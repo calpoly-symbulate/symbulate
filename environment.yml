@@ -1,0 +1,15 @@
+name: symbulate
+channels:
+  - defaults
+dependencies:
+  - python=3.13
+  - pip
+  - pip:
+    - numpy
+    - scipy
+    - matplotlib
+    - pandas
+    - pytest
+    - black
+    - jupyter
+    - notebook
