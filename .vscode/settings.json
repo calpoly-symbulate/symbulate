@@ -1,5 +1,4 @@
 {
-    "python.defaultInterpreterPath": "${env:CONDA_PREFIX}/python",
     "editor.formatOnSave": true,
     "editor.defaultFormatter": "ms-python.black-formatter",
     "[python]": {
@@ -19,7 +18,5 @@
             "path": "C:\\Program Files\\Git\\bin\\bash.exe",
             "args": []
         }
-    },
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    }
 }
