@@ -17,7 +17,9 @@
     "terminal.integrated.profiles.windows": {
         "Git Bash": {
             "path": "C:\\Program Files\\Git\\bin\\bash.exe",
-            "args": ["--login", "-i"]
+            "args": []
         }
-    }
+    },
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
 }
