@@ -1,0 +1,13 @@
+{
+    "recommendations": [
+        "ms-python.python",
+        "ms-python.pylance",
+        "ms-python.black-formatter",
+        "anthropic.claude-code",
+        "eamodio.gitlens",
+        "github.vscode-pull-request-github",
+        "ms-python.pytest",
+        "njpwerner.autodocstring",
+        "usernamehw.errorlens"
+    ]
+}
