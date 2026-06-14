@@ -43,20 +43,23 @@ Contains additional features. Also read-only reference.
 
 ### 1.2 Key Files to Read First
 
-Assign each team member one file to become the temporary "expert" on:
+As at team, decide on who will become the temporary "expert" on each of the following:
 
 | File | What it contains |
 |---|---|
 | `symbulate/probability_space.py` | `BoxModel`, `DeckOfCards`, core probability spaces |
 | `symbulate/distributions.py` | All probability distributions |
 | `symbulate/results.py` | Simulation result objects |
+| `symbulate/result.py` | Simulation result objects |
 | `symbulate/plot.py` | All plotting and graphics |
 | `symbulate/__init__.py` | The public API — what users import |
+| `symbulate/randomvariables.py` | All probability distributions |
+| `symbulate/base.py` | Basic operations |
 
 Use Claude to help understand each file:
 > *"Explain the architecture of this file and how it connects to the rest of Symbulate. I am a statistics student, not a software developer."*
 
-Each student gives a 5-minute summary to the group. After this everyone should have a mental map of the whole package.
+Each student will give a 5-minute summary to the group. After this everyone should have a mental map of the whole package.
 
 ### 1.3 Compare the Reference Repos with Claude
 

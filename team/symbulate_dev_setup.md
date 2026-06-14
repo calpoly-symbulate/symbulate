@@ -42,7 +42,7 @@ GitHub requires all users to enable 2FA. **You must do this before July 27, 2026
 
 ### 1.3 Share Your GitHub Username
 
-Send your GitHub username to the supervisor so you can be added to the project repository. You will receive an email invitation — accept it before proceeding.
+Send your GitHub username to the supervisor so you can be added to the project repository. You will receive an email invitation to join.
 
 ### 1.4 Accept the Claude Team Invitation
 
@@ -132,7 +132,7 @@ Everyone on the team must use the same Python and package versions. This prevent
 > - conda: 25.11.1
 > - Python: 3.13.9
 >
-> Share your version numbers in the team chat after setup to confirm everyone matches.
+> Share your version numbers with each other to confirm everyone matches.
 
 ### 3.1 Check What You Already Have
 
@@ -620,16 +620,11 @@ claude --version
 
 ## 8. Recommended Tutorials
 
-### Required (complete before first team meeting)
 - **Introduction to GitHub:** [github.com/skills/introduction-to-github](https://github.com/skills/introduction-to-github)
 - **Review Pull Requests:** [github.com/skills/review-pull-requests](https://github.com/skills/review-pull-requests)
-
-### Required (complete in week 1)
 - **pytest:** [docs.pytest.org/en/stable/getting-started.html](https://docs.pytest.org/en/stable/getting-started.html) — ~45 minutes
 - **NumPy Docstrings:** [numpydoc.readthedocs.io/en/latest/format.html](https://numpydoc.readthedocs.io/en/latest/format.html) — ~20 minutes
 - **Claude Code:** [docs.anthropic.com/en/docs/claude-code](https://docs.anthropic.com/en/docs/claude-code) — ~30 minutes
-
-### Recommended
 - **Prompt Engineering:** [docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview) — ~30 minutes
 - **Python Packaging:** [packaging.python.org/en/latest/tutorials/packaging-projects](https://packaging.python.org/en/latest/tutorials/packaging-projects/) — ~30 minutes
 
