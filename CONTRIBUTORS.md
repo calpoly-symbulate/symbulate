@@ -9,4 +9,6 @@ This document lists contributors to the 2026 summer development project.
 
 ## 2026 Student Contributors
 
--- Nitya Kolli, Student Researcher
+- Nitya Kolli, Student Researcher
+- Nico Ragasa, Student Researcher
+- Addison Weaver, Student Researcher
