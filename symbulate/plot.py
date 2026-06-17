@@ -15,7 +15,7 @@ ylim = plt.ylim
 
 
 def init_color():
-    hex_list = [colors.rgb2hex(rgb) for rgb in plt.cm.get_cmap("tab10").colors]
+    hex_list = [colors.rgb2hex(rgb) for rgb in cm.get_cmap("tab10").colors]
     plt.rcParams["axes.prop_cycle"] = cycler("color", hex_list)
 
 
