@@ -9,4 +9,4 @@ This document lists contributors to the 2026 summer development project.
 
 ## 2026 Student Contributors
 
-<!-- Students: add your name and role below as your first pull request -->
+Addison Weaver, Student Researcher
