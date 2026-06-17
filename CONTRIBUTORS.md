@@ -9,4 +9,6 @@ This document lists contributors to the 2026 summer development project.
 
 ## 2026 Student Contributors
 
-Addison Weaver, Student Researcher
+<!-- Students: add your name and role below as your first pull request -->
+- Nico Ragasa, Student Researcher
+- Addison Weaver, Student Researcher
