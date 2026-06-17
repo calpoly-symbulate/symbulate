@@ -5,6 +5,7 @@ import scipy.stats as stats
 from symbulate import *
 
 Nsim = 10000
+np.random.seed(67)
 
 
 class TestBernoulli(unittest.TestCase):
@@ -375,7 +376,7 @@ class TestExponential(unittest.TestCase):
     def test_Exponential_to_Weibull(self):
         X = RV(Exponential(rate=5))
         sims = X.sim(Nsim)
-        cdf = stats.weibull_min(scale=1/5, c=1).cdf
+        cdf = stats.weibull_min(scale=1 / 5, c=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
