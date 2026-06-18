@@ -8,6 +8,17 @@ from .plot import get_next_color
 from .result import Scalar, Vector, InfiniteVector
 
 class Distribution(ProbabilitySpace):
+    """Base class for probability distributions.
+
+    Parameters
+    ----------
+    params : dict
+        Dictionary of parameters for the distribution.
+    scipy : scipy.stats distribution object
+        The underlying scipy.stats distribution object used for calculations.
+    discrete : bool, optional
+        Whether the distribution is discrete. Default is True.
+    """
     def __init__(self, params, scipy, discrete=True):
         self.params = params
 
@@ -34,11 +45,31 @@ class Distribution(ProbabilitySpace):
             )
 
     def draw(self):
+        """Draw a single sample from the distribution.
+
+        Returns
+        -------
+        Scalar
+            A single random draw from the distribution.
+        """
         return Scalar(self.sim_func(**self.params))
 
     # Override the inherited __pow__ function to take advantage
     # of vectorized simulations.
     def __pow__(self, exponent):
+        """Generate multiple samples from the distribution.
+
+        Parameters
+        ----------
+        exponent : int or float
+            Number of samples to draw. If float('inf'), returns a function
+            that draws infinite samples on demand.
+
+        Returns
+        -------
+        ProbabilitySpace
+            A probability space that yields multiple samples.
+        """
         if exponent == float("inf"):
             def draw():
                 def _func(_):
@@ -50,7 +81,19 @@ class Distribution(ProbabilitySpace):
         return ProbabilitySpace(draw)
 
     def plot(self, xlim=None, alpha=None, ax=None, **kwargs):
+        """Plot the probability density/mass function of the distribution.
 
+        Parameters
+        ----------
+        xlim : tuple, optional
+            X-axis limits as (min, max). If None, uses distribution defaults.
+        alpha : float, optional
+            Transparency level for the plot (0 to 1).
+        ax : matplotlib.axes.Axes, optional
+            Matplotlib axes object to plot on. If None, creates or uses current axes.
+        **kwargs
+            Additional keyword arguments passed to matplotlib plotting functions.
+        """
         # use distribution defaults for xlim if none set
         if xlim is None:
             xlim = self.xlim
@@ -600,6 +643,13 @@ class Cauchy(Distribution):
         super().__init__(params, stats.cauchy, False)
 
     def draw(self):
+        """Draw a single sample from the Cauchy distribution.
+
+        Returns
+        -------
+        float
+            A single random draw from the Cauchy distribution.
+        """
         return self.loc + (self.scale * np.random.standard_cauchy())
 
 
@@ -723,6 +773,13 @@ class MultivariateNormal(Distribution):
         self.pdf = lambda x: stats.multivariate_normal(x, mean, cov)
 
     def plot(self):
+        """Plot is not supported for multivariate distributions.
+
+        Raises
+        ------
+        Exception
+            Plotting is not available for multivariate normal distributions.
+        """
         raise Exception(
             "Plotting is not currently available for "
             "the multivariate normal distribution."
@@ -735,6 +792,19 @@ class MultivariateNormal(Distribution):
         return Vector(np.random.multivariate_normal(self.mean, self.cov))
 
     def __pow__(self, exponent):
+        """Generate multiple samples from the multivariate normal distribution.
+
+        Parameters
+        ----------
+        exponent : int or float
+            Number of samples to draw. If float('inf'), returns a function
+            that draws infinite samples on demand.
+
+        Returns
+        -------
+        ProbabilitySpace
+            A probability space that yields multiple samples.
+        """
         if exponent == float("inf"):
             def draw():
                 def _func(n):
@@ -823,6 +893,13 @@ class Multinomial(Distribution):
         self.pdf = lambda x: stats.multinomial(x, n, p)
 
     def plot(self):
+        """Plot is not supported for multivariate distributions.
+
+        Raises
+        ------
+        Exception
+            Plotting is not available for multinomial distributions.
+        """
         raise Exception(
             "Plotting is not currently available for "
             "the Multinomial distribution."
@@ -835,6 +912,19 @@ class Multinomial(Distribution):
         return Vector(np.random.multinomial(self.n, self.p))
 
     def __pow__(self, exponent):
+        """Generate multiple samples from the multinomial distribution.
+
+        Parameters
+        ----------
+        exponent : int or float
+            Number of samples to draw. If float('inf'), returns a function
+            that draws infinite samples on demand.
+
+        Returns
+        -------
+        ProbabilitySpace
+            A probability space that yields multiple samples.
+        """
         if exponent == float("inf"):
             def draw():
                 def _func(_):
