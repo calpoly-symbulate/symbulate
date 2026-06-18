@@ -12,8 +12,46 @@ EPS = 1e-15
 
 
 class MarkovChainResult(InfiniteVector, DiscreteValued):
+    """One simulated sample path of a discrete-time Markov chain.
+
+    Stores the sequence of states visited by the chain. New states are
+    generated on demand as you index further into the path.
+
+    Attributes
+    ----------
+    transition_matrix : numpy.ndarray
+        The matrix of transition probabilities between states.
+    initial_dist : array-like
+        The starting probabilities for each state.
+    state_labels : range or list
+        The names (labels) of each state.
+    n_states : int
+        The total number of states in the chain.
+    states : list of int
+        The sequence of state indices visited so far.
+    """
 
     def __init__(self, transition_matrix, initial_dist, state_labels=None):
+        """Create one simulated sample path of a discrete-time Markov chain.
+
+        Parameters
+        ----------
+        transition_matrix : array-like of shape (n, n)
+            A square matrix where entry ``[i][j]`` is the probability of
+            moving from state ``i`` to state ``j``. Each row must sum to 1.
+        initial_dist : array-like of length n
+            The probability of starting in each state.
+        state_labels : array-like of length n, optional
+            Names to use for each state. Defaults to ``0, 1, ..., n-1``.
+
+        Raises
+        ------
+        Exception
+            If any row of ``transition_matrix`` does not sum to 1, any
+            entry is negative, the matrix is not square, or the lengths
+            of ``initial_dist`` or ``state_labels`` do not match the
+            number of states.
+        """
         # Check transition matrix
         for row in transition_matrix:
             if abs(sum(row) - 1) > EPS:
@@ -65,10 +103,32 @@ class MarkovChainResult(InfiniteVector, DiscreteValued):
         super().__init__(_func)
 
     def get_states(self):
+        """Return the sequence of states visited by this sample path.
+
+        Returns
+        -------
+        MarkovChainResult
+            This object itself, which can be indexed to get the state
+            at any time step.
+        """
         return self
 
 
 class MarkovChainProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying a discrete-time Markov chain.
+
+    Each draw from this space produces one simulated sample path
+    of the Markov chain.
+
+    Attributes
+    ----------
+    transition_matrix : numpy.ndarray
+        The matrix of transition probabilities between states.
+    initial_dist : array-like
+        The starting probabilities for each state.
+    state_labels : range or list
+        The names (labels) of each state.
+    """
 
     def __init__(self, transition_matrix, initial_dist, state_labels=None):
         """Initialize probability space for a (discrete-time) Markov chain.
@@ -89,6 +149,16 @@ class MarkovChainProbabilitySpace(ProbabilitySpace):
 
 
 class MarkovChain(RV):
+    """A discrete-time Markov chain, treated as a random variable.
+
+    Each time you simulate this object, you get a random sample path
+    — a sequence of states evolving according to the transition matrix.
+
+    Attributes
+    ----------
+    prob_space : MarkovChainProbabilitySpace
+        The underlying probability space used to generate sample paths.
+    """
 
     def __init__(self, transition_matrix, initial_dist, state_labels=None):
         """Initialize a (discrete-time) Markov chain.
@@ -109,10 +179,44 @@ class MarkovChain(RV):
 
 class ContinuousTimeMarkovChainResult(ContinuousTimeFunction,
                                       DiscreteValued):
+    """One simulated sample path of a continuous-time Markov chain.
+
+    Stores the sequence of states and the times spent in each state.
+    You can evaluate it at any time ``t`` to find which state the chain
+    is in at that moment.
+
+    Attributes
+    ----------
+    states : MarkovChainResult
+        The sequence of states visited (as state indices).
+    rates : numpy.ndarray
+        The rate of leaving each state (the negative of the diagonal
+        of the generator matrix).
+    times : InfiniteVector
+        Unscaled interarrival times drawn from an Exponential(1) distribution.
+    state_labels : range or list
+        The names (labels) of each state.
+    interarrival_times : InfiniteVector
+        The actual time spent in each state, scaled by the holding rate.
+    """
 
     def __init__(self, states, rates,
                  unscaled_interarrival_times,
                  state_labels):
+        """Create one simulated sample path of a continuous-time Markov chain.
+
+        Parameters
+        ----------
+        states : MarkovChainResult
+            The sequence of states (by index) that the chain visits.
+        rates : array-like
+            The rate of leaving each state.
+        unscaled_interarrival_times : InfiniteVector
+            Exponential(1) random variables used to compute the actual
+            time spent in each state.
+        state_labels : range or list
+            The names (labels) of each state.
+        """
         self.states = states
         self.rates = rates
         self.times = unscaled_interarrival_times
@@ -120,6 +224,19 @@ class ContinuousTimeMarkovChainResult(ContinuousTimeFunction,
 
         # Define an InfiniteVector of the interarrival times.
         def interarrival_times(n):
+            """Return the actual time spent in the n-th state.
+
+            Parameters
+            ----------
+            n : int
+                The index of the state visit (0-indexed).
+
+            Returns
+            -------
+            float
+                The time spent in state ``n``, equal to the unscaled
+                Exponential(1) draw divided by the holding rate of that state.
+            """
             for i in range(n + 1):
                 state = self.states[i]
                 interarrival_time = self.times[i] / self.rates[state]
@@ -139,6 +256,27 @@ class ContinuousTimeMarkovChainResult(ContinuousTimeFunction,
 
 
 class ContinuousTimeMarkovChainProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying a continuous-time Markov chain.
+
+    Each draw from this space produces one simulated sample path of the
+    continuous-time Markov chain, including the state sequence and the
+    random times spent in each state.
+
+    Attributes
+    ----------
+    generator_matrix : numpy.ndarray
+        The generator (or Q) matrix of the chain. Off-diagonal entries
+        are transition rates; diagonal entries are negative holding rates.
+    initial_dist : array-like
+        The starting probabilities for each state.
+    state_labels : range or list
+        The names (labels) of each state.
+    n_states : int
+        The total number of states.
+    transition_matrix : numpy.ndarray
+        The embedded discrete-time transition matrix derived from the
+        generator matrix.
+    """
 
     def __init__(self, generator_matrix, initial_dist, state_labels=None):
         """Initialize a probability space for a continuous-time Markov chain.
@@ -209,6 +347,17 @@ class ContinuousTimeMarkovChainProbabilitySpace(ProbabilitySpace):
 
 
 class ContinuousTimeMarkovChain(RV):
+    """A continuous-time Markov chain, treated as a random variable.
+
+    Each time you simulate this object, you get a random sample path
+    — a function of continuous time that jumps between states at
+    random moments according to the generator matrix.
+
+    Attributes
+    ----------
+    prob_space : ContinuousTimeMarkovChainProbabilitySpace
+        The underlying probability space used to generate sample paths.
+    """
 
     def __init__(self, generator_matrix, initial_dist, state_labels=None):
         """Initialize a continuous-time Markov chain.
