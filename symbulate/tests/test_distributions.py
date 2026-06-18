@@ -424,6 +424,7 @@ class TestExponential(unittest.TestCase):
 
     def test_Poisson_Exponential_to_Geometric(self):
         np.random.seed(42)
+
         def poisson_exp():
             x = Exponential(rate=1 / lam).draw()
             z = RV(Poisson(x)).draw()

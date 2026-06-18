@@ -3,6 +3,7 @@ from .probability_space import Event
 from .result import Vector, join, is_scalar, is_numeric_vector
 from .results import RVResults
 
+
 class RV(Arithmetic, Transformable, Comparable):
     """Defines a random variable.
 
@@ -72,10 +73,30 @@ class RV(Arithmetic, Transformable, Comparable):
         return RVResults(self.draw() for _ in range(n))
 
     def __call__(self, outcome):
-        print("Warning: Calling an RV as a function simply applies the "
-              "function that defines the RV to the input, regardless of "
-              "whether that input is a possible outcome in the underlying "
-              "probability space.")
+        """Apply the RV's function directly to an outcome.
+
+        Parameters
+        ----------
+        outcome : any
+            An outcome passed directly to the RV's defining function,
+            without checking if it belongs to the underlying probability space.
+
+        Returns
+        -------
+        scalar or tuple
+            The value of the RV's function applied to the outcome.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X(0.5)
+        """
+        print(
+            "Warning: Calling an RV as a function simply applies the "
+            "function that defines the RV to the input, regardless of "
+            "whether that input is a possible outcome in the underlying "
+            "probability space."
+        )
         return self.func(outcome)
 
     def check_same_prob_space(self, other):
@@ -103,13 +124,33 @@ class RV(Arithmetic, Transformable, Comparable):
             return log(x ** 2)
           Y = X.apply(g)
         """
+
         def _func(outcome):
             return func(self.func(outcome))
+
         return RV(self.prob_space, _func)
 
     # This allows us to unpack a random vector,
     # e.g., X, Y = RV(BoxModel([0, 1], size=2))
     def __iter__(self):
+        """Iterate over the components of a random vector.
+
+        Allows unpacking a random vector into individual scalar RVs.
+
+        Yields
+        ------
+        RV
+            Each component of the random vector as a scalar RV.
+
+        Raises
+        ------
+        Exception
+            If the random variable does not have multiple components.
+
+        Examples
+        --------
+        >>> X, Y = RV(BoxModel([0, 1], size=2))
+        """
         test = self.draw()
         if hasattr(test, "__iter__"):
             for i in range(len(test)):
@@ -121,21 +162,37 @@ class RV(Arithmetic, Transformable, Comparable):
             )
 
     def __getitem__(self, n):
+        """Index into a random vector to select a component or sub-vector.
+
+        Parameters
+        ----------
+        n : int, list of int, slice, or RV
+            Index or indices to select. An ``RV`` uses its realization as
+            a random index; a list or slice returns a random vector.
+
+        Returns
+        -------
+        RV
+            A new random variable representing the indexed component(s).
+
+        Examples
+        --------
+        >>> X = RV(BoxModel([0, 1], size=5))
+        >>> X[0]        # first component
+        >>> X[0:3]      # first three components as a vector
+        >>> X[[0, 2]]   # components at indices 0 and 2
+        """
         # if n is an RV, return a new random variable
         if isinstance(n, RV):
-            return RV(self.prob_space,
-                      lambda x: self.func(x)[n.func(x)])
+            return RV(self.prob_space, lambda x: self.func(x)[n.func(x)])
         # if the indices are a list, return a random vector
         elif is_numeric_vector(n):
-            return self.apply(
-                lambda x: Vector(x[i] for i in n)
-            )
+            return self.apply(lambda x: Vector(x[i] for i in n))
         # if the indices are a slice, return a random vector
         elif isinstance(n, slice):
             return self.apply(
-                lambda x: Vector(x[i] for i in
-                                 range(n.start, n.stop, n.step or 1))
-                )
+                lambda x: Vector(x[i] for i in range(n.start, n.stop, n.step or 1))
+            )
         # otherwise, return the nth value
         return self.apply(lambda x: x[n])
 
@@ -147,8 +204,10 @@ class RV(Arithmetic, Transformable, Comparable):
             # operations between this RV and another RV
             if isinstance(other, RV):
                 self.check_same_prob_space(other)
+
                 def _func(outcome):
                     return op(self.func(outcome), other.func(outcome))
+
                 return RV(self.prob_space, _func)
             # operations between this RV and a scalar
             return self.apply(lambda x: op(x, other))
@@ -162,12 +221,10 @@ class RV(Arithmetic, Transformable, Comparable):
 
         def _op_func(self, other):
             if is_scalar(other):
-                return Event(self.prob_space,
-                             lambda x: op(self.func(x), other))
+                return Event(self.prob_space, lambda x: op(self.func(x), other))
             elif isinstance(other, RV):
                 self.check_same_prob_space(other)
-                return Event(self.prob_space,
-                             lambda x: op(self.func(x), other.func(x)))
+                return Event(self.prob_space, lambda x: op(self.func(x), other.func(x)))
             raise NotImplementedError(
                 "Comparisons are only defined between two RVs or "
                 "between an RV and a scalar."
@@ -175,30 +232,99 @@ class RV(Arithmetic, Transformable, Comparable):
 
         return _op_func
 
-
     # Define a joint distribution of two random variables: e.g., X & Y
     def __and__(self, other):
+        """Form the joint distribution of two random variables using ``&``.
+
+        Parameters
+        ----------
+        other : RV or scalar
+            The other random variable or constant to join with.
+
+        Returns
+        -------
+        RV
+            A new random variable whose realizations are vectors joining both components.
+
+        Raises
+        ------
+        Exception
+            If other is not an RV or scalar.
+
+        Examples
+        --------
+        >>> X, Y = RV(Normal(0, 1) ** 2)
+        >>> Z = X & Y
+        """
         self.check_same_prob_space(other)
         if isinstance(other, RV):
+
             def _func(outcome):
                 return join(self.func(outcome), other.func(outcome))
+
         elif is_scalar(other):
+
             def _func(outcome):
                 return join(self.func(outcome), other)
+
         else:
             raise Exception("Joint distributions are only defined for RVs.")
         return RV(self.prob_space, _func)
 
     def __rand__(self, other):
+        """Support scalar & RV by forming a joint distribution.
+
+        Called when a scalar appears on the left side of ``&``
+        (e.g., ``3 & X``).
+
+        Parameters
+        ----------
+        other : scalar
+            The constant to join on the left side.
+
+        Returns
+        -------
+        RV
+            A new random variable whose realizations are vectors with ``other`` as the first component.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> Z = 3 & X
+        """
         self.check_same_prob_space(other)
         if is_scalar(other):
+
             def _func(outcome):
                 return join(other, self.func(outcome))
+
         return RV(self.prob_space, _func)
 
     # Define conditional distribution of random variable.
     # e.g., X | (X > 3)
     def __or__(self, condition_event):
+        """Condition the random variable on an event using ``|``.
+
+        Parameters
+        ----------
+        condition_event : Event
+            The event to condition on.
+
+        Returns
+        -------
+        RVConditional
+            A new conditional random variable
+
+        Raises
+        ------
+        NotImplementedError
+            If condition_event is not an Event.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (X | (X > 0)).draw()
+        """
         # Check that the random variable and event are
         # defined on the same probability space.
         self.check_same_prob_space(condition_event)
@@ -231,8 +357,7 @@ class RVConditional(RV):
 
     def __init__(self, random_variable, condition_event):
         self.condition_event = condition_event
-        super().__init__(random_variable.prob_space,
-                         random_variable.func)
+        super().__init__(random_variable.prob_space, random_variable.func)
 
     def draw(self):
         """A function that takes no arguments and returns a value from
