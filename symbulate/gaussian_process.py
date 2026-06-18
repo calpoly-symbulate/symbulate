@@ -1,16 +1,13 @@
 import numpy as np
 
-from .index_sets import (
-    DiscreteTimeSequence,
-    Reals
-)
+from .index_sets import DiscreteTimeSequence, Reals
 from .probability_space import ProbabilitySpace
 from .result import (
     DiscreteTimeFunction,
     ContinuousTimeFunction,
     Vector,
     is_number,
-    is_numeric_vector
+    is_numeric_vector,
 )
 from .random_variables import RV
 from .random_processes import RandomProcess
@@ -19,6 +16,27 @@ MACHINE_EPS = 1e-12
 
 
 def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
+    """Get a result object for a Gaussian process.
+
+    Parameters
+    ----------
+    mean_func : function
+        The mean function of the Gaussian process.
+    cov_func : function
+        The covariance function of the Gaussian process.
+    index_set : DiscreteTimeSequence or Reals, optional
+        The index set of which the Gaussian process is defined.
+
+    Returns
+    -------
+    GaussianProcessResult
+        A result object for the Gaussian process that can be evaluated at any time in the index set.
+
+    Raises
+    ------
+    Exception
+        If the ``index_set`` is not Reals or DiscreteTimeSequence.
+    """
 
     # Determine whether the process is discrete-time or continous-time
     if isinstance(index_set, DiscreteTimeSequence):
@@ -27,11 +45,25 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
         base_class = ContinuousTimeFunction
     else:
         raise Exception(
-            "Index set for Gaussian process must be Reals or "
-            "DiscreteTimeSequence."
+            "Index set for Gaussian process must be Reals or " "DiscreteTimeSequence."
         )
 
     class GaussianProcessResult(base_class):
+        """A realization of a Gaussian process.
+
+        Attributes
+        ----------
+        mean : numpy.ndarray
+            The mean vector of the observed times.
+        cov : numpy.ndarray
+            The covariance matrix of the observed times.
+        observed : dict
+            A dictionary mapping observed times to their corresponding values.
+        vfunc : function
+            A vectorized function that takes an array of times and returns the corresponding values of the Gaussian process.
+        index_set : DiscreteTimeSequence or Reals
+            The index set of which the Gaussian process is defined.
+        """
 
         def __init__(self, mean_func, cov_func):
 
@@ -89,14 +121,11 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
                     for j, t in enumerate(ts):
                         cov22[i, j] = cov_func(s, t)
 
-                cond_mean = (mean2 + (
-                    cov12.T @
-                    np.linalg.solve(cov11, list(self.observed.values()) - self.mean)
-                ))
-                cond_var = (cov22 - (
-                    cov12.T @
-                    np.linalg.solve(cov11, cov12)
-                ))
+                cond_mean = mean2 + (
+                    cov12.T
+                    @ np.linalg.solve(cov11, list(self.observed.values()) - self.mean)
+                )
+                cond_var = cov22 - (cov12.T @ np.linalg.solve(cov11, cov12))
 
                 # update mean vector and covariance matrix
                 self.mean = np.append(self.mean, mean2)
@@ -109,14 +138,14 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
                 for t, v in zip(ts, new_values):
                     self.observed[t] = v
                 values[np.isnan(values)] = new_values
-                
+
                 return values
 
             self.vfunc = _vfunc
 
             def _func(t):
                 return _vfunc([t])[0]
-            
+
             super().__init__(func=_func)
             self.index_set = index_set
 
@@ -124,6 +153,17 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
 
 
 class GaussianProcessProbabilitySpace(ProbabilitySpace):
+    """Probability space for a Gaussian process.
+
+    Attributes
+    ----------
+    mean_func : function
+        The mean function of the Gaussian process.
+    cov_func : function
+        The covariance function of the Gaussian process.
+    index_set : DiscreteTimeSequence or Reals
+        The index set of which the Gaussian process is defined.
+    """
 
     def __init__(self, mean_func, cov_func, index_set=Reals()):
         """Initialize probability space for a Gaussian process.
@@ -136,15 +176,23 @@ class GaussianProcessProbabilitySpace(ProbabilitySpace):
         """
 
         def draw():
-            return get_gaussian_process_result(
-                mean_func,
-                cov_func,
-                index_set)
+            return get_gaussian_process_result(mean_func, cov_func, index_set)
 
         super().__init__(draw)
 
 
 class GaussianProcess(RandomProcess, RV):
+    """A random Gaussian process and a random variable.
+
+    Attributes
+    ----------
+    mean_func : function
+        The mean function of the Gaussian process.
+    cov_func : function
+        The covariance function of the Gaussian process.
+    index_set : DiscreteTimeSequence or Reals
+        The index set of which the Gaussian process is defined.
+    """
 
     def __init__(self, mean_func, cov_func, index_set=Reals()):
         """Initialize Gaussian process.
@@ -156,15 +204,22 @@ class GaussianProcess(RandomProcess, RV):
                      (by default, all real numbers)
         """
 
-        prob_space = GaussianProcessProbabilitySpace(mean_func,
-                                                     cov_func,
-                                                     index_set)
+        prob_space = GaussianProcessProbabilitySpace(mean_func, cov_func, index_set)
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
 
 
 # Define convenience class for Brownian motion
 class BrownianMotionProbabilitySpace(GaussianProcessProbabilitySpace):
+    """Probability space for Brownian motion.
+
+    Attributes
+    ----------
+    drift : number
+        The drift parameter of Brownian motion.
+    scale : number
+        The scale parameter of Brownian motion.
+    """
 
     def __init__(self, drift=0, scale=1):
         """Initialize probability space for Brownian motion.
@@ -174,12 +229,20 @@ class BrownianMotionProbabilitySpace(GaussianProcessProbabilitySpace):
           scale: scale parameter of Brownian motion
         """
         super().__init__(
-            mean_func=lambda t: drift * t,
-            cov_func=lambda s, t: (scale ** 2) * min(s, t)
+            mean_func=lambda t: drift * t, cov_func=lambda s, t: (scale**2) * min(s, t)
         )
 
 
 class BrownianMotion(RandomProcess, RV):
+    """Brownian motion random process and random variable.
+
+    Attributes
+    ----------
+    drift : number
+        The drift parameter of Brownian motion.
+    scale : number
+        The scale parameter of Brownian motion.
+    """
 
     def __init__(self, drift=0, scale=1):
         """Initialize Brownian motion.
@@ -188,8 +251,6 @@ class BrownianMotion(RandomProcess, RV):
           drift: drift parameter of Brownian motion
           scale: scale parameter of Brownian motion
         """
-        prob_space = BrownianMotionProbabilitySpace(
-            drift=drift, scale=scale
-        )
+        prob_space = BrownianMotionProbabilitySpace(drift=drift, scale=scale)
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
