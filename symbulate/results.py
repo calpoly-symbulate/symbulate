@@ -5,6 +5,7 @@ results of a simulation, either outcomes from a
 probability space or realizations of a random variable /
 random process.
 """
+
 import difflib
 import time
 
@@ -15,24 +16,38 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import NullFormatter
 from matplotlib.transforms import Affine2D
 
-from .base import (Arithmetic, Statistical, Comparable,
-                   Logical, Filterable, Transformable)
-from .plot import (configure_axes, init_color, get_next_color, is_discrete,
-                   count_var, compute_density, add_colorbar,
-                   setup_ticks, make_tile, make_violin,
-                   make_marginal_impulse, make_density2D)
-from .result import (Scalar, Vector, TimeFunction,
-                     is_number, is_numeric_vector)
+from .base import (
+    Arithmetic,
+    Statistical,
+    Comparable,
+    Logical,
+    Filterable,
+    Transformable,
+)
+from .plot import (
+    configure_axes,
+    init_color,
+    get_next_color,
+    is_discrete,
+    count_var,
+    compute_density,
+    add_colorbar,
+    setup_ticks,
+    make_tile,
+    make_violin,
+    make_marginal_impulse,
+    make_density2D,
+)
+from .result import Scalar, Vector, TimeFunction, is_number, is_numeric_vector
 from .table import Table
-
 
 try:
     seaborn_colorblind_closest = difflib.get_close_matches(
-        'seaborn-colorblind', plt.style.available, cutoff=0.7
+        "seaborn-colorblind", plt.style.available, cutoff=0.7
     )
     stylesheet = seaborn_colorblind_closest[0]
 except IndexError:
-    stylesheet = 'ggplot'
+    stylesheet = "ggplot"
 
 plt.style.use(stylesheet)
 
@@ -40,16 +55,54 @@ plt.style.use(stylesheet)
 def _is_hashable(obj):
     return hasattr(obj, "__hash__")
 
+
 def _is_boolean_vector(vector):
     return all(isinstance(x, (bool, np.bool_)) for x in vector)
 
 
-class Results(Arithmetic, Statistical, Comparable,
-              Logical, Filterable, Transformable):
+class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transformable):
+    """
+    Container for the outcomes of a simulation from a probability space.
+
+    Stores a list of simulation outcomes and exposes methods for filtering,
+    tabulating, and transforming them. Arithmetic, comparison, and logical
+    operations are applied element-wise across all outcomes via the mixin
+    superclasses.
+
+    Attributes
+    ----------
+    results : list
+        The stored simulation outcomes.
+    sim_id : float
+        Timestamp identifying the simulation run that produced these results.
+    Methods
+    -------
+    apply(func)
+        Apply a function to each simulation outcome.
+    get(n)
+        Return the outcome of the nth simulation.
+    tabulate(outcomes=None, normalize=False)
+        Count or estimate frequencies of outcomes.
+    filter(filt)
+        Return outcomes satisfying a criterion.
+    plot()
+        Plot the simulation results when supported.
+    """
 
     def __init__(self, results, sim_id=None):
         self.results = list(results)
         self.sim_id = time.time() if sim_id is None else sim_id
+        """
+        Initialize a collection of simulation outcomes.
+
+        Parameters
+        ----------
+        results : iterable
+            Simulation outcomes to store.
+        sim_id : float, optional
+            Identifier for the simulation run. If None, a timestamp
+            is generated automatically.
+        """
 
     def apply(self, func):
         """Apply a function to each outcome of a simulation.
@@ -63,29 +116,55 @@ class Results(Arithmetic, Statistical, Comparable,
             the function to each outcome from the original
             Results object.
         """
-        return type(self)(
-            [func(result) for result in self.results],
-            self.sim_id
-        )
+        return type(self)([func(result) for result in self.results], self.sim_id)
 
     def __getitem__(self, n):
+        """
+        Return selected dimensions or filtered results.
+
+        Parameters
+        ----------
+        n : int, slice, numeric vector, or Results
+            Index, slice, collection of indices, or boolean Results
+            object used as a filter.
+
+        Returns
+        -------
+        Results
+            Results object containing the selected values or
+            filtered outcomes.
+        """
         # if n is a Results object, use it as a boolean mask
         if isinstance(n, Results):
             return self.filter(n)
         # if n is a numeric array of values, return a Results
         # object with those dimensions
         elif is_numeric_vector(n):
-            return self.apply(
-                lambda result: type(result)(result[i] for i in n)
-            )
+            return self.apply(lambda result: type(result)(result[i] for i in n))
         # otherwise, return the nth value of every simulation
         return self.apply(lambda result: result[n])
 
     def __iter__(self):
+        """
+        Iterate over the simulation outcomes.
+
+        Yields
+        ------
+        object
+            Next simulation outcome.
+        """
         for result in self.results:
             yield result
 
     def __len__(self):
+        """
+        Return the number of simulation outcomes.
+
+        Returns
+        -------
+        int
+            Number of stored outcomes.
+        """
         return len(self.results)
 
     def get(self, n):
@@ -108,9 +187,7 @@ class Results(Arithmetic, Statistical, Comparable,
 
         # if n is a numeric array, return a Results object with those results
         if is_numeric_vector(n):
-            return type(self)(
-                self.results[i] for i in n
-            )
+            return type(self)(self.results[i] for i in n)
         # otherwise, return the nth result (this also works when n is a slice)
         return self.results[n]
 
@@ -172,13 +249,10 @@ class Results(Arithmetic, Statistical, Comparable,
                 )
             if len(filt) != len(self):
                 raise ValueError(
-                    "Filter must be the same length as the "
-                    "Results object."
+                    "Filter must be the same length as the " "Results object."
                 )
             if not _is_boolean_vector(filt):
-                raise ValueError(
-                    "Every element in the filter must be a boolean."
-                )
+                raise ValueError("Every element in the filter must be a boolean.")
             return type(self)(x for x, cond in zip(self, filt) if cond)
         elif callable(filt):
             return type(self)(x for x in self if filt(x))
@@ -195,19 +269,12 @@ class Results(Arithmetic, Statistical, Comparable,
         def _op_func(self, other):
             if isinstance(other, Results):
                 if len(self) != len(other):
-                    raise Exception(
-                        "Results objects must be of the "
-                        "same length."
-                    )
+                    raise Exception("Results objects must be of the " "same length.")
                 if self.sim_id != other.sim_id:
                     raise Exception(
-                        "Results objects must come from the "
-                        "same simulation."
+                        "Results objects must come from the " "same simulation."
                     )
-                return type(self)(
-                    [op(x, y) for x, y in zip(self, other)],
-                    self.sim_id
-                )
+                return type(self)([op(x, y) for x, y in zip(self, other)], self.sim_id)
             else:
                 return self.apply(lambda x: op(x, other))
 
@@ -221,10 +288,12 @@ class Results(Arithmetic, Statistical, Comparable,
     # The Statistical superclass will use this to define all of the
     # usual comparison operations (e.g., <, >, ==, !=, etc.).
     def _statistic_factory(self, _):
-        raise Exception("Statistical functions are only available "
-                        "for simulations of random variables. "
-                        "Define a RV on this probability space "
-                        "and then try again.")
+        raise Exception(
+            "Statistical functions are only available "
+            "for simulations of random variables. "
+            "Define a RV on this probability space "
+            "and then try again."
+        )
 
     def _multivariate_statistic_factory(self, op):
         self._statistic_factory(op)
@@ -238,50 +307,69 @@ class Results(Arithmetic, Statistical, Comparable,
             if not _is_boolean_vector(self):
                 raise ValueError(
                     "Logical operations are only defined for "
-                    "boolean (True/False) Results objects.")
+                    "boolean (True/False) Results objects."
+                )
             # other will be None when op is the "not" operator
             if other is None:
                 return Results([op(x) for x in self], self.sim_id)
             else:
                 if isinstance(other, Results):
                     if self.sim_id != other.sim_id:
-                        raise Exception("Results objects must come "
-                                        "from the same simulation.")
+                        raise Exception(
+                            "Results objects must come " "from the same simulation."
+                        )
                     if not _is_boolean_vector(other):
                         raise ValueError(
                             "Logical operations are only defined for "
-                            "boolean (True/False) Results objects.")
+                            "boolean (True/False) Results objects."
+                        )
                 else:
                     raise TypeError(
                         "Logical operations are only defined "
                         "between two Results, not between a Result "
-                        "and a %s." % type(other).__name__)
-                return Results(
-                    [op(x, y) for x, y in zip(self, other)],
-                    self.sim_id
-                )
+                        "and a %s." % type(other).__name__
+                    )
+                return Results([op(x, y) for x, y in zip(self, other)], self.sim_id)
 
         return _op_func
 
-
     def plot(self):
-        raise Exception("Only simulations of random variables (RV) "
-                        "can be plotted, but you simulated from a "
-                        "probability space. You must first define a RV "
-                        "on your probability space and simulate it. "
-                        "Then call .plot() on those simulations.")
-        
+        """
+        Plot the simulation results.
+
+        Raises
+        ------
+        Exception
+            If the results do not correspond to simulations of a
+            random variable.
+        """
+        raise Exception(
+            "Only simulations of random variables (RV) "
+            "can be plotted, but you simulated from a "
+            "probability space. You must first define a RV "
+            "on your probability space and simulate it. "
+            "Then call .plot() on those simulations."
+        )
+
     def __repr__(self):
+        """
+        Return a string representation of the results.
+
+        Returns
+        -------
+        str
+            Tabular representation of the stored simulation outcomes.
+        """
 
         i_last = len(self) - 1
         max_index_length = len(str(i_last))
 
         if max_index_length <= 5:
-            index_header_space = ''
-            index_value_space = ' ' * 4
+            index_header_space = ""
+            index_value_space = " " * 4
         else:
-            index_header_space = ' ' * (max_index_length - 5)
-            index_value_space = ' ' * (max_index_length - 1)
+            index_header_space = " " * (max_index_length - 5)
+            index_value_space = " " * (max_index_length - 1)
 
         table_rows = []
 
@@ -291,27 +379,29 @@ class Results(Arithmetic, Statistical, Comparable,
             table_rows.append(f"{str(i)}{index_value_space} {str(result)}")
 
             if len(self) > 9 and i >= 8:
-                index_value_space = ' ' * (5 - len(str(i_last)))
+                index_value_space = " " * (5 - len(str(i_last)))
 
                 if len(self) > 11:
                     table_rows.append(
                         f"{'.' * max_index_length}{index_value_space} "
-                        f"{'.' * len(str(self.get(i_last)))}")
+                        f"{'.' * len(str(self.get(i_last)))}"
+                    )
                 elif len(self) == 11:
                     table_rows.append(
                         f"{str(i_last - 1)}{' ' * (5 - len(str(i_last - 1)))} "
-                        f"{str(self.get(i_last - 1))}")
+                        f"{str(self.get(i_last - 1))}"
+                    )
 
                 table_rows.append(
                     f"{str(i_last)}{index_value_space} {str(self.get(i_last))}"
                 )
                 break
 
-        return '\n'.join(table_rows)
+        return "\n".join(table_rows)
 
     def _repr_html_(self):
 
-        table_template = '''
+        table_template = """
     <table>
       <thead>
         <th width="10%">Index</th>
@@ -321,12 +411,12 @@ class Results(Arithmetic, Statistical, Comparable,
         {table_body}
       </tbody>
     </table>
-        '''
-        row_template = '''
+        """
+        row_template = """
         <tr>
           <td>%s</td><td>%s</td>
         </tr>
-        '''
+        """
 
         def _truncate(result):
             if len(result) > 100:
@@ -346,8 +436,41 @@ class Results(Arithmetic, Statistical, Comparable,
 
 
 class RVResults(Results):
+    """
+    Container for simulation outcomes of a random variable.
+
+    Extends ``Results`` with statistical methods and plotting
+    functionality for numerical simulation outcomes.
+
+    Attributes
+    ----------
+    dim : int or None
+        Dimension of each simulation outcome, if consistent.
+    index_set : IndexSet or None
+        Common index set when outcomes are time functions.
+
+    Methods
+    -------
+    standardize()
+        Standardize the results to have mean 0 and variance 1.
+    tabulate(outcomes=None, normalize=False)
+        Count or estimate frequencies of outcomes.
+    plot(...)
+        Visualize the simulation results.
+    """
 
     def __init__(self, results, sim_id=None):
+        """
+        Initialize simulation results for a random variable.
+
+        Parameters
+        ----------
+        results : iterable
+            Simulation outcomes to store.
+        sim_id : float, optional
+            Identifier for the simulation run. If None, a timestamp
+            is generated automatically.
+        """
         super().__init__(results, sim_id)
         init_color()
         # get type and dimension of the first result, if it exists
@@ -370,11 +493,11 @@ class RVResults(Results):
             self.dim = None
         # iterate over remaining results, ensure they are consistent with the first
         for result in iterresults:
-            if (isinstance(result, TimeFunction) and
-                result.index_set != self.index_set):
+            if isinstance(result, TimeFunction) and result.index_set != self.index_set:
                 self.index_set = None
-            if ((is_number(result) and self.dim != 1) or
-                (is_numeric_vector(result) and self.dim != len(result))):
+            if (is_number(result) and self.dim != 1) or (
+                is_numeric_vector(result) and self.dim != len(result)
+            ):
                 self.dim = None
 
     def _set_array(self):
@@ -390,7 +513,8 @@ class RVResults(Results):
         else:
             raise Exception(
                 "This operation is only possible with results "
-                "of consistent dimension.")
+                "of consistent dimension."
+            )
 
     # The Statistical superclass will use this to define all of the
     # usual comparison operations (e.g., <, >, ==, !=, etc.).
@@ -403,8 +527,10 @@ class RVResults(Results):
             elif self.dim is not None:
                 return Vector(op(a=self.array, axis=0))
             elif self.index_set is not None:
+
                 def _func(t):
                     return _op_func(self[t])
+
                 return TimeFunction.from_index_set(self.index_set, _func)
             raise NotImplementedError(
                 "Statistics can only be calculated for numerical "
@@ -424,7 +550,8 @@ class RVResults(Results):
             elif self.dim == 1:
                 raise Exception(
                     "This multivariate statistic is only defined when "
-                    "when there are at least 2 dimensions.")
+                    "when there are at least 2 dimensions."
+                )
             raise NotImplementedError(
                 "Statistics can only be calculated for numerical "
                 "data of consistent dimension."
@@ -433,22 +560,64 @@ class RVResults(Results):
         return _op_func
 
     def standardize(self):
-        """Standardizes the results with respect to the mean and standard deviation.
+        """
+        Standardize the results using the mean and standard deviation.
 
-        Returns:
-          A new RVResults object, where every dimension has mean 0 and variance 1.
+        Returns
+        -------
+        RVResults
+            Standardized results with mean 0 and standard deviation 1.
+
+        Raises
+        ------
+        Exception
+            If the results cannot be standardized.
         """
         self._set_array()
         if self.dim is not None:
             return (self - self.mean()) / self.std()
         else:
             raise Exception("Could not standardize the given results.")
-        
-    def tabulate(self, outcomes=None, normalize=False):
-        return Table(self._get_counts(), outcomes, normalize, "Value")        
 
-    def plot(self, type=None, alpha=None, normalize=True, jitter=False,
-             bins=None, **kwargs):
+    def tabulate(self, outcomes=None, normalize=False):
+        """
+        Count or estimate frequencies of simulation outcomes.
+
+        Parameters
+        ----------
+        outcomes : list, optional
+            Outcomes to include in the table.
+        normalize : bool, default=False
+            If True, return relative frequencies. Otherwise, return counts.
+
+        Returns
+        -------
+        Table
+            Table of outcomes and frequencies.
+        """
+        return Table(self._get_counts(), outcomes, normalize, "Value")
+
+    def plot(
+        self, type=None, alpha=None, normalize=True, jitter=False, bins=None, **kwargs
+    ):
+        """
+        Plot the simulated random variable results.
+
+        Parameters
+        ----------
+        type : str, tuple, or list, optional
+            Plot type or types to display.
+        alpha : float, optional
+            Transparency level for plotted elements.
+        normalize : bool, default=True
+            If True, plot relative frequencies or densities.
+        jitter : bool, default=False
+            If True, add random noise to reduce overplotting.
+        bins : int, optional
+            Number of bins to use for histograms.
+        **kwargs
+            Additional keyword arguments passed to matplotlib plotting functions.
+        """
         if type is not None:
             if isinstance(type, str):
                 type = (type,)
@@ -463,9 +632,9 @@ class RVResults(Results):
             counts = self._get_counts()
             discrete = is_discrete(counts.values())
             if type is None:
-                type = ("impulse", ) if discrete else ("hist", )
+                type = ("impulse",) if discrete else ("hist",)
             if alpha is None:
-                alpha = .5
+                alpha = 0.5
             if bins is None:
                 bins = 30
             n = len(self)
@@ -475,42 +644,49 @@ class RVResults(Results):
             ax = plt.gca()
             color = get_next_color(ax)
 
-            if 'density' in type:
+            if "density" in type:
                 if discrete:
                     xs = sorted(list(counts.keys()))
                     probs = [counts[x] / n for x in xs]
-                    ax.plot(xs, probs, marker='o', color=color, linestyle='-')
+                    ax.plot(xs, probs, marker="o", color=color, linestyle="-")
                     if len(type) == 1:
-                        plt.ylabel('Relative Frequency')
+                        plt.ylabel("Relative Frequency")
                 else:
                     density = compute_density(self.array)
                     xs = np.linspace(self.array.min(), self.array.max(), 1000)
                     ax.plot(xs, density(xs), linewidth=2, color=color)
-                    if len(type) == 1 or (len(type) == 2 and 'rug' in type):
-                        plt.ylabel('Density')
+                    if len(type) == 1 or (len(type) == 2 and "rug" in type):
+                        plt.ylabel("Density")
 
-            if 'hist' in type or 'bar' in type:
-                ax.hist(self.array, bins=bins, density=normalize,
-                        color=color, alpha=alpha, **kwargs)
+            if "hist" in type or "bar" in type:
+                ax.hist(
+                    self.array,
+                    bins=bins,
+                    density=normalize,
+                    color=color,
+                    alpha=alpha,
+                    **kwargs,
+                )
                 plt.ylabel("Density" if normalize else "Count")
-            elif 'impulse' in type:
+            elif "impulse" in type:
                 xs = list(counts.keys())
                 freqs = list(counts.values())
                 if normalize:
                     freqs = [freq / n for freq in freqs]
                 if jitter:
-                    a = .02 * (max(xs) - min(xs))
+                    a = 0.02 * (max(xs) - min(xs))
                     xs = [x + np.random.uniform(low=-a, high=a) for x in xs]
                 # plot the impulses
                 ax.vlines(xs, 0, freqs, color=color, alpha=alpha, **kwargs)
-                configure_axes(ax, xs, freqs,
-                               ylabel="Relative Frequency" if normalize else "Count")
-            if 'rug' in type:
+                configure_axes(
+                    ax, xs, freqs, ylabel="Relative Frequency" if normalize else "Count"
+                )
+            if "rug" in type:
                 xs = self.array
                 if discrete:
-                    noise_level = .002 * (self.array.max() - self.array.min())
+                    noise_level = 0.002 * (self.array.max() - self.array.min())
                     xs = xs + np.random.normal(scale=noise_level, size=n)
-                ax.plot(xs, [0.001] * n, '|', linewidth=5, color='k')
+                ax.plot(xs, [0.001] * n, "|", linewidth=5, color="k")
                 if len(type) == 1:
                     setup_ticks([], [], ax.yaxis)
         elif self.dim == 2:
@@ -528,38 +704,61 @@ class RVResults(Results):
             if type is None:
                 type = ("scatter",)
             if alpha is None:
-                alpha = .5
+                alpha = 0.5
             if bins is None:
-                bins = 10 if 'tile' in type else 30
+                bins = 10 if "tile" in type else 30
 
-            if 'marginal' in type:
+            if "marginal" in type:
                 fig = plt.gcf()
                 gs = GridSpec(4, 4)
                 ax = fig.add_subplot(gs[1:4, 0:3])
                 ax_marg_x = fig.add_subplot(gs[0, 0:3])
                 ax_marg_y = fig.add_subplot(gs[1:4, 3])
                 color = get_next_color(ax)
-                if 'density' in type:
+                if "density" in type:
                     densityX = compute_density(x)
                     densityY = compute_density(y)
                     x_lines = np.linspace(min(x), max(x), 1000)
                     y_lines = np.linspace(min(y), max(y), 1000)
-                    ax_marg_x.plot(x_lines, densityX(x_lines), linewidth=2,
-                                   color=get_next_color(ax))
-                    ax_marg_y.plot(y_lines, densityY(y_lines), linewidth=2,
-                                   color=get_next_color(ax),
-                                   transform=Affine2D().rotate_deg(270) + ax_marg_y.transData)
+                    ax_marg_x.plot(
+                        x_lines,
+                        densityX(x_lines),
+                        linewidth=2,
+                        color=get_next_color(ax),
+                    )
+                    ax_marg_y.plot(
+                        y_lines,
+                        densityY(y_lines),
+                        linewidth=2,
+                        color=get_next_color(ax),
+                        transform=Affine2D().rotate_deg(270) + ax_marg_y.transData,
+                    )
                 else:
                     if discrete_x:
-                        make_marginal_impulse(x_count, get_next_color(ax), ax_marg_x, alpha, 'x')
+                        make_marginal_impulse(
+                            x_count, get_next_color(ax), ax_marg_x, alpha, "x"
+                        )
                     else:
-                        ax_marg_x.hist(x, color=get_next_color(ax), density=normalize,
-                                       alpha=alpha, bins=bins)
+                        ax_marg_x.hist(
+                            x,
+                            color=get_next_color(ax),
+                            density=normalize,
+                            alpha=alpha,
+                            bins=bins,
+                        )
                     if discrete_y:
-                        make_marginal_impulse(y_count, get_next_color(ax), ax_marg_y, alpha, 'y')
+                        make_marginal_impulse(
+                            y_count, get_next_color(ax), ax_marg_y, alpha, "y"
+                        )
                     else:
-                        ax_marg_y.hist(y, color=get_next_color(ax), density=normalize,
-                                       alpha=alpha, bins=bins, orientation='horizontal')
+                        ax_marg_y.hist(
+                            y,
+                            color=get_next_color(ax),
+                            density=normalize,
+                            alpha=alpha,
+                            bins=bins,
+                            orientation="horizontal",
+                        )
                 plt.setp(ax_marg_x.get_xticklabels(), visible=False)
                 plt.setp(ax_marg_y.get_yticklabels(), visible=False)
             else:
@@ -567,40 +766,44 @@ class RVResults(Results):
                 ax = plt.gca()
                 color = get_next_color(ax)
 
-            nullfmt = NullFormatter() #removes labels on fig
+            nullfmt = NullFormatter()  # removes labels on fig
 
-            if 'scatter' in type:
+            if "scatter" in type:
                 if jitter:
-                    x = x + np.random.normal(loc=0, scale=.01 * (x.max() - x.min()), size=len(x))
-                    y = y + np.random.normal(loc=0, scale=.01 * (y.max() - y.min()), size=len(y))
+                    x = x + np.random.normal(
+                        loc=0, scale=0.01 * (x.max() - x.min()), size=len(x)
+                    )
+                    y = y + np.random.normal(
+                        loc=0, scale=0.01 * (y.max() - y.min()), size=len(y)
+                    )
                 ax.scatter(x, y, alpha=alpha, c=color, **kwargs)
-            elif 'hist' in type:
-                histo = ax.hist2d(x, y, bins=bins, cmap='Blues')
+            elif "hist" in type:
+                histo = ax.hist2d(x, y, bins=bins, cmap="Blues")
 
                 # When normalize=True, use density instead of counts
                 if normalize:
-                    caxes = add_colorbar(fig, type, histo[3], 'Density')
-                    #change scale to density instead of counts
+                    caxes = add_colorbar(fig, type, histo[3], "Density")
+                    # change scale to density instead of counts
                     plt.draw()
                     new_labels = []
                     for label in caxes.get_yticklabels():
                         new_labels.append(int(label.get_text()) / len(x))
                     caxes.set_yticklabels(new_labels)
                 else:
-                    caxes = add_colorbar(fig, type, histo[3], 'Count')
-            elif 'density' in type:
+                    caxes = add_colorbar(fig, type, histo[3], "Count")
+            elif "density" in type:
                 den = make_density2D(x, y, ax)
-                add_colorbar(fig, type, den, 'Density')
-            elif 'tile' in type:
+                add_colorbar(fig, type, den, "Density")
+            elif "tile" in type:
                 hm = make_tile(x, y, bins, discrete_x, discrete_y, ax)
-                add_colorbar(fig, type, hm, 'Relative Frequency')
-            elif 'violin' in type:
+                add_colorbar(fig, type, hm, "Relative Frequency")
+            elif "violin" in type:
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))
-                    make_violin(self.array, positions, ax, 'x', alpha)
+                    make_violin(self.array, positions, ax, "x", alpha)
                 elif not discrete_x and discrete_y:
                     positions = sorted(list(y_count.keys()))
-                    make_violin(self.array, positions, ax, 'y', alpha)
+                    make_violin(self.array, positions, ax, "y", alpha)
         else:
             if alpha is None:
                 alpha = np.log(2) / np.log(len(self) + 1)
