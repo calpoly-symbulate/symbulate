@@ -22,6 +22,22 @@ floor = math.floor
 ceil = math.ceil
 
 def operation_factory(operation):
+    """Create a function that applies a scalar operation to Symbulate objects.
+
+    Wraps a scalar operation so it can be applied element-wise to
+    `RV`, `Tuple`, `TimeFunction`, and `Results` objects via recursion.
+
+    Parameters
+    ----------
+    operation : callable
+        A scalar function to wrap (e.g. ``math.sqrt``).
+
+    Returns
+    -------
+    callable
+        A function that accepts a scalar, `RV`, `Tuple`, `TimeFunction`,
+        or `Results` and applies ``operation`` appropriately.
+    """
 
     def _op_func(x):
         if isinstance(x, (RV, Tuple, TimeFunction)):
@@ -42,42 +58,189 @@ tan = operation_factory(math.tan)
 factorial = operation_factory(math.factorial)
 
 def log(value, base=e):
+    """Compute the logarithm of a value with an optional base.
+
+    Parameters
+    ----------
+    value : float or RV or Tuple or TimeFunction or Results
+        The value to take the logarithm of.
+    base : float, optional
+        The logarithm base. Defaults to Euler's number ``e``
+        (natural logarithm).
+
+    Returns
+    -------
+    float or RV or Tuple or TimeFunction or Results
+        The logarithm of ``value`` in the given ``base``.
+    """
     return operation_factory(lambda x: math.log(x, base))(value)
 
 def mean(x):
+    """Compute the arithmetic mean of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values to average. Must contain more than one element.
+
+    Returns
+    -------
+    float
+        The arithmetic mean of ``x``.
+
+    Raises
+    ------
+    Exception
+        If ``x`` is a single real number.
+    """
     if isinstance(x, numbers.Real):
         raise Exception("Taking the mean with one value is unnecessary.")
     else:
         return sum(x) / len(x)
 
 def cumsum(x):
+    """Compute the cumulative sum of a sequence.
+
+    Parameters
+    ----------
+    x : Results or array-like
+        The sequence of values to accumulate.
+
+    Returns
+    -------
+    Results or array-like
+        The cumulative sum of ``x``.
+    """
     return x.cumsum()
 
 def var(x):
+    """Compute the population variance of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values for which to compute the variance.
+
+    Returns
+    -------
+    float
+        The population variance of ``x``.
+    """
     return mean([(i - mean(x)) ** 2 for i in x])
 
 def sd(x):
+    """Compute the population standard deviation of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values for which to compute the standard deviation.
+
+    Returns
+    -------
+    float
+        The population standard deviation of ``x``.
+    """
     return math.sqrt(var(x))
 
 def median(x):
+    """Compute the median of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values for which to compute the median. Must contain
+        more than one element.
+
+    Returns
+    -------
+    float
+        The median of ``x``.
+
+    Raises
+    ------
+    Exception
+        If ``x`` is a single real number.
+    """
     if isinstance(x, numbers.Real):
         raise Exception("Taking the median of one value is unnecessary.")
     else:
         return np.median(x)
 
 def min_max_diff(x):
+    """Compute the range (maximum minus minimum) of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values for which to compute the range. Must contain
+        more than one element.
+
+    Returns
+    -------
+    float
+        The difference between the maximum and minimum of ``x``.
+
+    Raises
+    ------
+    Exception
+        If ``x`` is a single real number.
+    """
     if isinstance(x, numbers.Real):
         raise Exception("Taking the range of one value is unnecessary.")
     else:
         return max(x) - min(x)
 
 def med_abs_dev(x):
+    """Compute the median absolute deviation (MAD) of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values for which to compute the MAD.
+
+    Returns
+    -------
+    float
+        The median of the absolute deviations from the median of ``x``.
+    """
     return median(list(abs(i-median(x)) for i in x))
 
 def quantile(q):
+    """Return a function that computes the q-th quantile of a collection.
+
+    Parameters
+    ----------
+    q : float
+        The quantile to compute, in the range [0, 1].
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable of floats and returns
+        the ``q``-th quantile.
+    """
     return lambda x: np.percentile(x, q * 100)
 
 def iqr(x):
+    """Compute the interquartile range (IQR) of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values for which to compute the IQR. Must contain
+        more than one element.
+
+    Returns
+    -------
+    float
+        The difference between the 75th and 25th percentiles of ``x``.
+
+    Raises
+    ------
+    Exception
+        If ``x`` is a single real number.
+    """
     if isinstance(x, numbers.Real):
         raise Exception("Taking the iqr of one value is unnecessary.")
     else:
@@ -85,30 +248,130 @@ def iqr(x):
         return q75 - q25
 
 def orderstatistics(n):
+    """Return a function that computes the n-th order statistic of a collection.
+
+    Parameters
+    ----------
+    n : int
+        The rank of the order statistic to retrieve (1-indexed, so ``n=1``
+        returns the minimum).
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable of floats and returns the
+        ``n``-th smallest value.
+
+    Raises
+    ------
+    Exception
+        If ``n`` is less than or equal to 0.
+    """
     if n <= 0:
         raise Exception("Out of bounds. Lowest order is 1.")
     else:
         return lambda x: np.partition(x, n - 1)[n - 1]
 
 def skewness(x):
+    """Compute the skewness of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values for which to compute the skewness. Must contain
+        more than one element.
+
+    Returns
+    -------
+    float
+        The skewness of ``x``.
+
+    Raises
+    ------
+    Exception
+        If ``x`` is a single real number.
+    """
     if isinstance(x, numbers.Real):
         raise Exception("Finding the skenewss of one value is unnecessary,")
     else:
         return stats.skew(x)
 
 def kurtosis(x):
+    """Compute the excess kurtosis of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values for which to compute the kurtosis. Must contain
+        more than one element.
+
+    Returns
+    -------
+    float
+        The excess kurtosis of ``x`` (Fisher's definition, normal = 0.0).
+
+    Raises
+    ------
+    Exception
+        If ``x`` is a single real number.
+    """
     if isinstance(x, numbers.Real):
         raise Exception("Finding the kurtosis of one value is unnecessary.")
     else:
         return stats.kurtosis(x)
 
 def moment(k):
+    """Return a function that computes the k-th central moment of a collection.
+
+    Parameters
+    ----------
+    k : int
+        The order of the central moment to compute.
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable of floats and returns the
+        ``k``-th central moment.
+    """
     return lambda x: stats.moment(x, k)
 
 def trimmed_mean(alpha):
+    """Return a function that computes the trimmed mean of a collection.
+
+    Parameters
+    ----------
+    alpha : float
+        The fraction of observations to trim from each end of the sorted
+        data, in the range [0, 0.5).
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable of floats and returns the
+        mean after trimming ``alpha`` from each tail.
+    """
     return lambda x: stats.trim_mean(x, alpha)
 
 def comparefun(x, compare, value):
+    """Count elements in a collection that satisfy a binary comparison.
+
+    Parameters
+    ----------
+    x : iterable
+        The collection of elements to test.
+    compare : callable
+        A binary comparison function (e.g. ``operator.eq``) that accepts
+        an element of ``x`` and ``value`` and returns a bool.
+    value : any
+        The value to compare each element of ``x`` against.
+
+    Returns
+    -------
+    int
+        The number of elements in ``x`` for which ``compare(element, value)``
+        is ``True``.
+    """
     count = 0
     for i in x:
         if compare(i, value):
@@ -116,6 +379,20 @@ def comparefun(x, compare, value):
     return count
 
 def count(func=lambda x: True):
+    """Return a function that counts elements in a collection satisfying a predicate.
+
+    Parameters
+    ----------
+    func : callable, optional
+        A predicate function that accepts a single element and returns a bool.
+        Defaults to ``lambda x: True``, which counts all elements.
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable and returns the number of
+        elements for which ``func`` returns ``True``.
+    """
     def _func(x):
         val = 0
         for i in x:
@@ -125,31 +402,109 @@ def count(func=lambda x: True):
     return _func
 
 def count_eq(value):
+    """Return a function that counts elements equal to a given value.
+
+    Parameters
+    ----------
+    value : any
+        The value to compare elements against.
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable and returns the count of
+        elements equal to ``value``.
+    """
     def func(x):
         return comparefun(x, op.eq, value)
     return func
 
 def count_neq(value):
+    """Return a function that counts elements not equal to a given value.
+
+    Parameters
+    ----------
+    value : any
+        The value to compare elements against.
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable and returns the count of
+        elements not equal to ``value``.
+    """
     def func(x):
         return comparefun(x, op.ne, value)
     return func
 
 def count_lt(value):
+    """Return a function that counts elements strictly less than a given value.
+
+    Parameters
+    ----------
+    value : any
+        The threshold to compare elements against.
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable and returns the count of
+        elements strictly less than ``value``.
+    """
     def func(x):
         return comparefun(x, op.lt, value)
     return func
 
 def count_gt(value):
+    """Return a function that counts elements strictly greater than a given value.
+
+    Parameters
+    ----------
+    value : any
+        The threshold to compare elements against.
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable and returns the count of
+        elements strictly greater than ``value``.
+    """
     def func(x):
         return comparefun(x, op.gt, value)
     return func
 
 def count_geq(value):
+    """Return a function that counts elements greater than or equal to a given value.
+
+    Parameters
+    ----------
+    value : any
+        The threshold to compare elements against.
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable and returns the count of
+        elements greater than or equal to ``value``.
+    """
     def func(x):
         return comparefun(x, op.ge, value)
     return func
 
 def count_leq(value):
+    """Return a function that counts elements less than or equal to a given value.
+
+    Parameters
+    ----------
+    value : any
+        The threshold to compare elements against.
+
+    Returns
+    -------
+    callable
+        A function that accepts an iterable and returns the count of
+        elements less than or equal to ``value``.
+    """
     def func(x):
         return comparefun(x, op.le, value)
     return func
