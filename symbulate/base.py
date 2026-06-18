@@ -3,6 +3,7 @@ import math
 import numpy as np
 import scipy.stats as stats
 
+
 class Arithmetic:
     """A class with operations such as +, -, *, /.
 
@@ -54,12 +55,12 @@ class Arithmetic:
 
     # e.g., X ** 2
     def __pow__(self, other):
-        op_func = self._operation_factory(lambda x, y: x ** y)
+        op_func = self._operation_factory(lambda x, y: x**y)
         return op_func(self, other)
 
     # e.g., 2 ** X
     def __rpow__(self, other):
-        op_func = self._operation_factory(lambda x, y: y ** x)
+        op_func = self._operation_factory(lambda x, y: y**x)
         return op_func(self, other)
 
     # Alternative notation for powers: e.g., X ^ 2
@@ -107,7 +108,7 @@ class Comparable:
 class Statistical:
     """A class with statistical functions, such as mean, var, etc.
 
-    Subclasses must implement the _statistic_factory and 
+    Subclasses must implement the _statistic_factory and
     _multivariate_statistic_factory methods, which specify how
     (univariate) statistics (e.g., mean and variance), as well as
     multivariate statistics (e.g., covariance and correlation)
@@ -172,7 +173,7 @@ class Statistical:
         Returns:
           The interquartile range.
         """
-        return self.quantile(.75) - self.quantile(.25)
+        return self.quantile(0.75) - self.quantile(0.25)
 
     def median(self):
         r"""Calculate the median.
@@ -295,7 +296,7 @@ class Statistical:
         The covariance is a measure of the relationship between two variables.
         The sign of the covariance indicates the direction of the relationship.
 
-        .. math:: 
+        .. math::
 
         \sigma_{XY} = \frac{1}{n} \sum_{i=1}^n (x_i - \mu_X) (y_i - \mu_Y)
 
@@ -314,7 +315,7 @@ class Statistical:
 
         The correlation is the covariance normalized by the standard deviations.
 
-        .. math:: 
+        .. math::
 
         \rho_{XY} = \frac{1}{n} \sum_{i=1}^n \frac{x_i - \mu_X}{\sigma_X} \frac{y_i - \mu_Y}{\sigma_Y}
 
@@ -331,12 +332,12 @@ class Statistical:
     def corrcoef(self):
         r"""An alias for .corr()"""
         return self.corr()
-    
+
 
 class Logical:
     """A class that supports logical operations: and, or, and not.
 
-    Subclasses must implement the _logical_factory method, which 
+    Subclasses must implement the _logical_factory method, which
     specifies how the logical operator operates on two objects
     of that type.
     """
@@ -353,12 +354,12 @@ class Logical:
         op_func = self._logical_factory(lambda x: not x)
         return op_func(self)
 
-    
+
 class Filterable:
     """A class with filtering and counting methods.
 
-    Subclasses must implement the filter method, which specifies how to 
-    construct a new instance containing only those elements that satisfy 
+    Subclasses must implement the filter method, which specifies how to
+    construct a new instance containing only those elements that satisfy
     a given criterion.
     """
 
@@ -367,7 +368,7 @@ class Filterable:
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           All of the elements that were equal to value.
         """
@@ -378,7 +379,7 @@ class Filterable:
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           All of the elements that were _not_ equal to value.
         """
@@ -387,12 +388,12 @@ class Filterable:
     def filter_lt(self, value):
         """Get all elements less than a particular value.
 
-        N.B. lt stands for "less than". For elements that are 
+        N.B. lt stands for "less than". For elements that are
         less than _or equal to_ the given value, use .filter_leq(value).
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           All of the elements that were less than value.
         """
@@ -401,12 +402,12 @@ class Filterable:
     def filter_leq(self, value):
         """Get all elements less than or equal to a particular value.
 
-        N.B. leq stands for "less than or equal to". For elements 
+        N.B. leq stands for "less than or equal to". For elements
         that are strictly less than the given value, use .filter_lt(value).
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           All of the elements that were less than _or equal to_ value.
         """
@@ -415,12 +416,12 @@ class Filterable:
     def filter_gt(self, value):
         """Get all elements greater than a particular value.
 
-        N.B. gt stands for "greater than". For elements that are 
+        N.B. gt stands for "greater than". For elements that are
         greater than _or equal to_ the given value, use .filter_geq(value).
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           All of the elements that were greater than value.
         """
@@ -435,16 +436,15 @@ class Filterable:
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           All of the elements that were greater than _or equal to_ value.
         """
         return self.filter(lambda x: x >= value)
 
-
     # The following functions return an integer indicating
     # how many elements passed a given criterion.
-    
+
     def count(self, func=lambda x: True):
         """Counts the number of elements satisfying a given criterion.
 
@@ -463,7 +463,7 @@ class Filterable:
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           int: The number of elements that were equal to value.
         """
@@ -474,7 +474,7 @@ class Filterable:
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           int: The number of elements that were not equal to value.
         """
@@ -484,12 +484,12 @@ class Filterable:
         """Count the number of elements less than a particular value.
 
         N.B. lt stands for "greater than". For the number of elements
-        that are less than _or equal to_ the given value, use 
+        that are less than _or equal to_ the given value, use
         .count_leq(value).
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           int: The number of elements that were less than value.
         """
@@ -499,12 +499,12 @@ class Filterable:
         """Count the number of elements less than or equal to a particular value.
 
         N.B. leq stands for "less than or equal to". For the number of
-        elements that are strictly greater than the given value, use 
+        elements that are strictly greater than the given value, use
         .count_lt(value).
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           int: The number of elements that were less than _or equal to_ value.
         """
@@ -514,12 +514,12 @@ class Filterable:
         """Count the number of elements greater than a particular value.
 
         N.B. gt stands for "greater than". For the number of elements
-        that are greater than _or equal to_ the given value, use 
+        that are greater than _or equal to_ the given value, use
         .count_geq(value).
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           int: The number of elements that were greater than value.
         """
@@ -529,12 +529,12 @@ class Filterable:
         """Count the number of elements greater than or equal to a particular value.
 
         N.B. geq stands for "greater than or equal to". For the number of
-        elements that are strictly greater than the given value, use 
+        elements that are strictly greater than the given value, use
         .count_gt(value).
 
         Args:
           value: A value of the same type as the elements in the object.
-       
+
         Returns:
           int: The number of elements that were greater than _or equal to_ value.
         """
@@ -544,20 +544,76 @@ class Filterable:
 class Transformable:
     """A class that supports transformations.
 
-    Subclasses must implement the apply method, which specifies how to 
+    Subclasses must implement the apply method, which specifies how to
     apply a function to the object.
     """
 
     def __abs__(self):
+        """Return the absolute value applied to the object.
+
+        Called by Python's built-in ``abs()``.
+
+        Returns
+        -------
+        same type as self
+            A new object with ``abs()`` applied to each value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> abs(X).draw()
+        """
         return self.apply(abs)
 
     def __round__(self):
+        """Return the object rounded to the nearest integer.
+
+        Called by Python's built-in ``round()``.
+
+        Returns
+        -------
+        same type as self
+            A new object with ``round()`` applied to each value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> round(X).draw()
+        """
         return self.apply(round)
-    
+
     def __floor__(self):
+        """Return the floor (round down to nearest integer) of the object.
+
+        Called by ``math.floor()``.
+
+        Returns
+        -------
+        same type as self
+            A new object with ``math.floor()`` applied to each value.
+
+        Examples
+        --------
+        >>> import math
+        >>> X = RV(Normal(0, 1))
+        >>> math.floor(X).draw()
+        """
         return self.apply(math.floor)
 
     def __ceil__(self):
-        return self.apply(math.ceil)
+        """Return the ceiling (round up to nearest integer) of the object.
 
-    
+        Called by ``math.ceil()``.
+
+        Returns
+        -------
+        same type as self
+            A new object with ``math.ceil()`` applied to each value.
+
+        Examples
+        --------
+        >>> import math
+        >>> X = RV(Normal(0, 1))
+        >>> math.ceil(X).draw()
+        """
+        return self.apply(math.ceil)
