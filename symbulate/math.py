@@ -37,6 +37,13 @@ def operation_factory(operation):
     callable
         A function that accepts a scalar, `RV`, `Tuple`, `TimeFunction`,
         or `Results` and applies ``operation`` appropriately.
+
+    Examples
+    --------
+    >>> import math
+    >>> log2 = operation_factory(lambda x: math.log(x, 2))
+    >>> log2(8)
+    3.0
     """
 
     def _op_func(x):
@@ -72,6 +79,13 @@ def log(value, base=e):
     -------
     float or RV or Tuple or TimeFunction or Results
         The logarithm of ``value`` in the given ``base``.
+
+    Examples
+    --------
+    >>> log(math.e)
+    1.0
+    >>> X = RV(Normal(0, 1))
+    >>> log(X ** 2).draw()
     """
     return operation_factory(lambda x: math.log(x, base))(value)
 
@@ -92,6 +106,11 @@ def mean(x):
     ------
     Exception
         If ``x`` is a single real number.
+
+    Examples
+    --------
+    >>> mean([1, 2, 3, 4, 5])
+    3.0
     """
     if isinstance(x, numbers.Real):
         raise Exception("Taking the mean with one value is unnecessary.")
@@ -110,6 +129,11 @@ def cumsum(x):
     -------
     Results or array-like
         The cumulative sum of ``x``.
+
+    Examples
+    --------
+    >>> X = RV(Normal(0, 1))
+    >>> X.sim(5).cumsum()
     """
     return x.cumsum()
 
@@ -125,6 +149,11 @@ def var(x):
     -------
     float
         The population variance of ``x``.
+
+    Examples
+    --------
+    >>> var([2, 4, 4, 4, 5, 5, 7, 9])
+    4.0
     """
     return mean([(i - mean(x)) ** 2 for i in x])
 
@@ -140,6 +169,11 @@ def sd(x):
     -------
     float
         The population standard deviation of ``x``.
+
+    Examples
+    --------
+    >>> sd([2, 4, 4, 4, 5, 5, 7, 9])
+    2.0
     """
     return math.sqrt(var(x))
 
@@ -161,6 +195,11 @@ def median(x):
     ------
     Exception
         If ``x`` is a single real number.
+
+    Examples
+    --------
+    >>> median([1, 2, 3, 4, 5])
+    3.0
     """
     if isinstance(x, numbers.Real):
         raise Exception("Taking the median of one value is unnecessary.")
@@ -185,6 +224,11 @@ def min_max_diff(x):
     ------
     Exception
         If ``x`` is a single real number.
+
+    Examples
+    --------
+    >>> min_max_diff([1, 2, 3, 4, 5])
+    4
     """
     if isinstance(x, numbers.Real):
         raise Exception("Taking the range of one value is unnecessary.")
@@ -203,6 +247,11 @@ def med_abs_dev(x):
     -------
     float
         The median of the absolute deviations from the median of ``x``.
+
+    Examples
+    --------
+    >>> med_abs_dev([1, 2, 3, 4, 5])
+    1.0
     """
     return median(list(abs(i-median(x)) for i in x))
 
@@ -219,6 +268,12 @@ def quantile(q):
     callable
         A function that accepts an iterable of floats and returns
         the ``q``-th quantile.
+
+    Examples
+    --------
+    >>> q25 = quantile(0.25)
+    >>> q25([1, 2, 3, 4, 5])
+    2.0
     """
     return lambda x: np.percentile(x, q * 100)
 
@@ -240,6 +295,11 @@ def iqr(x):
     ------
     Exception
         If ``x`` is a single real number.
+
+    Examples
+    --------
+    >>> iqr([1, 2, 3, 4, 5])
+    2.0
     """
     if isinstance(x, numbers.Real):
         raise Exception("Taking the iqr of one value is unnecessary.")
@@ -266,6 +326,12 @@ def orderstatistics(n):
     ------
     Exception
         If ``n`` is less than or equal to 0.
+
+    Examples
+    --------
+    >>> second_min = orderstatistics(2)
+    >>> second_min([5, 3, 1, 4, 2])
+    2
     """
     if n <= 0:
         raise Exception("Out of bounds. Lowest order is 1.")
@@ -290,6 +356,11 @@ def skewness(x):
     ------
     Exception
         If ``x`` is a single real number.
+
+    Examples
+    --------
+    >>> X = RV(Exponential(1))
+    >>> X.sim(10000).apply(skewness)
     """
     if isinstance(x, numbers.Real):
         raise Exception("Finding the skenewss of one value is unnecessary,")
@@ -314,6 +385,11 @@ def kurtosis(x):
     ------
     Exception
         If ``x`` is a single real number.
+
+    Examples
+    --------
+    >>> X = RV(Normal(0, 1))
+    >>> X.sim(10000).apply(kurtosis)
     """
     if isinstance(x, numbers.Real):
         raise Exception("Finding the kurtosis of one value is unnecessary.")
@@ -333,6 +409,12 @@ def moment(k):
     callable
         A function that accepts an iterable of floats and returns the
         ``k``-th central moment.
+
+    Examples
+    --------
+    >>> second_moment = moment(2)
+    >>> second_moment([1, 2, 3, 4, 5])
+    2.0
     """
     return lambda x: stats.moment(x, k)
 
@@ -350,6 +432,12 @@ def trimmed_mean(alpha):
     callable
         A function that accepts an iterable of floats and returns the
         mean after trimming ``alpha`` from each tail.
+
+    Examples
+    --------
+    >>> tm = trimmed_mean(0.1)
+    >>> tm([1, 2, 3, 4, 5])
+    3.0
     """
     return lambda x: stats.trim_mean(x, alpha)
 
@@ -371,6 +459,12 @@ def comparefun(x, compare, value):
     int
         The number of elements in ``x`` for which ``compare(element, value)``
         is ``True``.
+
+    Examples
+    --------
+    >>> import operator
+    >>> comparefun([1, 2, 3, 4, 5], operator.gt, 3)
+    2
     """
     count = 0
     for i in x:
@@ -379,7 +473,7 @@ def comparefun(x, compare, value):
     return count
 
 def count(func=lambda x: True):
-    """Return a function that counts elements in a collection satisfying a predicate.
+    """Return a function that counts elements satisfying a predicate.
 
     Parameters
     ----------
@@ -392,6 +486,11 @@ def count(func=lambda x: True):
     callable
         A function that accepts an iterable and returns the number of
         elements for which ``func`` returns ``True``.
+
+    Examples
+    --------
+    >>> count(lambda x: x > 3)([1, 2, 3, 4, 5])
+    2
     """
     def _func(x):
         val = 0
@@ -414,6 +513,11 @@ def count_eq(value):
     callable
         A function that accepts an iterable and returns the count of
         elements equal to ``value``.
+
+    Examples
+    --------
+    >>> count_eq(3)([1, 2, 3, 3, 5])
+    2
     """
     def func(x):
         return comparefun(x, op.eq, value)
@@ -432,6 +536,11 @@ def count_neq(value):
     callable
         A function that accepts an iterable and returns the count of
         elements not equal to ``value``.
+
+    Examples
+    --------
+    >>> count_neq(3)([1, 2, 3, 3, 5])
+    3
     """
     def func(x):
         return comparefun(x, op.ne, value)
@@ -450,6 +559,11 @@ def count_lt(value):
     callable
         A function that accepts an iterable and returns the count of
         elements strictly less than ``value``.
+
+    Examples
+    --------
+    >>> count_lt(3)([1, 2, 3, 4, 5])
+    2
     """
     def func(x):
         return comparefun(x, op.lt, value)
@@ -468,6 +582,11 @@ def count_gt(value):
     callable
         A function that accepts an iterable and returns the count of
         elements strictly greater than ``value``.
+
+    Examples
+    --------
+    >>> count_gt(3)([1, 2, 3, 4, 5])
+    2
     """
     def func(x):
         return comparefun(x, op.gt, value)
@@ -486,6 +605,11 @@ def count_geq(value):
     callable
         A function that accepts an iterable and returns the count of
         elements greater than or equal to ``value``.
+
+    Examples
+    --------
+    >>> count_geq(3)([1, 2, 3, 4, 5])
+    3
     """
     def func(x):
         return comparefun(x, op.ge, value)
@@ -504,20 +628,40 @@ def count_leq(value):
     callable
         A function that accepts an iterable and returns the count of
         elements less than or equal to ``value``.
+
+    Examples
+    --------
+    >>> count_leq(3)([1, 2, 3, 4, 5])
+    3
     """
     def func(x):
         return comparefun(x, op.le, value)
     return func
 
 def interarrival_times(continuous_time_function):
-    """Given a realization of a continuous-time,
-       discrete-state process, returns the interarrival
-       times (i.e., the times between each state change).
+    """Return the interarrival times of a continuous-time discrete-state process.
 
-    Args:
-      continuous_time_function: A ContinuousTimeFunction
-        object, such as ContinuousTimeMarkovChainResult or
-        PoissonProcessResult.
+    Parameters
+    ----------
+    continuous_time_function : ContinuousTimeFunction and DiscreteValued
+        A realization of a continuous-time, discrete-state process,
+        such as a ContinuousTimeMarkovChain or PoissonProcess result.
+
+    Returns
+    -------
+    array-like
+        The times between each successive state change.
+
+    Raises
+    ------
+    TypeError
+        If the argument is not a continuous-time, discrete-valued function.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = RV(PoissonProcessProbabilitySpace(rate=2))
+    >>> interarrival_times(X.draw())
     """
     if not (isinstance(continuous_time_function,
                        ContinuousTimeFunction) and
@@ -530,14 +674,29 @@ def interarrival_times(continuous_time_function):
     return continuous_time_function.get_interarrival_times()
 
 def arrival_times(continuous_time_function):
-    """Given a realization of a continuous-time,
-       discrete-state process, returns the arrival
-       times (i.e., the times when the state changes).
+    """Return the arrival times of a continuous-time discrete-state process.
 
-    Args:
-      continuous_time_function: A ContinuousTimeFunction
-        object, such as ContinuousTimeMarkovChainResult or
-        PoissonProcessResult.
+    Parameters
+    ----------
+    continuous_time_function : ContinuousTimeFunction and DiscreteValued
+        A realization of a continuous-time, discrete-state process,
+        such as a ContinuousTimeMarkovChain or PoissonProcess result.
+
+    Returns
+    -------
+    array-like
+        The times at which each successive state change occurs.
+
+    Raises
+    ------
+    TypeError
+        If the argument is not a continuous-time, discrete-valued function.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = RV(PoissonProcessProbabilitySpace(rate=2))
+    >>> arrival_times(X.draw())
     """
     if not (isinstance(continuous_time_function,
                        ContinuousTimeFunction) and
@@ -550,14 +709,30 @@ def arrival_times(continuous_time_function):
     return continuous_time_function.get_arrival_times()
 
 def states(discrete_valued_function):
-    """Given a realization of a discrete-valued function,
-       returns an InfiniteVector of the sequence of
-       values (or states).
+    """Return the sequence of states of a discrete-valued process realization.
 
-    Args:
-      discrete_valued_function: A DiscreteValued object
-                                (e.g., MarkovChainResult or
-                                       PoissonProcessResult)
+    Parameters
+    ----------
+    discrete_valued_function : DiscreteValued
+        A realization of a discrete-valued process, such as a
+        MarkovChain or PoissonProcess result.
+
+    Returns
+    -------
+    InfiniteVector
+        The sequence of values (states) visited by the process.
+
+    Raises
+    ------
+    TypeError
+        If the argument is not a discrete-valued function.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> T = [[0.5, 0.5], [0.5, 0.5]]
+    >>> X = RV(MarkovChainProbabilitySpace(transition_matrix=T, initial_dist=[1, 0]))
+    >>> states(X.draw())
     """
     if not isinstance(discrete_valued_function, DiscreteValued):
         raise TypeError(
