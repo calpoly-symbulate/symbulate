@@ -59,26 +59,18 @@ class Table(dict, Arithmetic):
 
     Examples
     --------
-    Create a table directly from a dictionary of counts:
-
     >>> from symbulate import *
     >>> t = Table({'heads': 55, 'tails': 45})
     >>> t['heads']
     55
 
-    Normalize counts to get relative frequencies:
-
     >>> t_rel = Table({'heads': 55, 'tails': 45}, normalize=True)
     >>> round(t_rel['heads'], 2)
     0.55
 
-    Fix an outcome ordering so missing outcomes show as 0:
-
     >>> t2 = Table({'A': 3}, outcomes=['A', 'B', 'C'])
     >>> t2['B']
     0
-
-    Typically produced via simulation:
 
     >>> RV(Bernoulli(0.5)).sim(100).tabulate()  # doctest: +SKIP
     Outcome  Frequency
@@ -120,13 +112,10 @@ class Table(dict, Arithmetic):
 
         Examples
         --------
-        Without a fixed outcome ordering, keys are sorted:
-
+        >>> from symbulate import *
         >>> t = Table({'B': 2, 'A': 3})
         >>> t.ordered_keys()
         ['A', 'B']
-
-        With a fixed ordering, the original order is preserved:
 
         >>> t2 = Table({'B': 2, 'A': 3}, outcomes=['B', 'A'])
         >>> t2.ordered_keys()
