@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 from matplotlib import colormaps as cm
+import itertools
 from scipy.stats import gaussian_kde
 from cycler import cycler
 
@@ -13,6 +14,9 @@ ylabel = plt.ylabel
 xlim = plt.xlim
 ylim = plt.ylim
 
+color_index = 0
+color_cycle = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
+
 
 def init_color():
     hex_list = [colors.rgb2hex(rgb) for rgb in cm.get_cmap("tab10").colors]
@@ -20,9 +24,10 @@ def init_color():
 
 
 def get_next_color(axes):
-    color_cycle = axes._get_lines.prop_cycler
-    color = next(color_cycle)["color"]
-    return color
+    if not hasattr(axes, "_color_cycle"):
+        prop_cycle = plt.rcParams["axes.prop_cycle"]
+        axes._color_cycle = itertools.cycle(prop_cycle.by_key()["color"])
+    return next(axes._color_cycle)
 
 
 def configure_axes(axes, xdata, ydata, xlabel=None, ylabel=None):
