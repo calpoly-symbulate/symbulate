@@ -39,18 +39,7 @@ class Distribution(ProbabilitySpace):
         Default x-axis range used when plotting.
     """
     def __init__(self, params, scipy, discrete=True):
-        """Initialize the base Distribution.
-
-        Parameters
-        ----------
-        params : dict
-            Named parameters for the scipy distribution (e.g., ``{"p": 0.5}``).
-        scipy : scipy.stats distribution object
-            The underlying scipy distribution used for calculations.
-        discrete : bool, optional
-            ``True`` for discrete distributions, ``False`` for continuous.
-            Default is ``True``.
-        """
+        """Initialize the base Distribution."""
         self.params = params
 
         self.discrete = discrete
@@ -224,18 +213,7 @@ class Bernoulli(Distribution):
     """
 
     def __init__(self, p):
-        """Create a Bernoulli distribution.
-
-        Parameters
-        ----------
-        p : float
-            Probability of success, between 0 and 1.
-
-        Raises
-        ------
-        Exception
-            If ``p`` is not between 0 and 1.
-        """
+        """Create a Bernoulli distribution."""
         if 0 <= p <= 1:
             self.p = p
         else:
@@ -276,21 +254,7 @@ class Binomial(Distribution):
     """
 
     def __init__(self, n, p):
-        """Create a binomial distribution.
-
-        Parameters
-        ----------
-        n : int
-            Number of trials. Must be a non-negative integer.
-        p : float
-            Probability of success on each trial, between 0 and 1.
-
-        Raises
-        ------
-        Exception
-            If ``n`` is not a non-negative integer, or if ``p`` is not
-            between 0 and 1.
-        """
+        """Create a binomial distribution."""
 
         if n >= 0 and isinstance(n, numbers.Integral):
             self.n = n
@@ -342,23 +306,7 @@ class Hypergeometric(Distribution):
     """
 
     def __init__(self, n, N0, N1):
-        """Create a hypergeometric distribution.
-
-        Parameters
-        ----------
-        n : int
-            Number of draws. Must be a positive integer.
-        N0 : int
-            Number of 0s in the collection. Must be a non-negative integer.
-        N1 : int
-            Number of 1s in the collection. Must be a non-negative integer.
-
-        Raises
-        ------
-        Exception
-            If ``n``, ``N0``, or ``N1`` are invalid, or if
-            ``N0 + N1 < n``.
-        """
+        """Create a hypergeometric distribution."""
 
         if n > 0 and isinstance(n, numbers.Integral):
             self.n = n
@@ -412,19 +360,7 @@ class Geometric(Distribution):
     """
 
     def __init__(self, p):
-        """Create a geometric distribution.
-
-        Parameters
-        ----------
-        p : float
-            Probability of success on each trial. Must be strictly
-            between 0 and 1.
-
-        Raises
-        ------
-        Exception
-            If ``p`` is not strictly between 0 and 1.
-        """
+        """Create a geometric distribution."""
 
         if 0 < p < 1:
             self.p = p
@@ -463,21 +399,7 @@ class NegativeBinomial(Distribution):
     """
 
     def __init__(self, r, p):
-        """Create a negative binomial distribution.
-
-        Parameters
-        ----------
-        r : int
-            Target number of successes. Must be a positive integer.
-        p : float
-            Probability of success on each trial. Must be in ``(0, 1]``.
-
-        Raises
-        ------
-        Exception
-            If ``r`` is not a positive integer, or if ``p`` is not in
-            ``(0, 1]``.
-        """
+        """Create a negative binomial distribution."""
 
         if 0 < r and isinstance(r, numbers.Integral):
             self.r = r
@@ -545,21 +467,7 @@ class Pascal(Distribution):
     """
 
     def __init__(self, r, p):
-        """Create a Pascal distribution.
-
-        Parameters
-        ----------
-        r : int
-            Target number of successes. Must be a positive integer.
-        p : float
-            Probability of success on each trial. Must be in ``(0, 1]``.
-
-        Raises
-        ------
-        Exception
-            If ``r`` is not a positive integer, or if ``p`` is not in
-            ``(0, 1]``.
-        """
+        """Create a Pascal distribution."""
 
         if 0 < r and isinstance(r, numbers.Integral):
             self.r = r
@@ -605,18 +513,7 @@ class Poisson(Distribution):
     """
 
     def __init__(self, lam):
-        """Create a Poisson distribution.
-
-        Parameters
-        ----------
-        lam : float
-            Rate parameter (λ). Must be greater than 0.
-
-        Raises
-        ------
-        Exception
-            If ``lam`` is not positive.
-        """
+        """Create a Poisson distribution."""
 
         if 0 < lam:
             self.lam = lam
@@ -656,20 +553,7 @@ class DiscreteUniform(Distribution):
     """
 
     def __init__(self, a=0, b=1):
-        """Create a discrete uniform distribution.
-
-        Parameters
-        ----------
-        a : int, optional
-            Lower bound (inclusive). Default is 0.
-        b : int, optional
-            Upper bound (inclusive). Default is 1.
-
-        Raises
-        ------
-        Exception
-            If ``b`` is less than or equal to ``a``.
-        """
+        """Create a discrete uniform distribution."""
         self.a = a
         self.b = b + 1
 
@@ -712,20 +596,7 @@ class Uniform(Distribution):
     """
 
     def __init__(self, a=0.0, b=1.0):
-        """Create a uniform distribution.
-
-        Parameters
-        ----------
-        a : float, optional
-            Lower bound. Default is 0.0.
-        b : float, optional
-            Upper bound. Default is 1.0.
-
-        Raises
-        ------
-        Exception
-            If ``b`` is less than ``a``.
-        """
+        """Create a uniform distribution."""
         self.a = a
         self.b = b
 
@@ -770,27 +641,7 @@ class Normal(Distribution):
     #TODO edit docstring for Normal Distribution
 
     def __init__(self, mean=0.0, sd=1.0, var=None):
-        """Create a normal distribution.
-
-        Specify either ``sd`` or ``var``, but not both. If ``var`` is
-        provided, it overrides ``sd``.
-
-        Parameters
-        ----------
-        mean : float, optional
-            Mean (center) of the distribution. Default is 0.0.
-        sd : float, optional
-            Standard deviation. Must be positive. Default is 1.0.
-        var : float, optional
-            Variance. Must be positive. If given, overrides ``sd``.
-
-        Raises
-        ------
-        Exception
-            If ``sd`` or ``var`` is negative.
-        NotImplementedError
-            If ``sd`` or ``var`` is exactly 0.
-        """
+        """Create a normal distribution."""
 
         #Note: cleaner way to implement this
 
@@ -848,22 +699,7 @@ class Exponential(Distribution):
     """
 
     def __init__(self, rate=1.0, scale=None):
-        """Create an exponential distribution.
-
-        Parameters
-        ----------
-        rate : float, optional
-            Rate parameter λ. Must be positive. Default is 1.0.
-            Ignored if ``scale`` is provided.
-        scale : float, optional
-            Scale parameter 1/λ. Must be positive. If provided,
-            overrides ``rate``.
-
-        Raises
-        ------
-        Exception
-            If ``rate`` or ``scale`` is not positive.
-        """
+        """Create an exponential distribution."""
 
         if scale is None:
             if rate > 0:
@@ -913,24 +749,7 @@ class Gamma(Distribution):
     """
 
     def __init__(self, shape, rate=1.0, scale=None):
-        """Create a gamma distribution.
-
-        Parameters
-        ----------
-        shape : float
-            Shape parameter α. Must be positive.
-        rate : float, optional
-            Rate parameter λ. Must be positive. Default is 1.0.
-            Ignored if ``scale`` is provided.
-        scale : float, optional
-            Scale parameter 1/λ. Must be positive. If provided,
-            overrides ``rate``.
-
-        Raises
-        ------
-        Exception
-            If ``shape``, ``rate``, or ``scale`` is not positive.
-        """
+        """Create a gamma distribution."""
 
         if 0 < shape:
             self.shape = shape
@@ -984,20 +803,7 @@ class Beta(Distribution):
     """
 
     def __init__(self, a, b):
-        """Create a beta distribution.
-
-        Parameters
-        ----------
-        a : float
-            First shape parameter (α). Must be positive.
-        b : float
-            Second shape parameter (β). Must be positive.
-
-        Raises
-        ------
-        Exception
-            If ``a`` or ``b`` is not positive.
-        """
+        """Create a beta distribution."""
 
         if 0 < a:
             self.a = a
@@ -1041,18 +847,7 @@ class StudentT(Distribution):
     """
 
     def __init__(self, df):
-        """Create a Student's t-distribution.
-
-        Parameters
-        ----------
-        df : int or float
-            Degrees of freedom. Must be greater than 0.
-
-        Raises
-        ------
-        Exception
-            If ``df`` is not greater than 0.
-        """
+        """Create a Student's t-distribution."""
         if df > 0:
             self.df = df
         else:
@@ -1093,18 +888,7 @@ class ChiSquare(Distribution):
     """
 
     def __init__(self, df):
-        """Create a chi-square distribution.
-
-        Parameters
-        ----------
-        df : int
-            Degrees of freedom. Must be a positive integer.
-
-        Raises
-        ------
-        Exception
-            If ``df`` is not a positive integer.
-        """
+        """Create a chi-square distribution."""
         if df > 0 and isinstance(df, numbers.Integral):
             self.df = df
         else:
@@ -1142,20 +926,7 @@ class F(Distribution):
     """
 
     def __init__(self, dfN, dfD):
-        """Create an F-distribution.
-
-        Parameters
-        ----------
-        dfN : int or float
-            Degrees of freedom in the numerator. Must be greater than 0.
-        dfD : int or float
-            Degrees of freedom in the denominator. Must be greater than 0.
-
-        Raises
-        ------
-        Exception
-            If ``dfN`` or ``dfD`` is not greater than 0.
-        """
+        """Create an F-distribution."""
 
         if dfN > 0:
             self.dfN = dfN
@@ -1200,15 +971,7 @@ class Cauchy(Distribution):
     """
 
     def __init__(self, loc=0, scale=1):
-        """Create a Cauchy distribution.
-
-        Parameters
-        ----------
-        loc : float, optional
-            Location parameter (center). Default is 0.
-        scale : float, optional
-            Scale parameter (spread). Default is 1.
-        """
+        """Create a Cauchy distribution."""
         self.loc = loc
         self.scale = scale
 
@@ -1264,21 +1027,7 @@ class LogNormal(Distribution):
     """
 
     def __init__(self, mu=0.0, sigma=1.0):
-        """Create a log-normal distribution.
-
-        Parameters
-        ----------
-        mu : float, optional
-            Mean of the underlying normal distribution. Default is 0.0.
-        sigma : float, optional
-            Standard deviation of the underlying normal distribution.
-            Must be positive. Default is 1.0.
-
-        Raises
-        ------
-        Exception
-            If ``sigma`` is not greater than 0.
-        """
+        """Create a log-normal distribution."""
 
         self.norm_mean = mu
 
@@ -1321,20 +1070,7 @@ class Pareto(Distribution):
     """
 
     def __init__(self, b=1.0, scale=1.0):
-        """Create a Pareto distribution.
-
-        Parameters
-        ----------
-        b : float, optional
-            Shape parameter (tail index). Must be positive. Default is 1.0.
-        scale : float, optional
-            Minimum possible value. Must be positive. Default is 1.0.
-
-        Raises
-        ------
-        Exception
-            If ``b`` or ``scale`` is not positive.
-        """
+        """Create a Pareto distribution."""
 
         if b > 0:
             self.b = b
@@ -1427,23 +1163,7 @@ class MultivariateNormal(Distribution):
     """
 
     def __init__(self, mean, cov):
-        """Create a multivariate normal distribution.
-
-        Parameters
-        ----------
-        mean : array-like of length n
-            The mean vector. Must have at least one element.
-        cov : array-like of shape (n, n)
-            The covariance matrix. Must be square, symmetric, and
-            positive semi-definite.
-
-        Raises
-        ------
-        Exception
-            If ``mean`` and ``cov`` have incompatible dimensions, if
-            ``cov`` is not square, or if ``cov`` is not symmetric and
-            positive semi-definite.
-        """
+        """Create a multivariate normal distribution."""
         if len(mean) != len(cov):
             raise Exception("The dimension of the mean vector" +
                             " is not compatible with the dimensions" +
@@ -1558,33 +1278,7 @@ class BivariateNormal(MultivariateNormal):
                  mean1=0.0, mean2=0.0,
                  sd1=1.0, sd2=1.0, corr=0.0,
                  var1=None, var2=None, cov=None):
-        """Create a bivariate normal distribution.
-
-        Parameters
-        ----------
-        mean1 : float, optional
-            Mean of the first variable (X). Default is 0.0.
-        mean2 : float, optional
-            Mean of the second variable (Y). Default is 0.0.
-        sd1 : float, optional
-            Standard deviation of X. Default is 1.0.
-        sd2 : float, optional
-            Standard deviation of Y. Default is 1.0.
-        corr : float, optional
-            Correlation between X and Y, between -1 and 1. Default is 0.0.
-        var1 : float, optional
-            Variance of X. If provided, overrides ``sd1``.
-        var2 : float, optional
-            Variance of Y. If provided, overrides ``sd2``.
-        cov : float, optional
-            Covariance between X and Y. If provided, overrides ``corr``.
-
-        Raises
-        ------
-        Exception
-            If ``corr`` is not between -1 and 1, if ``sd1`` or ``sd2``
-            is negative, or if ``var1`` or ``var2`` is negative.
-        """
+        """Create a bivariate normal distribution."""
 
         if not -1 <= corr <= 1:
             raise Exception("Correlation must be "
@@ -1635,22 +1329,7 @@ class Multinomial(Distribution):
     """
 
     def __init__(self, n, p):
-        """Create a multinomial distribution.
-
-        Parameters
-        ----------
-        n : int
-            Number of trials. Must be a non-negative integer.
-        p : array-like of float
-            Probability of each outcome. All values must be non-negative
-            and they must sum to 1.
-
-        Raises
-        ------
-        Exception
-            If ``n`` is not a non-negative integer, or if the entries of
-            ``p`` are negative or do not sum to 1.
-        """
+        """Create a multinomial distribution."""
         if n >= 0 and isinstance(n, numbers.Integral):
             self.n = n
         #elif n == 0:
