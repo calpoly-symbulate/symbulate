@@ -112,19 +112,6 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         Timestamp identifying the simulation run that produced
         these results.
 
-    Methods
-    -------
-    apply(func)
-        Apply a function to each simulation outcome.
-    get(n)
-        Return the outcome of the nth simulation.
-    tabulate(outcomes=None, normalize=False)
-        Count or estimate frequencies of outcomes.
-    filter(filt)
-        Return outcomes satisfying a criterion.
-    plot()
-        Plot the simulation results when supported.
-
     See Also
     --------
     RVResults : Container for outcomes of a random variable.
@@ -174,7 +161,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         >>> from symbulate import *
         >>> X = RV(BoxModel([1, 2, 3, 4, 5, 6]))
         >>> sims = X.sim(5)
-        >>> sims.apply(lambda x: x * 2)  #random
+        >>> sims.apply(lambda x: x * 2)  # doctest: +SKIP
         Index  Result
         0      4
         """
@@ -208,7 +195,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         >>> from symbulate import *
         >>> X = RV(BoxModel([1, 2, 3, 4, 5, 6], size=2))
         >>> sims = X.sim(5)
-        >>> sims[0]  #random
+        >>> sims[0]  # doctest: +SKIP
         Index  Result
         0      3
         """
@@ -298,12 +285,12 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         >>> from symbulate import *
         >>> X = RV(BoxModel([1, 2, 3, 4, 5, 6]))
         >>> sims = X.sim(5)
-        >>> sims.get(0)  #random
+        >>> sims.get(0)  # doctest: +SKIP
         3
 
         Retrieve a slice of outcomes:
 
-        >>> sims.get(slice(0, 3))  #random
+        >>> sims.get(slice(0, 3))  # doctest: +SKIP
         Index  Result
         0      3
         """
@@ -372,15 +359,15 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         >>> from symbulate import *
         >>> P = BoxModel(["H", "T"])
         >>> results = P.sim(100)
-        >>> results.tabulate()  #random
+        >>> results.tabulate()  # doctest: +SKIP
 
         Include an outcome that may not have appeared:
 
-        >>> results.tabulate(outcomes=["H", "T", "E"])  #random
+        >>> results.tabulate(outcomes=["H", "T", "E"])  # doctest: +SKIP
 
         Show relative frequencies instead of counts:
 
-        >>> results.tabulate(normalize=True)  #random
+        >>> results.tabulate(normalize=True)  # doctest: +SKIP
         """
         return Table(self._get_counts(), outcomes, normalize)
 
@@ -426,12 +413,12 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         >>> from symbulate import *
         >>> X = RV(BoxModel([1, 2, 3, 4, 5, 6]))
         >>> sims = X.sim(100)
-        >>> sims.filter(lambda x: x > 4)  #random
+        >>> sims.filter(lambda x: x > 4)  # doctest: +SKIP
 
         Filter using a boolean Results object from the same
         simulation:
 
-        >>> sims.filter(sims > 4)  #random
+        >>> sims.filter(sims > 4)  # doctest: +SKIP
         """
         if isinstance(filt, Results):
             if self.sim_id != filt.sim_id:
@@ -795,15 +782,6 @@ class RVResults(Results):
         instances. None if outcomes are not time functions or
         if index sets differ across outcomes.
 
-    Methods
-    -------
-    standardize()
-        Standardize the results to have mean 0 and variance 1.
-    tabulate(outcomes=None, normalize=False)
-        Count or estimate frequencies of outcomes.
-    plot(...)
-        Visualize the simulation results.
-
     See Also
     --------
     Results : Container for probability space simulation outcomes.
@@ -815,7 +793,7 @@ class RVResults(Results):
     >>> from symbulate import *
     >>> X = RV(BoxModel([1, 2, 3, 4, 5, 6]))
     >>> sims = X.sim(100)
-    >>> float(sims.mean())  #random
+    >>> float(sims.mean())  # doctest: +SKIP
     3.45
     """
 
@@ -1059,11 +1037,11 @@ class RVResults(Results):
         >>> from symbulate import *
         >>> X = RV(BoxModel([0, 1]))
         >>> sims = X.sim(50)
-        >>> sims.tabulate()  #random
+        >>> sims.tabulate()  # doctest: +SKIP
 
         Show relative frequencies:
 
-        >>> sims.tabulate(normalize=True)  #random
+        >>> sims.tabulate(normalize=True)  # doctest: +SKIP
         """
         return Table(self._get_counts(), outcomes, normalize, "Value")
 

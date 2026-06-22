@@ -5,7 +5,7 @@ import scipy.stats as stats
 
 
 class Arithmetic:
-    """Mixin providing arithmetic operators (+, -, *, /) for subclasses.
+    """Mixing providing arithmetic operators (+, -, *, /) for subclasses.
 
     Subclasses must implement the _operation_factory method,
     which specifies how each operation acts on instances of

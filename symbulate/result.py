@@ -13,6 +13,18 @@ class Scalar(numbers.Number):
 
     A ``Scalar`` creates either an ``Int`` or ``Float`` object based on
     the type of the input value.
+
+    Parameters
+    ----------
+    value : int or float
+        The numeric value to wrap.
+
+    Examples
+    --------
+    >>> Scalar(3)
+    3
+    >>> Scalar(3.14)
+    3.14
     """
 
     def __new__(cls, value, *args, **kwargs):
@@ -142,6 +154,11 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
     ----------
     values : scalar or iterable
         Values to store in the tuple.
+
+    Attributes
+    ----------
+    values : tuple
+        The stored values as a Python tuple.
 
     Examples
     --------
@@ -570,6 +587,12 @@ class InfiniteTuple(TimeFunction):
     An ``InfiniteTuple`` stores values as needed. Values are generated
     from a function whose input is a natural number index.
 
+    Parameters
+    ----------
+    func : callable, optional
+        A function of ``n`` (a non-negative integer) returning the value
+        at position ``n``. Defaults to the identity ``f(n) = n``.
+
     Attributes
     ----------
     func : callable
@@ -766,6 +789,21 @@ class InfiniteVector(InfiniteTuple):
     specific to sequences of numeric values, such as cumulative sums
     and plotting.
 
+    Parameters
+    ----------
+    func : callable, optional
+        A function of ``n`` (a non-negative integer) returning the value
+        at position ``n``. Defaults to the identity ``f(n) = n``.
+
+    Attributes
+    ----------
+    func : callable
+        Function that returns the value at index ``n``.
+    index_set : Naturals
+        Index set for the vector.
+    values : list
+        Cached values that have already been computed.
+
     See Also
     --------
     InfiniteTuple : The base class for lazy infinite sequences.
@@ -837,6 +875,17 @@ class DiscreteTimeFunction(TimeFunction):
 
     A ``DiscreteTimeFunction`` represents values sampled at evenly spaced
     times according to a sampling rate.
+
+    Parameters
+    ----------
+    func : callable, optional
+        A function of sample index ``n`` returning the value at time
+        ``n / fs``. Defaults to the identity ``f[n] = n / fs``.
+    fs : int, optional
+        Sampling rate in samples per second. Default is 1.
+        Ignored if ``index_set`` is provided.
+    index_set : DiscreteTimeSequence, optional
+        The index set. If provided, ``fs`` is ignored.
 
     Attributes
     ----------
@@ -1182,6 +1231,12 @@ class ContinuousTimeFunction(TimeFunction):
     Function defined over continuous time.
 
     A ``ContinuousTimeFunction`` maps real-valued times to values.
+
+    Parameters
+    ----------
+    func : callable, optional
+        A function of continuous time ``t`` returning the value at that
+        time. Defaults to the identity ``f(t) = t``.
 
     Attributes
     ----------
