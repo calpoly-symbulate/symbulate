@@ -376,7 +376,7 @@ class BoxModel(ProbabilitySpace):
 
         Examples
         --------
-        Draw 3 tickets from a box:
+        Draw 3 tickets from a box of colored balls:
 
         >>> box = ['red', 'blue', 'green']
         >>> box_model = BoxModel(box, size=3, replace=True)
