@@ -13,11 +13,6 @@ class Scalar(numbers.Number):
 
     A ``Scalar`` creates either an ``Int`` or ``Float`` object based on
     the type of the input value.
-
-    Methods
-    -------
-    __new__(value, *args, **kwargs)
-        Create an integer or floating-point scalar.
     """
 
     def __new__(cls, value, *args, **kwargs):
@@ -59,6 +54,18 @@ class Int(int, Scalar):
     Integer scalar value.
 
     An ``Int`` is a scalar represented as an integer.
+
+    Parameters
+    ----------
+    value : int
+        Value used to create the integer scalar.
+
+    Examples
+    --------
+    >>> Int(5)
+    5
+    >>> Int(0)
+    0
     """
 
     def __new__(cls, value, *args, **kwargs):
@@ -88,6 +95,18 @@ class Float(float, Scalar):
     Floating-point scalar value.
 
     A ``Float`` is a scalar represented as a floating-point number.
+
+    Parameters
+    ----------
+    value : float
+        Value used to create the floating-point scalar.
+
+    Examples
+    --------
+    >>> Float(2.71)
+    2.71
+    >>> Float(0.0)
+    0.0
     """
 
     def __new__(cls, value, *args, **kwargs):
@@ -450,6 +469,19 @@ class Vector(Tuple):
     A ``Vector`` behaves identically to a ``Tuple`` but preserves its
     structure when returned from arithmetic or transformation operations.
 
+    Parameters
+    ----------
+    values : scalar or iterable
+        Values to store in the vector.
+
+    Examples
+    --------
+    >>> v = Vector([1, 2, 3])
+    >>> v
+    (1, 2, 3)
+    >>> v[1]
+    2
+
     See Also
     --------
     Tuple : The collapsible counterpart to Vector.
@@ -464,13 +496,6 @@ class TimeFunction(Arithmetic):
 
     A ``TimeFunction`` represents a function whose values are indexed by
     a time set, such as discrete time, continuous time, or natural numbers.
-
-    Methods
-    -------
-    from_index_set(index_set, func=None)
-        Create the appropriate time function based on the given index set.
-    check_same_index_set(other)
-        Check whether another object can be combined with this time function.
 
     Raises
     ------
@@ -553,11 +578,6 @@ class InfiniteTuple(TimeFunction):
         Index set for the infinite tuple.
     values : list
         Cached values that have already been computed.
-
-    Methods
-    -------
-    apply(func)
-        Apply a function to each element of the infinite tuple.
     """
 
     def __init__(self, func=lambda n: n):
@@ -746,13 +766,6 @@ class InfiniteVector(InfiniteTuple):
     specific to sequences of numeric values, such as cumulative sums
     and plotting.
 
-    Methods
-    -------
-    cumsum()
-        Return the cumulative sum of the vector.
-    plot(tmin=0, tmax=10, **kwargs)
-        Plot a range of values from the vector.
-
     See Also
     --------
     InfiniteTuple : The base class for lazy infinite sequences.
@@ -835,13 +848,6 @@ class DiscreteTimeFunction(TimeFunction):
         Cached values for nonnegative indices.
     array_neg : list
         Cached values for negative indices.
-
-    Methods
-    -------
-    apply(func)
-        Compose a function with this discrete-time function.
-    plot(tmin=0, tmax=10, **kwargs)
-        Plot values over a specified time range.
 
     See Also
     --------
@@ -1184,13 +1190,6 @@ class ContinuousTimeFunction(TimeFunction):
     index_set : Reals
         The continuous index set.
 
-    Methods
-    -------
-    apply(func)
-        Compose a function with this continuous-time function.
-    plot(tmin=0, tmax=10, **kwargs)
-        Plot values over a specified time range.
-
     See Also
     --------
     DiscreteTimeFunction : Function indexed by a discrete time sequence.
@@ -1412,16 +1411,6 @@ class DiscreteValued:
     Provides access to states, interarrival times, and cumulative arrival
     times for stochastic processes such as Markov chains and Poisson
     processes.
-
-    Methods
-    -------
-    get_states()
-        Return the states associated with the function.
-    get_interarrival_times()
-        Return the interarrival times associated with the function.
-    get_arrival_times()
-        Return the arrival times computed from the cumulative sum
-        of the interarrival times.
     """
 
     def get_states(self):
@@ -1651,6 +1640,15 @@ def is_scalar(x):
     -------
     bool
         True if ``x`` is a number or string, otherwise False.
+
+    Examples
+    --------
+    >>> is_scalar(3)
+    True
+    >>> is_scalar("hello")
+    True
+    >>> is_scalar([1, 2, 3])
+    False
     """
     return isinstance(x, (numbers.Number, str))
 
@@ -1668,6 +1666,15 @@ def is_vector(x):
     -------
     bool
         True if ``x`` has a length, otherwise False.
+
+    Examples
+    --------
+    >>> is_vector([1, 2, 3])
+    True
+    >>> is_vector(Tuple([1, 2]))
+    True
+    >>> is_vector(5)
+    False
     """
     return hasattr(x, "__len__")
 
@@ -1685,6 +1692,15 @@ def is_number(x):
     -------
     bool
         True if ``x`` is a number, otherwise False.
+
+    Examples
+    --------
+    >>> is_number(3)
+    True
+    >>> is_number(3.14)
+    True
+    >>> is_number("3")
+    False
     """
     return isinstance(x, numbers.Number)
 
@@ -1703,5 +1719,14 @@ def is_numeric_vector(x):
     bool
         True if ``x`` has a length and all elements are numeric,
         otherwise False.
+
+    Examples
+    --------
+    >>> is_numeric_vector([1, 2, 3])
+    True
+    >>> is_numeric_vector([1, "a", 3])
+    False
+    >>> is_numeric_vector(5)
+    False
     """
     return hasattr(x, "__len__") and all(is_number(i) for i in x)
