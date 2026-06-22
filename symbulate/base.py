@@ -5,75 +5,290 @@ import scipy.stats as stats
 
 
 class Arithmetic:
-    """A class with operations such as +, -, *, /.
+    """Mixin providing arithmetic operators (+, -, *, /) for subclasses.
 
     Subclasses must implement the _operation_factory method,
     which specifies how each operation acts on instances of
     that class.
     """
 
-    # e.g., X + Y or X + 3
     def __add__(self, other):
+        """Return the element-wise sum (e.g., X + Y or X + 3).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Right-hand operand.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise sum of the two operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> Y = RV(Normal(0, 1))
+        >>> (X + Y).draw()
+        >>> (X + 3).draw()
+        """
         op_func = self._operation_factory(lambda x, y: x + y)
         return op_func(self, other)
 
-    # e.g., 3 + X
     def __radd__(self, other):
+        """Return the element-wise sum with scalar on the left (e.g., 3 + X).
+
+        Parameters
+        ----------
+        other : scalar
+            Left-hand operand.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise sum of the two operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (3 + X).draw()
+        """
         return self.__add__(other)
 
-    # e.g., X - Y or X - 3
     def __sub__(self, other):
+        """Return the element-wise difference (e.g., X - Y or X - 3).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Right-hand operand.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise difference of the two operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> Y = RV(Normal(0, 1))
+        >>> (X - Y).draw()
+        >>> (X - 3).draw()
+        """
         op_func = self._operation_factory(lambda x, y: x - y)
         return op_func(self, other)
 
-    # e.g., 3 - X
     def __rsub__(self, other):
+        """Return the difference with scalar on the left (e.g., 3 - X).
+
+        Parameters
+        ----------
+        other : scalar
+            Left-hand operand.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise difference of the two operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (3 - X).draw()
+        """
         return -1 * self.__sub__(other)
 
-    # e.g., -X
     def __neg__(self):
+        """Return the element-wise negation (e.g., -X).
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise negation.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (-X).draw()
+        """
         return -1 * self
 
-    # e.g., X * Y or X * 2
     def __mul__(self, other):
+        """Return the element-wise product (e.g., X * Y or X * 2).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Right-hand operand.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise product of the two operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> Y = RV(Normal(0, 1))
+        >>> (X * Y).draw()
+        >>> (X * 2).draw()
+        """
         op_func = self._operation_factory(lambda x, y: x * y)
         return op_func(self, other)
 
-    # e.g., 2 * X
     def __rmul__(self, other):
+        """Return the element-wise product with scalar on the left (e.g., 2 * X).
+
+        Parameters
+        ----------
+        other : scalar
+            Left-hand operand.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise product of the two operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (2 * X).draw()
+        """
         return self.__mul__(other)
 
-    # e.g., X / Y or X / 2
     def __truediv__(self, other):
+        """Return the element-wise quotient (e.g., X / Y or X / 2).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Right-hand operand (divisor).
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise quotient of the two operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> Y = RV(Normal(0, 1))
+        >>> (X / Y).draw()
+        >>> (X / 2).draw()
+        """
         op_func = self._operation_factory(lambda x, y: x / y)
         return op_func(self, other)
 
-    # e.g., 2 / X
     def __rtruediv__(self, other):
+        """Return the quotient with scalar on the left (e.g., 2 / X).
+
+        Parameters
+        ----------
+        other : scalar
+            Left-hand operand (dividend).
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise quotient of the two operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (2 / X).draw()
+        """
         op_func = self._operation_factory(lambda x, y: y / x)
         return op_func(self, other)
 
-    # e.g., X ** 2
     def __pow__(self, other):
+        """Return the element-wise power (e.g., X ** 2).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Exponent.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise power of the operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (X ** 2).draw()
+        """
         op_func = self._operation_factory(lambda x, y: x**y)
         return op_func(self, other)
 
-    # e.g., 2 ** X
     def __rpow__(self, other):
+        """Return the power with scalar base on the left (e.g., 2 ** X).
+
+        Parameters
+        ----------
+        other : scalar
+            Base value.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise power of the operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (2 ** X).draw()
+        """
         op_func = self._operation_factory(lambda x, y: y**x)
         return op_func(self, other)
 
-    # Alternative notation for powers: e.g., X ^ 2
     def __xor__(self, other):
+        """Return the element-wise power using ^ notation (e.g., X ^ 2).
+
+        Alternative to ``**``; calls :meth:`__pow__`.
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Exponent.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise power of the operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (X ^ 2).draw()
+        """
         return self.__pow__(other)
 
-    # Alternative notation for powers: e.g., 2 ^ X
     def __rxor__(self, other):
+        """Return the power with scalar base using ^ notation (e.g., 2 ^ X).
+
+        Alternative to ``**``; calls :meth:`__rpow__`.
+
+        Parameters
+        ----------
+        other : scalar
+            Base value.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Element-wise power of the operands.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (2 ^ X).draw()
+        """
         return self.__rpow__(other)
 
 
 class Comparable:
-    """A class with comparison operators such as <, >, and ==.
+    """Mixin providing comparison operators (<, >, ==) for subclasses.
 
     Subclasses must implement the _comparison_factory method,
     which specifies how each comparison acts on instances of
@@ -81,32 +296,134 @@ class Comparable:
     """
 
     def __eq__(self, other):
+        """Return an indicator of element-wise equality (e.g., X == 0).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Value to compare against.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where equal, 0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Binomial(10, 0.5))
+        >>> (X == 5).draw()
+        """
         op_func = self._comparison_factory(lambda x, y: x == y)
         return op_func(self, other)
 
     def __ne__(self, other):
+        """Return an indicator of element-wise inequality (e.g., X != 0).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Value to compare against.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where not equal, 0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Binomial(10, 0.5))
+        >>> (X != 5).draw()
+        """
         op_func = self._comparison_factory(lambda x, y: x != y)
         return op_func(self, other)
 
     def __lt__(self, other):
+        """Return an indicator of element-wise less than (e.g., X < 0).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Value to compare against.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where less than, 0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (X < 0).draw()
+        """
         op_func = self._comparison_factory(lambda x, y: x < y)
         return op_func(self, other)
 
     def __le__(self, other):
+        """Return an indicator of element-wise less than or equal (e.g., X <= 0).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Value to compare against.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where less than or equal, 0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (X <= 0).draw()
+        """
         op_func = self._comparison_factory(lambda x, y: x <= y)
         return op_func(self, other)
 
     def __gt__(self, other):
+        """Return an indicator of element-wise greater than (e.g., X > 0).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Value to compare against.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where greater than, 0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (X > 0).draw()
+        """
         op_func = self._comparison_factory(lambda x, y: x > y)
         return op_func(self, other)
 
     def __ge__(self, other):
+        """Return an indicator of element-wise greater than or equal (e.g., X >= 0).
+
+        Parameters
+        ----------
+        other : RV, RandomProcess, or scalar
+            Value to compare against.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where greater than or equal, 0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (X >= 0).draw()
+        """
         op_func = self._comparison_factory(lambda x, y: x >= y)
         return op_func(self, other)
 
 
 class Statistical:
-    """A class with statistical functions, such as mean, var, etc.
+    """Mixin providing statistical methods (mean, var, etc.) for subclasses.
 
     Subclasses must implement the _statistic_factory and
     _multivariate_statistic_factory methods, which specify how
@@ -118,10 +435,17 @@ class Statistical:
     def sum(self):
         r"""Calculate the sum.
 
-        .. math:: \frac{1}{n} \sum_{i=1}^n x_i
+        .. math:: \sum_{i=1}^n x_i
 
-        Returns:
-          The sum of the numbers.
+        Returns
+        -------
+        float
+            The sum of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).sum()
         """
         op_func = self._statistic_factory(np.sum)
         return op_func(self)
@@ -133,8 +457,15 @@ class Statistical:
 
         .. math:: \mu = \frac{1}{n} \sum_{i=1}^n x_i
 
-        Returns:
-          float: The mean of the numbers.
+        Returns
+        -------
+        float
+            The mean of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).mean()
         """
         op_func = self._statistic_factory(np.mean)
         return op_func(self)
@@ -146,12 +477,21 @@ class Statistical:
 
         .. math:: \frac{\#\{ i: x_i \leq x \}}{n} = q
 
-        Args:
-          q (float): A number between 0 and 1 specifying
-            the desired quantile or percentile.
+        Parameters
+        ----------
+        q : float
+            A number between 0 and 1 specifying the desired
+            quantile or percentile.
 
-        Returns:
-          The (100q)th quantile of the numbers.
+        Returns
+        -------
+        float
+            The (100q)th quantile of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).quantile(0.25)
         """
         op_func = self._statistic_factory(
             lambda **kwargs: np.percentile(q=q * 100, **kwargs)
@@ -161,7 +501,23 @@ class Statistical:
     def percentile(self, q):
         r"""Calculate a specified percentile.
 
-        Alias for .quantile().
+        Alias for :meth:`quantile`.
+
+        Parameters
+        ----------
+        q : float
+            A number between 0 and 1 specifying the desired
+            quantile or percentile.
+
+        Returns
+        -------
+        float
+            The (100q)th percentile of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).percentile(0.25)
         """
         return self.quantile(q)
 
@@ -170,8 +526,15 @@ class Statistical:
 
         The IQR is the 75th percentile minus the 25th percentile.
 
-        Returns:
-          The interquartile range.
+        Returns
+        -------
+        float
+            The interquartile range.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).iqr()
         """
         return self.quantile(0.75) - self.quantile(0.25)
 
@@ -181,8 +544,15 @@ class Statistical:
         The median is the middle number in a *sorted* list.
         It is a measure of center.
 
-        Returns:
-          The median of the numbers.
+        Returns
+        -------
+        float
+            The median of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).median()
         """
         op_func = self._statistic_factory(np.median)
         return op_func(self)
@@ -195,11 +565,17 @@ class Statistical:
 
         .. math::
 
-        \sigma &= \sqrt{\frac{1}{n} \sum_{i=1}^n (x_i - \mu)^2} \\
-               &= \sqrt{\frac{1}{n} \sum_{i=1}^n x_i^2 - \mu^2}
+            \sigma = \sqrt{\frac{1}{n} \sum_{i=1}^n (x_i - \mu)^2}
 
-        Returns:
-          float: The standard deviation of the numbers.
+        Returns
+        -------
+        float
+            The standard deviation of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).std()
         """
         op_func = self._statistic_factory(np.std)
         return op_func(self)
@@ -207,32 +583,39 @@ class Statistical:
     def sd(self):
         r"""Calculate the standard deviation.
 
-        The standard deviation is the square root of the variance.
-        It is a measure of spread.
+        Alias for :meth:`std`.
 
-        .. math::
+        Returns
+        -------
+        float
+            The standard deviation of the values.
 
-        \sigma &= \sqrt{\frac{1}{n} \sum_{i=1}^n (x_i - \mu)^2} \\
-               &= \sqrt{\frac{1}{n} \sum_{i=1}^n x_i^2 - \mu^2}
-
-        Returns:
-          float: The standard deviation of the numbers.
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).sd()
         """
         return self.std()
 
     def var(self):
         r"""Calculate the variance.
 
-        The variance is the average squared distance between
-        each number and the mean. It is a measure of spread.
+        The variance is the average squared distance from the mean.
+        It is a measure of spread.
 
         .. math::
 
-        \sigma^2 &= \frac{1}{n} \sum_{i=1}^n (x_i - \mu)^2 \\
-               &= \frac{1}{n} \sum_{i=1}^n x_i^2 - \mu^2
+            \sigma^2 = \frac{1}{n} \sum_{i=1}^n (x_i - \mu)^2
 
-        Returns:
-          float: The variance of the numbers.
+        Returns
+        -------
+        float
+            The variance of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).var()
         """
         op_func = self._statistic_factory(np.var)
         return op_func(self)
@@ -240,21 +623,48 @@ class Statistical:
     def skew(self):
         r"""Calculate the skewness.
 
-        Returns:
-          The skewness of the numbers.
+        Returns
+        -------
+        float
+            The skewness of the values.
+
+        Examples
+        --------
+        >>> X = RV(Exponential(1))
+        >>> X.sim(10000).skew()
         """
         op_func = self._statistic_factory(stats.skew)
         return op_func(self)
 
     def skewness(self):
-        """Calculate the skewness. Alias for .skew()"""
+        """Calculate the skewness.
+
+        Alias for :meth:`skew`.
+
+        Returns
+        -------
+        float
+            The skewness of the values.
+
+        Examples
+        --------
+        >>> X = RV(Exponential(1))
+        >>> X.sim(10000).skewness()
+        """
         return self.skew()
 
     def kurtosis(self):
         r"""Calculate the kurtosis.
 
-        Returns:
-          The kurtosis of the numbers.
+        Returns
+        -------
+        float
+            The kurtosis of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).kurtosis()
         """
         op_func = self._statistic_factory(stats.kurtosis)
         return op_func(self)
@@ -262,8 +672,15 @@ class Statistical:
     def max(self):
         r"""Calculate the maximum.
 
-        Returns:
-          The maximum of the numbers.
+        Returns
+        -------
+        float
+            The maximum of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).max()
         """
         op_func = self._statistic_factory(np.amax)
         return op_func(self)
@@ -271,8 +688,15 @@ class Statistical:
     def min(self):
         r"""Calculate the minimum.
 
-        Returns:
-          The minimum of the numbers.
+        Returns
+        -------
+        float
+            The minimum of the values.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).min()
         """
         op_func = self._statistic_factory(np.amin)
         return op_func(self)
@@ -285,25 +709,40 @@ class Statistical:
         The min-max diff is also called the range. It is
         a measure of spread.
 
-        Returns:
-          The difference between the min and the max.
+        Returns
+        -------
+        float
+            The difference between the min and the max.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).min_max_diff()
         """
         return self.max() - self.min()
 
     def cov(self):
         r"""Calculate the pairwise covariances.
 
-        The covariance is a measure of the relationship between two variables.
-        The sign of the covariance indicates the direction of the relationship.
+        The covariance is a measure of the relationship between
+        two variables. The sign indicates the direction of the
+        relationship.
 
         .. math::
 
-        \sigma_{XY} = \frac{1}{n} \sum_{i=1}^n (x_i - \mu_X) (y_i - \mu_Y)
+            \sigma_{XY} = \frac{1}{n} \sum_{i=1}^n
+            (x_i - \mu_X)(y_i - \mu_Y)
 
-        Returns:
-          The pairwise covariances between all dimensions. This is usually
-          a scalar when there are only 2 dimensions and a matrix when
-          there are more than 2 dimensions.
+        Returns
+        -------
+        float or numpy.ndarray
+            Pairwise covariances between all dimensions.
+            A scalar for 2 dimensions; a matrix for more.
+
+        Examples
+        --------
+        >>> X, Y = RV(Normal(0, 1)), RV(Normal(0, 1))
+        >>> (X & Y).sim(10000).cov()
         """
         op_func = self._multivariate_statistic_factory(
             lambda a: np.cov(a, rowvar=False, ddof=0)
@@ -313,16 +752,25 @@ class Statistical:
     def corr(self):
         r"""Calculate the pairwise correlations.
 
-        The correlation is the covariance normalized by the standard deviations.
+        The correlation is the covariance normalized by the
+        standard deviations.
 
         .. math::
 
-        \rho_{XY} = \frac{1}{n} \sum_{i=1}^n \frac{x_i - \mu_X}{\sigma_X} \frac{y_i - \mu_Y}{\sigma_Y}
+            \rho_{XY} = \frac{1}{n} \sum_{i=1}^n
+            \frac{x_i - \mu_X}{\sigma_X}
+            \frac{y_i - \mu_Y}{\sigma_Y}
 
-        Returns:
-          The pairwise correlations between all dimensions. This is usually
-          a scalar when there are only 2 dimensions and a matrix when
-          there are more than 2 dimensions.
+        Returns
+        -------
+        float or numpy.ndarray
+            Pairwise correlations between all dimensions.
+            A scalar for 2 dimensions; a matrix for more.
+
+        Examples
+        --------
+        >>> X, Y = RV(Normal(0, 1)), RV(Normal(0, 1))
+        >>> (X & Y).sim(10000).corr()
         """
         op_func = self._multivariate_statistic_factory(
             lambda a: np.corrcoef(a, rowvar=False, ddof=0)
@@ -330,12 +778,26 @@ class Statistical:
         return op_func(self)
 
     def corrcoef(self):
-        r"""An alias for .corr()"""
+        r"""Calculate the pairwise correlations.
+
+        Alias for :meth:`corr`.
+
+        Returns
+        -------
+        float or numpy.ndarray
+            Pairwise correlations between all dimensions.
+            A scalar for 2 dimensions; a matrix for more.
+
+        Examples
+        --------
+        >>> X, Y = RV(Normal(0, 1)), RV(Normal(0, 1))
+        >>> (X & Y).sim(10000).corrcoef()
+        """
         return self.corr()
 
 
 class Logical:
-    """A class that supports logical operations: and, or, and not.
+    """Mixin providing logical operators (and, or, not) for subclasses.
 
     Subclasses must implement the _logical_factory method, which
     specifies how the logical operator operates on two objects
@@ -343,20 +805,67 @@ class Logical:
     """
 
     def __and__(self, other):
+        """Return the logical AND of two events (e.g., A & B).
+
+        Parameters
+        ----------
+        other : RV or RandomProcess
+            Right-hand event.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where both events occur, 0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> ((X > -1) & (X < 1)).draw()
+        """
         op_func = self._logical_factory(lambda x, y: x and y)
         return op_func(self, other)
 
     def __or__(self, other):
+        """Return the logical OR of two events (e.g., A | B).
+
+        Parameters
+        ----------
+        other : RV or RandomProcess
+            Right-hand event.
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where either event occurs, 0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> ((X < -1) | (X > 1)).draw()
+        """
         op_func = self._logical_factory(lambda x, y: x or y)
         return op_func(self, other)
 
     def __invert__(self):
+        """Return the logical NOT of an event (e.g., ~A).
+
+        Returns
+        -------
+        RV or RandomProcess
+            Indicator that is 1 where the event does not occur,
+            0 otherwise.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> (~(X > 0)).draw()
+        """
         op_func = self._logical_factory(lambda x: not x)
         return op_func(self)
 
 
 class Filterable:
-    """A class with filtering and counting methods.
+    """Mixin providing filtering and counting methods for subclasses.
 
     Subclasses must implement the filter method, which specifies how to
     construct a new instance containing only those elements that satisfy
@@ -364,199 +873,308 @@ class Filterable:
     """
 
     def filter_eq(self, value):
-        """Get all elements equal to a particular value.
+        """Return all elements equal to a given value.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to filter by.
 
-        Returns:
-          All of the elements that were equal to value.
+        Returns
+        -------
+        Results
+            All elements equal to value.
+
+        Examples
+        --------
+        >>> X = RV(Binomial(10, 0.5))
+        >>> X.sim(10000).filter_eq(5)
         """
         return self.filter(lambda x: x == value)
 
     def filter_neq(self, value):
-        """Get all elements _not_ equal to a particular value.
+        """Return all elements not equal to a given value.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to filter by.
 
-        Returns:
-          All of the elements that were _not_ equal to value.
+        Returns
+        -------
+        Results
+            All elements not equal to value.
+
+        Examples
+        --------
+        >>> X = RV(Binomial(10, 0.5))
+        >>> X.sim(10000).filter_neq(5)
         """
         return self.filter(lambda x: x != value)
 
     def filter_lt(self, value):
-        """Get all elements less than a particular value.
+        """Return all elements less than a given value.
 
-        N.B. lt stands for "less than". For elements that are
-        less than _or equal to_ the given value, use .filter_leq(value).
+        For elements less than or equal to a value,
+        use :meth:`filter_leq`.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to filter by.
 
-        Returns:
-          All of the elements that were less than value.
+        Returns
+        -------
+        Results
+            All elements less than value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).filter_lt(0)
         """
         return self.filter(lambda x: x < value)
 
     def filter_leq(self, value):
-        """Get all elements less than or equal to a particular value.
+        """Return all elements less than or equal to a given value.
 
-        N.B. leq stands for "less than or equal to". For elements
-        that are strictly less than the given value, use .filter_lt(value).
+        For elements strictly less than a value,
+        use :meth:`filter_lt`.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to filter by.
 
-        Returns:
-          All of the elements that were less than _or equal to_ value.
+        Returns
+        -------
+        Results
+            All elements less than or equal to value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).filter_leq(0)
         """
         return self.filter(lambda x: x <= value)
 
     def filter_gt(self, value):
-        """Get all elements greater than a particular value.
+        """Return all elements greater than a given value.
 
-        N.B. gt stands for "greater than". For elements that are
-        greater than _or equal to_ the given value, use .filter_geq(value).
+        For elements greater than or equal to a value,
+        use :meth:`filter_geq`.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to filter by.
 
-        Returns:
-          All of the elements that were greater than value.
+        Returns
+        -------
+        Results
+            All elements greater than value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).filter_gt(0)
         """
-
         return self.filter(lambda x: x > value)
 
     def filter_geq(self, value):
-        """Get all elements greater than or equal to a particular value.
+        """Return all elements greater than or equal to a given value.
 
-        N.B. geq stands for "greater than or equal to". For elements
-        that are strictly greater than the given value, use .filter_gt(value).
+        For elements strictly greater than a value,
+        use :meth:`filter_gt`.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to filter by.
 
-        Returns:
-          All of the elements that were greater than _or equal to_ value.
+        Returns
+        -------
+        Results
+            All elements greater than or equal to value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).filter_geq(0)
         """
         return self.filter(lambda x: x >= value)
 
-    # The following functions return an integer indicating
-    # how many elements passed a given criterion.
-
     def count(self, func=lambda x: True):
-        """Counts the number of elements satisfying a given criterion.
+        """Count the number of elements satisfying a criterion.
 
-        Args:
-          func (element -> bool): A function that takes in an element
-            and returns a boolean (True/False). Only those elements
-            that return True will be counted.
+        Parameters
+        ----------
+        func : callable, optional
+            A function that takes an element and returns a bool.
+            Only elements for which func returns True are counted.
+            Default counts all elements.
 
-        Returns:
-          int: The number of elements e for which func(e) is True.
+        Returns
+        -------
+        int
+            Number of elements for which func returns True.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).count(lambda x: x > 0)
         """
         return len(self.filter(func))
 
     def count_eq(self, value):
-        """Count the number of elements equal to a particular value.
+        """Count the number of elements equal to a given value.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to count.
 
-        Returns:
-          int: The number of elements that were equal to value.
+        Returns
+        -------
+        int
+            Number of elements equal to value.
+
+        Examples
+        --------
+        >>> X = RV(Binomial(10, 0.5))
+        >>> X.sim(10000).count_eq(5)
         """
         return len(self.filter_eq(value))
 
     def count_neq(self, value):
-        """Count the number of elements _not_ equal to a particular value.
+        """Count the number of elements not equal to a given value.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to exclude.
 
-        Returns:
-          int: The number of elements that were not equal to value.
+        Returns
+        -------
+        int
+            Number of elements not equal to value.
+
+        Examples
+        --------
+        >>> X = RV(Binomial(10, 0.5))
+        >>> X.sim(10000).count_neq(5)
         """
         return len(self.filter_neq(value))
 
     def count_lt(self, value):
-        """Count the number of elements less than a particular value.
+        """Count the number of elements less than a given value.
 
-        N.B. lt stands for "greater than". For the number of elements
-        that are less than _or equal to_ the given value, use
-        .count_leq(value).
+        For the count of elements less than or equal to a value,
+        use :meth:`count_leq`.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to compare against.
 
-        Returns:
-          int: The number of elements that were less than value.
+        Returns
+        -------
+        int
+            Number of elements less than value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).count_lt(0)
         """
         return len(self.filter_lt(value))
 
     def count_leq(self, value):
-        """Count the number of elements less than or equal to a particular value.
+        """Count the number of elements less than or equal to a value.
 
-        N.B. leq stands for "less than or equal to". For the number of
-        elements that are strictly greater than the given value, use
-        .count_lt(value).
+        For the count of elements strictly less than a value,
+        use :meth:`count_lt`.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to compare against.
 
-        Returns:
-          int: The number of elements that were less than _or equal to_ value.
+        Returns
+        -------
+        int
+            Number of elements less than or equal to value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).count_leq(0)
         """
         return len(self.filter_leq(value))
 
     def count_gt(self, value):
-        """Count the number of elements greater than a particular value.
+        """Count the number of elements greater than a given value.
 
-        N.B. gt stands for "greater than". For the number of elements
-        that are greater than _or equal to_ the given value, use
-        .count_geq(value).
+        For the count of elements greater than or equal to a value,
+        use :meth:`count_geq`.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to compare against.
 
-        Returns:
-          int: The number of elements that were greater than value.
+        Returns
+        -------
+        int
+            Number of elements greater than value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).count_gt(0)
         """
         return len(self.filter_gt(value))
 
     def count_geq(self, value):
-        """Count the number of elements greater than or equal to a particular value.
+        """Count the number of elements greater than or equal to a value.
 
-        N.B. geq stands for "greater than or equal to". For the number of
-        elements that are strictly greater than the given value, use
-        .count_gt(value).
+        For the count of elements strictly greater than a value,
+        use :meth:`count_gt`.
 
-        Args:
-          value: A value of the same type as the elements in the object.
+        Parameters
+        ----------
+        value : any
+            The value to compare against.
 
-        Returns:
-          int: The number of elements that were greater than _or equal to_ value.
+        Returns
+        -------
+        int
+            Number of elements greater than or equal to value.
+
+        Examples
+        --------
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(10000).count_geq(0)
         """
         return len(self.filter_geq(value))
 
 
 class Transformable:
-    """A class that supports transformations.
+    """Mixin providing transformation methods for subclasses.
 
     Subclasses must implement the apply method, which specifies how to
     apply a function to the object.
     """
 
     def __abs__(self):
-        """Return the absolute value applied to the object.
+        """Return the absolute value applied element-wise.
 
         Called by Python's built-in ``abs()``.
 
         Returns
         -------
-        same type as self
-            A new object with ``abs()`` applied to each value.
+        RV or RandomProcess
+            Element-wise absolute value.
 
         Examples
         --------
@@ -566,14 +1184,14 @@ class Transformable:
         return self.apply(abs)
 
     def __round__(self):
-        """Return the object rounded to the nearest integer.
+        """Return values rounded to the nearest integer element-wise.
 
         Called by Python's built-in ``round()``.
 
         Returns
         -------
-        same type as self
-            A new object with ``round()`` applied to each value.
+        RV or RandomProcess
+            Element-wise rounded values.
 
         Examples
         --------
@@ -583,14 +1201,14 @@ class Transformable:
         return self.apply(round)
 
     def __floor__(self):
-        """Return the floor (round down to nearest integer) of the object.
+        """Return the floor (round down) of each value element-wise.
 
         Called by ``math.floor()``.
 
         Returns
         -------
-        same type as self
-            A new object with ``math.floor()`` applied to each value.
+        RV or RandomProcess
+            Element-wise floor values.
 
         Examples
         --------
@@ -601,14 +1219,14 @@ class Transformable:
         return self.apply(math.floor)
 
     def __ceil__(self):
-        """Return the ceiling (round up to nearest integer) of the object.
+        """Return the ceiling (round up) of each value element-wise.
 
         Called by ``math.ceil()``.
 
         Returns
         -------
-        same type as self
-            A new object with ``math.ceil()`` applied to each value.
+        RV or RandomProcess
+            Element-wise ceiling values.
 
         Examples
         --------
