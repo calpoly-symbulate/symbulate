@@ -16,26 +16,43 @@ MACHINE_EPS = 1e-12
 
 
 def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
-    """Get a result object for a Gaussian process.
+    """Create one simulated sample path of a Gaussian process.
+
+    Builds a result object that lazily generates values along the path
+    using conditional distributions — new time points are simulated
+    consistently with all previously observed values.
 
     Parameters
     ----------
-    mean_func : function
-        The mean function of the Gaussian process.
-    cov_func : function
-        The covariance function of the Gaussian process.
+    mean_func : callable
+        A function ``f(t)`` returning the expected value of the process
+        at time ``t``.
+    cov_func : callable
+        A function ``k(s, t)`` returning the covariance between the
+        process at times ``s`` and ``t``.
     index_set : DiscreteTimeSequence or Reals, optional
-        The index set of which the Gaussian process is defined.
+        The set of times over which the process is defined. Defaults
+        to all real numbers.
 
     Returns
     -------
     GaussianProcessResult
-        A result object for the Gaussian process that can be evaluated at any time in the index set.
+        A sample path that can be evaluated at any time in the index set.
 
     Raises
     ------
     Exception
-        If the ``index_set`` is not Reals or DiscreteTimeSequence.
+        If ``index_set`` is not ``Reals`` or ``DiscreteTimeSequence``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> path = get_gaussian_process_result(
+    ...     mean_func=lambda t: 0,
+    ...     cov_func=lambda s, t: min(s, t)
+    ... )
+    >>> path(1.0)  # doctest: +SKIP
+    0.43
     """
 
     # Determine whether the process is discrete-time or continous-time
@@ -49,23 +66,43 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
         )
 
     class GaussianProcessResult(base_class):
-        """A realization of a Gaussian process.
+        """One simulated sample path of a Gaussian process.
+
+        Evaluating this object at a time ``t`` returns the value of the
+        path at that moment. New values are generated on demand and are
+        always consistent with previously observed values.
 
         Attributes
         ----------
         mean : numpy.ndarray
-            The mean vector of the observed times.
+            Mean vector over all times observed so far.
         cov : numpy.ndarray
-            The covariance matrix of the observed times.
+            Covariance matrix over all times observed so far.
         observed : dict
-            A dictionary mapping observed times to their corresponding values.
-        vfunc : function
-            A vectorized function that takes an array of times and returns the corresponding values of the Gaussian process.
+            Maps each previously evaluated time to its simulated value.
+        vfunc : callable
+            Internal vectorized function that evaluates the path at an
+            array of times.
         index_set : DiscreteTimeSequence or Reals
-            The index set of which the Gaussian process is defined.
+            The set of times over which this path is defined.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> X = GaussianProcess(
+        ...     mean_func=lambda t: 0,
+        ...     cov_func=lambda s, t: min(s, t)
+        ... )
+        >>> path = X.draw()
+        >>> path(1.0)   # doctest: +SKIP
+        0.84
+        >>> # Re-evaluating the same time always returns the cached value
+        >>> path(1.0) == path(1.0)  # doctest: +SKIP
+        True
         """
 
         def __init__(self, mean_func, cov_func):
+            """Create one simulated sample path of a Gaussian process."""
 
             self.mean = np.empty(shape=0)
             self.cov = np.empty(shape=(0, 0))
@@ -153,27 +190,49 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
 
 
 class GaussianProcessProbabilitySpace(ProbabilitySpace):
-    """Probability space for a Gaussian process.
+    """The probability space underlying a Gaussian process.
+
+    Each draw from this space produces one simulated sample path of the
+    Gaussian process. Paths are generated lazily — values at new times
+    are computed on demand, consistent with all previously observed values.
+
+    Parameters
+    ----------
+    mean_func : callable
+        A function ``f(t)`` giving the expected value of the process at
+        time ``t``.
+    cov_func : callable
+        A function ``k(s, t)`` giving the covariance between the process
+        at times ``s`` and ``t``.
+    index_set : DiscreteTimeSequence or Reals, optional
+        The set of times over which the process is defined. Defaults to
+        all real numbers.
 
     Attributes
     ----------
-    mean_func : function
-        The mean function of the Gaussian process.
-    cov_func : function
-        The covariance function of the Gaussian process.
+    mean_func : callable
+        A function giving the expected value of the process at each time.
+    cov_func : callable
+        A function giving the covariance between the process at two times.
     index_set : DiscreteTimeSequence or Reals
-        The index set of which the Gaussian process is defined.
+        The set of times over which the process is defined.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = GaussianProcessProbabilitySpace(
+    ...     mean_func=lambda t: 0,
+    ...     cov_func=lambda s, t: min(s, t)
+    ... )
+    >>> path = P.draw()  # doctest: +SKIP
+    >>> path(1.0)        # doctest: +SKIP
+    0.43
+    >>> path(2.0)        # doctest: +SKIP
+    1.12
     """
 
     def __init__(self, mean_func, cov_func, index_set=Reals()):
-        """Initialize probability space for a Gaussian process.
-
-        Args:
-          mean_func: mean function (function of one argument)
-          cov_func: (auto)covariance function (function of two arguments)
-          index_set: index set for the Gaussian process
-                     (by default, all real numbers)
-        """
+        """Create a probability space for a Gaussian process."""
 
         def draw():
             return get_gaussian_process_result(mean_func, cov_func, index_set)
@@ -182,27 +241,48 @@ class GaussianProcessProbabilitySpace(ProbabilitySpace):
 
 
 class GaussianProcess(RandomProcess, RV):
-    """A random Gaussian process and a random variable.
+    """A Gaussian process, modeled as a random variable over sample paths.
+
+    A Gaussian process is a collection of random variables — one for each
+    time ``t`` — such that any finite set of them follows a multivariate
+    normal distribution. It is fully described by its mean function and
+    covariance (kernel) function.
+
+    Parameters
+    ----------
+    mean_func : callable
+        A function ``f(t)`` giving the expected value of the process at
+        time ``t``.
+    cov_func : callable
+        A function ``k(s, t)`` giving the covariance between the process
+        at times ``s`` and ``t``.
+    index_set : DiscreteTimeSequence or Reals, optional
+        The set of times over which the process is defined. Defaults to
+        all real numbers.
 
     Attributes
     ----------
-    mean_func : function
-        The mean function of the Gaussian process.
-    cov_func : function
-        The covariance function of the Gaussian process.
-    index_set : DiscreteTimeSequence or Reals
-        The index set of which the Gaussian process is defined.
+    prob_space : GaussianProcessProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = GaussianProcess(
+    ...     mean_func=lambda t: 0,
+    ...     cov_func=lambda s, t: min(s, t)
+    ... )
+    >>> # Draw a single sample path and evaluate at several times
+    >>> path = X.draw()                      # doctest: +SKIP
+    >>> path(0.5), path(1.0), path(2.0)      # doctest: +SKIP
+    (0.23, 0.84, 0.92)
+    >>> # Simulate the process at t=1 across many draws
+    >>> X[1.0].sim(1000).mean()              # doctest: +SKIP
+    0.01
     """
 
     def __init__(self, mean_func, cov_func, index_set=Reals()):
-        """Initialize Gaussian process.
-
-        Args:
-          mean_func: mean function (function of one argument)
-          cov_func: (auto)covariance function (function of two arguments)
-          index_set: index set for the Gaussian process
-                     (by default, all real numbers)
-        """
+        """Create a Gaussian process."""
 
         prob_space = GaussianProcessProbabilitySpace(mean_func, cov_func, index_set)
         RandomProcess.__init__(self, prob_space)
@@ -211,46 +291,87 @@ class GaussianProcess(RandomProcess, RV):
 
 # Define convenience class for Brownian motion
 class BrownianMotionProbabilitySpace(GaussianProcessProbabilitySpace):
-    """Probability space for Brownian motion.
+    """The probability space underlying a Brownian motion process.
+
+    Each draw from this space produces one simulated sample path of
+    Brownian motion. Standard Brownian motion (``drift=0``, ``scale=1``)
+    starts at 0 and has independent, normally distributed increments.
+
+    Parameters
+    ----------
+    drift : float, optional
+        The drift parameter μ. Controls the average rate of change per
+        unit time. Default is 0 (no drift).
+    scale : float, optional
+        The scale parameter σ. Controls the volatility (spread) of the
+        process. Default is 1.
 
     Attributes
     ----------
-    drift : number
-        The drift parameter of Brownian motion.
-    scale : number
-        The scale parameter of Brownian motion.
+    drift : float
+        The drift parameter μ. Defaults to 0.
+    scale : float
+        The scale parameter σ. Defaults to 1.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = BrownianMotionProbabilitySpace(drift=0, scale=1)
+    >>> path = P.draw()  # doctest: +SKIP
+    >>> path(1.0)        # doctest: +SKIP
+    -0.32
+    >>> # Standard Brownian motion has variance equal to t
+    >>> path(4.0)        # doctest: +SKIP
+    0.87
     """
 
     def __init__(self, drift=0, scale=1):
-        """Initialize probability space for Brownian motion.
-
-        Args:
-          drift: drift parameter of Brownian motion
-          scale: scale parameter of Brownian motion
-        """
+        """Create a probability space for Brownian motion."""
         super().__init__(
             mean_func=lambda t: drift * t, cov_func=lambda s, t: (scale**2) * min(s, t)
         )
 
 
 class BrownianMotion(RandomProcess, RV):
-    """Brownian motion random process and random variable.
+    """Brownian motion, modeled as a random variable over sample paths.
+
+    Standard Brownian motion (also called a Wiener process) starts at 0,
+    has continuous paths, and has independent normally distributed increments.
+    The optional ``drift`` and ``scale`` parameters shift and scale the process.
+
+    Parameters
+    ----------
+    drift : float, optional
+        The drift parameter μ. Controls the average rate of change per
+        unit time. Default is 0 (no drift).
+    scale : float, optional
+        The scale parameter σ. Controls the volatility (spread) of the
+        process. Default is 1.
 
     Attributes
     ----------
-    drift : number
-        The drift parameter of Brownian motion.
-    scale : number
-        The scale parameter of Brownian motion.
+    prob_space : BrownianMotionProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> B = BrownianMotion()
+    >>> path = B.draw()          # doctest: +SKIP
+    >>> path(1.0)                # doctest: +SKIP
+    -0.32
+    >>> # Brownian motion with positive drift shifts the mean upward
+    >>> B2 = BrownianMotion(drift=0.5, scale=1)
+    >>> path2 = B2.draw()        # doctest: +SKIP
+    >>> path2(2.0)               # doctest: +SKIP
+    1.43
+    >>> # Simulate B(1) many times — mean should be close to the drift
+    >>> B[1.0].sim(1000).mean()  # doctest: +SKIP
+    0.0
     """
 
     def __init__(self, drift=0, scale=1):
-        """Initialize Brownian motion.
-
-        Args:
-          drift: drift parameter of Brownian motion
-          scale: scale parameter of Brownian motion
-        """
+        """Create a Brownian motion process."""
         prob_space = BrownianMotionProbabilitySpace(drift=drift, scale=scale)
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
