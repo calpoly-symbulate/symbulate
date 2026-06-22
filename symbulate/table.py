@@ -25,9 +25,63 @@ def _get_row_html(outcome, count):
 
 
 class Table(dict, Arithmetic):
+    """A tabulated summary of simulation outcomes.
+
+    Stores outcome-count or outcome-relative-frequency pairs, typically
+    produced by calling ``.tabulate()`` on a simulation result. Inherits
+    from ``dict`` so standard dictionary operations work directly on
+    outcomes and their values.
+
+    Parameters
+    ----------
+    hash_map : dict
+        Mapping from outcomes to their counts or frequencies.
+    outcomes : list, optional
+        Ordered list of all possible outcomes. Outcomes absent from
+        ``hash_map`` are assigned a value of 0, and the table preserves
+        this ordering. Defaults to ``None``.
+    normalize : bool, optional
+        If ``True``, divide each count by the total so entries become
+        relative frequencies. Defaults to ``False``.
+    outcome_column : str, optional
+        Label for the outcomes column in the display.
+        Defaults to ``"Outcome"``.
+
+    Attributes
+    ----------
+    outcomes : list or None
+        Ordered list of possible outcomes, if provided.
+    outcome_column : str
+        Label for the outcomes column.
+    value_column : str
+        ``"Relative Frequency"`` when ``normalize=True``,
+        otherwise ``"Frequency"``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> t = Table({'heads': 55, 'tails': 45})
+    >>> t['heads']
+    55
+
+    >>> t_rel = Table({'heads': 55, 'tails': 45}, normalize=True)
+    >>> round(t_rel['heads'], 2)
+    0.55
+
+    >>> t2 = Table({'A': 3}, outcomes=['A', 'B', 'C'])
+    >>> t2['B']
+    0
+
+    >>> RV(Bernoulli(0.5)).sim(100).tabulate()  # doctest: +SKIP
+    Outcome  Frequency
+          0  48
+          1  52
+      Total  100
+    """
 
     def __init__(self, hash_map, outcomes=None, normalize=False,
                  outcome_column="Outcome"):
+        """Initialize a Table from a mapping of outcomes to counts."""
         self.outcomes = outcomes
         self.outcome_column = outcome_column
         if outcomes is None:
@@ -48,6 +102,25 @@ class Table(dict, Arithmetic):
             self.value_column = 'Frequency'
                 
     def ordered_keys(self):
+        """Return outcome keys in sorted or declaration order.
+
+        Returns
+        -------
+        list
+            Keys sorted in ascending order when ``outcomes`` was not
+            specified, or in the original ``outcomes`` order otherwise.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> t = Table({'B': 2, 'A': 3})
+        >>> t.ordered_keys()
+        ['A', 'B']
+
+        >>> t2 = Table({'B': 2, 'A': 3}, outcomes=['B', 'A'])
+        >>> t2.ordered_keys()
+        ['B', 'A']
+        """
         # get keys in order
         if self.outcomes is None:
             keys = list(self.keys())
@@ -62,6 +135,7 @@ class Table(dict, Arithmetic):
         return keys
     
     def __repr__(self):
+        """Return a plain-text table representation."""
         keys = self.ordered_keys()
         keys_strings = [str(x) for x in keys]
         max_key_length = len(max(keys_strings, key=len))
@@ -100,6 +174,7 @@ class Table(dict, Arithmetic):
         return '\n'.join(table_rows)
 
     def _repr_html_(self):
+        """Return an HTML table representation for Jupyter notebooks."""
         keys = self.ordered_keys()
 
         # get HTML for table body
@@ -119,9 +194,23 @@ class Table(dict, Arithmetic):
                                      value_column = self.value_column,
                                      table_body=table_body)
 
-    # The Arithmetic superclass will use this to define all of the
-    # usual arithmetic operations (e.g., +, -, *, /, **, ^, etc.).
     def _operation_factory(self, op):
+        """Return a function that applies ``op`` element-wise to all values.
+
+        Used by the ``Arithmetic`` superclass to define standard arithmetic
+        operations (``+``, ``-``, ``*``, ``/``, ``**``, etc.) on a Table.
+
+        Parameters
+        ----------
+        op : callable
+            A binary operator, e.g. ``operator.add``.
+
+        Returns
+        -------
+        callable
+            A function ``_op_func(self, other)`` that returns a new
+            ``Table`` with each value replaced by ``op(value, other)``.
+        """
 
         def _op_func(self, other):
             return Table(
