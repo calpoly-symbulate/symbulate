@@ -38,6 +38,13 @@ class Scalar(numbers.Number):
         ------
         Exception
             If the scalar type is not understood.
+
+        Examples
+        --------
+        >>> Scalar(3)
+        3
+        >>> Scalar(3.14)
+        3.14
         """
         if isinstance(value, numbers.Integral):
             return Int(value)
@@ -56,22 +63,22 @@ class Int(int, Scalar):
 
     def __new__(cls, value, *args, **kwargs):
         """
-        Create a scalar from a numeric value.
+        Create an integer scalar from a numeric value.
 
         Parameters
         ----------
-        value : int or float
-            Value used to create the scalar.
+        value : int
+            Value used to create the integer scalar.
 
         Returns
         -------
-        Int or Float
-            Scalar object matching the input type.
+        Int
+            An integer scalar object.
 
-        Raises
-        ------
-        Exception
-            If the scalar type is not understood.
+        Examples
+        --------
+        >>> Int(5)
+        5
         """
         return super(Int, cls).__new__(cls, value)
 
@@ -85,28 +92,46 @@ class Float(float, Scalar):
 
     def __new__(cls, value, *args, **kwargs):
         """
-        Create a scalar from a numeric value.
+        Create a floating-point scalar from a numeric value.
 
         Parameters
         ----------
-        value : int or float
-            Value used to create the scalar.
+        value : float
+            Value used to create the floating-point scalar.
 
         Returns
         -------
-        Int or Float
-            Scalar object matching the input type.
+        Float
+            A floating-point scalar object.
 
-        Raises
-        ------
-        Exception
-            If the scalar type is not understood.
+        Examples
+        --------
+        >>> Float(2.71)
+        2.71
         """
         return super(Float, cls).__new__(cls, value)
 
 
 class Tuple(Arithmetic, Transformable, Statistical, Filterable):
-    """A collapsible data structure."""
+    """
+    A collapsible data structure for finite collections of values.
+
+    A ``Tuple`` stores a fixed number of values and supports arithmetic,
+    statistical, and filtering operations.
+
+    Parameters
+    ----------
+    values : scalar or iterable
+        Values to store in the tuple.
+
+    Examples
+    --------
+    >>> t = Tuple([1, 2, 3])
+    >>> t
+    (1, 2, 3)
+    >>> t[0]
+    1
+    """
 
     def __init__(self, values):
         """
@@ -121,6 +146,12 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         ------
         Exception
             If ``values`` is not finite iterable data.
+
+        Examples
+        --------
+        >>> t = Tuple([1, 2, 3])
+        >>> len(t)
+        3
         """
         if is_scalar(values):
             self.values = (values,)
@@ -142,6 +173,14 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         -------
         object or Tuple
             Retrieved value or values.
+
+        Examples
+        --------
+        >>> t = Tuple([10, 20, 30])
+        >>> t[1]
+        20
+        >>> t[[0, 2]]
+        (10, 30)
         """
         # if n is a numeric array, return a Tuple of those values
         if is_numeric_vector(n):
@@ -152,7 +191,6 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
     def __len__(self):
         """
         Return the number of values in the tuple.
-
 
         Returns
         -------
@@ -222,40 +260,73 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         return tuple(self.values) < tuple(other.values)
 
     def apply(self, func):
-        """Apply function to every element of a Tuple.
+        """
+        Apply a function to every element of a Tuple.
 
-        Args:
-          func: function to apply to the Tuple
+        Parameters
+        ----------
+        func : callable
+            Function to apply to each element.
 
-        Example:
-          x = Tuple([1, 2, 3])
-          y = x.apply(log)
+        Returns
+        -------
+        Tuple
+            A new Tuple with ``func`` applied to each element.
 
-        Note: For most standard functions, you can apply the function to
-          the Tuple directly. For example, in the example above,
-          y = log(x) would have been equivalent and more readable.
+        See Also
+        --------
+        Tuple.filter : Select elements that satisfy a criterion.
 
-        User defined functions can also be applied.
+        Notes
+        -----
+        For most standard functions, you can apply the function to the
+        Tuple directly without calling ``apply``. For example,
+        ``log(t)`` is equivalent to ``t.apply(log)`` and more readable.
 
-        Example:
-          def log_squared(n):
-            return log(n) ** 2
-          y = x.apply(log_squared)
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> t = Tuple([1, 4, 9])
+        >>> t.apply(sqrt)
+        (1.0, 2.0, 3.0)
+
+        User-defined functions can also be applied.
+
+        >>> def square_plus_one(x):
+        ...     return x ** 2 + 1
+        >>> t.apply(square_plus_one)
+        (2, 17, 82)
         """
         return type(self)(func(e) for e in self)
 
     # The Filterable superclass will use this to define all of the
     # .filter_*() and .count_*() methods.
     def filter(self, filt):
-        """Get only the elements that satisfy the given criterion.
+        """
+        Get only the elements that satisfy the given criterion.
 
-        Args:
-          filt: A function that takes in an element and returns
-            a boolean.
+        Parameters
+        ----------
+        filt : callable
+            A function that takes an element and returns a boolean.
 
-        Returns:
-          Tuple: Another Tuple containing only those elements e
-          where filt(e) is True.
+        Returns
+        -------
+        Tuple
+            A new Tuple containing only elements ``e`` where ``filt(e)``
+            is True.
+
+        See Also
+        --------
+        Tuple.apply : Apply a function to every element.
+
+        Examples
+        --------
+        >>> t = Tuple([1, 2, 3, 4, 5])
+        >>> t.filter(lambda x: x > 3)
+        (4, 5)
+        >>> t.filter(lambda x: x % 2 == 0)
+        (2, 4)
         """
         return type(self)(e for e in self if filt(e))
 
@@ -300,38 +371,58 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
 
     def cumsum(self):
         """
-        Compute the cumulative sum of the vector.
+        Compute the cumulative sum of the tuple values.
 
         Returns
         -------
-        InfiniteVector
-        Infinite vector containing cumulative sums.
+        Tuple
+            A new Tuple containing the cumulative sums.
+
+        See Also
+        --------
+        InfiniteVector.cumsum : Cumulative sum for an infinite vector.
+
+        Examples
+        --------
+        >>> t = Tuple([1, 2, 3, 4])
+        >>> t.cumsum()
+        (1, 3, 6, 10)
         """
         return type(self)(np.cumsum(self.values))
 
     def plot(self, **kwargs):
         """
-        Plot values from the vector over a specified range.
+        Plot the values of the tuple as a dot-dash line.
 
         Parameters
         ----------
-        tmin : int, default=0
-            Starting index.
-        tmax : int, default=10
-            Ending index (exclusive).
         **kwargs
             Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+
+        See Also
+        --------
+        InfiniteVector.plot : Plot values from an infinite vector.
+        DiscreteTimeFunction.plot : Plot a discrete-time function.
+        ContinuousTimeFunction.plot : Plot a continuous-time function.
+
+        Examples
+        --------
+        >>> import matplotlib.pyplot as plt
+        >>> t = Tuple([1, 4, 2, 8, 5])
+        >>> t.plot()
+        >>> plt.show()  # doctest: +SKIP
         """
         plt.plot(range(len(self)), self.values, ".--", **kwargs)
 
     def __str__(self):
         """
-        Return a string representation of the infinite tuple.
+        Return a string representation of the tuple.
 
         Returns
         -------
         str
-           String containing the first few values of the tuple.
+            String containing all values, or the first few and the last
+            if the tuple is long.
         """
         if len(self) <= 6:
             return "(" + ", ".join(str(x) for x in self) + ")"
@@ -342,19 +433,27 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
 
     def __repr__(self):
         """
-        Return the string representation of the infinite tuple.
-
+        Return the string representation of the tuple.
 
         Returns
         -------
         str
-        String representation of the infinite tuple.
+            String representation of the tuple.
         """
         return self.__str__()
 
 
 class Vector(Tuple):
-    """A data structure like a Tuple, except it does not collapse."""
+    """
+    A data structure like a Tuple, except it does not collapse.
+
+    A ``Vector`` behaves identically to a ``Tuple`` but preserves its
+    structure when returned from arithmetic or transformation operations.
+
+    See Also
+    --------
+    Tuple : The collapsible counterpart to Vector.
+    """
 
     pass
 
@@ -390,14 +489,15 @@ class TimeFunction(Arithmetic):
         Parameters
         ----------
         index_set : DiscreteTimeSequence, Reals, or Naturals
-        The index set used to determine the type of time function to create.
+            The index set used to determine the type of time function to create.
         func : callable, optional
-        Function used to generate values for the time function. Defaults to None.
+            Function used to generate values for the time function.
+            Defaults to None.
 
         Returns
         -------
         DiscreteTimeFunction, ContinuousTimeFunction, or InfiniteVector
-        A time function object matching the given index set.
+            A time function object matching the given index set.
         """
         if isinstance(index_set, DiscreteTimeSequence):
             return DiscreteTimeFunction(func, index_set=index_set)
@@ -413,16 +513,15 @@ class TimeFunction(Arithmetic):
         Parameters
         ----------
         other : object
-        The object to compare against. May be a number, random variable,
-        or another TimeFunction.
+            The object to compare against. May be a number, random variable,
+            or another TimeFunction.
 
         Raises
         ------
         Exception
-        If ``other`` is a TimeFunction with a different index set.
-
+            If ``other`` is a TimeFunction with a different index set.
         Exception
-        If ``other`` is not a number, random variable, or TimeFunction.
+            If ``other`` is not a number, random variable, or TimeFunction.
         """
         if isinstance(other, (numbers.Number, symbulate.RV)):
             return
@@ -462,13 +561,21 @@ class InfiniteTuple(TimeFunction):
     """
 
     def __init__(self, func=lambda n: n):
-        """Initializes a (lazy) data structure for an infinite vector.
+        """
+        Initialize an infinite tuple.
 
-        Args:
-          func: A function of n that returns the value in position n.
-                n is assumed to be a natural number (integer >= 0).
-                This function can be defined at initialization time,
-                or later. By default, it is not set at initialization.
+        Parameters
+        ----------
+        func : callable, optional
+            A function of ``n`` that returns the value at position ``n``.
+            ``n`` is assumed to be a natural number (integer >= 0).
+            Defaults to the identity function ``f(n) = n``.
+
+        Examples
+        --------
+        >>> iv = InfiniteTuple(lambda n: n ** 2)
+        >>> iv[0], iv[3], iv[5]
+        (0, 9, 25)
         """
         if func is not None:
             self.func = func
@@ -482,12 +589,18 @@ class InfiniteTuple(TimeFunction):
         Parameters
         ----------
         n : int or slice
-        Index or slice to retrieve.
+            Index or slice to retrieve.
 
         Returns
         -------
         object or InfiniteTuple
-        Retrieved value or slice.
+            Retrieved value or a new InfiniteTuple representing the slice.
+
+        Examples
+        --------
+        >>> iv = InfiniteTuple(lambda n: n * 2)
+        >>> iv[4]
+        8
         """
         m = len(self.values)
         # Add necessary elements to self.values
@@ -522,6 +635,12 @@ class InfiniteTuple(TimeFunction):
         -------
         object
             Value at the specified index.
+
+        Examples
+        --------
+        >>> iv = InfiniteTuple(lambda n: n + 10)
+        >>> iv(3)
+        13
         """
         return self[n]
 
@@ -544,30 +663,49 @@ class InfiniteTuple(TimeFunction):
         Returns
         -------
         str
-        String representation of the infinite tuple.
+            String representation of the infinite tuple.
         """
         return self.__str__()
 
     def apply(self, func):
-        """Apply function to every element of an InfiniteTuple.
+        """
+        Apply a function to every element of an InfiniteTuple.
 
-        Args:
-          func: function to apply to the InfiniteTuple
+        Parameters
+        ----------
+        func : callable
+            Function to apply to each element.
 
-        Example:
-          x = InfiniteTuple(lambda n: n)
-          y = x.apply(log)
+        Returns
+        -------
+        InfiniteTuple
+            A new InfiniteTuple with ``func`` applied to each element.
 
-        Note: For most standard functions, you can apply the function to
-          the InfiniteTuple directly. For example, in the example above,
-          y = log(x) would have been equivalent and more readable.
+        See Also
+        --------
+        Tuple.apply : Apply a function to every element of a finite Tuple.
 
-        User defined functions can also be applied.
+        Notes
+        -----
+        For most standard functions, you can apply the function to the
+        InfiniteTuple directly without calling ``apply``. For example,
+        ``log(iv)`` is equivalent to ``iv.apply(log)`` and more readable.
 
-        Example:
-          def log_squared(n):
-            return log(n) ** 2
-          y = x.apply(log_squared)
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> iv = InfiniteTuple(lambda n: n + 1)
+        >>> doubled = iv.apply(lambda x: x * 2)
+        >>> doubled[3]
+        8
+
+        User-defined functions can also be applied.
+
+        >>> def square_root(x):
+        ...     return x ** 0.5
+        >>> iv = InfiniteTuple(lambda n: n ** 2)
+        >>> iv.apply(square_root)[4]
+        4.0
         """
         return type(self)(lambda n: func(self[n]))
 
@@ -581,6 +719,7 @@ class InfiniteTuple(TimeFunction):
         ----------
         op : callable
             Binary operation to apply element-wise.
+
         Returns
         -------
         callable
@@ -601,10 +740,11 @@ class InfiniteTuple(TimeFunction):
 
 class InfiniteVector(InfiniteTuple):
     """
-    Infinite tuple indexed by the natural numbers.
+    Infinite vector indexed by the natural numbers.
 
     An ``InfiniteVector`` extends ``InfiniteTuple`` with operations
-    specific to sequences of numeric values.
+    specific to sequences of numeric values, such as cumulative sums
+    and plotting.
 
     Methods
     -------
@@ -612,16 +752,34 @@ class InfiniteVector(InfiniteTuple):
         Return the cumulative sum of the vector.
     plot(tmin=0, tmax=10, **kwargs)
         Plot a range of values from the vector.
+
+    See Also
+    --------
+    InfiniteTuple : The base class for lazy infinite sequences.
     """
 
     def cumsum(self):
         """
-        Compute the cumulative sum of the vector.
+        Compute the cumulative sum of the infinite vector.
+
+        Returns a new ``InfiniteVector`` where position ``n`` contains
+        the sum of elements 0 through ``n``.
 
         Returns
         -------
         InfiniteVector
-        Infinite vector containing cumulative sums.
+            Infinite vector containing cumulative sums.
+
+        See Also
+        --------
+        Tuple.cumsum : Cumulative sum for a finite Tuple.
+
+        Examples
+        --------
+        >>> iv = InfiniteVector(lambda n: 1)
+        >>> cs = iv.cumsum()
+        >>> cs[0], cs[4]
+        (1, 5)
         """
 
         def _func(n):
@@ -631,16 +789,29 @@ class InfiniteVector(InfiniteTuple):
 
     def plot(self, tmin=0, tmax=10, **kwargs):
         """
-        Plot values from the vector over a specified range.
+        Plot values from the vector over a specified index range.
 
         Parameters
         ----------
-        tmin : int, default=0
-            Starting index.
-        tmax : int, default=10
-            Ending index (exclusive).
+        tmin : int, optional
+            Starting index, by default 0.
+        tmax : int, optional
+            Ending index (exclusive), by default 10.
         **kwargs
             Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+
+        See Also
+        --------
+        DiscreteTimeFunction.plot : Plot a discrete-time function.
+        ContinuousTimeFunction.plot : Plot a continuous-time function.
+        Tuple.plot : Plot a finite Tuple.
+
+        Examples
+        --------
+        >>> import matplotlib.pyplot as plt
+        >>> iv = InfiniteVector(lambda n: n ** 2)
+        >>> iv.plot(tmin=0, tmax=5)
+        >>> plt.show()  # doctest: +SKIP
         """
         xs = range(tmin, tmax)
         ys = [self[t] for t in range(tmin, tmax)]
@@ -657,7 +828,7 @@ class DiscreteTimeFunction(TimeFunction):
     Attributes
     ----------
     func : callable
-        Function used to generate values.
+        Function used to generate values at sample index ``n``.
     index_set : DiscreteTimeSequence
         Set of valid discrete time values.
     array_pos : list
@@ -671,19 +842,37 @@ class DiscreteTimeFunction(TimeFunction):
         Compose a function with this discrete-time function.
     plot(tmin=0, tmax=10, **kwargs)
         Plot values over a specified time range.
+
+    See Also
+    --------
+    ContinuousTimeFunction : Function defined over continuous time.
+    InfiniteVector : Infinite vector indexed by the natural numbers.
     """
 
     def __init__(self, func=None, fs=1, index_set=None):
-        """Initializes a data structure for a discrete-time function.
+        """
+        Initialize a discrete-time function.
 
-        Args:
-          func: A function of n that returns the value at time n / fs.
-            n is assumed to be any integer (postive or negative).
-            By default, it is set to the identity function f[n] = n / fs.
-          fs (int): The sampling rate of the function, in Hertz (samples
-            per second).
-          index_set (IndexSet): The index set of the discrete-time function
-            (fs is ignored if this is specified.)
+        Parameters
+        ----------
+        func : callable, optional
+            A function of sample index ``n`` that returns the value at time
+            ``n / fs``. ``n`` may be any integer (positive or negative).
+            Defaults to the identity ``f[n] = n / fs``.
+        fs : int, optional
+            The sampling rate in Hertz (samples per second), by default 1.
+            Ignored if ``index_set`` is provided.
+        index_set : DiscreteTimeSequence, optional
+            The index set of the discrete-time function. If provided,
+            ``fs`` is ignored.
+
+        Examples
+        --------
+        >>> f = DiscreteTimeFunction(lambda n: n ** 2, fs=1)
+        >>> f[0], f[3]
+        (0, 9)
+        >>> f(3.0)
+        9
         """
         if func is not None:
             self.func = func
@@ -777,12 +966,20 @@ class DiscreteTimeFunction(TimeFunction):
         Returns
         -------
         object or Vector
-            Value at the specified index, or vector of values.
+            Value at the specified index, or a Vector of values.
 
         Raises
         ------
         TypeError
             If ``n`` is not a valid index type.
+
+        Examples
+        --------
+        >>> f = DiscreteTimeFunction(lambda n: n * 3, fs=1)
+        >>> f[2]
+        6
+        >>> f[0:4]
+        (0, 3, 6, 9)
         """
         if is_number(n):
             return self._get_value_at_index(n)
@@ -805,8 +1002,27 @@ class DiscreteTimeFunction(TimeFunction):
         Parameters
         ----------
         t : float, vector, or DiscreteTimeFunction
-            Time value, vector of time values, or discrete
+            Time value, vector of time values, or a discrete-time function
+            to use as the input.
 
+        Returns
+        -------
+        object, Vector, or DiscreteTimeFunction
+            Function value, vector of values, or a composed discrete-time
+            function.
+
+        Raises
+        ------
+        TypeError
+            If ``t`` is not a supported input type.
+
+        Examples
+        --------
+        >>> f = DiscreteTimeFunction(lambda n: n ** 2, fs=2)
+        >>> f(0.0)
+        0
+        >>> f(0.5)
+        1
         """
         if is_number(t):
             return self._get_value_at_time(t)
@@ -824,25 +1040,46 @@ class DiscreteTimeFunction(TimeFunction):
             )
 
     def apply(self, func):
-        """Compose function with the TimeFunction.
+        """
+        Compose a function with this discrete-time function.
 
-        Args:
-          func: function to compose with the TimeFunction
+        Parameters
+        ----------
+        func : callable
+            Function to compose with this discrete-time function.
 
-        Example:
-          f = DiscreteTimeFunction(lambda t: t, fs=1)
-          g = f.apply(log)
+        Returns
+        -------
+        DiscreteTimeFunction
+            A new discrete-time function where each value is ``func``
+            applied to the original value at that index.
 
-        Note: For most standard functions, you can apply the function to
-          the TimeFunction directly. For example, in the example above,
-          g = log(f) would have been equivalent and more readable.
+        See Also
+        --------
+        ContinuousTimeFunction.apply : Compose a function with a continuous-time function.
+        InfiniteTuple.apply : Apply a function to every element of an InfiniteTuple.
+
+        Notes
+        -----
+        For most standard functions, you can apply the function to the
+        DiscreteTimeFunction directly without calling ``apply``. For example,
+        ``log(f)`` is equivalent to ``f.apply(log)`` and more readable.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> f = DiscreteTimeFunction(lambda n: n + 1, fs=1)
+        >>> g = f.apply(lambda x: x ** 2)
+        >>> g[0], g[3]
+        (1, 16)
 
         User-defined functions can also be applied.
 
-        Example:
-          def log_squared(f):
-            return log(f) ** 2
-          g = f.apply(log_squared)
+        >>> def double(x):
+        ...     return x * 2
+        >>> h = f.apply(double)
+        >>> h[2]
+        6
         """
         return DiscreteTimeFunction(lambda n: func(self[n]), index_set=self.index_set)
 
@@ -880,27 +1117,25 @@ class DiscreteTimeFunction(TimeFunction):
 
     def __str__(self):
         """
-        Return a string representation of the infinite tuple.
+        Return a string representation of the discrete-time function.
 
         Returns
         -------
         str
-            String containing the first few values of the tuple.
+            String containing a few sample values around time zero.
         """
         first_few = ", ".join(str(self[n]) for n in range(-2, 3))
         return "(..., " + first_few + ", ...)"
 
     def __repr__(self):
         """
-        Return the string representation of the infinite tuple.
-
+        Return the string representation of the discrete-time function.
 
         Returns
         -------
         str
-        String representation of the infinite tuple.
+            String representation of the discrete-time function.
         """
-
         return self.__str__()
 
     def plot(self, tmin=0, tmax=10, **kwargs):
@@ -909,13 +1144,25 @@ class DiscreteTimeFunction(TimeFunction):
 
         Parameters
         ----------
-        tmin : int, optional
+        tmin : int or float, optional
             Starting time, by default 0.
-        tmax : int, optional
+        tmax : int or float, optional
             Ending time, by default 10.
         **kwargs
-            Additional keyword arguments passed to
-            ``matplotlib.pyplot.plot``.
+            Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+
+        See Also
+        --------
+        ContinuousTimeFunction.plot : Plot a continuous-time function.
+        InfiniteVector.plot : Plot values from an infinite vector.
+        Tuple.plot : Plot a finite Tuple.
+
+        Examples
+        --------
+        >>> import matplotlib.pyplot as plt
+        >>> f = DiscreteTimeFunction(lambda n: n, fs=1)
+        >>> f.plot(tmin=0, tmax=5)
+        >>> plt.show()  # doctest: +SKIP
         """
         nmin = int(np.floor(tmin * self.index_set.fs))
         nmax = int(np.ceil(tmax * self.index_set.fs))
@@ -930,20 +1177,43 @@ class ContinuousTimeFunction(TimeFunction):
 
     A ``ContinuousTimeFunction`` maps real-valued times to values.
 
+    Attributes
+    ----------
+    func : callable
+        Function that maps time ``t`` to a value.
+    index_set : Reals
+        The continuous index set.
+
     Methods
     -------
     apply(func)
         Compose a function with this continuous-time function.
+    plot(tmin=0, tmax=10, **kwargs)
+        Plot values over a specified time range.
+
+    See Also
+    --------
+    DiscreteTimeFunction : Function indexed by a discrete time sequence.
     """
 
     def __init__(self, func=lambda t: t):
-        """Initializes a data structure for a discrete-time function.
+        """
+        Initialize a continuous-time function.
 
-        Args:
-          func: A function of n that returns the value in position n.
-                n is assumed to be any integer (postive or negative).
-                This function can be defined at initialization time,
-                or later. By default, it is not set at initialization.
+        Parameters
+        ----------
+        func : callable, optional
+            A function of continuous time ``t`` that returns the value at
+            that time. Defaults to the identity function ``f(t) = t``.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> f = ContinuousTimeFunction(lambda t: np.sin(t))
+        >>> f(0)
+        0.0
+        >>> round(f(np.pi / 2), 5)
+        1.0
         """
         self.index_set = Reals()
         if func is not None:
@@ -956,7 +1226,8 @@ class ContinuousTimeFunction(TimeFunction):
         Parameters
         ----------
         t : float, vector, or ContinuousTimeFunction
-            Time value, vector of time values, or continuous-time function.
+            Time value, vector of time values, or a continuous-time function
+            to use as the input.
 
         Returns
         -------
@@ -967,8 +1238,15 @@ class ContinuousTimeFunction(TimeFunction):
         ------
         TypeError
             If ``t`` is not a supported input type.
-        """
 
+        Examples
+        --------
+        >>> f = ContinuousTimeFunction(lambda t: t ** 2)
+        >>> f(3.0)
+        9.0
+        >>> f([1.0, 2.0, 3.0])
+        (1.0, 4.0, 9.0)
+        """
         if is_number(t):
             return self.func(t)
         elif is_numeric_vector(t):
@@ -992,36 +1270,56 @@ class ContinuousTimeFunction(TimeFunction):
         Parameters
         ----------
         t : float
-        Time at which to evaluate the function.
+            Time at which to evaluate the function.
 
         Returns
         -------
         object
-        Value at the specified time.
+            Value at the specified time.
         """
         return self(t)
 
     def apply(self, func):
-        """Compose function with the TimeFunction.
+        """
+        Compose a function with this continuous-time function.
 
-        Args:
-          func: function to compose with the TimeFunction
+        Parameters
+        ----------
+        func : callable
+            Function to compose with this continuous-time function.
 
+        Returns
+        -------
+        ContinuousTimeFunction
+            A new continuous-time function where each value is ``func``
+            applied to the original value at that time.
 
-        Example:
-          f = ContinuousTimeFunction(lambda t: t)
-          g = f.apply(log)
+        See Also
+        --------
+        DiscreteTimeFunction.apply : Compose a function with a discrete-time function.
+        InfiniteTuple.apply : Apply a function to every element of an InfiniteTuple.
 
-        Note: For most standard functions, you can apply the function to
-          the TimeFunction directly. For example, in the example above,
-          g = log(f) would have been equivalent and more readable.
+        Notes
+        -----
+        For most standard functions, you can apply the function to the
+        ContinuousTimeFunction directly without calling ``apply``. For example,
+        ``log(f)`` is equivalent to ``f.apply(log)`` and more readable.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> f = ContinuousTimeFunction(lambda t: t)
+        >>> g = f.apply(lambda x: x ** 2)
+        >>> g(3.0)
+        9.0
 
         User-defined functions can also be applied.
 
-        Example:
-          def log_squared(f):
-            return log(f) ** 2
-          g = f.apply(log_squared)
+        >>> def shift(x):
+        ...     return x + 5
+        >>> h = f.apply(shift)
+        >>> h(2.0)
+        7.0
         """
         return ContinuousTimeFunction(lambda t: func(self(t)))
 
@@ -1055,24 +1353,23 @@ class ContinuousTimeFunction(TimeFunction):
 
     def __str__(self):
         """
-        Return a string representation of the infinite tuple.
+        Return a string representation of the continuous-time function.
 
         Returns
         -------
         str
-           String containing the first few values of the tuple.
+            A placeholder string describing the function type.
         """
         return "[continuous-time function]"
 
     def __repr__(self):
         """
-        Return the string representation of the infinite tuple.
-
+        Return the string representation of the continuous-time function.
 
         Returns
         -------
         str
-        String representation of the infinite tuple.
+            String representation of the continuous-time function.
         """
         return self.__str__()
 
@@ -1082,13 +1379,26 @@ class ContinuousTimeFunction(TimeFunction):
 
         Parameters
         ----------
-        tmin : int, optional
+        tmin : float, optional
             Starting time, by default 0.
-        tmax : int, optional
+        tmax : float, optional
             Ending time, by default 10.
         **kwargs
-            Additional keyword arguments passed to
-            ``matplotlib.pyplot.plot``.
+            Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+
+        See Also
+        --------
+        DiscreteTimeFunction.plot : Plot a discrete-time function.
+        InfiniteVector.plot : Plot values from an infinite vector.
+        Tuple.plot : Plot a finite Tuple.
+
+        Examples
+        --------
+        >>> import matplotlib.pyplot as plt
+        >>> import numpy as np
+        >>> f = ContinuousTimeFunction(lambda t: np.sin(t))
+        >>> f.plot(tmin=0, tmax=2 * np.pi)
+        >>> plt.show()  # doctest: +SKIP
         """
         ts = np.linspace(tmin, tmax, 200)
         ys = [self(t) for t in ts]
@@ -1097,9 +1407,11 @@ class ContinuousTimeFunction(TimeFunction):
 
 class DiscreteValued:
     """
-    Object with discrete-valued states and arrival information.
+    Mixin for objects with discrete-valued states and arrival times.
 
-    ...
+    Provides access to states, interarrival times, and cumulative arrival
+    times for stochastic processes such as Markov chains and Poisson
+    processes.
 
     Methods
     -------
@@ -1125,6 +1437,19 @@ class DiscreteValued:
         ------
         NameError
             If states are not defined.
+
+        See Also
+        --------
+        DiscreteValued.get_interarrival_times : Return interarrival times.
+        DiscreteValued.get_arrival_times : Return cumulative arrival times.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> X = MarkovChain(tpm=[[0.5, 0.5], [0.3, 0.7]], initial_dist=[1, 0])
+        >>> sim = X.sim(1)  # doctest: +SKIP
+        >>> sim[0].get_states()  # doctest: +SKIP
+        (0, 1, 0, ...)
         """
         if not hasattr(self, "states"):
             raise NameError("States not defined for " "function.")
@@ -1143,6 +1468,20 @@ class DiscreteValued:
         ------
         NameError
             If interarrival times are not defined.
+
+        See Also
+        --------
+        DiscreteValued.get_arrival_times : Return cumulative arrival times.
+        DiscreteValued.get_states : Return the states.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> T = Exponential(1)
+        >>> N = PoissonProcess(T)  # doctest: +SKIP
+        >>> sim = N.sim(1)  # doctest: +SKIP
+        >>> sim[0].get_interarrival_times()  # doctest: +SKIP
+        (0.23, 1.05, ...)
         """
         if not hasattr(self, "interarrival_times"):
             raise NameError("Interarrival times not " "defined for function.")
@@ -1151,6 +1490,8 @@ class DiscreteValued:
     def get_arrival_times(self):
         """
         Return the arrival times of the function.
+
+        Computes the cumulative sum of the interarrival times.
 
         Returns
         -------
@@ -1162,6 +1503,20 @@ class DiscreteValued:
         ------
         NameError
             If interarrival times are not defined.
+
+        See Also
+        --------
+        DiscreteValued.get_interarrival_times : Return raw interarrival times.
+        DiscreteValued.get_states : Return the states.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> T = Exponential(1)
+        >>> N = PoissonProcess(T)  # doctest: +SKIP
+        >>> sim = N.sim(1)  # doctest: +SKIP
+        >>> sim[0].get_arrival_times()  # doctest: +SKIP
+        (0.23, 1.28, ...)
         """
         if not hasattr(self, "interarrival_times"):
             raise NameError("Interarrival times not " "defined for function.")
@@ -1169,13 +1524,42 @@ class DiscreteValued:
 
 
 def join(result1, result2):
-    """Joins two result objects into a single result object.
-
-    Args:
-      result1: The first result.
-      result2: The second result.
     """
+    Join two result objects into a single Tuple.
 
+    Combines the values of two result objects, unpacking any ``Tuple``
+    into its component values before joining.
+
+    Parameters
+    ----------
+    result1 : object
+        The first result. If a ``Tuple``, its values are unpacked.
+    result2 : object
+        The second result. If a ``Tuple``, its values are unpacked.
+
+    Returns
+    -------
+    Tuple
+        A new Tuple containing the values of both inputs.
+
+    See Also
+    --------
+    concat : Concatenate scalars and vectors into one data structure.
+
+    Examples
+    --------
+    >>> a = Scalar(1)
+    >>> b = Scalar(2)
+    >>> join(a, b)
+    (1, 2)
+
+    Tuples are unpacked before joining.
+
+    >>> t1 = Tuple([1, 2])
+    >>> t2 = Tuple([3, 4])
+    >>> join(t1, t2)
+    (1, 2, 3, 4)
+    """
     a = tuple(result1.values) if type(result1) == Tuple else (result1,)
     b = tuple(result2.values) if type(result2) == Tuple else (result2,)
 
@@ -1183,15 +1567,48 @@ def join(result1, result2):
 
 
 def concat(*args):
-    """Concatenates scalars and vectors into one data structure.
+    """
+    Concatenate scalars and vectors into one data structure.
 
-    Args:
-      *args: Any number of scalar or vector objects. The last
-          argument can be an InfiniteTuple.
+    Parameters
+    ----------
+    *args : scalar, vector, or InfiniteTuple
+        Any number of scalar or vector objects. The last argument may
+        be an InfiniteTuple.
 
-    Returns:
-      A Vector or an InfiniteTuple, depending on whether the
-      last argument is an InfiniteTuple.
+    Returns
+    -------
+    Vector or InfiniteTuple
+        A ``Vector`` if no ``InfiniteTuple`` is present; otherwise an
+        ``InfiniteTuple`` whose first elements come from the scalar and
+        vector arguments and the rest come from the trailing
+        ``InfiniteTuple``.
+
+    Raises
+    ------
+    Exception
+        If an ``InfiniteTuple`` appears before the last argument.
+    TypeError
+        If any argument is not a scalar, vector, or InfiniteTuple.
+
+    See Also
+    --------
+    join : Join two result objects into a single Tuple.
+
+    Examples
+    --------
+    >>> concat(1, 2, 3)
+    (1, 2, 3)
+    >>> v = Vector([4, 5])
+    >>> concat(1, v, 3)
+    (1, 4, 5, 3)
+
+    An InfiniteTuple may be the final argument.
+
+    >>> iv = InfiniteVector(lambda n: n)
+    >>> result = concat(10, 20, iv)
+    >>> result[0], result[1], result[2], result[3]
+    (10, 20, 0, 1)
     """
     values = []
     for i, arg in enumerate(args):
