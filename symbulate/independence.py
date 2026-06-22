@@ -2,15 +2,35 @@ from .probability_space import ProbabilitySpace
 from .random_variables import RV
 
 def AssumeIndependent(*args):
-    """Make RVs independent.
+    """Construct RVs with the same marginals but defined to be independent.
 
-    Args:
-      *args: Any number of RVs
+    Takes RVs defined on separate probability spaces and returns new RVs
+    on a joint probability space such that they are mutually independent.
 
-    Returns:
-      RVs with the same marginal distributions
-      as the inputs, but defined on a common
-      probability space so as to be independent.
+    Parameters
+    ----------
+    *args : RV
+        Any number of RVs, each defined on a different probability space.
+
+    Returns
+    -------
+    tuple of RV
+        RVs with the same marginal distributions as the inputs,
+        defined on a common probability space as independent.
+
+    Raises
+    ------
+    Exception
+        If any argument is not an RV.
+    Exception
+        If any two RVs share the same probability space.
+
+    Examples
+    --------
+    >>> X = RV(Normal(0, 1))
+    >>> Y = RV(Exponential(1))
+    >>> X, Y = AssumeIndependent(X, Y)
+    >>> (X & Y).sim(10000).plot()
     """
 
     # Check that none of the RVs are defined on
