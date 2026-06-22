@@ -34,7 +34,7 @@ class RandomProcess(RV):
     --------
     >>> from symbulate import *
     >>> X = RandomProcess(Bernoulli(p=0.5) ** inf)
-    >>> X[3].sim(5) # random
+    >>> X[3].sim(5)  # doctest: +SKIP
     Results([0, 1, 0, 1, 1])
     """
 
@@ -79,7 +79,7 @@ class RandomProcess(RV):
         >>> from symbulate import *
         >>> X = RandomProcess(Bernoulli(p=0.5) ** inf)
         >>> X[0] = 1
-        >>> X[0].sim(5) # random
+        >>> X[0].sim(5)  # doctest: +SKIP
         Results([1, 1, 1, 1, 1])
         """
         if t not in self.index_set:
@@ -110,7 +110,7 @@ class RandomProcess(RV):
         --------
         >>> from symbulate import *
         >>> X = RandomProcess(Bernoulli(p=0.5) ** inf)
-        >>> X[0].sim(5) # random
+        >>> X[0].sim(5)  # doctest: +SKIP
         Results([0, 1, 0, 1, 1])
         """
         # First, check if the time is in self.rvs.
@@ -135,7 +135,7 @@ class RandomProcess(RV):
         --------
         >>> from symbulate import *
         >>> X = RandomProcess(Bernoulli(p=0.5) ** inf)
-        >>> X(0).sim(5) # random
+        >>> X(0).sim(5)  # doctest: +SKIP
         Results([0, 1, 0, 1, 1])
         """
         return RV(self.prob_space, lambda outcome: self.func(outcome)(t))
