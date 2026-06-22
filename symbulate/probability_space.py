@@ -8,17 +8,27 @@ from .results import Results
 class ProbabilitySpace:
     """Defines a probability space.
 
+    A probability space encapsulates a random experiment by wrapping
+    a ``draw`` function that produces one outcome each time it is called.
+
+    Parameters
+    ----------
+    draw : callable
+        A function that takes no arguments and returns one outcome
+        from the probability space.
+
     Attributes
     ----------
     draw : callable
-        A function explaining how to draw one outcome from the probability space.
+        A function that takes no arguments and returns one outcome
+        from the probability space.
 
     Examples
     --------
-    Define a probability space for rolling a die:
-
+    >>> from symbulate import *
     >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
-    >>> die.draw()
+    >>> die.draw()  # doctest: +SKIP
+    3
     """
 
     def __init__(self, draw):
@@ -40,10 +50,9 @@ class ProbabilitySpace:
 
         Examples
         --------
-        Simulate 10 coin flips:
-
+        >>> from symbulate import *
         >>> coin = ProbabilitySpace(lambda: np.random.choice(["H", "T"]))
-        >>> coin.sim(10)
+        >>> coin.sim(10)  # doctest: +SKIP
         Results(['H', 'T', 'H', 'H', 'T', 'T', 'H', 'T', 'H', 'T'])
         """
         return Results(self.draw() for _ in range(n))
@@ -69,21 +78,22 @@ class ProbabilitySpace:
 
         Parameters
         ----------
-        func : function
-            A function to apply to each realization.
+        func : callable
+            A function to apply to each outcome drawn from this space.
 
         Returns
         -------
         ProbabilitySpace
-            A new ProbabilitySpace where each realization is func applied to a realization from the current probability space.
+            A new probability space where each outcome is ``func`` applied
+            to one draw from the current space.
 
         Examples
         --------
-        Square each outcome from a die roll:
-
+        >>> from symbulate import *
         >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
-        >>> squared_die = die.apply(lambda x: x**2)
-        >>> squared_die.draw()
+        >>> squared_die = die.apply(lambda x: x ** 2)
+        >>> squared_die.draw()  # doctest: +SKIP
+        16
         """
 
         def draw():
@@ -97,21 +107,21 @@ class ProbabilitySpace:
         Parameters
         ----------
         other : ProbabilitySpace
-            The other probability space to join with.
+            The other probability space to combine with.
 
         Returns
         -------
         ProbabilitySpace
-            A new probability space where each draw is a pair of outcomes from one draw from ``self`` and one draw from ``other``.
+            A new probability space whose draws produce one outcome from
+            ``self`` and one from ``other``, joined into a single tuple.
 
         Examples
         --------
-        Model rolling a die and flipping a coin as a joint probability space:
-
+        >>> from symbulate import *
         >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
         >>> coin = ProbabilitySpace(lambda: np.random.choice(["H", "T"]))
         >>> joint_space = die * coin
-        >>> joint_space.draw()
+        >>> joint_space.draw()  # doctest: +SKIP
         (3, 'H')
         """
 
@@ -126,20 +136,22 @@ class ProbabilitySpace:
         Parameters
         ----------
         exponent : int or float
-            The number of independent draws to take.
+            Number of independent draws to take. Pass ``float('inf')``
+            to create an infinite sequence of draws generated lazily
+            on demand.
 
         Returns
         -------
         ProbabilitySpace
-            A new probability space where each draw is a vector of ``exponent`` outcomes from the original probability space.
+            A new probability space whose draws produce a Vector of
+            ``exponent`` outcomes from the original space.
 
         Examples
         --------
-        Model rolling 3 dice at once:
-
+        >>> from symbulate import *
         >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
         >>> three_dice = die ** 3
-        >>> three_dice.draw()
+        >>> three_dice.draw()  # doctest: +SKIP
         Vector([2, 5, 3])
         """
         if exponent == float("inf"):
@@ -161,22 +173,32 @@ class ProbabilitySpace:
 class Event(Logical):
     """Defines an event in a probability space.
 
-    An event is a function that takes an outcome from a probability space and returns a boolean indicating whether that event was observed or not.
+    An event is a predicate over outcomes: given one draw from a
+    probability space, it returns a bool indicating whether that
+    outcome satisfies the event.
+
+    Parameters
+    ----------
+    prob_space : ProbabilitySpace
+        The probability space the event is defined on.
+    func : callable
+        A function that maps one outcome to a bool — ``True`` if the
+        event occurred, ``False`` otherwise.
 
     Attributes
     ----------
     prob_space : ProbabilitySpace
         The probability space that the event is defined on.
-    func : function
-        A function that defines the event and maps outcomes to a boolean for whether the event occurred or not.
+    func : callable
+        A function that maps outcomes to a bool for whether
+        the event occurred.
 
     Examples
     --------
-    Define an event for rolling an even number on a die:
-
+    >>> from symbulate import *
     >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
     >>> even_event = Event(die, lambda x: x % 2 == 0)
-    >>> even_event.draw()
+    >>> even_event.draw()  # doctest: +SKIP
     True
     """
 
@@ -196,7 +218,8 @@ class Event(Logical):
         Raises
         ------
         Exception
-            If the ``self`` and ``other`` are not defined on the same probability space.
+            If ``self`` and ``other`` are not defined on the same
+            probability space.
         """
         self.prob_space.check_same(other.prob_space)
 
@@ -208,12 +231,14 @@ class Event(Logical):
         Parameters
         ----------
         op : callable
-            The logical operator to apply to the two events.
+            The logical operator (e.g., ``and``, ``or``, ``not``) to
+            apply to the two events.
 
         Returns
         -------
         callable
-            A bound method that applies ``op`` to two events and returns a new combined event.
+            A bound method that applies ``op`` to ``self`` and another
+            event and returns a new combined ``Event``.
         """
 
         def _op_func(self, other=None):
@@ -245,7 +270,8 @@ class Event(Logical):
         Raises
         ------
         Exception
-            If an attempt is made to cast an Event to a boolean.
+            Always raised to prevent chained comparisons like ``2 < X < 5``.
+            Use ``(2 < X) & (X < 5)`` instead.
         """
         raise Exception(
             "Cannot cast an Event to a boolean. "
@@ -260,16 +286,16 @@ class Event(Logical):
         Returns
         -------
         bool
-            Whether the event occurred ``True`` or not ``False`` for the drawn outcome.
+            ``True`` if the event occurred for the drawn outcome,
+            ``False`` otherwise.
 
         Examples
         --------
-        Check if a single dice roll is greater than 3:
-
+        >>> from symbulate import *
         >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
         >>> event = Event(die, lambda x: x > 3)
-        >>> event.draw()
-        True
+        >>> event.draw()  # doctest: +SKIP
+        False
         """
         return self.func(self.prob_space.draw())
 
@@ -279,21 +305,21 @@ class Event(Logical):
         Parameters
         ----------
         n : int
-            How many draws to make.
+            Number of draws to make.
 
         Returns
         -------
         Results
-            A Results object containing a list of boolean results for each draw.
+            A Results object containing a bool for each draw — ``True``
+            if the event occurred, ``False`` otherwise.
 
         Examples
         --------
-        Estimate the probability of that a dice roll is even:
-
+        >>> from symbulate import *
         >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
-        >>> even_event = Event(die, lambda x: x % 2 == 0
-        >>> even_event.sim(10).mean()
-        0.5
+        >>> even_event = Event(die, lambda x: x % 2 == 0)
+        >>> even_event.sim(10000).mean()  # doctest: +SKIP
+        0.498
         """
         return Results(self.draw() for _ in range(n))
 
@@ -301,31 +327,46 @@ class Event(Logical):
 class BoxModel(ProbabilitySpace):
     """Defines a probability space from a box model.
 
-    Attributes
+    A box model represents drawing tickets from a collection, with options
+    for replacement, custom probabilities, and ordering rules.
+
+    Parameters
     ----------
     box : list or dict
-        The box to sample from.
-        The box can be specified either directly as a list
-        of objects or indirectly as a dict of objects and
-        their counts.
-    size : int, optional
-        How many draws to make.
+        The collection of tickets to sample from. Specify as a list
+        of objects or as a dict mapping objects to their counts.
+    size : int or float, optional
+        Number of tickets to draw per outcome. Default is ``None``
+        (draw 1 ticket and return a scalar). Pass ``float('inf')``
+        for an infinite lazy sequence.
     replace : bool, optional
-        Sample with replacement if ``True`` or without if ``False``.
-    probs : list, optional
-        Probabilities of sampling each ticket
-        (by default, all tickets are equally likely). Note
-        that this is ignored if box is specified as a dict.
+        If ``True``, sample with replacement. Default is ``True``.
+    probs : list of float, optional
+        Sampling probability for each ticket. All tickets are equally
+        likely by default. Ignored when ``box`` is a dict.
     order_matters : bool, optional
-        Count different orderings of the same tickets as different outcomes if ``True`` or the same outcome if ``False``.
+        If ``True``, different orderings of the same tickets are counted
+        as different outcomes. Default is ``True``.
+
+    Attributes
+    ----------
+    box : list
+        The flat list of tickets (after expanding any dict counts).
+    size : int or float or None
+        Number of tickets drawn per outcome.
+    replace : bool
+        Whether tickets are drawn with replacement.
+    probs : list of float or None
+        Per-ticket sampling probabilities, or ``None`` for uniform.
+    order_matters : bool
+        Whether ticket order affects the outcome.
 
     Examples
     --------
-    Draw a ticket from a box of colored balls:
-
+    >>> from symbulate import *
     >>> box = ['red', 'blue', 'green']
     >>> box_model = BoxModel(box)
-    >>> box_model.draw()
+    >>> box_model.draw()  # doctest: +SKIP
     'blue'
     """
 
@@ -366,21 +407,20 @@ class BoxModel(ProbabilitySpace):
     def draw(self):
         """Draw one outcome from the box model probability space.
 
-        A function that takes no arguments and returns a value(s) from the
-            "box" argument of the BoxModel.
-
         Returns
         -------
         object or Vector or InfiniteVector
-            A single value from the box if size is 1, a Vector of values from the box if size is a finite integer greater than 1, or an InfiniteVector of values from the box if size is infinity.
+            A single ticket if ``size`` is ``None``, a ``Vector`` of
+            tickets if ``size`` is a finite integer greater than 1, or
+            an ``InfiniteVector`` of tickets if ``size`` is
+            ``float('inf')``.
 
         Examples
         --------
-        Draw 3 tickets from a box of colored balls:
-
+        >>> from symbulate import *
         >>> box = ['red', 'blue', 'green']
         >>> box_model = BoxModel(box, size=3, replace=True)
-        >>> box_model.draw()
+        >>> box_model.draw()  # doctest: +SKIP
         Vector(['blue', 'red', 'green'])
         """
 
@@ -403,23 +443,37 @@ class BoxModel(ProbabilitySpace):
 
 
 class DeckOfCards(BoxModel):
-    """Defines the probability space for drawing from a deck of cards.
+    """Defines the probability space for drawing from a standard 52-card deck.
+
+    Each card is a tuple of ``(rank, suit)``, where rank is an integer
+    2–10 or one of ``'J'``, ``'Q'``, ``'K'``, ``'A'``, and suit is one
+    of ``'Diamonds'``, ``'Hearts'``, ``'Clubs'``, ``'Spades'``.
+
+    Parameters
+    ----------
+    size : int or float, optional
+        Number of cards to draw per outcome. Default is ``None``
+        (draw 1 card and return a scalar).
+    replace : bool, optional
+        If ``True``, draw with replacement. Default is ``False``.
+    order_matters : bool, optional
+        If ``True``, different orderings of the same cards are counted
+        as different outcomes. Default is ``True``.
 
     Attributes
     ----------
-    size : int, optional
-        How many draws to make. Defaults to None.
-    replace : bool, optional
-        Draw with replacement if ``True`` or without replacement if ``False``. Defaults to ``False``.
-    order_matters : bool, optional
-        If ``True``, count different orderings of the same cards as different outcomes. If ``False``, count different orderings of the same cards as the same outcome. Defaults to ``True``.
+    size : int or float or None
+        Number of cards drawn per outcome.
+    replace : bool
+        Whether cards are drawn with replacement.
+    order_matters : bool
+        Whether card order affects the outcome.
 
     Examples
     --------
-    Draw a single card from a deck:
-
+    >>> from symbulate import *
     >>> deck = DeckOfCards()
-    >>> deck.draw()
+    >>> deck.draw()  # doctest: +SKIP
     ('A', 'Spades')
     """
 

@@ -15,6 +15,16 @@ class Distribution(ProbabilitySpace):
     You typically won't use this class directly — use one of the
     specific distribution classes instead (e.g., ``Normal``, ``Binomial``).
 
+    Parameters
+    ----------
+    params : dict
+        Named parameter values for the underlying scipy distribution.
+    scipy : scipy.stats distribution
+        The scipy distribution object used for computation.
+    discrete : bool, optional
+        ``True`` for discrete distributions, ``False`` for continuous.
+        Default is ``True``.
+
     Attributes
     ----------
     params : dict
@@ -193,6 +203,11 @@ class Bernoulli(Distribution):
     Models a single trial with two outcomes: success (1) with probability
     ``p``, or failure (0) with probability ``1 - p``.
 
+    Parameters
+    ----------
+    p : float
+        Probability of success (1), between 0 and 1.
+
     Attributes
     ----------
     p : float
@@ -213,7 +228,7 @@ class Bernoulli(Distribution):
     """
 
     def __init__(self, p):
-        """Create a Bernoulli distribution."""
+        """Initialize a Bernoulli distribution."""
         if 0 <= p <= 1:
             self.p = p
         else:
@@ -231,6 +246,13 @@ class Binomial(Distribution):
 
     Models the number of successes in ``n`` independent trials, each
     with probability ``p`` of success.
+
+    Parameters
+    ----------
+    n : int
+        Number of trials. Must be a non-negative integer.
+    p : float
+        Probability of success on each trial, between 0 and 1.
 
     Attributes
     ----------
@@ -254,13 +276,10 @@ class Binomial(Distribution):
     """
 
     def __init__(self, n, p):
-        """Create a binomial distribution."""
+        """Initialize a binomial distribution."""
 
         if n >= 0 and isinstance(n, numbers.Integral):
             self.n = n
-        #elif n == 0:
-            #raise NotImplementedError
-            #TODO
         else:
             raise Exception("n must be a non-negative integer")
 
@@ -284,6 +303,15 @@ class Hypergeometric(Distribution):
     without replacement from a collection containing ``N0`` zeros
     and ``N1`` ones.
 
+    Parameters
+    ----------
+    n : int
+        Number of draws (without replacement). Must be positive.
+    N0 : int
+        Number of 0s (failures) in the collection.
+    N1 : int
+        Number of 1s (successes) in the collection.
+
     Attributes
     ----------
     n : int
@@ -306,7 +334,7 @@ class Hypergeometric(Distribution):
     """
 
     def __init__(self, n, N0, N1):
-        """Create a hypergeometric distribution."""
+        """Initialize a hypergeometric distribution."""
 
         if n > 0 and isinstance(n, numbers.Integral):
             self.n = n
@@ -342,6 +370,11 @@ class Geometric(Distribution):
     Models the number of trials (including the success) until the
     first success, where each trial has probability ``p`` of success.
 
+    Parameters
+    ----------
+    p : float
+        Probability of success on each trial, strictly between 0 and 1.
+
     Attributes
     ----------
     p : float
@@ -360,7 +393,7 @@ class Geometric(Distribution):
     """
 
     def __init__(self, p):
-        """Create a geometric distribution."""
+        """Initialize a geometric distribution."""
 
         if 0 < p < 1:
             self.p = p
@@ -381,6 +414,13 @@ class NegativeBinomial(Distribution):
     until the ``r``-th success, where each trial has probability ``p``
     of success.
 
+    Parameters
+    ----------
+    r : int
+        Target number of successes. Must be a positive integer.
+    p : float
+        Probability of success on each trial, between 0 and 1.
+
     Attributes
     ----------
     r : int
@@ -399,7 +439,7 @@ class NegativeBinomial(Distribution):
     """
 
     def __init__(self, r, p):
-        """Create a negative binomial distribution."""
+        """Initialize a negative binomial distribution."""
 
         if 0 < r and isinstance(r, numbers.Integral):
             self.r = r
@@ -447,6 +487,13 @@ class Pascal(Distribution):
     each trial has probability ``p`` of success. Unlike the negative
     binomial, the ``r`` successes themselves are not counted.
 
+    Parameters
+    ----------
+    r : int
+        Target number of successes. Must be a positive integer.
+    p : float
+        Probability of success on each trial, between 0 and 1.
+
     Attributes
     ----------
     r : int
@@ -467,7 +514,7 @@ class Pascal(Distribution):
     """
 
     def __init__(self, r, p):
-        """Create a Pascal distribution."""
+        """Initialize a Pascal distribution."""
 
         if 0 < r and isinstance(r, numbers.Integral):
             self.r = r
@@ -494,6 +541,11 @@ class Poisson(Distribution):
     or space, when events happen at a constant average rate ``lam``
     and independently of each other.
 
+    Parameters
+    ----------
+    lam : float
+        Average number of events per interval (λ). Must be positive.
+
     Attributes
     ----------
     lam : float
@@ -513,7 +565,7 @@ class Poisson(Distribution):
     """
 
     def __init__(self, lam):
-        """Create a Poisson distribution."""
+        """Initialize a Poisson distribution."""
 
         if 0 < lam:
             self.lam = lam
@@ -532,6 +584,13 @@ class DiscreteUniform(Distribution):
 
     Every integer from ``a`` to ``b`` (inclusive) is equally likely.
     This can model, for example, rolling a fair die.
+
+    Parameters
+    ----------
+    a : int, optional
+        Smallest possible value. Default is 0.
+    b : int, optional
+        Largest possible value (inclusive). Default is 1.
 
     Attributes
     ----------
@@ -553,7 +612,7 @@ class DiscreteUniform(Distribution):
     """
 
     def __init__(self, a=0, b=1):
-        """Create a discrete uniform distribution."""
+        """Initialize a discrete uniform distribution."""
         self.a = a
         self.b = b + 1
 
@@ -576,6 +635,13 @@ class Uniform(Distribution):
 
     Every value between ``a`` and ``b`` is equally likely.
 
+    Parameters
+    ----------
+    a : float, optional
+        Lower bound of the distribution. Default is 0.0.
+    b : float, optional
+        Upper bound of the distribution. Default is 1.0.
+
     Attributes
     ----------
     a : float
@@ -596,7 +662,7 @@ class Uniform(Distribution):
     """
 
     def __init__(self, a=0.0, b=1.0):
-        """Create a uniform distribution."""
+        """Initialize a uniform distribution."""
         self.a = a
         self.b = b
 
@@ -619,6 +685,15 @@ class Normal(Distribution):
     standard deviation. You can specify either ``sd`` or ``var``,
     but not both.
 
+    Parameters
+    ----------
+    mean : float, optional
+        Mean of the distribution. Default is 0.0.
+    sd : float, optional
+        Standard deviation. Must be positive. Default is 1.0.
+    var : float, optional
+        Variance. If provided, overrides ``sd``. Must be positive.
+
     Attributes
     ----------
     scale : float
@@ -638,19 +713,15 @@ class Normal(Distribution):
     >>> X.draw()  # doctest: +SKIP
     -0.234
     """
-    #TODO edit docstring for Normal Distribution
 
     def __init__(self, mean=0.0, sd=1.0, var=None):
-        """Create a normal distribution."""
-
-        #Note: cleaner way to implement this
+        """Initialize a normal distribution."""
 
         if var is None:
             if sd > 0:
                 self.scale = sd
             elif sd == 0:
                 raise NotImplementedError
-                #TODO
             else:
                 raise Exception("sd cannot be less than 0")
 
@@ -659,7 +730,6 @@ class Normal(Distribution):
                 self.scale = np.sqrt(var)
             elif var == 0:
                 raise NotImplementedError
-                #TODO
             else:
                 raise Exception("var cannot be less than 0")
 
@@ -676,6 +746,15 @@ class Exponential(Distribution):
     Models the waiting time between events that occur at a constant
     average rate. Specify either ``rate`` (λ) or ``scale`` (1/λ),
     but not both.
+
+    Parameters
+    ----------
+    rate : float, optional
+        Rate parameter λ. Must be positive. Default is 1.0.
+        Mutually exclusive with ``scale``.
+    scale : float, optional
+        Scale parameter 1/λ. If provided, overrides ``rate``.
+        Must be positive.
 
     Attributes
     ----------
@@ -699,7 +778,7 @@ class Exponential(Distribution):
     """
 
     def __init__(self, rate=1.0, scale=None):
-        """Create an exponential distribution."""
+        """Initialize an exponential distribution."""
 
         if scale is None:
             if rate > 0:
@@ -727,6 +806,16 @@ class Gamma(Distribution):
     Specify either ``rate`` or ``scale``, but not both. The gamma
     generalizes the exponential (``shape=1``) distribution.
 
+    Parameters
+    ----------
+    shape : float
+        Shape parameter α. Must be positive.
+    rate : float, optional
+        Rate parameter λ. Default is 1.0. Mutually exclusive with ``scale``.
+    scale : float, optional
+        Scale parameter 1/λ. If provided, overrides ``rate``.
+        Must be positive.
+
     Attributes
     ----------
     shape : float
@@ -749,7 +838,7 @@ class Gamma(Distribution):
     """
 
     def __init__(self, shape, rate=1.0, scale=None):
-        """Create a gamma distribution."""
+        """Initialize a gamma distribution."""
 
         if 0 < shape:
             self.shape = shape
@@ -783,6 +872,13 @@ class Beta(Distribution):
     probabilities or proportions. The shape changes with parameters
     ``a`` and ``b``.
 
+    Parameters
+    ----------
+    a : float
+        First shape parameter (α). Must be positive.
+    b : float
+        Second shape parameter (β). Must be positive.
+
     Attributes
     ----------
     a : float
@@ -803,7 +899,7 @@ class Beta(Distribution):
     """
 
     def __init__(self, a, b):
-        """Create a beta distribution."""
+        """Initialize a beta distribution."""
 
         if 0 < a:
             self.a = a
@@ -831,6 +927,11 @@ class StudentT(Distribution):
     is small. As degrees of freedom increase, it approaches the normal
     distribution.
 
+    Parameters
+    ----------
+    df : int or float
+        Degrees of freedom. Must be positive.
+
     Attributes
     ----------
     df : int or float
@@ -847,7 +948,7 @@ class StudentT(Distribution):
     """
 
     def __init__(self, df):
-        """Create a Student's t-distribution."""
+        """Initialize a Student's t-distribution."""
         if df > 0:
             self.df = df
         else:
@@ -870,6 +971,11 @@ class ChiSquare(Distribution):
     variables. Commonly used in hypothesis testing and confidence
     intervals for variance.
 
+    Parameters
+    ----------
+    df : int
+        Degrees of freedom. Must be a positive integer.
+
     Attributes
     ----------
     df : int
@@ -888,7 +994,7 @@ class ChiSquare(Distribution):
     """
 
     def __init__(self, df):
-        """Create a chi-square distribution."""
+        """Initialize a chi-square distribution."""
         if df > 0 and isinstance(df, numbers.Integral):
             self.df = df
         else:
@@ -908,6 +1014,13 @@ class F(Distribution):
     their degrees of freedom. Commonly used in analysis of variance
     (ANOVA) to compare group variances.
 
+    Parameters
+    ----------
+    dfN : int or float
+        Degrees of freedom for the numerator. Must be positive.
+    dfD : int or float
+        Degrees of freedom for the denominator. Must be positive.
+
     Attributes
     ----------
     dfN : int or float
@@ -926,7 +1039,7 @@ class F(Distribution):
     """
 
     def __init__(self, dfN, dfD):
-        """Create an F-distribution."""
+        """Initialize an F-distribution."""
 
         if dfN > 0:
             self.dfN = dfN
@@ -953,6 +1066,13 @@ class Cauchy(Distribution):
     distribution has no finite mean or variance — it is a classic example
     where the law of large numbers does not apply.
 
+    Parameters
+    ----------
+    loc : float, optional
+        Location parameter (center of the distribution). Default is 0.
+    scale : float, optional
+        Scale parameter (controls the spread). Default is 1.
+
     Attributes
     ----------
     loc : float
@@ -971,7 +1091,7 @@ class Cauchy(Distribution):
     """
 
     def __init__(self, loc=0, scale=1):
-        """Create a Cauchy distribution."""
+        """Initialize a Cauchy distribution."""
         self.loc = loc
         self.scale = scale
 
@@ -1007,6 +1127,14 @@ class LogNormal(Distribution):
     ``mu`` and standard deviation ``sigma``. Often used to model positive,
     right-skewed quantities such as income or stock prices.
 
+    Parameters
+    ----------
+    mu : float, optional
+        Mean of the underlying normal distribution. Default is 0.0.
+    sigma : float, optional
+        Standard deviation of the underlying normal distribution.
+        Must be positive. Default is 1.0.
+
     Attributes
     ----------
     norm_mean : float
@@ -1027,7 +1155,7 @@ class LogNormal(Distribution):
     """
 
     def __init__(self, mu=0.0, sigma=1.0):
-        """Create a log-normal distribution."""
+        """Initialize a log-normal distribution."""
 
         self.norm_mean = mu
 
@@ -1052,6 +1180,14 @@ class Pareto(Distribution):
     small fraction of items account for a large share of the effect
     (the "80/20 rule"). All values are at least ``scale``.
 
+    Parameters
+    ----------
+    b : float, optional
+        Shape parameter (tail index). Must be positive. Default is 1.0.
+    scale : float, optional
+        Minimum possible value (lower bound of the support).
+        Must be positive. Default is 1.0.
+
     Attributes
     ----------
     b : float
@@ -1070,7 +1206,7 @@ class Pareto(Distribution):
     """
 
     def __init__(self, b=1.0, scale=1.0):
-        """Create a Pareto distribution."""
+        """Initialize a Pareto distribution."""
 
         if b > 0:
             self.b = b
@@ -1110,11 +1246,6 @@ class Pareto(Distribution):
         return self.scale * (1 + np.random.pareto(self.b))
 
 
-# class Weibull(Distribution):
-#
-#     def __init__(self, eta, beta= ):
-
-
 class Rayleigh(Distribution):
     """Probability space for a Rayleigh distribution.
 
@@ -1133,7 +1264,7 @@ class Rayleigh(Distribution):
     """
 
     def __init__(self):
-        """Create a Rayleigh distribution."""
+        """Initialize a Rayleigh distribution."""
         params = {}
         super().__init__(params, stats.rayleigh, False)
 
@@ -1146,6 +1277,13 @@ class MultivariateNormal(Distribution):
     Generalizes the normal distribution to multiple dimensions. Each
     draw produces a vector of correlated normal values, described by
     a mean vector and a covariance matrix.
+
+    Parameters
+    ----------
+    mean : array-like of length n
+        The mean vector of the distribution.
+    cov : array-like of shape (n, n)
+        The covariance matrix. Must be symmetric and positive semi-definite.
 
     Attributes
     ----------
@@ -1163,7 +1301,7 @@ class MultivariateNormal(Distribution):
     """
 
     def __init__(self, mean, cov):
-        """Create a multivariate normal distribution."""
+        """Initialize a multivariate normal distribution."""
         if len(mean) != len(cov):
             raise Exception("The dimension of the mean vector" +
                             " is not compatible with the dimensions" +
@@ -1251,13 +1389,32 @@ class MultivariateNormal(Distribution):
         return ProbabilitySpace(draw)
 
 
-
 class BivariateNormal(MultivariateNormal):
     """Probability space for a bivariate normal distribution.
 
     A special case of the multivariate normal with exactly two variables
     (X and Y). You can specify the relationship between X and Y using
     either correlation (``corr``) or covariance (``cov``).
+
+    Parameters
+    ----------
+    mean1 : float, optional
+        Mean of the first variable. Default is 0.0.
+    mean2 : float, optional
+        Mean of the second variable. Default is 0.0.
+    sd1 : float, optional
+        Standard deviation of the first variable. Default is 1.0.
+    sd2 : float, optional
+        Standard deviation of the second variable. Default is 1.0.
+    corr : float, optional
+        Correlation between the two variables, between -1 and 1.
+        Default is 0.0.
+    var1 : float, optional
+        Variance of the first variable. Overrides ``sd1`` if provided.
+    var2 : float, optional
+        Variance of the second variable. Overrides ``sd2`` if provided.
+    cov : float, optional
+        Covariance between the two variables. Overrides ``corr`` if provided.
 
     Attributes
     ----------
@@ -1278,7 +1435,7 @@ class BivariateNormal(MultivariateNormal):
                  mean1=0.0, mean2=0.0,
                  sd1=1.0, sd2=1.0, corr=0.0,
                  var1=None, var2=None, cov=None):
-        """Create a bivariate normal distribution."""
+        """Initialize a bivariate normal distribution."""
 
         if not -1 <= corr <= 1:
             raise Exception("Correlation must be "
@@ -1304,7 +1461,6 @@ class BivariateNormal(MultivariateNormal):
         self.pdf = lambda x: stats.multivariate_normal(x, self.mean, self.cov)
 
 
-
 class Multinomial(Distribution):
     """Probability space for a multinomial distribution.
 
@@ -1312,6 +1468,13 @@ class Multinomial(Distribution):
     Models the counts of each outcome across ``n`` independent trials,
     where each trial lands in one of several categories with fixed
     probabilities.
+
+    Parameters
+    ----------
+    n : int
+        Number of trials. Must be a non-negative integer.
+    p : array-like of float
+        Probability of each outcome. Must be non-negative and sum to 1.
 
     Attributes
     ----------
@@ -1329,12 +1492,9 @@ class Multinomial(Distribution):
     """
 
     def __init__(self, n, p):
-        """Create a multinomial distribution."""
+        """Initialize a multinomial distribution."""
         if n >= 0 and isinstance(n, numbers.Integral):
             self.n = n
-        #elif n == 0:
-            #raise NotImplementedError
-            #TODO
         else:
             raise Exception("n must be a non-negative integer")
 
