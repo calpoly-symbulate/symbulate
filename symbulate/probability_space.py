@@ -8,7 +8,7 @@ from .results import Results
 class ProbabilitySpace:
     """Defines a probability space.
 
-    Parameters
+    Attributes
     ----------
     draw : callable
         A function explaining how to draw one outcome from the probability space.
@@ -163,7 +163,7 @@ class Event(Logical):
 
     An event is a function that takes an outcome from a probability space and returns a boolean indicating whether that event was observed or not.
 
-    Parameters
+    Attributes
     ----------
     prob_space : ProbabilitySpace
         The probability space that the event is defined on.
@@ -301,7 +301,7 @@ class Event(Logical):
 class BoxModel(ProbabilitySpace):
     """Defines a probability space from a box model.
 
-    Parameters
+    Attributes
     ----------
     box : list or dict
         The box to sample from.
@@ -405,7 +405,7 @@ class BoxModel(ProbabilitySpace):
 class DeckOfCards(BoxModel):
     """Defines the probability space for drawing from a deck of cards.
 
-    Parameters
+    Attributes
     ----------
     size : int, optional
         How many draws to make. Defaults to None.
