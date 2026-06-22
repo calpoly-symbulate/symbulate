@@ -8,68 +8,84 @@ class RV(Arithmetic, Transformable, Comparable):
     """Defines a random variable.
 
     A random variable is a function which maps an outcome of
-    a probability space to a number.  Simulating a random
+    a probability space to a number. Simulating a random
     variable is a two-step process: first, a draw is taken
     from the underlying probability space; then, the function
     is applied to that draw to obtain the realized value of
     the random variable.
 
-    Args:
-      prob_space (ProbabilitySpace): the underlying probability space
-        of the random variable.
-      func (function, optional): a function that maps draws from the
-        probability space to numbers. (By default, the function is the
-        identity function. For named distributions, a draw from the
-        underlying probability space is the value of the random
-        variable itself, which is why the identity function is the
-        most frequently used.)
+    Parameters
+    ----------
+    prob_space : ProbabilitySpace
+        The underlying probability space of the random variable.
+    func : callable, optional
+        A function that maps draws from the probability space to numbers.
+        Defaults to the identity function.
 
-    Attributes:
-      prob_space (ProbabilitySpace): the underlying probability space
-        of the random variable.
-      func (function): a function that maps draws from the probability
-        space to numbers.
+    Attributes
+    ----------
+    prob_space : ProbabilitySpace
+        The underlying probability space of the random variable.
+    func : callable
+        A function that maps draws from the probability space to numbers.
 
-    Examples:
-      # a single draw is a sequence of 0s and 1s, e.g., (0, 0, 1, 0, 1)
-      P = BoxModel([0, 1], size=5)
-      # X counts the number of 1s in the draw, e.g., 5
-      X = RV(P, sum)
-
-      # the function is the identity, so Y has a Normal(0, 1) distribution
-      Y = RV(Normal(0, 1))
-
-      # a single draw from BivariateNormal is a tuple of two numbers
-      P = BivariateNormal()
-      # Z is the smaller of the two numbers
-      Z = RV(P, min)
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = BoxModel([0, 1], size=5)
+    >>> X = RV(P, sum)
+    >>> X.draw()  # doctest: +SKIP
+    2
+    >>> Y = RV(Normal(0, 1))
+    >>> Y.draw()  # doctest: +SKIP
+    -0.9
     """
 
     def __init__(self, prob_space, func=lambda x: x):
+        """Create a random variable."""
         self.prob_space = prob_space
         self.func = func
 
     def draw(self):
-        """A function that takes no arguments and returns a single
-          realization of the random variable.
+        """Draw a single realization of the random variable.
 
-        Example:
-          X = RV(Normal(0, 1))
-          X.draw() might return -0.9, for example.
+        Returns
+        -------
+        scalar or array-like
+            A single realized value of the random variable.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> import numpy as np
+        >>> np.random.seed(0)
+        >>> X = RV(Normal(0, 1))
+        >>> X.draw()
+        1.764052345967664
         """
         return self.func(self.prob_space.draw())
 
     def sim(self, n):
-        """Simulate n draws from probability space described by the random
-          variable.
+        """Simulate n draws from the random variable.
 
-        Args:
-          n (int): How many draws to make.
+        Parameters
+        ----------
+        n : int
+            Number of draws to simulate.
 
-        Returns:
-          RVResults: A list-like object containing the simulation results.
+        Returns
+        -------
+        RVResults
+            A list-like object containing the simulation results.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> import numpy as np
+        >>> np.random.seed(0)
+        >>> X = RV(Normal(0, 1))
+        >>> X.sim(3)  # doctest: +SKIP
         """
-
         return RVResults(self.draw() for _ in range(n))
 
     def __call__(self, outcome):
@@ -88,8 +104,10 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Examples
         --------
+        >>> from symbulate import *
         >>> X = RV(Normal(0, 1))
-        >>> X(0.5)
+        >>> X(0.5)  # doctest: +SKIP
+        0.5
         """
         print(
             "Warning: Calling an RV as a function simply applies the "
@@ -100,29 +118,40 @@ class RV(Arithmetic, Transformable, Comparable):
         return self.func(outcome)
 
     def check_same_prob_space(self, other):
+        """Check that this RV and another object share the same probability space.
+
+        Parameters
+        ----------
+        other : any
+            The object to compare probability spaces with. If ``other`` has
+            no ``prob_space`` attribute, the check is skipped.
+
+        Raises
+        ------
+        Exception
+            If the two objects are defined on different probability spaces.
+        """
         if hasattr(other, "prob_space"):
             self.prob_space.check_same(other.prob_space)
 
     def apply(self, func):
         """Transform a random variable by a function.
 
-        Args:
-          func: function to apply to the random variable
+        Parameters
+        ----------
+        func : callable
+            A function to apply to the random variable.
 
-        Example:
-          X = RV(Exponential(1))
-          Y = X.apply(log)
+        Returns
+        -------
+        RV
+            A new random variable with the transformation applied.
 
-        Note: For most standard functions, you can apply the function to
-          the random variable directly. For example, in the example above,
-          Y = log(X) would have been equivalent and more readable.
-
-        User defined functions can also be applied.
-
-        Example:
-          def g(x):
-            return log(x ** 2)
-          Y = X.apply(g)
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> X = RV(Exponential(rate=1))
+        >>> Y = X.apply(log)
         """
 
         def _func(outcome):
@@ -149,6 +178,7 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Examples
         --------
+        >>> from symbulate import *
         >>> X, Y = RV(BoxModel([0, 1], size=2))
         """
         test = self.draw()
@@ -177,6 +207,7 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Examples
         --------
+        >>> from symbulate import *
         >>> X = RV(BoxModel([0, 1], size=5))
         >>> X[0]        # first component
         >>> X[0:3]      # first three components as a vector
@@ -196,9 +227,23 @@ class RV(Arithmetic, Transformable, Comparable):
         # otherwise, return the nth value
         return self.apply(lambda x: x[n])
 
-    # The Arithmetic superclass will use this to define all of the
-    # usual arithmetic operations (e.g., +, -, *, /, **, ^, etc.)
     def _operation_factory(self, op):
+        """Create an arithmetic operation between this RV and another value.
+
+        Used by the ``Arithmetic`` superclass to define operators such as
+        ``+``, ``-``, ``*``, ``/``, ``**``, etc.
+
+        Parameters
+        ----------
+        op : callable
+            A binary function representing the arithmetic operation.
+
+        Returns
+        -------
+        callable
+            A method that applies ``op`` between this RV and another RV
+            or scalar, returning a new RV.
+        """
 
         def _op_func(self, other):
             # operations between this RV and another RV
@@ -214,10 +259,24 @@ class RV(Arithmetic, Transformable, Comparable):
 
         return _op_func
 
-    # The Comparison superclass will use this to define all of the
-    # usual comparison operations (e.g., <, >, ==, !=, etc.).
-    # Note that a comparison of a random variable returns an Event.
     def _comparison_factory(self, op):
+        """Create a comparison operation between this RV and another value.
+
+        Used by the ``Comparable`` superclass to define comparison operators
+        such as ``<``, ``>``, ``==``, ``!=``, etc. Comparisons on an RV
+        return an ``Event`` rather than a boolean.
+
+        Parameters
+        ----------
+        op : callable
+            A binary function representing the comparison operation.
+
+        Returns
+        -------
+        callable
+            A method that applies ``op`` between this RV and a scalar or
+            another RV, returning an ``Event``.
+        """
 
         def _op_func(self, other):
             if is_scalar(other):
@@ -253,6 +312,7 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Examples
         --------
+        >>> from symbulate import *
         >>> X, Y = RV(Normal(0, 1) ** 2)
         >>> Z = X & Y
         """
@@ -289,6 +349,7 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Examples
         --------
+        >>> from symbulate import *
         >>> X = RV(Normal(0, 1))
         >>> Z = 3 & X
         """
@@ -313,7 +374,7 @@ class RV(Arithmetic, Transformable, Comparable):
         Returns
         -------
         RVConditional
-            A new conditional random variable
+            A new conditional random variable.
 
         Raises
         ------
@@ -322,8 +383,10 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Examples
         --------
+        >>> from symbulate import *
         >>> X = RV(Normal(0, 1))
-        >>> (X | (X > 0)).draw()
+        >>> (X | (X > 0)).draw()  # doctest: +SKIP
+        0.7
         """
         # Check that the random variable and event are
         # defined on the same probability space.
@@ -340,32 +403,45 @@ class RVConditional(RV):
     RVConditionals are typically produced when you condition a
     RV on an Event object.
 
-    Args:
-      random_variable (RV): the random variable whose conditional
-        distribution is desired
-      condition_event (Event): the event to condition on
+    Parameters
+    ----------
+    random_variable : RV
+        The random variable whose conditional distribution is desired.
+    condition_event : Event
+        The event to condition on.
 
-    Attributes:
-      random_variable (RV): the random variable whose conditional
-        distribution is desired
-      condition_event (Event): the event to condition on
+    Attributes
+    ----------
+    condition_event : Event
+        The event to condition on.
 
-    Examples:
-      X, Y = RV(Binomial(10, 0.4) ** 2)
-      (X | (X + Y == 5)).draw() # returns a value between 0 and 5.
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X, Y = RV(Binomial(10, 0.4) ** 2)
+    >>> (X | (X + Y == 5)).draw()  # doctest: +SKIP
+    3
     """
 
     def __init__(self, random_variable, condition_event):
+        """Create a conditional random variable."""
         self.condition_event = condition_event
         super().__init__(random_variable.prob_space, random_variable.func)
 
     def draw(self):
-        """A function that takes no arguments and returns a value from
-          the conditional distribution of the random variable.
+        """Draw a single value from the conditional distribution.
 
-        Example:
-          X, Y = RV(Binomial(10, 0.4) ** 2)
-          (X | (X + Y == 5)).draw() might return a value of 4, for example.
+        Returns
+        -------
+        scalar or array-like
+            A single realized value from the conditional distribution.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> X, Y = RV(Binomial(10, 0.4) ** 2)
+        >>> (X | (X + Y == 5)).draw()  # doctest: +SKIP
+        3
         """
         while True:
             outcome = self.prob_space.draw()
