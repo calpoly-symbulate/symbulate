@@ -10,6 +10,7 @@ class IndexSet(object):
     """
 
     def __init__(self):
+        """Initialize an IndexSet."""
         return
 
     def __getitem__(self, t):
@@ -29,6 +30,13 @@ class IndexSet(object):
         ------
         KeyError
             If t is not in the index set.
+
+        Examples
+        --------
+        >>> Reals()[1.5]
+        1.5
+        >>> Naturals()[3]
+        3
         """
         if t in self:
             return t
@@ -50,6 +58,13 @@ class IndexSet(object):
         -------
         bool
             True if value is in the index set, False otherwise.
+
+        Examples
+        --------
+        >>> 1.5 in Reals()
+        True
+        >>> 3 in Naturals()
+        True
         """
         return False
 
@@ -65,6 +80,13 @@ class IndexSet(object):
         -------
         bool
             True if other is the same type as self.
+
+        Examples
+        --------
+        >>> Reals() == Reals()
+        True
+        >>> Reals() == Naturals()
+        False
         """
         return type(other) == type(self)
 
@@ -76,6 +98,7 @@ class Reals(IndexSet):
     """
 
     def __init__(self):
+        """Initialize a Reals index set."""
         return
 
     def __contains__(self, value):
@@ -90,6 +113,13 @@ class Reals(IndexSet):
         -------
         bool
             True if -inf < value < inf, False otherwise.
+
+        Examples
+        --------
+        >>> 1.5 in Reals()
+        True
+        >>> float("inf") in Reals()
+        False
         """
         try:
             return -float("inf") < value < float("inf")
@@ -105,6 +135,7 @@ class Naturals(IndexSet):
     """
 
     def __init__(self):
+        """Initialize a Naturals index set."""
         return
 
     def __contains__(self, value):
@@ -120,6 +151,15 @@ class Naturals(IndexSet):
         bool
             True if value >= 0 and value is an integer,
             False otherwise.
+
+        Examples
+        --------
+        >>> 3 in Naturals()
+        True
+        >>> -1 in Naturals()
+        False
+        >>> 1.5 in Naturals()
+        False
         """
         try:
             return value >= 0 and (
@@ -146,6 +186,7 @@ class DiscreteTimeSequence(IndexSet):
     """
 
     def __init__(self, fs):
+        """Initialize a DiscreteTimeSequence with a given sampling frequency."""
         self.fs = fs
 
     def __getitem__(self, n):
@@ -160,6 +201,14 @@ class DiscreteTimeSequence(IndexSet):
         -------
         float
             The time value n / fs.
+
+        Examples
+        --------
+        >>> ts = DiscreteTimeSequence(4)
+        >>> ts[2]
+        0.5
+        >>> ts[8]
+        2.0
         """
         return n / self.fs
 
@@ -175,6 +224,14 @@ class DiscreteTimeSequence(IndexSet):
         -------
         bool
             True if value * fs is an integer, False otherwise.
+
+        Examples
+        --------
+        >>> ts = DiscreteTimeSequence(4)
+        >>> 0.25 in ts
+        True
+        >>> 0.1 in ts
+        False
         """
         return float(value * self.fs).is_integer()
 
@@ -191,6 +248,13 @@ class DiscreteTimeSequence(IndexSet):
         bool
             True if index is a DiscreteTimeSequence with the
             same sampling frequency.
+
+        Examples
+        --------
+        >>> DiscreteTimeSequence(4) == DiscreteTimeSequence(4)
+        True
+        >>> DiscreteTimeSequence(4) == DiscreteTimeSequence(8)
+        False
         """
         return isinstance(index, DiscreteTimeSequence) and (self.fs == index.fs)
 
@@ -203,4 +267,5 @@ class Integers(DiscreteTimeSequence):
     """
 
     def __init__(self):
+        """Initialize an Integers index set with sampling frequency 1."""
         self.fs = 1
