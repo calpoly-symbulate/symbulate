@@ -142,7 +142,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
 
     def __init__(self, results, sim_id=None):
         """
-        Initialize simulation results for a random variable.
+        Initialize simulation results from a probability space.
         """
         self.results = list(results)
         self.sim_id = time.time() if sim_id is None else sim_id
@@ -639,6 +639,18 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         Exception
             If the results do not correspond to simulations of a
             random variable.
+
+        Examples
+        --------
+        Attempting to plot outcomes from a probability space raises
+        an exception directing the user to define an RV first:
+
+        >>> from symbulate import *
+        >>> P = BoxModel(["H", "T"])
+        >>> P.sim(100).plot()  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+            ...
+        Exception: Only simulations of random variables (RV) ...
         """
         raise Exception(
             "Only simulations of random variables (RV) "
@@ -658,6 +670,17 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             Tabular representation of the stored simulation
             outcomes. Shows all rows for 11 or fewer results;
             truncates to the first 9 and the last row otherwise.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> P = BoxModel(["H", "T"])
+        >>> results = P.sim(3)
+        >>> print(repr(results))  # doctest: +SKIP
+        Index  Result
+        0      H
+        1      T
+        2      H
         """
 
         i_last = len(self) - 1
