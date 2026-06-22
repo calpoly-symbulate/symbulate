@@ -8,18 +8,49 @@ from .plot import get_next_color
 from .result import Scalar, Vector, InfiniteVector
 
 class Distribution(ProbabilitySpace):
-    """Base class for probability distributions.
+    """Base class for all probability distributions in Symbulate.
 
-    Parameters
+    Provides common methods shared by all distributions, including
+    drawing samples, computing summary statistics, and plotting.
+    You typically won't use this class directly — use one of the
+    specific distribution classes instead (e.g., ``Normal``, ``Binomial``).
+
+    Attributes
     ----------
     params : dict
-        Dictionary of parameters for the distribution.
-    scipy : scipy.stats distribution object
-        The underlying scipy.stats distribution object used for calculations.
-    discrete : bool, optional
-        Whether the distribution is discrete. Default is True.
+        Named parameter values passed to the underlying scipy distribution.
+    discrete : bool
+        ``True`` for discrete distributions, ``False`` for continuous.
+    pdf : callable
+        Probability density (or mass) function.
+    cdf : callable
+        Cumulative distribution function.
+    quantile : callable
+        Inverse CDF (percent-point function).
+    mean : callable
+        Returns the expected value of the distribution.
+    var : callable
+        Returns the variance of the distribution.
+    sd : callable
+        Returns the standard deviation of the distribution.
+    median : callable
+        Returns the median of the distribution.
+    xlim : tuple of float
+        Default x-axis range used when plotting.
     """
     def __init__(self, params, scipy, discrete=True):
+        """Initialize the base Distribution.
+
+        Parameters
+        ----------
+        params : dict
+            Named parameters for the scipy distribution (e.g., ``{"p": 0.5}``).
+        scipy : scipy.stats distribution object
+            The underlying scipy distribution used for calculations.
+        discrete : bool, optional
+            ``True`` for discrete distributions, ``False`` for continuous.
+            Default is ``True``.
+        """
         self.params = params
 
         self.discrete = discrete
@@ -45,30 +76,44 @@ class Distribution(ProbabilitySpace):
             )
 
     def draw(self):
-        """Draw a single sample from the distribution.
+        """Draw a single random sample from the distribution.
 
         Returns
         -------
         Scalar
-            A single random draw from the distribution.
+            One random value drawn from the distribution.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> np.random.seed(42)
+        >>> Normal(0, 1).draw()
+        0.4967141530112327
         """
         return Scalar(self.sim_func(**self.params))
 
     # Override the inherited __pow__ function to take advantage
     # of vectorized simulations.
     def __pow__(self, exponent):
-        """Generate multiple samples from the distribution.
+        """Draw multiple independent samples from the distribution.
 
         Parameters
         ----------
         exponent : int or float
-            Number of samples to draw. If float('inf'), returns a function
-            that draws infinite samples on demand.
+            Number of samples to draw. Pass ``float('inf')`` to create
+            an infinite sequence of draws generated lazily on demand.
 
         Returns
         -------
         ProbabilitySpace
-            A probability space that yields multiple samples.
+            A probability space whose draws produce ``exponent`` samples
+            at a time.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> (Normal(0, 1) ** 3).draw()  # doctest: +SKIP
+        [-0.234, 1.724, 0.313]
         """
         if exponent == float("inf"):
             def draw():
@@ -81,18 +126,28 @@ class Distribution(ProbabilitySpace):
         return ProbabilitySpace(draw)
 
     def plot(self, xlim=None, alpha=None, ax=None, **kwargs):
-        """Plot the probability density/mass function of the distribution.
+        """Plot the probability density or mass function.
+
+        For discrete distributions, dots are drawn at each integer value.
+        For continuous distributions, a smooth curve is drawn.
 
         Parameters
         ----------
-        xlim : tuple, optional
-            X-axis limits as (min, max). If None, uses distribution defaults.
+        xlim : tuple of float, optional
+            x-axis range as ``(min, max)``. Uses distribution defaults
+            if not provided.
         alpha : float, optional
-            Transparency level for the plot (0 to 1).
+            Transparency of the plot, from 0 (invisible) to 1 (opaque).
         ax : matplotlib.axes.Axes, optional
-            Matplotlib axes object to plot on. If None, creates or uses current axes.
+            The axes to draw on. Creates or uses the current axes if
+            not provided.
         **kwargs
-            Additional keyword arguments passed to matplotlib plotting functions.
+            Additional keyword arguments forwarded to matplotlib.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Normal(0, 1).plot()
         """
         # use distribution defaults for xlim if none set
         if xlim is None:
@@ -108,7 +163,7 @@ class Distribution(ProbabilitySpace):
         # determine limits for y-axes based on y values
         ymin, ymax = ys[np.isfinite(ys)].min(), ys[np.isfinite(ys)].max()
         ylim = min(0, ymin - 0.05 * (ymax - ymin)), 1.05 * ymax
-        
+
         # get the current axis if they exist and no axis is specified
         fig = plt.gcf()
         if ax is None and fig.axes:
@@ -126,7 +181,7 @@ class Distribution(ProbabilitySpace):
         # set the axis limits
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
-        
+
         # get next color in cycle
         color = get_next_color(ax)
 
@@ -144,15 +199,43 @@ class Distribution(ProbabilitySpace):
 ## Discrete Distributions
 
 class Bernoulli(Distribution):
-    """Defines a probability space for a Bernoulli
-         distribution.
+    """Probability space for a Bernoulli distribution.
 
-    Attributes:
-      p (float): probability (number between 0 and 1)
-        of a "success" (i.e., 1)
+    Models a single trial with two outcomes: success (1) with probability
+    ``p``, or failure (0) with probability ``1 - p``.
+
+    Attributes
+    ----------
+    p : float
+        Probability of success (1), between 0 and 1.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Bernoulli(p=0.5)
+    >>> X.mean()
+    0.5
+    >>> X.sd()
+    0.5
+    >>> X.pmf(1)
+    0.5
+    >>> X.draw()  # doctest: +SKIP
+    1
     """
 
     def __init__(self, p):
+        """Create a Bernoulli distribution.
+
+        Parameters
+        ----------
+        p : float
+            Probability of success, between 0 and 1.
+
+        Raises
+        ------
+        Exception
+            If ``p`` is not between 0 and 1.
+        """
         if 0 <= p <= 1:
             self.p = p
         else:
@@ -166,16 +249,48 @@ class Bernoulli(Distribution):
 
 
 class Binomial(Distribution):
-    """Defines a probability space for a binomial
-         distribution.
+    """Probability space for a binomial distribution.
 
-    Attributes:
-      n (int): number of trials
-      p (float): probability (number between 0 and 1)
-        that each trial results in a "success" (i.e., 1)
+    Models the number of successes in ``n`` independent trials, each
+    with probability ``p`` of success.
+
+    Attributes
+    ----------
+    n : int
+        Number of trials.
+    p : float
+        Probability of success on each trial, between 0 and 1.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Binomial(n=4, p=0.5)
+    >>> X.mean()
+    2.0
+    >>> X.sd()
+    1.0
+    >>> X.pmf(2)
+    0.375
+    >>> X.draw()  # doctest: +SKIP
+    2
     """
 
     def __init__(self, n, p):
+        """Create a binomial distribution.
+
+        Parameters
+        ----------
+        n : int
+            Number of trials. Must be a non-negative integer.
+        p : float
+            Probability of success on each trial, between 0 and 1.
+
+        Raises
+        ------
+        Exception
+            If ``n`` is not a non-negative integer, or if ``p`` is not
+            between 0 and 1.
+        """
 
         if n >= 0 and isinstance(n, numbers.Integral):
             self.n = n
@@ -199,19 +314,51 @@ class Binomial(Distribution):
 
 
 class Hypergeometric(Distribution):
-    """Defines a probability space for a hypergeometric
-         distribution (which represents the number of
-         ones in n draws without replacement from a box
-         containing zeros and ones).
+    """Probability space for a hypergeometric distribution.
 
-    Attributes:
-      n (int): number of draws (without replacement)
-        from the box
-      N0 (int): number of 0s in the box
-      N1 (int): number of 1s in the box
+    Models the number of successes (1s) when drawing ``n`` items
+    without replacement from a collection containing ``N0`` zeros
+    and ``N1`` ones.
+
+    Attributes
+    ----------
+    n : int
+        Number of draws (without replacement).
+    N0 : int
+        Number of 0s (failures) in the collection.
+    N1 : int
+        Number of 1s (successes) in the collection.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Hypergeometric(n=2, N0=3, N1=3)
+    >>> X.mean()
+    1.0
+    >>> X.pmf(1)
+    0.6
+    >>> X.draw()  # doctest: +SKIP
+    1
     """
 
     def __init__(self, n, N0, N1):
+        """Create a hypergeometric distribution.
+
+        Parameters
+        ----------
+        n : int
+            Number of draws. Must be a positive integer.
+        N0 : int
+            Number of 0s in the collection. Must be a non-negative integer.
+        N1 : int
+            Number of 1s in the collection. Must be a non-negative integer.
+
+        Raises
+        ------
+        Exception
+            If ``n``, ``N0``, or ``N1`` are invalid, or if
+            ``N0 + N1 < n``.
+        """
 
         if n > 0 and isinstance(n, numbers.Integral):
             self.n = n
@@ -242,17 +389,42 @@ class Hypergeometric(Distribution):
 
 
 class Geometric(Distribution):
-    """Defines a probability space for a geometric
-         distribution (which represents the number
-         of trials until the first success), including
-         the success.
+    """Probability space for a geometric distribution.
 
-    Attributes:
-      p (float): probability (number between 0 and 1)
-        that each trial results in a "success" (i.e., 1)
+    Models the number of trials (including the success) until the
+    first success, where each trial has probability ``p`` of success.
+
+    Attributes
+    ----------
+    p : float
+        Probability of success on each trial, strictly between 0 and 1.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Geometric(p=0.5)
+    >>> X.mean()
+    2.0
+    >>> X.pmf(1)
+    0.5
+    >>> X.draw()  # doctest: +SKIP
+    3
     """
 
     def __init__(self, p):
+        """Create a geometric distribution.
+
+        Parameters
+        ----------
+        p : float
+            Probability of success on each trial. Must be strictly
+            between 0 and 1.
+
+        Raises
+        ------
+        Exception
+            If ``p`` is not strictly between 0 and 1.
+        """
 
         if 0 < p < 1:
             self.p = p
@@ -267,18 +439,45 @@ class Geometric(Distribution):
 
 
 class NegativeBinomial(Distribution):
-    """Defines a probability space for a negative
-         binomial distribution (which represents the
-         number of trials until r successes), including
-         the r successes.
+    """Probability space for a negative binomial distribution.
 
-    Attributes:
-      r (int): desired number of successes
-      p (float): probability (number between 0 and 1)
-        that each trial results in a "success" (i.e., 1)
+    Models the total number of trials (including the ``r`` successes)
+    until the ``r``-th success, where each trial has probability ``p``
+    of success.
+
+    Attributes
+    ----------
+    r : int
+        Target number of successes.
+    p : float
+        Probability of success on each trial.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = NegativeBinomial(r=3, p=0.5)
+    >>> X.mean()
+    6.0
+    >>> X.draw()  # doctest: +SKIP
+    7
     """
 
     def __init__(self, r, p):
+        """Create a negative binomial distribution.
+
+        Parameters
+        ----------
+        r : int
+            Target number of successes. Must be a positive integer.
+        p : float
+            Probability of success on each trial. Must be in ``(0, 1]``.
+
+        Raises
+        ------
+        Exception
+            If ``r`` is not a positive integer, or if ``p`` is not in
+            ``(0, 1]``.
+        """
 
         if 0 < r and isinstance(r, numbers.Integral):
             self.r = r
@@ -299,8 +498,20 @@ class NegativeBinomial(Distribution):
         self.xlim = (r, self.xlim[1]) # Negative Binomial distributions are not defined for x < r
 
     def draw(self):
-        """A function that takes no arguments and
-            returns a single draw from the Negative Binomial distribution."""
+        """Draw a single random sample from the negative binomial distribution.
+
+        Returns
+        -------
+        int
+            The total number of trials (including the ``r`` successes)
+            until the ``r``-th success.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> NegativeBinomial(r=3, p=0.5).draw()  # doctest: +SKIP
+        6
+        """
 
         # Numpy's negative binomial returns numbers in [0, inf),
         # but we want numbers in [r, inf).
@@ -308,18 +519,47 @@ class NegativeBinomial(Distribution):
 
 
 class Pascal(Distribution):
-    """Defines a probability space for a Pascal
-         distribution (which represents the number
-         of trials until r successes), not including
-         the r successes.
+    """Probability space for a Pascal distribution.
 
-    Attributes:
-      r (int): desired number of successes
-      p (float): probability (number between 0 and 1)
-        that each trial results in a "success" (i.e., 1)
+    Models the number of failures before the ``r``-th success, where
+    each trial has probability ``p`` of success. Unlike the negative
+    binomial, the ``r`` successes themselves are not counted.
+
+    Attributes
+    ----------
+    r : int
+        Target number of successes.
+    p : float
+        Probability of success on each trial.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Pascal(r=1, p=0.5)
+    >>> X.mean()
+    1.0
+    >>> X.pmf(0)
+    0.5
+    >>> X.draw()  # doctest: +SKIP
+    0
     """
 
     def __init__(self, r, p):
+        """Create a Pascal distribution.
+
+        Parameters
+        ----------
+        r : int
+            Target number of successes. Must be a positive integer.
+        p : float
+            Probability of success on each trial. Must be in ``(0, 1]``.
+
+        Raises
+        ------
+        Exception
+            If ``r`` is not a positive integer, or if ``p`` is not in
+            ``(0, 1]``.
+        """
 
         if 0 < r and isinstance(r, numbers.Integral):
             self.r = r
@@ -340,13 +580,43 @@ class Pascal(Distribution):
 
 
 class Poisson(Distribution):
-    """Defines a probability space for a Poisson distribution.
+    """Probability space for a Poisson distribution.
 
-    Attributes:
-      lam (float): rate parameter for the Poisson distribution
+    Models the number of events occurring in a fixed interval of time
+    or space, when events happen at a constant average rate ``lam``
+    and independently of each other.
+
+    Attributes
+    ----------
+    lam : float
+        Average number of events per interval (the rate parameter,
+        often written as λ). Must be positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Poisson(lam=4)
+    >>> X.mean()
+    4.0
+    >>> X.sd()
+    2.0
+    >>> X.draw()  # doctest: +SKIP
+    3
     """
 
     def __init__(self, lam):
+        """Create a Poisson distribution.
+
+        Parameters
+        ----------
+        lam : float
+            Rate parameter (λ). Must be greater than 0.
+
+        Raises
+        ------
+        Exception
+            If ``lam`` is not positive.
+        """
 
         if 0 < lam:
             self.lam = lam
@@ -361,14 +631,45 @@ class Poisson(Distribution):
 
 
 class DiscreteUniform(Distribution):
-    """Defines a probability space for a discrete uniform distribution.
+    """Probability space for a discrete uniform distribution.
 
-    Attributes:
-      a (int): lower bound for possible values
-      b (int): upper bound for possible values
+    Every integer from ``a`` to ``b`` (inclusive) is equally likely.
+    This can model, for example, rolling a fair die.
+
+    Attributes
+    ----------
+    a : int
+        Smallest possible value.
+    b : int
+        Internal upper bound (stored as ``b + 1`` for scipy compatibility).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = DiscreteUniform(a=1, b=6)
+    >>> X.mean()
+    3.5
+    >>> X.pmf(3)
+    0.16666666666666666
+    >>> X.draw()  # doctest: +SKIP
+    4
     """
 
     def __init__(self, a=0, b=1):
+        """Create a discrete uniform distribution.
+
+        Parameters
+        ----------
+        a : int, optional
+            Lower bound (inclusive). Default is 0.
+        b : int, optional
+            Upper bound (inclusive). Default is 1.
+
+        Raises
+        ------
+        Exception
+            If ``b`` is less than or equal to ``a``.
+        """
         self.a = a
         self.b = b + 1
 
@@ -387,14 +688,44 @@ class DiscreteUniform(Distribution):
 ## Continuous Distributions
 
 class Uniform(Distribution):
-    """Defines a probability space for a uniform distribution.
+    """Probability space for a continuous uniform distribution.
 
-    Attributes:
-      a (float): lower bound for possible values
-      b (float): upper bound for possible values
+    Every value between ``a`` and ``b`` is equally likely.
+
+    Attributes
+    ----------
+    a : float
+        Lower bound of the distribution.
+    b : float
+        Upper bound of the distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Uniform(a=0, b=1)
+    >>> X.mean()
+    0.5
+    >>> X.pdf(0.5)
+    1.0
+    >>> X.draw()  # doctest: +SKIP
+    0.374
     """
 
     def __init__(self, a=0.0, b=1.0):
+        """Create a uniform distribution.
+
+        Parameters
+        ----------
+        a : float, optional
+            Lower bound. Default is 0.0.
+        b : float, optional
+            Upper bound. Default is 1.0.
+
+        Raises
+        ------
+        Exception
+            If ``b`` is less than ``a``.
+        """
         self.a = a
         self.b = b
 
@@ -411,18 +742,55 @@ class Uniform(Distribution):
 
 
 class Normal(Distribution):
-    """Defines a probability space for a normal distribution.
+    """Probability space for a normal (Gaussian) distribution.
 
-    Attributes:
-      mean (float): mean parameter of the normal distribution
-      sd (float): standard deviation parameter of the normal
-        distribution
-      var (float): variance parameter of the normal distribution
-        (if specified, var parameter will be ignored)
+    The classic bell-shaped distribution, described by its mean and
+    standard deviation. You can specify either ``sd`` or ``var``,
+    but not both.
+
+    Attributes
+    ----------
+    scale : float
+        The standard deviation used internally, regardless of whether
+        ``sd`` or ``var`` was passed in.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Normal(mean=0, sd=1)
+    >>> X.mean()
+    0.0
+    >>> X.sd()
+    1.0
+    >>> X.pdf(0)
+    0.3989422804014327
+    >>> X.draw()  # doctest: +SKIP
+    -0.234
     """
     #TODO edit docstring for Normal Distribution
 
     def __init__(self, mean=0.0, sd=1.0, var=None):
+        """Create a normal distribution.
+
+        Specify either ``sd`` or ``var``, but not both. If ``var`` is
+        provided, it overrides ``sd``.
+
+        Parameters
+        ----------
+        mean : float, optional
+            Mean (center) of the distribution. Default is 0.0.
+        sd : float, optional
+            Standard deviation. Must be positive. Default is 1.0.
+        var : float, optional
+            Variance. Must be positive. If given, overrides ``sd``.
+
+        Raises
+        ------
+        Exception
+            If ``sd`` or ``var`` is negative.
+        NotImplementedError
+            If ``sd`` or ``var`` is exactly 0.
+        """
 
         #Note: cleaner way to implement this
 
@@ -452,18 +820,50 @@ class Normal(Distribution):
 
 
 class Exponential(Distribution):
-    """Defines a probability space for an exponential distribution.
-       Only one of scale or rate should be set. (The scale is the
-       inverse of the rate.)
+    """Probability space for an exponential distribution.
 
-    Attributes:
-      scale (float): scale parameter for gamma distribution
-        (often symbolized beta = 1 / lambda)
-      rate (float): rate parameter for gamma distribution
-        (often symbolized lambda)
+    Models the waiting time between events that occur at a constant
+    average rate. Specify either ``rate`` (λ) or ``scale`` (1/λ),
+    but not both.
+
+    Attributes
+    ----------
+    rate : float or None
+        The rate parameter λ. ``None`` if ``scale`` was specified instead.
+    scale : float or None
+        The scale parameter 1/λ. ``None`` if ``rate`` was specified instead.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Exponential(rate=1)
+    >>> X.mean()
+    1.0
+    >>> X.sd()
+    1.0
+    >>> X.pdf(1)
+    0.36787944117144233
+    >>> X.draw()  # doctest: +SKIP
+    0.423
     """
 
     def __init__(self, rate=1.0, scale=None):
+        """Create an exponential distribution.
+
+        Parameters
+        ----------
+        rate : float, optional
+            Rate parameter λ. Must be positive. Default is 1.0.
+            Ignored if ``scale`` is provided.
+        scale : float, optional
+            Scale parameter 1/λ. Must be positive. If provided,
+            overrides ``rate``.
+
+        Raises
+        ------
+        Exception
+            If ``rate`` or ``scale`` is not positive.
+        """
 
         if scale is None:
             if rate > 0:
@@ -485,20 +885,52 @@ class Exponential(Distribution):
 
 
 class Gamma(Distribution):
-    """Defines a probability space for a gamma distribution.
-       Only one of scale or rate should be set. (The scale is the
-       inverse of the rate.)
+    """Probability space for a gamma distribution.
 
-    Attributes:
-      shape (float): shape parameter for gamma distribution
-        (often symbolized alpha)
-      scale (float): scale parameter for gamma distribution
-        (often symbolized beta = 1 / lambda)
-      rate (float): rate parameter for gamma distribution
-        (often symbolized lambda)
+    A flexible continuous distribution often used to model waiting times.
+    Specify either ``rate`` or ``scale``, but not both. The gamma
+    generalizes the exponential (``shape=1``) distribution.
+
+    Attributes
+    ----------
+    shape : float
+        Shape parameter α. Controls the number of "phases."
+    rate : float or None
+        Rate parameter λ. ``None`` if ``scale`` was specified instead.
+    scale : float or None
+        Scale parameter 1/λ. ``None`` if ``rate`` was specified instead.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Gamma(shape=2, rate=1)
+    >>> X.mean()
+    2.0
+    >>> X.sd()
+    1.4142135623730951
+    >>> X.draw()  # doctest: +SKIP
+    1.52
     """
 
     def __init__(self, shape, rate=1.0, scale=None):
+        """Create a gamma distribution.
+
+        Parameters
+        ----------
+        shape : float
+            Shape parameter α. Must be positive.
+        rate : float, optional
+            Rate parameter λ. Must be positive. Default is 1.0.
+            Ignored if ``scale`` is provided.
+        scale : float, optional
+            Scale parameter 1/λ. Must be positive. If provided,
+            overrides ``rate``.
+
+        Raises
+        ------
+        Exception
+            If ``shape``, ``rate``, or ``scale`` is not positive.
+        """
 
         if 0 < shape:
             self.shape = shape
@@ -526,14 +958,46 @@ class Gamma(Distribution):
 
 
 class Beta(Distribution):
-    """Defines a probability space for a beta distribution.
+    """Probability space for a beta distribution.
 
-    Attributes:
-      a (float): alpha parameter for beta distribution
-      b (float): beta parameter for beta distribution
+    A continuous distribution defined on [0, 1], often used to model
+    probabilities or proportions. The shape changes with parameters
+    ``a`` and ``b``.
+
+    Attributes
+    ----------
+    a : float
+        First shape parameter (α). Must be positive.
+    b : float
+        Second shape parameter (β). Must be positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Beta(a=1, b=1)
+    >>> X.mean()
+    0.5
+    >>> X.pdf(0.5)
+    1.0
+    >>> X.draw()  # doctest: +SKIP
+    0.632
     """
 
     def __init__(self, a, b):
+        """Create a beta distribution.
+
+        Parameters
+        ----------
+        a : float
+            First shape parameter (α). Must be positive.
+        b : float
+            Second shape parameter (β). Must be positive.
+
+        Raises
+        ------
+        Exception
+            If ``a`` or ``b`` is not positive.
+        """
 
         if 0 < a:
             self.a = a
@@ -554,13 +1018,41 @@ class Beta(Distribution):
 
 
 class StudentT(Distribution):
-    """Defines a probability space for Student's t distribution.
+    """Probability space for Student's t-distribution.
 
-    Attributes:
-      df (int): degrees of freedom
+    A bell-shaped distribution similar to the normal but with heavier
+    tails. Commonly used in statistical inference when the sample size
+    is small. As degrees of freedom increase, it approaches the normal
+    distribution.
+
+    Attributes
+    ----------
+    df : int or float
+        Degrees of freedom. Must be positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = StudentT(df=10)
+    >>> X.mean()
+    0.0
+    >>> X.draw()  # doctest: +SKIP
+    0.312
     """
 
     def __init__(self, df):
+        """Create a Student's t-distribution.
+
+        Parameters
+        ----------
+        df : int or float
+            Degrees of freedom. Must be greater than 0.
+
+        Raises
+        ------
+        Exception
+            If ``df`` is not greater than 0.
+        """
         if df > 0:
             self.df = df
         else:
@@ -577,13 +1069,42 @@ class StudentT(Distribution):
 
 
 class ChiSquare(Distribution):
-    """Defines a probability space for a chi-square distribution
+    """Probability space for a chi-square distribution.
 
-    Attributes:
-      df (int): degrees of freedom
+    Arises as the sum of squares of independent standard normal random
+    variables. Commonly used in hypothesis testing and confidence
+    intervals for variance.
+
+    Attributes
+    ----------
+    df : int
+        Degrees of freedom. Must be a positive integer.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = ChiSquare(df=4)
+    >>> X.mean()
+    4.0
+    >>> X.sd()
+    2.8284271247461903
+    >>> X.draw()  # doctest: +SKIP
+    3.14
     """
 
     def __init__(self, df):
+        """Create a chi-square distribution.
+
+        Parameters
+        ----------
+        df : int
+            Degrees of freedom. Must be a positive integer.
+
+        Raises
+        ------
+        Exception
+            If ``df`` is not a positive integer.
+        """
         if df > 0 and isinstance(df, numbers.Integral):
             self.df = df
         else:
@@ -597,14 +1118,44 @@ class ChiSquare(Distribution):
 
 
 class F(Distribution):
-    """Defines a probability space for an F distribution
+    """Probability space for an F-distribution.
 
-    Attributes:
-      dfN (int): degrees of freedom in the numerator
-      dfD (int): degrees of freedom in the denominator
+    Arises as the ratio of two chi-square random variables divided by
+    their degrees of freedom. Commonly used in analysis of variance
+    (ANOVA) to compare group variances.
+
+    Attributes
+    ----------
+    dfN : int or float
+        Degrees of freedom for the numerator.
+    dfD : int or float
+        Degrees of freedom for the denominator.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = F(dfN=5, dfD=10)
+    >>> X.mean()
+    1.25
+    >>> X.draw()  # doctest: +SKIP
+    0.85
     """
 
     def __init__(self, dfN, dfD):
+        """Create an F-distribution.
+
+        Parameters
+        ----------
+        dfN : int or float
+            Degrees of freedom in the numerator. Must be greater than 0.
+        dfD : int or float
+            Degrees of freedom in the denominator. Must be greater than 0.
+
+        Raises
+        ------
+        Exception
+            If ``dfN`` or ``dfD`` is not greater than 0.
+        """
 
         if dfN > 0:
             self.dfN = dfN
@@ -625,13 +1176,39 @@ class F(Distribution):
 
 
 class Cauchy(Distribution):
-    """Defines a probability space for a Cauchy distribution
+    """Probability space for a Cauchy distribution.
 
-    Attributes:
-      The Cauchy distribution has no parameters
+    A heavy-tailed symmetric distribution centered at ``loc``. The Cauchy
+    distribution has no finite mean or variance — it is a classic example
+    where the law of large numbers does not apply.
+
+    Attributes
+    ----------
+    loc : float
+        Location parameter (center of the distribution). Default is 0.
+    scale : float
+        Scale parameter (controls the spread). Default is 1.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Cauchy(loc=0, scale=1)
+    >>> X.pdf(0)
+    0.3183098861837907
+    >>> X.draw()  # doctest: +SKIP
+    -2.31
     """
 
     def __init__(self, loc=0, scale=1):
+        """Create a Cauchy distribution.
+
+        Parameters
+        ----------
+        loc : float, optional
+            Location parameter (center). Default is 0.
+        scale : float, optional
+            Scale parameter (spread). Default is 1.
+        """
         self.loc = loc
         self.scale = scale
 
@@ -643,28 +1220,65 @@ class Cauchy(Distribution):
         super().__init__(params, stats.cauchy, False)
 
     def draw(self):
-        """Draw a single sample from the Cauchy distribution.
+        """Draw a single random sample from the Cauchy distribution.
 
         Returns
         -------
         float
-            A single random draw from the Cauchy distribution.
+            One random value drawn from the Cauchy distribution.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Cauchy().draw()  # doctest: +SKIP
+        1.48
         """
         return self.loc + (self.scale * np.random.standard_cauchy())
 
 
 class LogNormal(Distribution):
-    """Defines a probability space for a Log-Normal distribution
+    """Probability space for a log-normal distribution.
 
-       If Y has a LogNormal distribution with parameters mu and sigma, then
-       log(Y) has a normal distribution with mean mu and sd sigma.
+    If ``Y`` has a log-normal distribution with parameters ``mu`` and
+    ``sigma``, then ``log(Y)`` follows a normal distribution with mean
+    ``mu`` and standard deviation ``sigma``. Often used to model positive,
+    right-skewed quantities such as income or stock prices.
 
-    Attributes:
-      mu (float): mean of the underlying normal distribution
-      sigma (float): standard deviation of the underlying normal distribution
+    Attributes
+    ----------
+    norm_mean : float
+        Mean of the underlying normal distribution (μ).
+    norm_sd : float
+        Standard deviation of the underlying normal distribution (σ).
+    s : float
+        Shape parameter passed to scipy (equal to ``sigma``).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = LogNormal(mu=0, sigma=1)
+    >>> X.mean()
+    1.6487212707001282
+    >>> X.draw()  # doctest: +SKIP
+    0.94
     """
 
     def __init__(self, mu=0.0, sigma=1.0):
+        """Create a log-normal distribution.
+
+        Parameters
+        ----------
+        mu : float, optional
+            Mean of the underlying normal distribution. Default is 0.0.
+        sigma : float, optional
+            Standard deviation of the underlying normal distribution.
+            Must be positive. Default is 1.0.
+
+        Raises
+        ------
+        Exception
+            If ``sigma`` is not greater than 0.
+        """
 
         self.norm_mean = mu
 
@@ -683,15 +1297,44 @@ class LogNormal(Distribution):
 
 
 class Pareto(Distribution):
-    """Defines a probability space for a Pareto distribution.
+    """Probability space for a Pareto distribution.
 
-    Attributes:
-      b (float): shape parameter of Pareto distribution
-      scale (float): scale parameter of Pareto distribution
-          lower bound for possible values
+    A heavy-tailed distribution often used to model phenomena where a
+    small fraction of items account for a large share of the effect
+    (the "80/20 rule"). All values are at least ``scale``.
+
+    Attributes
+    ----------
+    b : float
+        Shape parameter (tail index). Larger values give thinner tails.
+    scale : float
+        Minimum possible value (lower bound of the support).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Pareto(b=2, scale=1)
+    >>> X.mean()
+    2.0
+    >>> X.draw()  # doctest: +SKIP
+    1.34
     """
 
     def __init__(self, b=1.0, scale=1.0):
+        """Create a Pareto distribution.
+
+        Parameters
+        ----------
+        b : float, optional
+            Shape parameter (tail index). Must be positive. Default is 1.0.
+        scale : float, optional
+            Minimum possible value. Must be positive. Default is 1.0.
+
+        Raises
+        ------
+        Exception
+            If ``b`` or ``scale`` is not positive.
+        """
 
         if b > 0:
             self.b = b
@@ -711,9 +1354,21 @@ class Pareto(Distribution):
         self.xlim = (scale, self.xlim[1]) # Pareto distributions are not defined for x < scale
 
     def draw(self):
-        """A function that takes no arguments and
-           returns a single draw from the Pareto distribution."""
-        
+        """Draw a single random sample from the Pareto distribution.
+
+        Returns
+        -------
+        float
+            One random value drawn from the Pareto distribution.
+            Always greater than or equal to ``scale``.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Pareto(b=2, scale=1).draw()  # doctest: +SKIP
+        1.42
+        """
+
         # Numpy's Pareto is Lomax distribution, or Type II Pareto
         # but we want the more standard parametrization
         return self.scale * (1 + np.random.pareto(self.b))
@@ -725,13 +1380,24 @@ class Pareto(Distribution):
 
 
 class Rayleigh(Distribution):
-    """Defines a probability space for a Rayleigh distribution
+    """Probability space for a Rayleigh distribution.
 
-    Attributes:
-      The Rayleigh distribution has no parameters
+    Arises when computing the magnitude of a two-dimensional vector
+    whose components are independent, identically distributed normal
+    random variables. Often used in signal processing.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Rayleigh()
+    >>> X.mean()
+    1.2533141373155003
+    >>> X.draw()  # doctest: +SKIP
+    0.88
     """
 
     def __init__(self):
+        """Create a Rayleigh distribution."""
         params = {}
         super().__init__(params, stats.rayleigh, False)
 
@@ -739,15 +1405,45 @@ class Rayleigh(Distribution):
 ## Multivariate Distributions
 
 class MultivariateNormal(Distribution):
-    """Defines a probability space for a multivariate normal
-       distribution.
+    """Probability space for a multivariate normal distribution.
 
-    Attributes:
-      mean (1-D array_like, of length n): mean vector
-      cov (2-D array_like, of shape (n, n)): covariance matrix
+    Generalizes the normal distribution to multiple dimensions. Each
+    draw produces a vector of correlated normal values, described by
+    a mean vector and a covariance matrix.
+
+    Attributes
+    ----------
+    mean : array-like of length n
+        The mean vector of the distribution.
+    cov : array-like of shape (n, n)
+        The covariance matrix. Must be symmetric and positive semi-definite.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+    >>> X.draw()  # doctest: +SKIP
+    (1.76, 0.40)
     """
 
     def __init__(self, mean, cov):
+        """Create a multivariate normal distribution.
+
+        Parameters
+        ----------
+        mean : array-like of length n
+            The mean vector. Must have at least one element.
+        cov : array-like of shape (n, n)
+            The covariance matrix. Must be square, symmetric, and
+            positive semi-definite.
+
+        Raises
+        ------
+        Exception
+            If ``mean`` and ``cov`` have incompatible dimensions, if
+            ``cov`` is not square, or if ``cov`` is not symmetric and
+            positive semi-definite.
+        """
         if len(mean) != len(cov):
             raise Exception("The dimension of the mean vector" +
                             " is not compatible with the dimensions" +
@@ -778,7 +1474,8 @@ class MultivariateNormal(Distribution):
         Raises
         ------
         Exception
-            Plotting is not available for multivariate normal distributions.
+            Always raised — plotting is not available for the
+            multivariate normal distribution.
         """
         raise Exception(
             "Plotting is not currently available for "
@@ -786,24 +1483,42 @@ class MultivariateNormal(Distribution):
         )
 
     def draw(self):
-        """A function that takes no arguments and
-            returns a single draw from the Multivariate Normal distribution."""
+        """Draw a single random sample from the multivariate normal distribution.
+
+        Returns
+        -------
+        Vector
+            A random vector drawn from the multivariate normal distribution.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]]).draw()  # doctest: +SKIP
+        (1.76, 0.40)
+        """
 
         return Vector(np.random.multivariate_normal(self.mean, self.cov))
 
     def __pow__(self, exponent):
-        """Generate multiple samples from the multivariate normal distribution.
+        """Draw multiple independent samples from the multivariate normal distribution.
 
         Parameters
         ----------
         exponent : int or float
-            Number of samples to draw. If float('inf'), returns a function
-            that draws infinite samples on demand.
+            Number of samples to draw. Pass ``float('inf')`` to create
+            an infinite sequence of draws generated lazily on demand.
 
         Returns
         -------
         ProbabilitySpace
-            A probability space that yields multiple samples.
+            A probability space whose draws produce ``exponent`` samples
+            at a time.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> (MultivariateNormal([0, 0], [[1, 0], [0, 1]]) ** 3).draw()  # doctest: +SKIP
+        [(-0.23, 1.72), (0.31, -0.72), (0.88, -0.21)]
         """
         if exponent == float("inf"):
             def draw():
@@ -818,27 +1533,58 @@ class MultivariateNormal(Distribution):
 
 
 class BivariateNormal(MultivariateNormal):
-    """Defines a probability space for a bivariate normal
-       distribution.
+    """Probability space for a bivariate normal distribution.
 
-    Attributes:
-      mean1 (float): mean parameter of X
-      mean2 (float): mean parameter of Y
-      sd1 (float): standard deviation parameter of X
-      sd2 (float): standard deviation parameter of Y
-      corr (float): correlation between X and Y
-      var1 (float): variance parameter of X
-        (if specified, sd1 will be ignored)
-      var2 (float): variance parameter of Y
-        (if specified, sd2 will be ignored)
-      cov (float): covariance between X and Y
-        (if specified, corr parameter will be ignored)
+    A special case of the multivariate normal with exactly two variables
+    (X and Y). You can specify the relationship between X and Y using
+    either correlation (``corr``) or covariance (``cov``).
+
+    Attributes
+    ----------
+    mean : list of float
+        The mean vector ``[mean1, mean2]``.
+    cov : list of list of float
+        The 2×2 covariance matrix.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = BivariateNormal(mean1=0, mean2=0, sd1=1, sd2=1, corr=0.5)
+    >>> X.draw()  # doctest: +SKIP
+    (1.76, 1.20)
     """
 
     def __init__(self,
                  mean1=0.0, mean2=0.0,
                  sd1=1.0, sd2=1.0, corr=0.0,
                  var1=None, var2=None, cov=None):
+        """Create a bivariate normal distribution.
+
+        Parameters
+        ----------
+        mean1 : float, optional
+            Mean of the first variable (X). Default is 0.0.
+        mean2 : float, optional
+            Mean of the second variable (Y). Default is 0.0.
+        sd1 : float, optional
+            Standard deviation of X. Default is 1.0.
+        sd2 : float, optional
+            Standard deviation of Y. Default is 1.0.
+        corr : float, optional
+            Correlation between X and Y, between -1 and 1. Default is 0.0.
+        var1 : float, optional
+            Variance of X. If provided, overrides ``sd1``.
+        var2 : float, optional
+            Variance of Y. If provided, overrides ``sd2``.
+        cov : float, optional
+            Covariance between X and Y. If provided, overrides ``corr``.
+
+        Raises
+        ------
+        Exception
+            If ``corr`` is not between -1 and 1, if ``sd1`` or ``sd2``
+            is negative, or if ``var1`` or ``var2`` is negative.
+        """
 
         if not -1 <= corr <= 1:
             raise Exception("Correlation must be "
@@ -866,15 +1612,45 @@ class BivariateNormal(MultivariateNormal):
 
 
 class Multinomial(Distribution):
-    """Defines a probability space for a multinomial
-       distribution.
+    """Probability space for a multinomial distribution.
 
-    Attributes:
-      n (int): number of trials
-      p (1-D array_like): probability vector
+    Generalizes the binomial distribution to more than two outcomes.
+    Models the counts of each outcome across ``n`` independent trials,
+    where each trial lands in one of several categories with fixed
+    probabilities.
+
+    Attributes
+    ----------
+    n : int
+        Number of trials.
+    p : array-like of float
+        Probability of each outcome. Must be non-negative and sum to 1.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
+    >>> X.draw()  # doctest: +SKIP
+    (5, 3, 2)
     """
 
     def __init__(self, n, p):
+        """Create a multinomial distribution.
+
+        Parameters
+        ----------
+        n : int
+            Number of trials. Must be a non-negative integer.
+        p : array-like of float
+            Probability of each outcome. All values must be non-negative
+            and they must sum to 1.
+
+        Raises
+        ------
+        Exception
+            If ``n`` is not a non-negative integer, or if the entries of
+            ``p`` are negative or do not sum to 1.
+        """
         if n >= 0 and isinstance(n, numbers.Integral):
             self.n = n
         #elif n == 0:
@@ -898,7 +1674,8 @@ class Multinomial(Distribution):
         Raises
         ------
         Exception
-            Plotting is not available for multinomial distributions.
+            Always raised — plotting is not available for the
+            multinomial distribution.
         """
         raise Exception(
             "Plotting is not currently available for "
@@ -906,24 +1683,42 @@ class Multinomial(Distribution):
         )
 
     def draw(self):
-        """A function that takes no arguments and
-            returns a single draw from the multinomial distribution."""
+        """Draw a single random sample from the multinomial distribution.
+
+        Returns
+        -------
+        Vector
+            A vector of counts, one per category, summing to ``n``.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Multinomial(n=10, p=[0.5, 0.3, 0.2]).draw()  # doctest: +SKIP
+        (6, 2, 2)
+        """
 
         return Vector(np.random.multinomial(self.n, self.p))
 
     def __pow__(self, exponent):
-        """Generate multiple samples from the multinomial distribution.
+        """Draw multiple independent samples from the multinomial distribution.
 
         Parameters
         ----------
         exponent : int or float
-            Number of samples to draw. If float('inf'), returns a function
-            that draws infinite samples on demand.
+            Number of samples to draw. Pass ``float('inf')`` to create
+            an infinite sequence of draws generated lazily on demand.
 
         Returns
         -------
         ProbabilitySpace
-            A probability space that yields multiple samples.
+            A probability space whose draws produce ``exponent`` samples
+            at a time.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> (Multinomial(10, [0.5, 0.3, 0.2]) ** 3).draw()  # doctest: +SKIP
+        [(5, 3, 2), (4, 4, 2), (6, 2, 2)]
         """
         if exponent == float("inf"):
             def draw():
