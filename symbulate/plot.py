@@ -19,7 +19,7 @@ color_cycle = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
 
 
 def init_color():
-    hex_list = [colors.rgb2hex(rgb) for rgb in cm.get_cmap("tab10").colors]
+    hex_list = [colors.rgb2hex(rgb) for rgb in cm["tab10"].colors]
     plt.rcParams["axes.prop_cycle"] = cycler("color", hex_list)
 
 
@@ -135,9 +135,8 @@ def make_violin(data, positions, ax, axis, alpha):
     values = []
     i, j = (0, 1) if axis == "x" else (1, 0)
     values = [data[data[:, i] == pos, j].tolist() for pos in positions]
-    violins = ax.violinplot(
-        dataset=values, showmedians=True, vert=False if axis == "y" else True
-    )
+    orientation = "horizontal" if axis == "y" else "vertical"
+    violins = ax.violinplot(dataset=values, showmedians=True, orientation=orientation)
     setup_ticks(
         np.array(positions) + 1, positions, ax.xaxis if axis == "x" else ax.yaxis
     )
