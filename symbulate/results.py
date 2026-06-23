@@ -8,6 +8,7 @@ random process.
 
 import difflib
 import time
+from collections import defaultdict
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -66,7 +67,11 @@ def _is_hashable(obj):
         True if ``obj`` has a ``__hash__`` attribute,
         False otherwise.
     """
-    return hasattr(obj, "__hash__")
+    try:
+        hash(obj)
+        return True
+    except TypeError:
+        return False
 
 
 def _is_boolean_vector(vector):
@@ -327,7 +332,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             A mapping from each observed outcome to its integer
             count.
         """
-        counts = {}
+        counts = defaultdict(int)
         for result in self.results:
             if _is_hashable(result):
                 outcome = result
@@ -335,11 +340,8 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
                 outcome = tuple(result)
             else:
                 outcome = str(result)
-            if outcome in counts:
-                counts[outcome] += 1
-            else:
-                counts[outcome] = 1
-        return counts
+            counts[outcome] += 1
+        return dict(counts)
 
     def tabulate(self, outcomes=None, normalize=False):
         """Count how many times each outcome appears.
@@ -435,14 +437,14 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         """
         if isinstance(filt, Results):
             if self.sim_id != filt.sim_id:
-                raise Exception(
+                raise ValueError(
                     "In order to filter one Results object "
                     "by another, they must come from the "
                     "same simulation."
                 )
             if len(filt) != len(self):
                 raise ValueError(
-                    "Filter must be the same length as the " "Results object."
+                    "Filter must be the same length as the Results object."
                 )
             if not _is_boolean_vector(filt):
                 raise ValueError("Every element in the filter must be a boolean.")
@@ -477,10 +479,10 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         def _op_func(self, other):
             if isinstance(other, Results):
                 if len(self) != len(other):
-                    raise Exception("Results objects must be of the " "same length.")
+                    raise ValueError("Results objects must be of the same length.")
                 if self.sim_id != other.sim_id:
-                    raise Exception(
-                        "Results objects must come from the " "same simulation."
+                    raise ValueError(
+                        "Results objects must come from the same simulation."
                     )
                 return type(self)([op(x, y) for x, y in zip(self, other)], self.sim_id)
             else:
@@ -514,7 +516,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         return self._operation_factory(op)
 
     # The Statistical superclass will use this to define all of the
-    # usual comparison operations (e.g., <, >, ==, !=, etc.).
+    # usual statistical operations (e.g., mean, var, std, etc.).
     def _statistic_factory(self, _):
         """Raise an error for statistical operations on Results.
 
@@ -612,8 +614,8 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             else:
                 if isinstance(other, Results):
                     if self.sim_id != other.sim_id:
-                        raise Exception(
-                            "Results objects must come " "from the same simulation."
+                        raise ValueError(
+                            "Results objects must come from the same simulation."
                         )
                     if not _is_boolean_vector(other):
                         raise ValueError(
@@ -745,25 +747,22 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
       </tbody>
     </table>
         """
-        row_template = """
-        <tr>
-          <td>%s</td><td>%s</td>
-        </tr>
-        """
-
         def _truncate(result):
             if len(result) > 100:
                 return result[:100] + "..."
             return result
 
+        def _row(index, value):
+            return f"<tr><td>{index}</td><td>{value}</td></tr>\n"
+
         table_body = ""
         for i, result in enumerate(self.results):
-            table_body += row_template % (i, _truncate(str(result)))
+            table_body += _row(i, _truncate(str(result)))
             # if we've already printed 9 rows, skip to end
             if i >= 8:
-                table_body += "<tr><td>...</td><td>...</td></tr>"
+                table_body += "<tr><td>...</td><td>...</td></tr>\n"
                 i_last = len(self) - 1
-                table_body += row_template % (i_last, _truncate(str(self.get(i_last))))
+                table_body += _row(i_last, _truncate(str(self.get(i_last))))
                 break
         return table_template.format(table_body=table_body)
 
@@ -1127,7 +1126,7 @@ class RVResults(Results):
             if isinstance(type, str):
                 type = (type,)
             elif not isinstance(type, (tuple, list)):
-                raise Exception("I don't know how to plot a " + str(type))
+                raise Exception(f"I don't know how to plot {type!r}")
 
         if self.dim == 1:
             # make sure self.array, a Numpy array, has been set
@@ -1292,7 +1291,10 @@ class RVResults(Results):
                     plt.draw()
                     new_labels = []
                     for label in caxes.get_yticklabels():
-                        new_labels.append(int(label.get_text()) / len(x))
+                        try:
+                            new_labels.append(float(label.get_text()) / len(x))
+                        except ValueError:
+                            new_labels.append("")
                     caxes.set_yticklabels(new_labels)
                 else:
                     caxes = add_colorbar(fig, type, histo[3], "Count")
