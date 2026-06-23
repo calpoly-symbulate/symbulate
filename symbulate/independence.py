@@ -1,6 +1,7 @@
 from .probability_space import ProbabilitySpace
 from .random_variables import RV
 
+
 def AssumeIndependent(*args):
     """Construct RVs with the same marginals but defined to be independent.
 
@@ -20,9 +21,9 @@ def AssumeIndependent(*args):
 
     Raises
     ------
-    Exception
+    TypeError
         If any argument is not an RV.
-    Exception
+    ValueError
         If any two RVs share the same probability space.
 
     Examples
@@ -35,26 +36,25 @@ def AssumeIndependent(*args):
 
     # Check that none of the RVs are defined on
     # the same probability space.
-    for i in range(len(args)):
-        if not isinstance(args[i], RV):
-            raise Exception(
+    for i, arg in enumerate(args):
+        if not isinstance(arg, RV):
+            raise TypeError(
                 "AssumeIndependent(...) can only be "
                 "used with RVs, but you passed in a "
-                "%s." % type(args[i]).__name__)
+                f"{type(arg).__name__}."
+            )
         for j in range(i + 1, len(args)):
-            if args[i].prob_space == args[j].prob_space:
-                raise Exception(
+            if arg.prob_space == args[j].prob_space:
+                raise ValueError(
                     "AssumeIndependent(...) can only be "
                     "called on RVs that are initially "
                     "defined on different probability "
                     "spaces."
-                    )
+                )
 
     def draw():
-        outcome = []
-        for arg in args:
-            outcome.append(arg.prob_space.draw())
-        return outcome
+        return [arg.prob_space.draw() for arg in args]
+
     P = ProbabilitySpace(draw)
 
     outputs = []
@@ -62,6 +62,7 @@ def AssumeIndependent(*args):
         # i=i forces Python to bind i now
         def _func(x, func=arg.func, i=i):
             return func(x[i])
+
         outputs.append(RV(P, _func))
 
     return tuple(outputs)
