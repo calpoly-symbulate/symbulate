@@ -91,7 +91,7 @@ class MarkovChainResult(InfiniteVector, DiscreteValued):
         # Generate initial state.
         # (self.states stores the indexes of the states, while
         #  self.values stores the labels of the states.)
-        state = rng.choice(range(n), p=self.initial_dist)
+        state = rng.choice(n, p=self.initial_dist)
         self.states = [state]
 
         def _func(n):
@@ -101,7 +101,7 @@ class MarkovChainResult(InfiniteVector, DiscreteValued):
                 state = self.states[m - 1]
                 for _ in range(m, n + 1):
                     state = rng.choice(
-                        range(self.n_states), p=self.transition_matrix[state, :]
+                        self.n_states, p=self.transition_matrix[state, :]
                     )
                     self.states.append(state)
             else:

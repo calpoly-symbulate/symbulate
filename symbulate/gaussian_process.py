@@ -81,9 +81,6 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
             Covariance matrix over all times observed so far.
         observed : dict
             Maps each previously evaluated time to its simulated value.
-        vfunc : callable
-            Internal vectorized function that evaluates the path at an
-            array of times.
         index_set : DiscreteTimeSequence or Reals
             The set of times over which this path is defined.
 
@@ -125,7 +122,7 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
                 for t in ts:
                     if t not in index_set:
                         raise KeyError(
-                            "Gaussian process is not defined at time %.2f." % t0
+                            "Gaussian process is not defined at time %.2f." % t
                         )
 
                 # Create an object to store the results
@@ -149,7 +146,7 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
 
                 # Simulate values for the remaining times
                 mean2 = np.array([mean_func(t) for t in ts])
-                cov11 = self.cov + MACHINE_EPS * np.identity(len(times))
+                cov11 = self.cov + MACHINE_EPS * np.eye(len(times))
                 cov12 = np.empty(shape=(len(times), len(ts)))
                 for i, s in enumerate(times):
                     for j, t in enumerate(ts):
@@ -166,7 +163,7 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
                 cond_var = cov22 - (cov12.T @ np.linalg.solve(cov11, cov12))
 
                 # update mean vector and covariance matrix
-                self.mean = np.append(self.mean, mean2)
+                self.mean = np.concatenate([self.mean, mean2])
                 self.cov = np.block([[cov11, cov12], [cov12.T, cov22]])
 
                 # simulate normal with given mean and variance
