@@ -120,7 +120,5 @@ class PoissonProcess(RandomProcess, RV):
         """Create a Poisson process with the given rate."""
         self.rate = rate
         prob_space = PoissonProcessProbabilitySpace(self.rate)
-        # A Poisson process is a continuous-time process, so its index set
-        # is the reals (not the natural-number default of RandomProcess).
         RandomProcess.__init__(self, prob_space, Reals())
         RV.__init__(self, prob_space)
