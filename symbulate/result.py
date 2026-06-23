@@ -293,6 +293,8 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         bool
             True if this tuple is less than ``other``.
         """
+        if not hasattr(other, "values"):
+            return NotImplemented
         return tuple(self.values) < tuple(other.values)
 
     def apply(self, func):
@@ -999,7 +1001,7 @@ class DiscreteTimeFunction(TimeFunction):
             If ``t`` is not in the index set.
         """
         fs = self.index_set.fs
-        if not t in self.index_set:
+        if t not in self.index_set:
             raise KeyError(
                 (
                     "No value at time %.2f for a function with "
@@ -1007,7 +1009,7 @@ class DiscreteTimeFunction(TimeFunction):
                 )
                 % (t, fs)
             )
-        return self._get_value_at_index(int(t * fs))
+        return self._get_value_at_index(round(t * fs))
 
     def __getitem__(self, n):
         """
@@ -1042,7 +1044,7 @@ class DiscreteTimeFunction(TimeFunction):
             return Vector(self._get_value_at_index(e) for e in n)
         elif isinstance(n, slice):
             return Vector(
-                self._get_value_at_index(e) for e in range(n.start, n.stop, n.step or 1)
+                self._get_value_at_index(e) for e in range(n.start or 0, n.stop, n.step or 1)
             )
         else:
             raise TypeError(
@@ -1307,7 +1309,7 @@ class ContinuousTimeFunction(TimeFunction):
             try:
                 # Use vectorized function if it exists
                 return Vector(self.vfunc(t))
-            except:
+            except AttributeError:
                 return Vector(self.func(e) for e in t)
         elif isinstance(t, ContinuousTimeFunction):
             return ContinuousTimeFunction(func=lambda s: self(t(s)))
@@ -1604,8 +1606,8 @@ def join(result1, result2):
     >>> join(t1, t2)
     (1, 2, 3, 4)
     """
-    a = tuple(result1.values) if type(result1) == Tuple else (result1,)
-    b = tuple(result2.values) if type(result2) == Tuple else (result2,)
+    a = tuple(result1.values) if isinstance(result1, Tuple) else (result1,)
+    b = tuple(result2.values) if isinstance(result2, Tuple) else (result2,)
 
     return Tuple(a + b)
 
