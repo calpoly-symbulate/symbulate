@@ -156,7 +156,8 @@ def var(x):
     >>> var([2, 4, 4, 4, 5, 5, 7, 9])
     4.0
     """
-    return mean([(i - mean(x)) ** 2 for i in x])
+    mu = mean(x)
+    return mean([(i - mu) ** 2 for i in x])
 
 
 def sd(x):
@@ -258,7 +259,8 @@ def med_abs_dev(x):
     >>> med_abs_dev([1, 2, 3, 4, 5])
     1.0
     """
-    return median([abs(i - median(x)) for i in x])
+    med = median(x)
+    return median([abs(i - med) for i in x])
 
 
 def quantile(q):
@@ -281,7 +283,7 @@ def quantile(q):
     >>> q25([1, 2, 3, 4, 5])
     2.0
     """
-    return lambda x: np.percentile(x, q * 100)
+    return lambda x: np.quantile(x, q)
 
 
 def iqr(x):
@@ -311,7 +313,7 @@ def iqr(x):
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the iqr of one value is unnecessary.")
     else:
-        q75, q25 = np.percentile(x, [75, 25])
+        q75, q25 = np.quantile(x, [0.75, 0.25])
         return q75 - q25
 
 
