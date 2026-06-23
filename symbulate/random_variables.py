@@ -1,3 +1,5 @@
+import warnings
+
 from .base import Arithmetic, Transformable, Comparable
 from .probability_space import Event
 from .result import Vector, join, is_scalar, is_numeric_vector
@@ -109,11 +111,13 @@ class RV(Arithmetic, Transformable, Comparable):
         >>> X(0.5)  # doctest: +SKIP
         0.5
         """
-        print(
-            "Warning: Calling an RV as a function simply applies the "
+        warnings.warn(
+            "Calling an RV as a function simply applies the "
             "function that defines the RV to the input, regardless of "
             "whether that input is a possible outcome in the underlying "
-            "probability space."
+            "probability space.",
+            UserWarning,
+            stacklevel=2,
         )
         return self.func(outcome)
 
@@ -222,7 +226,7 @@ class RV(Arithmetic, Transformable, Comparable):
         # if the indices are a slice, return a random vector
         elif isinstance(n, slice):
             return self.apply(
-                lambda x: Vector(x[i] for i in range(n.start, n.stop, n.step or 1))
+                lambda x: Vector(x[i] for i in range(n.start or 0, n.stop, n.step or 1))
             )
         # otherwise, return the nth value
         return self.apply(lambda x: x[n])
@@ -359,6 +363,8 @@ class RV(Arithmetic, Transformable, Comparable):
             def _func(outcome):
                 return join(other, self.func(outcome))
 
+        else:
+            raise Exception("Joint distributions are only defined for RVs and scalars.")
         return RV(self.prob_space, _func)
 
     # Define conditional distribution of random variable.
