@@ -7,6 +7,9 @@ from .probability_space import ProbabilitySpace
 from .plot import get_next_color
 from .result import Scalar, Vector, InfiniteVector
 
+rng = np.random.default_rng()
+
+
 class Distribution(ProbabilitySpace):
     """Base class for all probability distributions in Symbulate.
 
@@ -85,11 +88,10 @@ class Distribution(ProbabilitySpace):
         Examples
         --------
         >>> from symbulate import *
-        >>> np.random.seed(42)
-        >>> Normal(0, 1).draw()
+        >>> Normal(0, 1).draw()  # doctest: +SKIP
         0.4967141530112327
         """
-        return Scalar(self.sim_func(**self.params))
+        return Scalar(self.sim_func(**self.params, random_state=rng))
 
     # Override the inherited __pow__ function to take advantage
     # of vectorized simulations.
@@ -117,11 +119,13 @@ class Distribution(ProbabilitySpace):
         if exponent == float("inf"):
             def draw():
                 def _func(_):
-                    return self.sim_func(**self.params)
+                    return self.sim_func(**self.params, random_state=rng)
                 return InfiniteVector(_func)
         else:
             def draw():
-                return Vector(self.sim_func(**self.params, size=exponent))
+                return Vector(
+                    self.sim_func(**self.params, size=exponent, random_state=rng)
+                )
         return ProbabilitySpace(draw)
 
     def plot(self, xlim=None, alpha=None, ax=None, **kwargs):
@@ -477,7 +481,7 @@ class NegativeBinomial(Distribution):
 
         # Numpy's negative binomial returns numbers in [0, inf),
         # but we want numbers in [r, inf).
-        return self.r + np.random.negative_binomial(n=self.r, p=self.p)
+        return self.r + rng.negative_binomial(n=self.r, p=self.p)
 
 
 class Pascal(Distribution):
@@ -1116,7 +1120,7 @@ class Cauchy(Distribution):
         >>> Cauchy().draw()  # doctest: +SKIP
         1.48
         """
-        return self.loc + (self.scale * np.random.standard_cauchy())
+        return self.loc + (self.scale * rng.standard_cauchy())
 
 
 class LogNormal(Distribution):
@@ -1243,7 +1247,7 @@ class Pareto(Distribution):
 
         # Numpy's Pareto is Lomax distribution, or Type II Pareto
         # but we want the more standard parametrization
-        return self.scale * (1 + np.random.pareto(self.b))
+        return self.scale * (1 + rng.pareto(self.b))
 
 
 class Rayleigh(Distribution):
@@ -1355,7 +1359,7 @@ class MultivariateNormal(Distribution):
         (1.76, 0.40)
         """
 
-        return Vector(np.random.multivariate_normal(self.mean, self.cov))
+        return Vector(rng.multivariate_normal(self.mean, self.cov))
 
     def __pow__(self, exponent):
         """Draw multiple independent samples from the multivariate normal distribution.
@@ -1536,7 +1540,7 @@ class Multinomial(Distribution):
         (6, 2, 2)
         """
 
-        return Vector(np.random.multinomial(self.n, self.p))
+        return Vector(rng.multinomial(self.n, self.p))
 
     def __pow__(self, exponent):
         """Draw multiple independent samples from the multinomial distribution.
