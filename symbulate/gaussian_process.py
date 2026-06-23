@@ -13,6 +13,7 @@ from .random_variables import RV
 from .random_processes import RandomProcess
 
 MACHINE_EPS = 1e-12
+rng = np.random.default_rng()
 
 
 def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
@@ -169,7 +170,7 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
                 self.cov = np.block([[cov11, cov12], [cov12.T, cov22]])
 
                 # simulate normal with given mean and variance
-                new_values = np.random.multivariate_normal(cond_mean, cond_var)
+                new_values = rng.multivariate_normal(cond_mean, cond_var)
 
                 # store the new values
                 for t, v in zip(ts, new_values):
