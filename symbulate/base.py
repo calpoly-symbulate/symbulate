@@ -12,11 +12,6 @@ class Arithmetic:
     that class.
     """
 
-    def _operation_factory(self, _op):
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _operation_factory."
-        )
-
     def __add__(self, other):
         """Return the element-wise sum (e.g., X + Y or X + 3).
 
@@ -301,16 +296,6 @@ class Comparable:
     that class.
     """
 
-    # Explicitly unhashable: defining __eq__ without __hash__ would
-    # implicitly set __hash__ = None in Python 3, but stating it here
-    # makes the intent clear.
-    __hash__ = None
-
-    def _comparison_factory(self, _op):
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _comparison_factory."
-        )
-
     def __eq__(self, other):
         """Return an indicator of element-wise equality (e.g., X == 0).
 
@@ -447,16 +432,6 @@ class Statistical:
     multivariate statistics (e.g., covariance and correlation)
     are calculated on the object.
     """
-
-    def _statistic_factory(self, _op):
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _statistic_factory."
-        )
-
-    def _multivariate_statistic_factory(self, _op):
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _multivariate_statistic_factory."
-        )
 
     def sum(self):
         r"""Calculate the sum.
@@ -830,11 +805,6 @@ class Logical:
     of that type.
     """
 
-    def _logical_factory(self, _op):
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement _logical_factory."
-        )
-
     def __and__(self, other):
         """Return the logical AND of two events (e.g., A & B).
 
@@ -902,11 +872,6 @@ class Filterable:
     construct a new instance containing only those elements that satisfy
     a given criterion.
     """
-
-    def filter(self, _filt):
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement filter."
-        )
 
     def filter_eq(self, value):
         """Return all elements equal to a given value.
@@ -1201,11 +1166,6 @@ class Transformable:
     Subclasses must implement the apply method, which specifies how to
     apply a function to the object.
     """
-
-    def apply(self, _func):
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement apply."
-        )
 
     def __abs__(self):
         """Return the absolute value applied element-wise.
