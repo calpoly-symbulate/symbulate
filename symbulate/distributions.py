@@ -217,11 +217,11 @@ class Bernoulli(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Bernoulli(p=0.5)
-    >>> X.mean()
+    >>> float(X.mean())
     0.5
-    >>> X.sd()
+    >>> float(X.sd())
     0.5
-    >>> X.pmf(1)
+    >>> float(X.pmf(1))
     0.5
     >>> X.draw()  # doctest: +SKIP
     1
@@ -265,11 +265,11 @@ class Binomial(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Binomial(n=4, p=0.5)
-    >>> X.mean()
+    >>> float(X.mean())
     2.0
-    >>> X.sd()
+    >>> float(X.sd())
     1.0
-    >>> X.pmf(2)
+    >>> round(float(X.pmf(2)), 4)
     0.375
     >>> X.draw()  # doctest: +SKIP
     2
@@ -325,9 +325,9 @@ class Hypergeometric(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Hypergeometric(n=2, N0=3, N1=3)
-    >>> X.mean()
+    >>> float(X.mean())
     1.0
-    >>> X.pmf(1)
+    >>> round(float(X.pmf(1)), 4)
     0.6
     >>> X.draw()  # doctest: +SKIP
     1
@@ -384,9 +384,9 @@ class Geometric(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Geometric(p=0.5)
-    >>> X.mean()
+    >>> float(X.mean())
     2.0
-    >>> X.pmf(1)
+    >>> float(X.pmf(1))
     0.5
     >>> X.draw()  # doctest: +SKIP
     3
@@ -432,7 +432,7 @@ class NegativeBinomial(Distribution):
     --------
     >>> from symbulate import *
     >>> X = NegativeBinomial(r=3, p=0.5)
-    >>> X.mean()
+    >>> float(X.mean())
     6.0
     >>> X.draw()  # doctest: +SKIP
     7
@@ -505,9 +505,9 @@ class Pascal(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Pascal(r=1, p=0.5)
-    >>> X.mean()
+    >>> float(X.mean())
     1.0
-    >>> X.pmf(0)
+    >>> round(float(X.pmf(0)), 4)
     0.5
     >>> X.draw()  # doctest: +SKIP
     0
@@ -556,9 +556,9 @@ class Poisson(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Poisson(lam=4)
-    >>> X.mean()
+    >>> float(X.mean())
     4.0
-    >>> X.sd()
+    >>> float(X.sd())
     2.0
     >>> X.draw()  # doctest: +SKIP
     3
@@ -603,9 +603,9 @@ class DiscreteUniform(Distribution):
     --------
     >>> from symbulate import *
     >>> X = DiscreteUniform(a=1, b=6)
-    >>> X.mean()
+    >>> float(X.mean())
     3.5
-    >>> X.pmf(3)
+    >>> float(X.pmf(3))
     0.16666666666666666
     >>> X.draw()  # doctest: +SKIP
     4
@@ -653,9 +653,9 @@ class Uniform(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Uniform(a=0, b=1)
-    >>> X.mean()
+    >>> float(X.mean())
     0.5
-    >>> X.pdf(0.5)
+    >>> float(X.pdf(0.5))
     1.0
     >>> X.draw()  # doctest: +SKIP
     0.374
@@ -704,11 +704,11 @@ class Normal(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Normal(mean=0, sd=1)
-    >>> X.mean()
+    >>> float(X.mean())
     0.0
-    >>> X.sd()
+    >>> float(X.sd())
     1.0
-    >>> X.pdf(0)
+    >>> float(X.pdf(0))
     0.3989422804014327
     >>> X.draw()  # doctest: +SKIP
     -0.234
@@ -767,11 +767,11 @@ class Exponential(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Exponential(rate=1)
-    >>> X.mean()
+    >>> float(X.mean())
     1.0
-    >>> X.sd()
+    >>> float(X.sd())
     1.0
-    >>> X.pdf(1)
+    >>> float(X.pdf(1))
     0.36787944117144233
     >>> X.draw()  # doctest: +SKIP
     0.423
@@ -829,9 +829,9 @@ class Gamma(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Gamma(shape=2, rate=1)
-    >>> X.mean()
+    >>> float(X.mean())
     2.0
-    >>> X.sd()
+    >>> float(X.sd())
     1.4142135623730951
     >>> X.draw()  # doctest: +SKIP
     1.52
@@ -890,9 +890,9 @@ class Beta(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Beta(a=1, b=1)
-    >>> X.mean()
+    >>> float(X.mean())
     0.5
-    >>> X.pdf(0.5)
+    >>> round(float(X.pdf(0.5)), 4)
     1.0
     >>> X.draw()  # doctest: +SKIP
     0.632
@@ -941,7 +941,7 @@ class StudentT(Distribution):
     --------
     >>> from symbulate import *
     >>> X = StudentT(df=10)
-    >>> X.mean()
+    >>> float(X.mean())
     0.0
     >>> X.draw()  # doctest: +SKIP
     0.312
@@ -985,9 +985,9 @@ class ChiSquare(Distribution):
     --------
     >>> from symbulate import *
     >>> X = ChiSquare(df=4)
-    >>> X.mean()
+    >>> float(X.mean())
     4.0
-    >>> X.sd()
+    >>> float(X.sd())
     2.8284271247461903
     >>> X.draw()  # doctest: +SKIP
     3.14
@@ -1032,7 +1032,7 @@ class F(Distribution):
     --------
     >>> from symbulate import *
     >>> X = F(dfN=5, dfD=10)
-    >>> X.mean()
+    >>> float(X.mean())
     1.25
     >>> X.draw()  # doctest: +SKIP
     0.85
@@ -1084,7 +1084,7 @@ class Cauchy(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Cauchy(loc=0, scale=1)
-    >>> X.pdf(0)
+    >>> float(X.pdf(0))
     0.3183098861837907
     >>> X.draw()  # doctest: +SKIP
     -2.31
@@ -1148,7 +1148,7 @@ class LogNormal(Distribution):
     --------
     >>> from symbulate import *
     >>> X = LogNormal(mu=0, sigma=1)
-    >>> X.mean()
+    >>> float(X.mean())
     1.6487212707001282
     >>> X.draw()  # doctest: +SKIP
     0.94
@@ -1199,7 +1199,7 @@ class Pareto(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Pareto(b=2, scale=1)
-    >>> X.mean()
+    >>> float(X.mean())
     2.0
     >>> X.draw()  # doctest: +SKIP
     1.34
@@ -1257,8 +1257,8 @@ class Rayleigh(Distribution):
     --------
     >>> from symbulate import *
     >>> X = Rayleigh()
-    >>> X.mean()
-    1.2533141373155003
+    >>> round(float(X.mean()), 4)
+    1.2533
     >>> X.draw()  # doctest: +SKIP
     0.88
     """
@@ -1324,7 +1324,7 @@ class MultivariateNormal(Distribution):
             raise Exception("Dimension of cov matrix cannot be less than 1")
 
         self.discrete = False
-        self.pdf = lambda x: stats.multivariate_normal(x, mean, cov)
+        self.pdf = lambda x: stats.multivariate_normal(mean, cov).pdf(x)
 
     def plot(self):
         """Plot is not supported for multivariate distributions.
@@ -1458,7 +1458,7 @@ class BivariateNormal(MultivariateNormal):
             cov = corr * np.sqrt(var1 * var2)
         self.cov = [[var1, cov], [cov, var2]]
         self.discrete = False
-        self.pdf = lambda x: stats.multivariate_normal(x, self.mean, self.cov)
+        self.pdf = lambda x: stats.multivariate_normal(self.mean, self.cov).pdf(x)
 
 
 class Multinomial(Distribution):
@@ -1505,7 +1505,7 @@ class Multinomial(Distribution):
                             " and sum to 1.")
 
         self.discrete = False
-        self.pdf = lambda x: stats.multinomial(x, n, p)
+        self.pdf = lambda x: stats.multinomial(n, p).pmf(x)
 
     def plot(self):
         """Plot is not supported for multivariate distributions.
