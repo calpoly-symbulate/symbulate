@@ -21,7 +21,7 @@ TABLE_TEMPLATE = '''
 
 
 def _get_row_html(outcome, count):
-    return "<tr><td>%s</td><td>%s</td></tr>" % (outcome, count)
+    return f"<tr><td>{outcome}</td><td>{count}</td></tr>"
 
 
 class Table(dict, Arithmetic):
@@ -152,8 +152,7 @@ class Table(dict, Arithmetic):
             if i >= 18:
                 last_outcome = str(keys[-1])
                 last_value = str(self[keys[-1]])
-                table_rows.append(f"{'.' * len(last_outcome)}{outcome_space} "
-                                  f"{'.' * len(last_value)}")
+                table_rows.append(f"...{outcome_space} ...")
                 table_rows.append(f"{last_outcome}{outcome_space} "
                                   f"{last_value}")
                 break
@@ -187,7 +186,7 @@ class Table(dict, Arithmetic):
                 table_body += _get_row_html(keys[-1], self[keys[-1]])
                 break
         total = str(sum(self.values()))
-        table_body += _get_row_html("<b>Total</b>", "<b>%s</b>" % total)
+        table_body += _get_row_html("<b>Total</b>", f"<b>{total}</b>")
 
         # return HTML for entire table
         return TABLE_TEMPLATE.format(outcome_column = self.outcome_column,
@@ -215,7 +214,8 @@ class Table(dict, Arithmetic):
         def _op_func(self, other):
             return Table(
                 {outcome: op(count, other) for outcome, count in self.items()},
-                self.outcomes
+                self.outcomes,
+                outcome_column=self.outcome_column
             )
 
         return _op_func
