@@ -5,9 +5,6 @@ from .probability_space import ProbabilitySpace
 from .result import (
     DiscreteTimeFunction,
     ContinuousTimeFunction,
-    Vector,
-    is_number,
-    is_numeric_vector,
 )
 from .random_variables import RV
 from .random_processes import RandomProcess

@@ -1,7 +1,7 @@
 import numbers
 
 
-class IndexSet(object):
+class IndexSet:
     """Base class for index sets defining the time domain of a process.
 
     An index set specifies which values of "time" are valid for
@@ -88,7 +88,7 @@ class IndexSet(object):
         >>> Reals() == Naturals()
         False
         """
-        return type(other) == type(self)
+        return type(other) is type(self)
 
 
 class Reals(IndexSet):
@@ -123,7 +123,7 @@ class Reals(IndexSet):
         """
         try:
             return -float("inf") < value < float("inf")
-        except:
+        except Exception:
             return False
 
 
@@ -165,7 +165,7 @@ class Naturals(IndexSet):
             return value >= 0 and (
                 isinstance(value, numbers.Integral) or value.is_integer()
             )
-        except:
+        except Exception:
             return False
 
 
@@ -268,4 +268,4 @@ class Integers(DiscreteTimeSequence):
 
     def __init__(self):
         """Initialize an Integers index set with sampling frequency 1."""
-        self.fs = 1
+        super().__init__(1)
