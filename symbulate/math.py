@@ -6,12 +6,7 @@ import numpy as np
 import scipy.stats as stats
 
 from .random_variables import RV
-from .result import (
-    Tuple,
-    TimeFunction,
-    ContinuousTimeFunction,
-    DiscreteValued
-)
+from .result import Tuple, TimeFunction, ContinuousTimeFunction, DiscreteValued
 from .results import Results
 
 pi = math.pi
@@ -20,6 +15,7 @@ inf = float("inf")
 
 floor = math.floor
 ceil = math.ceil
+
 
 def operation_factory(operation):
     """Create a function that applies a scalar operation to Symbulate objects.
@@ -57,12 +53,14 @@ def operation_factory(operation):
 
     return _op_func
 
+
 sqrt = operation_factory(math.sqrt)
 exp = operation_factory(math.exp)
 sin = operation_factory(math.sin)
 cos = operation_factory(math.cos)
 tan = operation_factory(math.tan)
 factorial = operation_factory(math.factorial)
+
 
 def log(value, base=e):
     """Compute the logarithm of a value with an optional base.
@@ -89,6 +87,7 @@ def log(value, base=e):
     """
     return operation_factory(lambda x: math.log(x, base))(value)
 
+
 def mean(x):
     """Compute the arithmetic mean of a collection of values.
 
@@ -104,7 +103,7 @@ def mean(x):
 
     Raises
     ------
-    Exception
+    TypeError
         If ``x`` is a single real number.
 
     Examples
@@ -113,9 +112,10 @@ def mean(x):
     3.0
     """
     if isinstance(x, numbers.Real):
-        raise Exception("Taking the mean with one value is unnecessary.")
+        raise TypeError("Taking the mean with one value is unnecessary.")
     else:
         return sum(x) / len(x)
+
 
 def cumsum(x):
     """Compute the cumulative sum of a sequence.
@@ -137,6 +137,7 @@ def cumsum(x):
     """
     return x.cumsum()
 
+
 def var(x):
     """Compute the population variance of a collection of values.
 
@@ -156,6 +157,7 @@ def var(x):
     4.0
     """
     return mean([(i - mean(x)) ** 2 for i in x])
+
 
 def sd(x):
     """Compute the population standard deviation of a collection of values.
@@ -177,6 +179,7 @@ def sd(x):
     """
     return math.sqrt(var(x))
 
+
 def median(x):
     """Compute the median of a collection of values.
 
@@ -193,7 +196,7 @@ def median(x):
 
     Raises
     ------
-    Exception
+    TypeError
         If ``x`` is a single real number.
 
     Examples
@@ -202,9 +205,10 @@ def median(x):
     3.0
     """
     if isinstance(x, numbers.Real):
-        raise Exception("Taking the median of one value is unnecessary.")
+        raise TypeError("Taking the median of one value is unnecessary.")
     else:
         return np.median(x)
+
 
 def min_max_diff(x):
     """Compute the range (maximum minus minimum) of a collection of values.
@@ -222,7 +226,7 @@ def min_max_diff(x):
 
     Raises
     ------
-    Exception
+    TypeError
         If ``x`` is a single real number.
 
     Examples
@@ -231,9 +235,10 @@ def min_max_diff(x):
     4
     """
     if isinstance(x, numbers.Real):
-        raise Exception("Taking the range of one value is unnecessary.")
+        raise TypeError("Taking the range of one value is unnecessary.")
     else:
         return max(x) - min(x)
+
 
 def med_abs_dev(x):
     """Compute the median absolute deviation (MAD) of a collection of values.
@@ -253,7 +258,8 @@ def med_abs_dev(x):
     >>> med_abs_dev([1, 2, 3, 4, 5])
     1.0
     """
-    return median(list(abs(i-median(x)) for i in x))
+    return median([abs(i - median(x)) for i in x])
+
 
 def quantile(q):
     """Return a function that computes the q-th quantile of a collection.
@@ -277,6 +283,7 @@ def quantile(q):
     """
     return lambda x: np.percentile(x, q * 100)
 
+
 def iqr(x):
     """Compute the interquartile range (IQR) of a collection of values.
 
@@ -293,7 +300,7 @@ def iqr(x):
 
     Raises
     ------
-    Exception
+    TypeError
         If ``x`` is a single real number.
 
     Examples
@@ -302,10 +309,11 @@ def iqr(x):
     2.0
     """
     if isinstance(x, numbers.Real):
-        raise Exception("Taking the iqr of one value is unnecessary.")
+        raise TypeError("Taking the iqr of one value is unnecessary.")
     else:
         q75, q25 = np.percentile(x, [75, 25])
         return q75 - q25
+
 
 def orderstatistics(n):
     """Return a function that computes the n-th order statistic of a collection.
@@ -324,7 +332,7 @@ def orderstatistics(n):
 
     Raises
     ------
-    Exception
+    ValueError
         If ``n`` is less than or equal to 0.
 
     Examples
@@ -334,9 +342,10 @@ def orderstatistics(n):
     2
     """
     if n <= 0:
-        raise Exception("Out of bounds. Lowest order is 1.")
+        raise ValueError("Out of bounds. Lowest order is 1.")
     else:
         return lambda x: np.partition(x, n - 1)[n - 1]
+
 
 def skewness(x):
     """Compute the skewness of a collection of values.
@@ -354,7 +363,7 @@ def skewness(x):
 
     Raises
     ------
-    Exception
+    TypeError
         If ``x`` is a single real number.
 
     Examples
@@ -363,9 +372,10 @@ def skewness(x):
     >>> X.sim(10000).apply(skewness)
     """
     if isinstance(x, numbers.Real):
-        raise Exception("Finding the skenewss of one value is unnecessary,")
+        raise TypeError("Finding the skewness of one value is unnecessary.")
     else:
         return stats.skew(x)
+
 
 def kurtosis(x):
     """Compute the excess kurtosis of a collection of values.
@@ -383,7 +393,7 @@ def kurtosis(x):
 
     Raises
     ------
-    Exception
+    TypeError
         If ``x`` is a single real number.
 
     Examples
@@ -392,9 +402,10 @@ def kurtosis(x):
     >>> X.sim(10000).apply(kurtosis)
     """
     if isinstance(x, numbers.Real):
-        raise Exception("Finding the kurtosis of one value is unnecessary.")
+        raise TypeError("Finding the kurtosis of one value is unnecessary.")
     else:
         return stats.kurtosis(x)
+
 
 def moment(k):
     """Return a function that computes the k-th central moment of a collection.
@@ -416,7 +427,8 @@ def moment(k):
     >>> second_moment([1, 2, 3, 4, 5])
     2.0
     """
-    return lambda x: stats.moment(x, k)
+    return lambda x: stats.moment(x, order=k)
+
 
 def trimmed_mean(alpha):
     """Return a function that computes the trimmed mean of a collection.
@@ -440,6 +452,7 @@ def trimmed_mean(alpha):
     3.0
     """
     return lambda x: stats.trim_mean(x, alpha)
+
 
 def comparefun(x, compare, value):
     """Count elements in a collection that satisfy a binary comparison.
@@ -466,11 +479,8 @@ def comparefun(x, compare, value):
     >>> comparefun([1, 2, 3, 4, 5], operator.gt, 3)
     2
     """
-    count = 0
-    for i in x:
-        if compare(i, value):
-            count += 1
-    return count
+    return sum(1 for i in x if compare(i, value))
+
 
 def count(func=lambda x: True):
     """Return a function that counts elements satisfying a predicate.
@@ -492,13 +502,12 @@ def count(func=lambda x: True):
     >>> count(lambda x: x > 3)([1, 2, 3, 4, 5])
     2
     """
+
     def _func(x):
-        val = 0
-        for i in x:
-            if func(i):
-                val += 1
-        return val
+        return sum(1 for i in x if func(i))
+
     return _func
+
 
 def count_eq(value):
     """Return a function that counts elements equal to a given value.
@@ -519,9 +528,12 @@ def count_eq(value):
     >>> count_eq(3)([1, 2, 3, 3, 5])
     2
     """
+
     def func(x):
         return comparefun(x, op.eq, value)
+
     return func
+
 
 def count_neq(value):
     """Return a function that counts elements not equal to a given value.
@@ -542,9 +554,12 @@ def count_neq(value):
     >>> count_neq(3)([1, 2, 3, 3, 5])
     3
     """
+
     def func(x):
         return comparefun(x, op.ne, value)
+
     return func
+
 
 def count_lt(value):
     """Return a function that counts elements strictly less than a given value.
@@ -565,9 +580,12 @@ def count_lt(value):
     >>> count_lt(3)([1, 2, 3, 4, 5])
     2
     """
+
     def func(x):
         return comparefun(x, op.lt, value)
+
     return func
+
 
 def count_gt(value):
     """Return a function that counts elements strictly greater than a given value.
@@ -588,9 +606,12 @@ def count_gt(value):
     >>> count_gt(3)([1, 2, 3, 4, 5])
     2
     """
+
     def func(x):
         return comparefun(x, op.gt, value)
+
     return func
+
 
 def count_geq(value):
     """Return a function that counts elements greater than or equal to a given value.
@@ -611,9 +632,12 @@ def count_geq(value):
     >>> count_geq(3)([1, 2, 3, 4, 5])
     3
     """
+
     def func(x):
         return comparefun(x, op.ge, value)
+
     return func
+
 
 def count_leq(value):
     """Return a function that counts elements less than or equal to a given value.
@@ -634,9 +658,12 @@ def count_leq(value):
     >>> count_leq(3)([1, 2, 3, 4, 5])
     3
     """
+
     def func(x):
         return comparefun(x, op.le, value)
+
     return func
+
 
 def interarrival_times(continuous_time_function):
     """Return the interarrival times of a continuous-time discrete-state process.
@@ -663,15 +690,16 @@ def interarrival_times(continuous_time_function):
     >>> X = RV(PoissonProcessProbabilitySpace(rate=2))
     >>> interarrival_times(X.draw())
     """
-    if not (isinstance(continuous_time_function,
-                       ContinuousTimeFunction) and
-            isinstance(continuous_time_function,
-                       DiscreteValued)):
+    if not (
+        isinstance(continuous_time_function, ContinuousTimeFunction)
+        and isinstance(continuous_time_function, DiscreteValued)
+    ):
         raise TypeError(
             "Interarrival times are only defined for "
             "continuous-time, discrete-valued functions."
         )
     return continuous_time_function.get_interarrival_times()
+
 
 def arrival_times(continuous_time_function):
     """Return the arrival times of a continuous-time discrete-state process.
@@ -698,15 +726,16 @@ def arrival_times(continuous_time_function):
     >>> X = RV(PoissonProcessProbabilitySpace(rate=2))
     >>> arrival_times(X.draw())
     """
-    if not (isinstance(continuous_time_function,
-                       ContinuousTimeFunction) and
-            isinstance(continuous_time_function,
-                       DiscreteValued)):
+    if not (
+        isinstance(continuous_time_function, ContinuousTimeFunction)
+        and isinstance(continuous_time_function, DiscreteValued)
+    ):
         raise TypeError(
             "Interarrival times are only defined for "
             "continuous-time, discrete-valued functions."
         )
     return continuous_time_function.get_arrival_times()
+
 
 def states(discrete_valued_function):
     """Return the sequence of states of a discrete-valued process realization.
@@ -735,8 +764,5 @@ def states(discrete_valued_function):
     >>> states(X.draw())
     """
     if not isinstance(discrete_valued_function, DiscreteValued):
-        raise TypeError(
-            "States are only defined for discrete-valued "
-            "functions."
-        )
+        raise TypeError("States are only defined for discrete-valued " "functions.")
     return discrete_valued_function.get_states()
