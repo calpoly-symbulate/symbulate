@@ -810,18 +810,21 @@ class Logical:
 
         Parameters
         ----------
-        other : RV or RandomProcess
+        other : Event
             Right-hand event.
 
         Returns
         -------
-        RV or RandomProcess
-            Indicator that is 1 where both events occur, 0 otherwise.
+        Event
+            A new event that occurs when both events occur.
 
         Examples
         --------
-        >>> X = RV(Normal(0, 1))
-        >>> ((X > -1) & (X < 1)).draw()
+        >>> from symbulate import *
+        >>> die = ProbabilitySpace(lambda: np.random.choice(range(1, 7)))
+        >>> A = Event(die, lambda x: x > 2)
+        >>> B = Event(die, lambda x: x < 5)
+        >>> (A & B).draw()  # doctest: +SKIP
         """
         op_func = self._logical_factory(lambda x, y: x and y)
         return op_func(self, other)
@@ -831,18 +834,21 @@ class Logical:
 
         Parameters
         ----------
-        other : RV or RandomProcess
+        other : Event
             Right-hand event.
 
         Returns
         -------
-        RV or RandomProcess
-            Indicator that is 1 where either event occurs, 0 otherwise.
+        Event
+            A new event that occurs when either event occurs.
 
         Examples
         --------
-        >>> X = RV(Normal(0, 1))
-        >>> ((X < -1) | (X > 1)).draw()
+        >>> from symbulate import *
+        >>> die = ProbabilitySpace(lambda: np.random.choice(range(1, 7)))
+        >>> A = Event(die, lambda x: x < 2)
+        >>> B = Event(die, lambda x: x > 5)
+        >>> (A | B).draw()  # doctest: +SKIP
         """
         op_func = self._logical_factory(lambda x, y: x or y)
         return op_func(self, other)
@@ -852,14 +858,15 @@ class Logical:
 
         Returns
         -------
-        RV or RandomProcess
-            Indicator that is 1 where the event does not occur,
-            0 otherwise.
+        Event
+            A new event that occurs when the original event does not occur.
 
         Examples
         --------
-        >>> X = RV(Normal(0, 1))
-        >>> (~(X > 0)).draw()
+        >>> from symbulate import *
+        >>> die = ProbabilitySpace(lambda: np.random.choice(range(1, 7)))
+        >>> A = Event(die, lambda x: x > 3)
+        >>> (~A).draw()  # doctest: +SKIP
         """
         op_func = self._logical_factory(lambda x: not x)
         return op_func(self)
