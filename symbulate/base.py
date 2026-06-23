@@ -96,7 +96,8 @@ class Arithmetic:
         >>> X = RV(Normal(0, 1))
         >>> (3 - X).draw()
         """
-        return -1 * self.__sub__(other)
+        op_func = self._operation_factory(lambda x, y: y - x)
+        return op_func(self, other)
 
     def __neg__(self):
         """Return the element-wise negation (e.g., -X).
@@ -494,7 +495,7 @@ class Statistical:
         >>> X.sim(10000).quantile(0.25)
         """
         op_func = self._statistic_factory(
-            lambda **kwargs: np.percentile(q=q * 100, **kwargs)
+            lambda **kwargs: np.quantile(q=q, **kwargs)
         )
         return op_func(self)
 
@@ -682,7 +683,7 @@ class Statistical:
         >>> X = RV(Normal(0, 1))
         >>> X.sim(10000).max()
         """
-        op_func = self._statistic_factory(np.amax)
+        op_func = self._statistic_factory(np.max)
         return op_func(self)
 
     def min(self):
@@ -698,7 +699,7 @@ class Statistical:
         >>> X = RV(Normal(0, 1))
         >>> X.sim(10000).min()
         """
-        op_func = self._statistic_factory(np.amin)
+        op_func = self._statistic_factory(np.min)
         return op_func(self)
 
     def min_max_diff(self):
@@ -773,7 +774,7 @@ class Statistical:
         >>> (X & Y).sim(10000).corr()
         """
         op_func = self._multivariate_statistic_factory(
-            lambda a: np.corrcoef(a, rowvar=False, ddof=0)
+            lambda a: np.corrcoef(a, rowvar=False)
         )
         return op_func(self)
 
@@ -1183,10 +1184,15 @@ class Transformable:
         """
         return self.apply(abs)
 
-    def __round__(self):
+    def __round__(self, ndigits=None):
         """Return values rounded to the nearest integer element-wise.
 
         Called by Python's built-in ``round()``.
+
+        Parameters
+        ----------
+        ndigits : int, optional
+            Number of decimal places. If None, rounds to the nearest integer.
 
         Returns
         -------
@@ -1197,8 +1203,11 @@ class Transformable:
         --------
         >>> X = RV(Normal(0, 1))
         >>> round(X).draw()
+        >>> round(X, 2).draw()
         """
-        return self.apply(round)
+        if ndigits is None:
+            return self.apply(round)
+        return self.apply(lambda x: round(x, ndigits))
 
     def __floor__(self):
         """Return the floor (round down) of each value element-wise.
