@@ -12,6 +12,11 @@ class Arithmetic:
     that class.
     """
 
+    def _operation_factory(self, _op):
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _operation_factory."
+        )
+
     def __add__(self, other):
         """Return the element-wise sum (e.g., X + Y or X + 3).
 
@@ -96,7 +101,8 @@ class Arithmetic:
         >>> X = RV(Normal(0, 1))
         >>> (3 - X).draw()
         """
-        return -1 * self.__sub__(other)
+        op_func = self._operation_factory(lambda x, y: y - x)
+        return op_func(self, other)
 
     def __neg__(self):
         """Return the element-wise negation (e.g., -X).
@@ -295,6 +301,16 @@ class Comparable:
     that class.
     """
 
+    # Explicitly unhashable: defining __eq__ without __hash__ would
+    # implicitly set __hash__ = None in Python 3, but stating it here
+    # makes the intent clear.
+    __hash__ = None
+
+    def _comparison_factory(self, _op):
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _comparison_factory."
+        )
+
     def __eq__(self, other):
         """Return an indicator of element-wise equality (e.g., X == 0).
 
@@ -432,6 +448,16 @@ class Statistical:
     are calculated on the object.
     """
 
+    def _statistic_factory(self, _op):
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _statistic_factory."
+        )
+
+    def _multivariate_statistic_factory(self, _op):
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _multivariate_statistic_factory."
+        )
+
     def sum(self):
         r"""Calculate the sum.
 
@@ -494,7 +520,7 @@ class Statistical:
         >>> X.sim(10000).quantile(0.25)
         """
         op_func = self._statistic_factory(
-            lambda **kwargs: np.percentile(q=q * 100, **kwargs)
+            lambda **kwargs: np.quantile(q=q, **kwargs)
         )
         return op_func(self)
 
@@ -682,7 +708,7 @@ class Statistical:
         >>> X = RV(Normal(0, 1))
         >>> X.sim(10000).max()
         """
-        op_func = self._statistic_factory(np.amax)
+        op_func = self._statistic_factory(np.max)
         return op_func(self)
 
     def min(self):
@@ -698,7 +724,7 @@ class Statistical:
         >>> X = RV(Normal(0, 1))
         >>> X.sim(10000).min()
         """
-        op_func = self._statistic_factory(np.amin)
+        op_func = self._statistic_factory(np.min)
         return op_func(self)
 
     def min_max_diff(self):
@@ -773,7 +799,7 @@ class Statistical:
         >>> (X & Y).sim(10000).corr()
         """
         op_func = self._multivariate_statistic_factory(
-            lambda a: np.corrcoef(a, rowvar=False, ddof=0)
+            lambda a: np.corrcoef(a, rowvar=False)
         )
         return op_func(self)
 
@@ -803,6 +829,11 @@ class Logical:
     specifies how the logical operator operates on two objects
     of that type.
     """
+
+    def _logical_factory(self, _op):
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _logical_factory."
+        )
 
     def __and__(self, other):
         """Return the logical AND of two events (e.g., A & B).
@@ -871,6 +902,11 @@ class Filterable:
     construct a new instance containing only those elements that satisfy
     a given criterion.
     """
+
+    def filter(self, _filt):
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement filter."
+        )
 
     def filter_eq(self, value):
         """Return all elements equal to a given value.
@@ -1166,6 +1202,11 @@ class Transformable:
     apply a function to the object.
     """
 
+    def apply(self, _func):
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement apply."
+        )
+
     def __abs__(self):
         """Return the absolute value applied element-wise.
 
@@ -1183,10 +1224,15 @@ class Transformable:
         """
         return self.apply(abs)
 
-    def __round__(self):
+    def __round__(self, ndigits=None):
         """Return values rounded to the nearest integer element-wise.
 
         Called by Python's built-in ``round()``.
+
+        Parameters
+        ----------
+        ndigits : int, optional
+            Number of decimal places. If None, rounds to the nearest integer.
 
         Returns
         -------
@@ -1197,8 +1243,11 @@ class Transformable:
         --------
         >>> X = RV(Normal(0, 1))
         >>> round(X).draw()
+        >>> round(X, 2).draw()
         """
-        return self.apply(round)
+        if ndigits is None:
+            return self.apply(round)
+        return self.apply(lambda x: round(x, ndigits))
 
     def __floor__(self):
         """Return the floor (round down) of each value element-wise.
