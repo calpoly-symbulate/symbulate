@@ -67,11 +67,11 @@ class ProbabilitySpace:
 
         Raises
         ------
-        Exception
+        ValueError
             If ``self`` and ``other`` are not the same probability space object.
         """
         if self != other:
-            raise Exception("Events must be defined on same probability space.")
+            raise ValueError("Events must be defined on same probability space.")
 
     def apply(self, func):
         """Define a new probability space.
@@ -217,7 +217,7 @@ class Event(Logical):
 
         Raises
         ------
-        Exception
+        ValueError
             If ``self`` and ``other`` are not defined on the same
             probability space.
         """
@@ -252,7 +252,7 @@ class Event(Logical):
                     raise TypeError(
                         "Logical operations are only defined "
                         "between two Events, not between an Event "
-                        "and a %s." % type(other).__name__
+                        f"and a {type(other).__name__}."
                     )
                 return Event(
                     self.prob_space,
@@ -269,11 +269,11 @@ class Event(Logical):
 
         Raises
         ------
-        Exception
+        TypeError
             Always raised to prevent chained comparisons like ``2 < X < 5``.
             Use ``(2 < X) & (X < 5)`` instead.
         """
-        raise Exception(
+        raise TypeError(
             "Cannot cast an Event to a boolean. "
             "You may be getting this error if you "
             "wrote an expression like (2 < X < 5). "
@@ -375,9 +375,9 @@ class BoxModel(ProbabilitySpace):
 
         Raises
         ------
-        Exception
+        TypeError
             If the ``box`` is not specified as either a list or a dict.
-        Exception
+        ValueError
             If the ``size`` exceeds the number of tickets in the box when sampling without replacement.
         """
         if isinstance(box, list):
@@ -389,7 +389,7 @@ class BoxModel(ProbabilitySpace):
                 self.box.extend([ticket] * count)
             self.probs = None
         else:
-            raise Exception("Box must be specified either as a list or a dict.")
+            raise TypeError("Box must be specified either as a list or a dict.")
         self.size = None if size == 1 else size
         self.replace = replace
         self.order_matters = order_matters
@@ -399,7 +399,7 @@ class BoxModel(ProbabilitySpace):
         # If drawing without replacement, check that the number
         # of draws does not exceed the number of tickets in the box.
         if not self.replace and self.size is not None and self.size > len(self.box):
-            raise Exception(
+            raise ValueError(
                 "Cannot draw more tickets (without replacement) "
                 "than there are tickets in the box."
             )
@@ -425,7 +425,9 @@ class BoxModel(ProbabilitySpace):
         """
 
         def draw_inds(size):
-            return np.random.choice(len(self.box), size, self.replace, self.probs)
+            return np.random.choice(
+                len(self.box), size=size, replace=self.replace, p=self.probs
+            )
 
         if self.size is None:
             return self.box[draw_inds(None)]
@@ -438,7 +440,7 @@ class BoxModel(ProbabilitySpace):
         else:
             draws = [self.box[i] for i in draw_inds(self.size)]
             if not self.order_matters:
-                draws.sort()
+                draws.sort(key=str)
             return self.output_type(draws)
 
 
