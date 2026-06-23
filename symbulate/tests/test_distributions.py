@@ -1,3 +1,4 @@
+import math
 import unittest
 import numpy as np
 import scipy.stats as stats
@@ -48,6 +49,28 @@ class TestBernoulli(unittest.TestCase):
         ).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Bernoulli_error_p_negative(self):
+        self.assertRaises(Exception, lambda: Bernoulli(p=-0.1))
+
+    def test_Bernoulli_error_p_too_large(self):
+        self.assertRaises(Exception, lambda: Bernoulli(p=1.5))
+
+    def test_Bernoulli_p_zero(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Bernoulli(p=0))
+        sims = X.sim(Nsim)
+        self.assertTrue(all(sim == 0 for sim in sims))
+
+    def test_Bernoulli_mean_sd(self):
+        X = Bernoulli(p=0.3)
+        self.assertAlmostEqual(float(X.mean()), 0.3)
+        self.assertAlmostEqual(float(X.sd()), np.sqrt(0.3 * 0.7))
+
+    def test_Bernoulli_pmf(self):
+        X = Bernoulli(p=0.3)
+        self.assertAlmostEqual(float(X.pmf(1)), 0.3)
+        self.assertAlmostEqual(float(X.pmf(0)), 0.7)
+
 
 class TestBinomial(unittest.TestCase):
 
@@ -77,6 +100,21 @@ class TestBinomial(unittest.TestCase):
         ).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Binomial_error_p_negative(self):
+        self.assertRaises(Exception, lambda: Binomial(n=10, p=-0.1))
+
+    def test_Binomial_error_p_too_large(self):
+        self.assertRaises(Exception, lambda: Binomial(n=10, p=1.5))
+
+    def test_Binomial_error_n_float(self):
+        self.assertRaises(Exception, lambda: Binomial(n=2.5, p=0.4))
+
+    def test_Binomial_mean_sd_pmf(self):
+        X = Binomial(n=10, p=0.3)
+        self.assertAlmostEqual(float(X.mean()), 3.0)
+        self.assertAlmostEqual(float(X.sd()), np.sqrt(10 * 0.3 * 0.7))
+        self.assertAlmostEqual(float(X.pmf(3)), stats.binom(n=10, p=0.3).pmf(3))
+
 
 class TestHypergeometric(unittest.TestCase):
 
@@ -105,11 +143,43 @@ class TestHypergeometric(unittest.TestCase):
     def test_Hypergeometric_error_n_greater(self):
         self.assertRaises(Exception, lambda: Hypergeometric(n=10, N0=1, N1=8))
 
+    def test_Hypergeometric_error_n_zero(self):
+        self.assertRaises(Exception, lambda: Hypergeometric(n=0, N0=5, N1=5))
+
+    def test_Hypergeometric_error_N0_negative(self):
+        self.assertRaises(Exception, lambda: Hypergeometric(n=2, N0=-1, N1=5))
+
+    def test_Hypergeometric_error_N1_negative(self):
+        self.assertRaises(Exception, lambda: Hypergeometric(n=2, N0=5, N1=-1))
+
+    def test_Hypergeometric_mean(self):
+        X = Hypergeometric(n=4, N0=6, N1=10)
+        self.assertAlmostEqual(float(X.mean()), 4 * 10 / 16)
+
+    def test_Hypergeometric_pmf(self):
+        X = Hypergeometric(n=2, N0=3, N1=3)
+        self.assertAlmostEqual(float(X.pmf(1)), stats.hypergeom(M=6, n=3, N=2).pmf(1))
+
 
 class TestGeometric(unittest.TestCase):
 
     def test_Geometric_error(self):
         self.assertRaises(Exception, lambda: Geometric(p=0))
+
+    def test_Geometric_error_p_one(self):
+        self.assertRaises(Exception, lambda: Geometric(p=1))
+
+    def test_Geometric_error_p_greater_than_one(self):
+        self.assertRaises(Exception, lambda: Geometric(p=1.5))
+
+    def test_Geometric_mean(self):
+        X = Geometric(p=0.25)
+        self.assertAlmostEqual(float(X.mean()), 4.0)
+
+    def test_Geometric_pmf(self):
+        X = Geometric(p=0.5)
+        self.assertAlmostEqual(float(X.pmf(1)), 0.5)
+        self.assertAlmostEqual(float(X.pmf(2)), 0.25)
 
     def test_Geometric_to_NBinom(self):
         distributions.rng = np.random.default_rng(42)
@@ -171,6 +241,19 @@ class TestNegativeBinomial(unittest.TestCase):
         ).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_NBinom_error_p_zero(self):
+        self.assertRaises(Exception, lambda: NegativeBinomial(r=5, p=0))
+
+    def test_NBinom_error_p_too_large(self):
+        self.assertRaises(Exception, lambda: NegativeBinomial(r=5, p=1.5))
+
+    def test_NBinom_error_r_float(self):
+        self.assertRaises(Exception, lambda: NegativeBinomial(r=2.5, p=0.5))
+
+    def test_NBinom_mean(self):
+        X = NegativeBinomial(r=3, p=0.5)
+        self.assertAlmostEqual(float(X.mean()), 6.0)
+
 
 class TestPascal(unittest.TestCase):
 
@@ -182,6 +265,21 @@ class TestPascal(unittest.TestCase):
         X = Pascal(r=10, p=1.0)
         sims = X.sim(Nsim)
         self.assertTrue(all(sim == 0 for sim in sims))
+
+    def test_Pascal_error_p_zero(self):
+        self.assertRaises(Exception, lambda: Pascal(r=5, p=0))
+
+    def test_Pascal_error_r_float(self):
+        self.assertRaises(Exception, lambda: Pascal(r=2.5, p=0.5))
+
+    def test_Pascal_mean(self):
+        X = Pascal(r=3, p=0.5)
+        self.assertAlmostEqual(float(X.mean()), 3.0)
+
+    def test_Pascal_pmf(self):
+        X = Pascal(r=1, p=0.5)
+        self.assertAlmostEqual(float(X.pmf(0)), 0.5)
+        self.assertAlmostEqual(float(X.pmf(1)), 0.25)
 
 
 class TestPoisson(unittest.TestCase):
@@ -220,6 +318,54 @@ class TestPoisson(unittest.TestCase):
             obs_list, np.array(exp_list) * sum(obs_list) / sum(exp_list)
         ).pvalue
         self.assertTrue(pval > 0.01)
+
+    def test_Poisson_error_negative_lam(self):
+        self.assertRaises(Exception, lambda: Poisson(lam=-1))
+
+    def test_Poisson_mean_sd(self):
+        X = Poisson(lam=5)
+        self.assertAlmostEqual(float(X.mean()), 5.0)
+        self.assertAlmostEqual(float(X.sd()), np.sqrt(5))
+
+    def test_Poisson_pmf(self):
+        X = Poisson(lam=3)
+        self.assertAlmostEqual(float(X.pmf(3)), stats.poisson(mu=3).pmf(3))
+
+
+class TestDiscreteUniform(unittest.TestCase):
+
+    def test_DiscreteUniform_error_equal(self):
+        self.assertRaises(Exception, lambda: DiscreteUniform(a=5, b=5))
+
+    def test_DiscreteUniform_error_reversed(self):
+        self.assertRaises(Exception, lambda: DiscreteUniform(a=6, b=3))
+
+    def test_DiscreteUniform_mean(self):
+        X = DiscreteUniform(a=1, b=6)
+        self.assertAlmostEqual(float(X.mean()), 3.5)
+
+    def test_DiscreteUniform_pmf(self):
+        X = DiscreteUniform(a=1, b=6)
+        for k in range(1, 7):
+            self.assertAlmostEqual(float(X.pmf(k)), 1 / 6)
+
+    def test_DiscreteUniform_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        exp_list, obs_list = [], []
+        X = RV(DiscreteUniform(a=1, b=6))
+        sims = X.sim(Nsim)
+        simulated = sims.tabulate()
+        for k in range(1, 7):
+            exp_list.append(Nsim / 6)
+            obs_list.append(simulated[k])
+        pval = stats.chisquare(obs_list, exp_list).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_DiscreteUniform_sim_bounds(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(DiscreteUniform(a=3, b=7))
+        sims = X.sim(Nsim)
+        self.assertTrue(all(3 <= sim <= 7 for sim in sims))
 
 
 class TestUniform(unittest.TestCase):
@@ -275,6 +421,17 @@ class TestUniform(unittest.TestCase):
         cdf = stats.pareto(b=0.1, loc=0, scale=2).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
+
+    def test_Uniform_mean_pdf(self):
+        X = Uniform(a=2, b=8)
+        self.assertAlmostEqual(float(X.mean()), 5.0)
+        self.assertAlmostEqual(float(X.pdf(5)), 1 / 6)
+
+    def test_Uniform_cdf(self):
+        X = Uniform(a=0, b=4)
+        self.assertAlmostEqual(float(X.cdf(2)), 0.5)
+        self.assertAlmostEqual(float(X.cdf(0)), 0.0)
+        self.assertAlmostEqual(float(X.cdf(4)), 1.0)
 
 
 class TestNormal(unittest.TestCase):
@@ -371,6 +528,27 @@ class TestNormal(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Normal_var_param(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Normal(mean=0, var=4))
+        sims = X.sim(Nsim)
+        cdf = stats.norm(loc=0, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Normal_mean_sd_var_pdf(self):
+        X = Normal(mean=5, sd=2)
+        self.assertAlmostEqual(float(X.mean()), 5.0)
+        self.assertAlmostEqual(float(X.sd()), 2.0)
+        self.assertAlmostEqual(float(X.var()), 4.0)
+        self.assertAlmostEqual(float(X.pdf(5)), stats.norm(loc=5, scale=2).pdf(5))
+
+    def test_Normal_error_sd_negative(self):
+        self.assertRaises(Exception, lambda: Normal(mean=0, sd=-1))
+
+    def test_Normal_error_var_negative(self):
+        self.assertRaises(Exception, lambda: Normal(mean=0, var=-1.0))
+
 
 class TestExponential(unittest.TestCase):
 
@@ -448,6 +626,22 @@ class TestExponential(unittest.TestCase):
         ).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Exponential_scale_param(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Exponential(scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.expon(scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Exponential_error_scale_negative(self):
+        self.assertRaises(Exception, lambda: Exponential(scale=-1))
+
+    def test_Exponential_mean_sd(self):
+        X = Exponential(rate=2)
+        self.assertAlmostEqual(float(X.mean()), 0.5)
+        self.assertAlmostEqual(float(X.sd()), 0.5)
+
 
 class TestGamma(unittest.TestCase):
 
@@ -505,6 +699,21 @@ class TestGamma(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Gamma_scale_param(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Gamma(shape=3, scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.gamma(a=3, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Gamma_error_scale_negative(self):
+        self.assertRaises(Exception, lambda: Gamma(shape=2, scale=-1))
+
+    def test_Gamma_mean(self):
+        X = Gamma(shape=4, rate=2)
+        self.assertAlmostEqual(float(X.mean()), 2.0)
+
 
 class TestBeta(unittest.TestCase):
 
@@ -546,6 +755,11 @@ class TestBeta(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Beta_mean_pdf(self):
+        X = Beta(a=2, b=5)
+        self.assertAlmostEqual(float(X.mean()), 2 / 7)
+        self.assertAlmostEqual(float(X.pdf(0.5)), stats.beta(a=2, b=5).pdf(0.5))
+
 
 class TestStudentT(unittest.TestCase):
 
@@ -567,6 +781,19 @@ class TestStudentT(unittest.TestCase):
         cdf = stats.t(df=5).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
+
+    def test_StudentT_df1_nan_moments(self):
+        X = StudentT(df=1)
+        self.assertTrue(math.isnan(X.mean()))
+        self.assertTrue(math.isnan(X.sd()))
+        self.assertTrue(math.isnan(X.var()))
+
+    def test_StudentT_mean_zero(self):
+        X = StudentT(df=5)
+        self.assertAlmostEqual(float(X.mean()), 0.0)
+
+    def test_StudentT_error_negative_df(self):
+        self.assertRaises(Exception, lambda: StudentT(df=-1))
 
 
 class TestChiSquare(unittest.TestCase):
@@ -598,6 +825,16 @@ class TestChiSquare(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_ChiSquare_mean(self):
+        X = ChiSquare(df=7)
+        self.assertAlmostEqual(float(X.mean()), 7.0)
+
+    def test_ChiSquare_error_float_df(self):
+        self.assertRaises(Exception, lambda: ChiSquare(df=2.5))
+
+    def test_ChiSquare_error_zero_df(self):
+        self.assertRaises(Exception, lambda: ChiSquare(df=0))
+
 
 class TestF(unittest.TestCase):
 
@@ -627,6 +864,16 @@ class TestF(unittest.TestCase):
         cdf = stats.beta(a=5 / 2, b=8 / 2).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
+
+    def test_F_error_dfD(self):
+        self.assertRaises(Exception, lambda: F(dfN=5, dfD=0))
+
+    def test_F_error_dfN_negative(self):
+        self.assertRaises(Exception, lambda: F(dfN=-1, dfD=5))
+
+    def test_F_mean(self):
+        X = F(dfN=5, dfD=10)
+        self.assertAlmostEqual(float(X.mean()), 10 / (10 - 2))
 
 
 class TestCauchy(unittest.TestCase):
@@ -663,6 +910,17 @@ class TestCauchy(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Cauchy_loc_scale_params(self):
+        X = Cauchy(loc=2, scale=3)
+        self.assertEqual(X.loc, 2)
+        self.assertEqual(X.scale, 3)
+        # median of Cauchy equals its loc parameter
+        self.assertAlmostEqual(float(X.median()), 2.0)
+
+    def test_Cauchy_pdf_at_loc(self):
+        X = Cauchy(loc=0, scale=1)
+        self.assertAlmostEqual(float(X.pdf(0)), 1 / math.pi)
+
 
 class TestLognormal(unittest.TestCase):
 
@@ -693,6 +951,14 @@ class TestLognormal(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_LogNormal_error_sigma_zero(self):
+        self.assertRaises(Exception, lambda: LogNormal(mu=0, sigma=0))
+
+    def test_LogNormal_mean(self):
+        X = LogNormal(mu=1, sigma=0.5)
+        expected_mean = np.exp(1 + 0.5**2 / 2)
+        self.assertAlmostEqual(float(X.mean()), expected_mean, places=5)
+
 
 class TestPareto(unittest.TestCase):
 
@@ -705,6 +971,29 @@ class TestPareto(unittest.TestCase):
         X = RV(Pareto(b=1.5, scale=0.1))
         sims = (log(X / 0.1)).sim(Nsim)
         cdf = stats.expon(scale=1 / 1.5).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Pareto_error_b_nonpositive(self):
+        self.assertRaises(Exception, lambda: Pareto(b=0, scale=1))
+
+    def test_Pareto_error_b_negative(self):
+        self.assertRaises(Exception, lambda: Pareto(b=-1, scale=1))
+
+    def test_Pareto_error_scale_nonpositive(self):
+        self.assertRaises(Exception, lambda: Pareto(b=2, scale=0))
+
+    def test_Pareto_draw_above_scale(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Pareto(b=2, scale=3))
+        sims = X.sim(Nsim)
+        self.assertTrue(all(sim >= 3 for sim in sims))
+
+    def test_Pareto_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Pareto(b=2, scale=1))
+        sims = X.sim(Nsim)
+        cdf = stats.pareto(b=2, scale=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
@@ -738,6 +1027,18 @@ class TestRayleigh(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Rayleigh_mean(self):
+        X = Rayleigh()
+        self.assertAlmostEqual(float(X.mean()), np.sqrt(np.pi / 2), places=5)
+
+    def test_Rayleigh_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Rayleigh())
+        sims = X.sim(Nsim)
+        cdf = stats.rayleigh.cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
 
 class TestMultivariateNormal(unittest.TestCase):
 
@@ -750,6 +1051,29 @@ class TestMultivariateNormal(unittest.TestCase):
         self.assertRaises(
             Exception, lambda: MultivariateNormal(mean=[2, 4], cov=[[2, 4, 5], [2, 1]])
         )
+
+    def test_MultivariateNormal_cov_not_psd(self):
+        self.assertRaises(
+            Exception, lambda: MultivariateNormal(mean=[0, 0], cov=[[-1, 0], [0, 1]])
+        )
+
+    def test_MultivariateNormal_draw_shape(self):
+        distributions.rng = np.random.default_rng(42)
+        X = MultivariateNormal(mean=[0, 0, 0], cov=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        draw = X.draw()
+        self.assertEqual(len(draw), 3)
+
+    def test_MultivariateNormal_marginal(self):
+        distributions.rng = np.random.default_rng(42)
+        X, _ = RV(MultivariateNormal(mean=[3, 7], cov=[[4, 0], [0, 9]]))
+        sims = X.sim(Nsim)
+        cdf = stats.norm(loc=3, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_MultivariateNormal_plot_raises(self):
+        X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+        self.assertRaises(Exception, X.plot)
 
 
 class TestBivariateNormal(unittest.TestCase):
@@ -786,3 +1110,64 @@ class TestBivariateNormal(unittest.TestCase):
             ).cdf
             pval = stats.kstest(sims, cdf).pvalue
             self.assertTrue(pval > 0.01)
+
+    def test_BivariateNormal_corr_below_neg1(self):
+        self.assertRaises(
+            Exception,
+            lambda: BivariateNormal(mean1=0, mean2=0, sd1=1, sd2=1, corr=-1.5),
+        )
+
+    def test_BivariateNormal_marginal(self):
+        distributions.rng = np.random.default_rng(42)
+        X, _ = RV(BivariateNormal(mean1=5, mean2=10, sd1=2, sd2=3, corr=0.6))
+        sims = X.sim(Nsim)
+        cdf = stats.norm(loc=5, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_BivariateNormal_explicit_cov(self):
+        # Exercise the var1/var2/cov keyword paths (instead of sd/corr)
+        X = BivariateNormal(mean1=1, mean2=2, var1=4, var2=9, cov=3.0)
+        self.assertEqual(X.cov, [[4, 3.0], [3.0, 9]])
+
+
+class TestMultinomial(unittest.TestCase):
+
+    def test_Multinomial_error_n_negative(self):
+        self.assertRaises(Exception, lambda: Multinomial(n=-1, p=[0.5, 0.5]))
+
+    def test_Multinomial_error_n_float(self):
+        self.assertRaises(Exception, lambda: Multinomial(n=5.5, p=[0.5, 0.5]))
+
+    def test_Multinomial_error_p_sum(self):
+        self.assertRaises(Exception, lambda: Multinomial(n=10, p=[0.5, 0.6]))
+
+    def test_Multinomial_error_p_negative(self):
+        self.assertRaises(Exception, lambda: Multinomial(n=10, p=[-0.1, 1.1]))
+
+    def test_Multinomial_draw_sums_to_n(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Multinomial(n=20, p=[0.2, 0.5, 0.3])
+        draw = X.draw()
+        self.assertEqual(sum(draw), 20)
+
+    def test_Multinomial_marginals_match_Binomial(self):
+        distributions.rng = np.random.default_rng(42)
+        p = [0.3, 0.5, 0.2]
+        n = 15
+        X0, X1, X2 = RV(Multinomial(n=n, p=p))
+        for i, (rv, pi) in enumerate(zip([X0, X1, X2], p)):
+            sims = rv.sim(Nsim)
+            expected_mean = n * pi
+            expected_var = n * pi * (1 - pi)
+            self.assertAlmostEqual(float(sims.mean()), expected_mean, delta=0.15)
+            self.assertAlmostEqual(float(sims.var()), expected_var, delta=0.15)
+
+    def test_Multinomial_plot_raises(self):
+        X = Multinomial(n=10, p=[0.5, 0.5])
+        self.assertRaises(Exception, X.plot)
+
+    def test_Multinomial_pdf(self):
+        X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
+        expected = stats.multinomial(10, [0.5, 0.3, 0.2]).pmf([5, 3, 2])
+        self.assertAlmostEqual(float(X.pdf([5, 3, 2])), expected)
