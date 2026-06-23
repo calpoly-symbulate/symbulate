@@ -6,14 +6,12 @@ probability space or realizations of a random variable /
 random process.
 """
 
-import difflib
 import time
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 from matplotlib.gridspec import GridSpec
-from matplotlib.ticker import NullFormatter
 from matplotlib.transforms import Affine2D
 
 from .base import (
@@ -41,13 +39,11 @@ from .plot import (
 from .result import Scalar, Vector, TimeFunction, is_number, is_numeric_vector
 from .table import Table
 
-try:
-    seaborn_colorblind_closest = difflib.get_close_matches(
-        "seaborn-colorblind", plt.style.available, cutoff=0.7
-    )
-    stylesheet = seaborn_colorblind_closest[0]
-except IndexError:
-    stylesheet = "ggplot"
+stylesheet = (
+    "seaborn-v0_8-colorblind"
+    if "seaborn-v0_8-colorblind" in plt.style.available
+    else "ggplot"
+)
 
 plt.style.use(stylesheet)
 
@@ -66,7 +62,7 @@ def _is_hashable(obj):
         True if ``obj`` has a ``__hash__`` attribute,
         False otherwise.
     """
-    return hasattr(obj, "__hash__")
+    return getattr(obj, "__hash__", None) is not None
 
 
 def _is_boolean_vector(vector):
@@ -748,9 +744,10 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             table_body += row_template % (i, _truncate(str(result)))
             # if we've already printed 9 rows, skip to end
             if i >= 8:
-                table_body += "<tr><td>...</td><td>...</td></tr>"
-                i_last = len(self) - 1
-                table_body += row_template % (i_last, _truncate(str(self.get(i_last))))
+                if len(self) > 9:
+                    table_body += "<tr><td>...</td><td>...</td></tr>"
+                    i_last = len(self) - 1
+                    table_body += row_template % (i_last, _truncate(str(self.get(i_last))))
                 break
         return table_template.format(table_body=table_body)
 
@@ -804,6 +801,8 @@ class RVResults(Results):
         super().__init__(results, sim_id)
         init_color()
         # get type and dimension of the first result, if it exists
+        self.dim = None
+        self.index_set = None
         iterresults = iter(self)
         try:
             first_result = next(iterresults)
@@ -895,9 +894,9 @@ class RVResults(Results):
         def _op_func(self):
             self._set_array()
             if self.dim == 1:
-                return Scalar(op(a=self.array))
+                return Scalar(op(self.array))
             elif self.dim is not None:
-                return Vector(op(a=self.array, axis=0))
+                return Vector(op(self.array, axis=0))
             elif self.index_set is not None:
 
                 def _func(t):
@@ -949,7 +948,7 @@ class RVResults(Results):
             self._set_array()
             if self.dim == 2:
                 return op(self.array)[0, 1]
-            elif self.dim > 2:
+            elif self.dim is not None and self.dim > 2:
                 return op(self.array)
             elif self.dim == 1:
                 raise Exception(
@@ -1249,8 +1248,6 @@ class RVResults(Results):
                 ax = plt.gca()
                 color = get_next_color(ax)
 
-            nullfmt = NullFormatter()  # removes labels on fig
-
             if "scatter" in type:
                 if jitter:
                     x = x + np.random.normal(
@@ -1259,7 +1256,7 @@ class RVResults(Results):
                     y = y + np.random.normal(
                         loc=0, scale=0.01 * (y.max() - y.min()), size=len(y)
                     )
-                ax.scatter(x, y, alpha=alpha, c=color, **kwargs)
+                ax.scatter(x, y, alpha=alpha, color=color, **kwargs)
             elif "hist" in type:
                 histo = ax.hist2d(x, y, bins=bins, cmap="Blues")
 
@@ -1268,9 +1265,8 @@ class RVResults(Results):
                     caxes = add_colorbar(fig, type, histo[3], "Density")
                     # change scale to density instead of counts
                     plt.draw()
-                    new_labels = []
-                    for label in caxes.get_yticklabels():
-                        new_labels.append(int(label.get_text()) / len(x))
+                    tick_locs = caxes.get_yticks()
+                    new_labels = [tick / len(x) for tick in tick_locs]
                     caxes.set_yticklabels(new_labels)
                 else:
                     caxes = add_colorbar(fig, type, histo[3], "Count")
