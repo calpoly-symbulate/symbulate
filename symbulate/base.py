@@ -495,7 +495,7 @@ class Statistical:
         >>> X.sim(10000).quantile(0.25)
         """
         op_func = self._statistic_factory(
-            lambda **kwargs: np.quantile(q=q, **kwargs)
+            lambda a, axis=None: np.quantile(a, q=q, axis=axis)
         )
         return op_func(self)
 
