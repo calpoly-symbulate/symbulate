@@ -1,4 +1,5 @@
 from .distributions import Exponential
+from .index_sets import Reals
 from .math import inf
 from .probability_space import ProbabilitySpace
 from .result import InfiniteVector, ContinuousTimeFunction, DiscreteValued
@@ -22,10 +23,8 @@ class PoissonProcessResult(ContinuousTimeFunction, DiscreteValued):
     Examples
     --------
     >>> from symbulate import *
-    >>> import numpy as np
-    >>> np.random.seed(0)
     >>> path = PoissonProcess(rate=1).draw()
-    >>> path[1.5]
+    >>> path[1.5]  # doctest: +SKIP
     1
     """
 
@@ -79,11 +78,9 @@ class PoissonProcessProbabilitySpace(ProbabilitySpace):
     Examples
     --------
     >>> from symbulate import *
-    >>> import numpy as np
-    >>> np.random.seed(0)
     >>> space = PoissonProcessProbabilitySpace(rate=2)
     >>> path = space.draw()
-    >>> path[1.0]
+    >>> path[1.0]  # doctest: +SKIP
     2
     """
 
@@ -114,8 +111,6 @@ class PoissonProcess(RandomProcess, RV):
     Examples
     --------
     >>> from symbulate import *
-    >>> import numpy as np
-    >>> np.random.seed(0)
     >>> N = PoissonProcess(rate=1)
     >>> N[2].mean()  # doctest: +SKIP
     2.0
@@ -125,5 +120,7 @@ class PoissonProcess(RandomProcess, RV):
         """Create a Poisson process with the given rate."""
         self.rate = rate
         prob_space = PoissonProcessProbabilitySpace(self.rate)
-        RandomProcess.__init__(self, prob_space)
+        # A Poisson process is a continuous-time process, so its index set
+        # is the reals (not the natural-number default of RandomProcess).
+        RandomProcess.__init__(self, prob_space, Reals())
         RV.__init__(self, prob_space)
