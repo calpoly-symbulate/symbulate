@@ -11,6 +11,8 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
+rng = np.random.default_rng()
+
 from matplotlib.gridspec import GridSpec
 from matplotlib.transforms import Affine2D
 
@@ -1157,7 +1159,7 @@ class RVResults(Results):
                     freqs = [freq / n for freq in freqs]
                 if jitter:
                     a = 0.02 * (max(xs) - min(xs))
-                    xs = [x + np.random.uniform(low=-a, high=a) for x in xs]
+                    xs = [x + rng.uniform(low=-a, high=a) for x in xs]
                 # plot the impulses
                 ax.vlines(xs, 0, freqs, color=color, alpha=alpha, **kwargs)
                 configure_axes(
@@ -1167,7 +1169,7 @@ class RVResults(Results):
                 xs = self.array
                 if discrete:
                     noise_level = 0.002 * (self.array.max() - self.array.min())
-                    xs = xs + np.random.normal(scale=noise_level, size=n)
+                    xs = xs + rng.normal(scale=noise_level, size=n)
                 ax.plot(xs, [0.001] * n, "|", linewidth=5, color="k")
                 if len(type) == 1:
                     setup_ticks([], [], ax.yaxis)
@@ -1250,26 +1252,16 @@ class RVResults(Results):
 
             if "scatter" in type:
                 if jitter:
-                    x = x + np.random.normal(
-                        loc=0, scale=0.01 * (x.max() - x.min()), size=len(x)
-                    )
-                    y = y + np.random.normal(
-                        loc=0, scale=0.01 * (y.max() - y.min()), size=len(y)
-                    )
+                    x = x + rng.normal(loc=0, scale=0.01 * (x.max() - x.min()), size=len(x))
+                    y = y + rng.normal(loc=0, scale=0.01 * (y.max() - y.min()), size=len(y))
                 ax.scatter(x, y, alpha=alpha, color=color, **kwargs)
             elif "hist" in type:
-                histo = ax.hist2d(x, y, bins=bins, cmap="Blues")
-
-                # When normalize=True, use density instead of counts
                 if normalize:
-                    caxes = add_colorbar(fig, type, histo[3], "Density")
-                    # change scale to density instead of counts
-                    plt.draw()
-                    tick_locs = caxes.get_yticks()
-                    new_labels = [tick / len(x) for tick in tick_locs]
-                    caxes.set_yticklabels(new_labels)
+                    histo = ax.hist2d(x, y, bins=bins, cmap="Blues", density=True)
+                    add_colorbar(fig, type, histo[3], "Density")
                 else:
-                    caxes = add_colorbar(fig, type, histo[3], "Count")
+                    histo = ax.hist2d(x, y, bins=bins, cmap="Blues")
+                    add_colorbar(fig, type, histo[3], "Count")
             elif "density" in type:
                 den = make_density2D(x, y, ax)
                 add_colorbar(fig, type, den, "Density")
