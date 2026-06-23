@@ -1,5 +1,7 @@
 import numpy as np
 
+rng = np.random.default_rng()
+
 from .base import Logical
 from .result import Vector, InfiniteVector, join
 from .results import Results
@@ -26,7 +28,8 @@ class ProbabilitySpace:
     Examples
     --------
     >>> from symbulate import *
-    >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
+    >>> rng = np.random.default_rng()
+    >>> die = ProbabilitySpace(lambda: rng.choice([1, 2, 3, 4, 5, 6]))
     >>> die.draw()  # doctest: +SKIP
     3
     """
@@ -51,7 +54,8 @@ class ProbabilitySpace:
         Examples
         --------
         >>> from symbulate import *
-        >>> coin = ProbabilitySpace(lambda: np.random.choice(["H", "T"]))
+        >>> rng = np.random.default_rng()
+        >>> coin = ProbabilitySpace(lambda: rng.choice(["H", "T"]))
         >>> coin.sim(10)  # doctest: +SKIP
         Results(['H', 'T', 'H', 'H', 'T', 'T', 'H', 'T', 'H', 'T'])
         """
@@ -90,7 +94,8 @@ class ProbabilitySpace:
         Examples
         --------
         >>> from symbulate import *
-        >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
+        >>> rng = np.random.default_rng()
+        >>> die = ProbabilitySpace(lambda: rng.choice([1, 2, 3, 4, 5, 6]))
         >>> squared_die = die.apply(lambda x: x ** 2)
         >>> squared_die.draw()  # doctest: +SKIP
         16
@@ -118,8 +123,9 @@ class ProbabilitySpace:
         Examples
         --------
         >>> from symbulate import *
-        >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
-        >>> coin = ProbabilitySpace(lambda: np.random.choice(["H", "T"]))
+        >>> rng = np.random.default_rng()
+        >>> die = ProbabilitySpace(lambda: rng.choice([1, 2, 3, 4, 5, 6]))
+        >>> coin = ProbabilitySpace(lambda: rng.choice(["H", "T"]))
         >>> joint_space = die * coin
         >>> joint_space.draw()  # doctest: +SKIP
         (3, 'H')
@@ -149,7 +155,8 @@ class ProbabilitySpace:
         Examples
         --------
         >>> from symbulate import *
-        >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
+        >>> rng = np.random.default_rng()
+        >>> die = ProbabilitySpace(lambda: rng.choice([1, 2, 3, 4, 5, 6]))
         >>> three_dice = die ** 3
         >>> three_dice.draw()  # doctest: +SKIP
         Vector([2, 5, 3])
@@ -196,7 +203,8 @@ class Event(Logical):
     Examples
     --------
     >>> from symbulate import *
-    >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
+    >>> rng = np.random.default_rng()
+    >>> die = ProbabilitySpace(lambda: rng.choice([1, 2, 3, 4, 5, 6]))
     >>> even_event = Event(die, lambda x: x % 2 == 0)
     >>> even_event.draw()  # doctest: +SKIP
     True
@@ -292,7 +300,8 @@ class Event(Logical):
         Examples
         --------
         >>> from symbulate import *
-        >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
+        >>> rng = np.random.default_rng()
+        >>> die = ProbabilitySpace(lambda: rng.choice([1, 2, 3, 4, 5, 6]))
         >>> event = Event(die, lambda x: x > 3)
         >>> event.draw()  # doctest: +SKIP
         False
@@ -316,7 +325,8 @@ class Event(Logical):
         Examples
         --------
         >>> from symbulate import *
-        >>> die = ProbabilitySpace(lambda: np.random.choice([1, 2, 3, 4, 5, 6]))
+        >>> rng = np.random.default_rng()
+        >>> die = ProbabilitySpace(lambda: rng.choice([1, 2, 3, 4, 5, 6]))
         >>> even_event = Event(die, lambda x: x % 2 == 0)
         >>> even_event.sim(10000).mean()  # doctest: +SKIP
         0.498
@@ -425,7 +435,7 @@ class BoxModel(ProbabilitySpace):
         """
 
         def draw_inds(size):
-            return np.random.choice(
+            return rng.choice(
                 len(self.box), size=size, replace=self.replace, p=self.probs
             )
 
