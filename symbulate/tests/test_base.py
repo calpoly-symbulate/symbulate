@@ -298,6 +298,16 @@ class TestStatistical(unittest.TestCase):
         """corr() requires at least 2 dimensions."""
         self.assertRaises(Exception, self.sims.corr)
 
+    def test_quantile_out_of_range_raises(self):
+        """quantile(q) raises ValueError when q is outside [0, 1]."""
+        with self.assertRaises(ValueError):
+            self.sims.quantile(25)
+
+    def test_percentile_out_of_range_raises(self):
+        """percentile(q) raises ValueError when q is outside [0, 1]."""
+        with self.assertRaises(ValueError):
+            self.sims.percentile(2.0)
+
 
 # ===========================================================================
 # Logical mixin
@@ -524,6 +534,11 @@ class TestFilterable(unittest.TestCase):
         disc_sims = RV(BoxModel([1, 2, 3, 4, 5])).sim(200)
         self.assertEqual(disc_sims.count_eq(3), len(disc_sims.filter_eq(3)))
 
+    def test_count_non_callable_raises_type_error(self):
+        """count() raises TypeError when passed a non-callable."""
+        with self.assertRaises(TypeError):
+            self.sims.count(5)
+
 
 # ===========================================================================
 # Transformable mixin
@@ -574,6 +589,12 @@ class TestTransformable(unittest.TestCase):
         """math.ceil(2.3) == 3."""
         X = degenerate(2.3)
         self.assertEqual(math.ceil(X).draw(), 3)
+
+    def test_round_invalid_ndigits_raises(self):
+        """round(X, ndigits) raises ValueError when ndigits is not a non-negative int."""
+        X = degenerate(2.3)
+        with self.assertRaises(ValueError):
+            round(X, -1)
 
 
 if __name__ == "__main__":
