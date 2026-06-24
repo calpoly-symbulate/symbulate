@@ -248,5 +248,43 @@ class TestMarginalDistribution(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
 
+class TestRandomProcessErrors(unittest.TestCase):
+    """Error handling for RandomProcess construction."""
+
+    def test_non_callable_func_raises_type_error(self):
+        """func must be callable, not a plain value."""
+        with self.assertRaises(TypeError):
+            RandomProcess(Bernoulli(p=0.5) ** inf, Naturals(), func=5)
+
+    def test_string_func_raises_type_error(self):
+        """func must be callable, not a string."""
+        with self.assertRaises(TypeError):
+            RandomProcess(Bernoulli(p=0.5) ** inf, Naturals(), func="outcome[t]")
+
+    def test_string_index_set_raises_type_error(self):
+        """index_set must be an IndexSet instance, not a string."""
+        with self.assertRaises(TypeError):
+            RandomProcess(Bernoulli(p=0.5) ** inf, index_set="naturals")
+
+    def test_integer_index_set_raises_type_error(self):
+        """index_set must be an IndexSet instance, not a bare int."""
+        with self.assertRaises(TypeError):
+            RandomProcess(Bernoulli(p=0.5) ** inf, index_set=10)
+
+    def test_valid_custom_func_does_not_raise(self):
+        """A valid callable func and valid index_set must not raise."""
+        X = RandomProcess(
+            Bernoulli(p=0.5) ** inf,
+            Naturals(),
+            lambda outcome, t: 1 - outcome[t],
+        )
+        self.assertIsInstance(X, RandomProcess)
+
+    def test_valid_discrete_time_index_set_does_not_raise(self):
+        """DiscreteTimeSequence is a valid index_set."""
+        X = RandomProcess(Bernoulli(p=0.5) ** inf, DiscreteTimeSequence(4))
+        self.assertIsInstance(X, RandomProcess)
+
+
 if __name__ == "__main__":
     unittest.main()

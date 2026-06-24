@@ -1,4 +1,4 @@
-from .index_sets import Naturals
+from .index_sets import IndexSet, Naturals
 from .random_variables import RV
 from .result import TimeFunction, is_scalar
 
@@ -30,6 +30,13 @@ class RandomProcess(RV):
     rvs : dict
         Random variables assigned at specific times via ``X[t] = rv``.
 
+    Raises
+    ------
+    TypeError
+        If ``index_set`` is not an ``IndexSet`` instance.
+    TypeError
+        If ``func`` is not callable.
+
     Examples
     --------
     >>> from symbulate import *
@@ -42,6 +49,16 @@ class RandomProcess(RV):
         self, prob_space, index_set=Naturals(), func=lambda outcome, t: outcome[t]
     ):
         """Initialize a RandomProcess."""
+        if not isinstance(index_set, IndexSet):
+            raise TypeError(
+                f"index_set must be an IndexSet instance (e.g., Naturals(), Reals()), "
+                f"got {type(index_set).__name__}."
+            )
+        if not callable(func):
+            raise TypeError(
+                f"func must be callable (e.g., lambda outcome, t: outcome[t]), "
+                f"got {type(func).__name__}."
+            )
         self.index_set = index_set
         # This dict stores random variables at specific times.
         self.rvs = {}
@@ -84,7 +101,8 @@ class RandomProcess(RV):
         """
         if t not in self.index_set:
             raise KeyError(
-                "Time %s is not in the index set for this " "random process." % str(t)
+                f"Time {t!r} is not in the index set for this random process "
+                f"({type(self.index_set).__name__})."
             )
         # If value is a RV, store it in self.rvs.
         if isinstance(value, RV):
