@@ -167,5 +167,50 @@ class TestTableFromTabulate(unittest.TestCase):
         self.assertAlmostEqual(sum(result.values()), 1.0)
 
 
+# ---------------------------------------------------------------------------
+# Error messages
+# ---------------------------------------------------------------------------
+
+class TestTableNormalizeErrors(unittest.TestCase):
+
+    def test_normalize_zero_sum_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            Table({'a': 0, 'b': 0}, normalize=True)
+
+    def test_normalize_zero_sum_message(self):
+        with self.assertRaisesRegex(ValueError, "sum to zero"):
+            Table({'a': 0, 'b': 0}, normalize=True)
+
+    def test_normalize_empty_hash_map_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            Table({}, normalize=True)
+
+
+class TestTableEmptyRepr(unittest.TestCase):
+
+    def test_repr_empty_table_does_not_crash(self):
+        repr(Table({}))
+
+    def test_repr_empty_table_contains_empty_marker(self):
+        self.assertIn('(empty)', repr(Table({})))
+
+    def test_repr_empty_table_shows_outcome_header(self):
+        self.assertIn('Outcome', repr(Table({})))
+
+    def test_repr_empty_table_shows_frequency_header(self):
+        self.assertIn('Frequency', repr(Table({})))
+
+    def test_repr_empty_table_custom_outcome_column(self):
+        self.assertIn('Category', repr(Table({}, outcome_column='Category')))
+
+    def test_repr_empty_table_normalized_header(self):
+        # normalize=True on all-zero table raises before repr is called,
+        # but a normalized table that happens to be empty after construction
+        # should still show Relative Frequency — verify via outcomes kwarg
+        t = Table({'a': 1}, outcomes=[], normalize=False)
+        t.value_column = 'Relative Frequency'
+        self.assertIn('Relative Frequency', repr(t))
+
+
 if __name__ == '__main__':
     unittest.main()
