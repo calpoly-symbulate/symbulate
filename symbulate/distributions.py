@@ -51,6 +51,7 @@ class Distribution(ProbabilitySpace):
     xlim : tuple of float
         Default x-axis range used when plotting.
     """
+
     def __init__(self, params, scipy, discrete=True):
         """Initialize the base Distribution."""
         self.params = params
@@ -59,7 +60,7 @@ class Distribution(ProbabilitySpace):
 
         if discrete:
             self.pmf = lambda x: scipy.pmf(x, **self.params)
-            self.pdf = self.pmf # add pdf as an alias for pmf
+            self.pdf = self.pmf  # add pdf as an alias for pmf
         else:
             self.pdf = lambda x: scipy.pdf(x, **self.params)
 
@@ -72,10 +73,7 @@ class Distribution(ProbabilitySpace):
         self.sd = lambda: scipy.std(**self.params)
         self.sim_func = scipy.rvs
 
-        self.xlim = (
-            scipy.ppf(0.001, **self.params),
-            scipy.ppf(0.999, **self.params)
-            )
+        self.xlim = (scipy.ppf(0.001, **self.params), scipy.ppf(0.999, **self.params))
 
     def draw(self):
         """Draw a single random sample from the distribution.
@@ -117,15 +115,20 @@ class Distribution(ProbabilitySpace):
         [-0.234, 1.724, 0.313]
         """
         if exponent == float("inf"):
+
             def draw():
                 def _func(_):
                     return self.sim_func(**self.params, random_state=rng)
+
                 return InfiniteVector(_func)
+
         else:
+
             def draw():
                 return Vector(
                     self.sim_func(**self.params, size=exponent, random_state=rng)
                 )
+
         return ProbabilitySpace(draw)
 
     def plot(self, xlim=None, alpha=None, ax=None, **kwargs):
@@ -179,7 +182,7 @@ class Distribution(ProbabilitySpace):
             ylower, yupper = ax.get_ylim()
             ylim = min(ylim[0], ylower), max(ylim[1], yupper)
         else:
-            ax = plt.gca() # creates new axis
+            ax = plt.gca()  # creates new axis
 
         # set the axis limits
         ax.set_xlim(*xlim)
@@ -200,6 +203,7 @@ class Distribution(ProbabilitySpace):
 
 
 ## Discrete Distributions
+
 
 class Bernoulli(Distribution):
     """Probability space for a Bernoulli distribution.
@@ -238,11 +242,12 @@ class Bernoulli(Distribution):
         else:
             raise Exception("p must be between 0 and 1")
 
-        params = {
-            "p" : p
-            }
+        params = {"p": p}
         super().__init__(params, stats.bernoulli, True)
-        self.xlim = (0, 1) # Bernoulli distributions are not defined for x < 0 and x > 1
+        self.xlim = (
+            0,
+            1,
+        )  # Bernoulli distributions are not defined for x < 0 and x > 1
 
 
 class Binomial(Distribution):
@@ -292,12 +297,9 @@ class Binomial(Distribution):
         else:
             raise Exception("p must be between 0 and 1")
 
-        params = {
-            "n" : n,
-            "p" : p
-            }
+        params = {"n": n, "p": p}
         super().__init__(params, stats.binom, True)
-        self.xlim = (0, n) # Binomial distributions are not defined for x < 0 and x > n
+        self.xlim = (0, n)  # Binomial distributions are not defined for x < 0 and x > n
 
 
 class Hypergeometric(Distribution):
@@ -355,17 +357,16 @@ class Hypergeometric(Distribution):
         else:
             raise Exception("N1 must be a non-negative integer")
 
-        params = {
-            "M" : N0 + N1,
-            "n" : N1,
-            "N" : n
-            }
+        params = {"M": N0 + N1, "n": N1, "N": n}
 
         if N0 + N1 < n:
             raise Exception("N0 + N1 cannot be less than the sample size n")
 
         super().__init__(params, stats.hypergeom, True)
-        self.xlim = (0, n) # Hypergeometric distributions are not defined for x < 0 and x > n
+        self.xlim = (
+            0,
+            n,
+        )  # Hypergeometric distributions are not defined for x < 0 and x > n
 
 
 class Geometric(Distribution):
@@ -404,11 +405,12 @@ class Geometric(Distribution):
         else:
             raise Exception("p must be between 0 and 1")
 
-        params = {
-            "p" : p
-            }
+        params = {"p": p}
         super().__init__(params, stats.geom, True)
-        self.xlim = (1, self.xlim[1]) # Geometric distributions are not defined for x < 1
+        self.xlim = (
+            1,
+            self.xlim[1],
+        )  # Geometric distributions are not defined for x < 1
 
 
 class NegativeBinomial(Distribution):
@@ -455,13 +457,12 @@ class NegativeBinomial(Distribution):
         else:
             raise Exception("p must be between 0 and 1")
 
-        params = {
-            "n" : r,
-            "p" : p,
-            "loc" : r
-            }
+        params = {"n": r, "p": p, "loc": r}
         super().__init__(params, stats.nbinom, True)
-        self.xlim = (r, self.xlim[1]) # Negative Binomial distributions are not defined for x < r
+        self.xlim = (
+            r,
+            self.xlim[1],
+        )  # Negative Binomial distributions are not defined for x < r
 
     def draw(self):
         """Draw a single random sample from the negative binomial distribution.
@@ -530,12 +531,9 @@ class Pascal(Distribution):
         else:
             raise Exception("p must be between 0 and 1")
 
-        params = {
-            "n" : r,
-            "p" : p
-            }
+        params = {"n": r, "p": p}
         super().__init__(params, stats.nbinom, True)
-        self.xlim = (0, self.xlim[1]) # Pascal distributions are not defined for x < 0
+        self.xlim = (0, self.xlim[1])  # Pascal distributions are not defined for x < 0
 
 
 class Poisson(Distribution):
@@ -576,11 +574,9 @@ class Poisson(Distribution):
         else:
             raise Exception("Lambda (lam) must be greater than 0")
 
-        params = {
-            "mu" : lam
-            }
+        params = {"mu": lam}
         super().__init__(params, stats.poisson, True)
-        self.xlim = (0, self.xlim[1]) # Poisson distributions are not defined for x < 0
+        self.xlim = (0, self.xlim[1])  # Poisson distributions are not defined for x < 0
 
 
 class DiscreteUniform(Distribution):
@@ -620,19 +616,17 @@ class DiscreteUniform(Distribution):
         self.a = a
         self.b = b + 1
 
-        params = {
-            "low" : self.a,
-            "high" : self.b
-            }
+        params = {"low": self.a, "high": self.b}
 
         if a >= b:
             raise Exception("b cannot be less than or equal to a")
 
         super().__init__(params, stats.randint, True)
-        self.xlim = (a, b) # Uniform distributions are not defined for x < a and x > b
+        self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
 
 
 ## Continuous Distributions
+
 
 class Uniform(Distribution):
     """Probability space for a continuous uniform distribution.
@@ -670,16 +664,13 @@ class Uniform(Distribution):
         self.a = a
         self.b = b
 
-        params = {
-            "loc" : a,
-            "scale" : b - a
-            }
+        params = {"loc": a, "scale": b - a}
 
         if a > b:
             raise Exception("b cannot be less than a")
 
         super().__init__(params, stats.uniform, False)
-        self.xlim = (a, b) # Uniform distributions are not defined for x < a and x > b
+        self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
 
 
 class Normal(Distribution):
@@ -718,8 +709,14 @@ class Normal(Distribution):
     -0.234
     """
 
-    def __init__(self, mean=0.0, sd=1.0, var=None):
+    def __init__(self, mean=0.0, sd=None, var=None):
         """Initialize a normal distribution."""
+
+        if sd is not None and var is not None:
+            raise ValueError("Specify sd or var, but not both.")
+
+        if sd is None and var is None:
+            sd = 1.0
 
         if var is None:
             if sd > 0:
@@ -737,10 +734,7 @@ class Normal(Distribution):
             else:
                 raise Exception("var cannot be less than 0")
 
-        params = {
-            "loc" : mean,
-            "scale" : self.scale
-            }
+        params = {"loc": mean, "scale": self.scale}
         super().__init__(params, stats.norm, False)
 
 
@@ -796,11 +790,12 @@ class Exponential(Distribution):
             else:
                 raise Exception("scale must be positive")
 
-        params = {
-            "scale" : 1. / rate if scale is None else scale
-            }
+        params = {"scale": 1.0 / rate if scale is None else scale}
         super().__init__(params, stats.expon, False)
-        self.xlim = (0, self.xlim[1]) # Exponential distributions are not defined for x < 0
+        self.xlim = (
+            0,
+            self.xlim[1],
+        )  # Exponential distributions are not defined for x < 0
 
 
 class Gamma(Distribution):
@@ -861,12 +856,9 @@ class Gamma(Distribution):
             else:
                 raise Exception("scale must be positive")
 
-        params = {
-            "a" : shape,
-            "scale" : 1. / rate if scale is None else scale
-            }
+        params = {"a": shape, "scale": 1.0 / rate if scale is None else scale}
         super().__init__(params, stats.gamma, False)
-        self.xlim = (0, self.xlim[1]) # Gamma distributions are not defined for x < 0
+        self.xlim = (0, self.xlim[1])  # Gamma distributions are not defined for x < 0
 
 
 class Beta(Distribution):
@@ -915,12 +907,9 @@ class Beta(Distribution):
         else:
             raise Exception("b must be positive")
 
-        params = {
-            "a" : a,
-            "b" : b
-            }
+        params = {"a": a, "b": b}
         super().__init__(params, stats.beta, False)
-        self.xlim = (0, 1) # Beta distributions are not defined for x < 0 and x > 1
+        self.xlim = (0, 1)  # Beta distributions are not defined for x < 0 and x > 1
 
 
 class StudentT(Distribution):
@@ -958,14 +947,12 @@ class StudentT(Distribution):
         else:
             raise Exception("df must be greater than 0")
 
-        params = {
-            "df" : df
-            }
+        params = {"df": df}
         super().__init__(params, stats.t, False)
         if df == 1:
-            self.mean = lambda: float('nan')
-            self.sd = lambda: float('nan')
-            self.var = lambda: float('nan')
+            self.mean = lambda: float("nan")
+            self.sd = lambda: float("nan")
+            self.var = lambda: float("nan")
 
 
 class ChiSquare(Distribution):
@@ -1004,11 +991,12 @@ class ChiSquare(Distribution):
         else:
             raise Exception("df must be a positive integer")
 
-        params = {
-            "df" : df
-            }
+        params = {"df": df}
         super().__init__(params, stats.chi2, False)
-        self.xlim = (0, self.xlim[1]) # Chi-Square distributions are not defined for x < 0
+        self.xlim = (
+            0,
+            self.xlim[1],
+        )  # Chi-Square distributions are not defined for x < 0
 
 
 class F(Distribution):
@@ -1055,12 +1043,9 @@ class F(Distribution):
         else:
             raise Exception("dfD must be greater than 0")
 
-        params = {
-            "dfn" : dfN,
-            "dfd" : dfD
-            }
+        params = {"dfn": dfN, "dfd": dfD}
         super().__init__(params, stats.f, False)
-        self.xlim = (0, self.xlim[1]) # F distributions are not defined for x < 0
+        self.xlim = (0, self.xlim[1])  # F distributions are not defined for x < 0
 
 
 class Cauchy(Distribution):
@@ -1099,10 +1084,7 @@ class Cauchy(Distribution):
         self.loc = loc
         self.scale = scale
 
-        params = {
-            "loc" : loc,
-            "scale" : scale
-        }
+        params = {"loc": loc, "scale": scale}
 
         super().__init__(params, stats.cauchy, False)
 
@@ -1169,12 +1151,12 @@ class LogNormal(Distribution):
         else:
             raise Exception("sigma must be greater than 0")
 
-        params = {
-            "s" : self.s,
-            "scale" : np.exp(mu)
-            }
+        params = {"s": self.s, "scale": np.exp(mu)}
         super().__init__(params, stats.lognorm, False)
-        self.xlim = (0, self.xlim[1]) # Log-Normal distributions are not defined for x < 0
+        self.xlim = (
+            0,
+            self.xlim[1],
+        )  # Log-Normal distributions are not defined for x < 0
 
 
 class Pareto(Distribution):
@@ -1222,12 +1204,12 @@ class Pareto(Distribution):
         else:
             raise Exception("scale must be greater than 0")
 
-        params = {
-            "b" : self.b,
-            "scale" : self.scale
-            }
+        params = {"b": self.b, "scale": self.scale}
         super().__init__(params, stats.pareto, False)
-        self.xlim = (scale, self.xlim[1]) # Pareto distributions are not defined for x < scale
+        self.xlim = (
+            scale,
+            self.xlim[1],
+        )  # Pareto distributions are not defined for x < scale
 
     def draw(self):
         """Draw a single random sample from the Pareto distribution.
@@ -1275,6 +1257,7 @@ class Rayleigh(Distribution):
 
 ## Multivariate Distributions
 
+
 class MultivariateNormal(Distribution):
     """Probability space for a multivariate normal distribution.
 
@@ -1307,9 +1290,11 @@ class MultivariateNormal(Distribution):
     def __init__(self, mean, cov):
         """Initialize a multivariate normal distribution."""
         if len(mean) != len(cov):
-            raise Exception("The dimension of the mean vector" +
-                            " is not compatible with the dimensions" +
-                            " of the covariance matrix.")
+            raise Exception(
+                "The dimension of the mean vector"
+                + " is not compatible with the dimensions"
+                + " of the covariance matrix."
+            )
 
         if len(mean) >= 1:
             self.mean = mean
@@ -1318,10 +1303,14 @@ class MultivariateNormal(Distribution):
 
         if len(cov) >= 1:
             if all(len(row) == len(mean) for row in cov):
-                if np.all(np.linalg.eigvals(cov) >= 0) and np.allclose(cov, np.transpose(cov)):
+                if np.all(np.linalg.eigvals(cov) >= 0) and np.allclose(
+                    cov, np.transpose(cov)
+                ):
                     self.cov = cov
                 else:
-                    raise Exception("Cov matrix is not symmetric and positive semi-definite")
+                    raise Exception(
+                        "Cov matrix is not symmetric and positive semi-definite"
+                    )
             else:
                 raise Exception("Cov matrix is not square")
         else:
@@ -1383,13 +1372,18 @@ class MultivariateNormal(Distribution):
         [(-0.23, 1.72), (0.31, -0.72), (0.88, -0.21)]
         """
         if exponent == float("inf"):
+
             def draw():
                 def _func(n):
                     return self.draw()
+
                 return InfiniteVector(_func)
+
         else:
+
             def draw():
                 return Vector(self.draw() for _ in range(exponent))
+
         return ProbabilitySpace(draw)
 
 
@@ -1435,15 +1429,21 @@ class BivariateNormal(MultivariateNormal):
     (1.76, 1.20)
     """
 
-    def __init__(self,
-                 mean1=0.0, mean2=0.0,
-                 sd1=1.0, sd2=1.0, corr=0.0,
-                 var1=None, var2=None, cov=None):
+    def __init__(
+        self,
+        mean1=0.0,
+        mean2=0.0,
+        sd1=1.0,
+        sd2=1.0,
+        corr=0.0,
+        var1=None,
+        var2=None,
+        cov=None,
+    ):
         """Initialize a bivariate normal distribution."""
 
         if not -1 <= corr <= 1:
-            raise Exception("Correlation must be "
-                            "between -1 and 1.")
+            raise Exception("Correlation must be " "between -1 and 1.")
 
         self.mean = [mean1, mean2]
 
@@ -1453,9 +1453,9 @@ class BivariateNormal(MultivariateNormal):
             raise Exception("sd2 cannot be less than 0")
 
         if var1 is None:
-            var1 = sd1 ** 2
+            var1 = sd1**2
         if var2 is None:
-            var2 = sd2 ** 2
+            var2 = sd2**2
         if var1 < 0 or var2 < 0:
             raise Exception("var1 and var2 cannot be negative")
         if cov is None:
@@ -1505,8 +1505,7 @@ class Multinomial(Distribution):
         if sum(p) == 1 and min(p) >= 0:
             self.p = p
         else:
-            raise Exception("Elements of p must be non-negative" +
-                            " and sum to 1.")
+            raise Exception("Elements of p must be non-negative" + " and sum to 1.")
 
         self.discrete = False
         self.pdf = lambda x: stats.multinomial(n, p).pmf(x)
@@ -1521,8 +1520,7 @@ class Multinomial(Distribution):
             multinomial distribution.
         """
         raise Exception(
-            "Plotting is not currently available for "
-            "the Multinomial distribution."
+            "Plotting is not currently available for " "the Multinomial distribution."
         )
 
     def draw(self):
@@ -1564,11 +1562,15 @@ class Multinomial(Distribution):
         [(5, 3, 2), (4, 4, 2), (6, 2, 2)]
         """
         if exponent == float("inf"):
+
             def draw():
                 def _func(_):
                     return self.draw()
+
                 return InfiniteVector(_func)
+
         else:
+
             def draw():
                 return Vector(self.draw() for _ in range(exponent))
 

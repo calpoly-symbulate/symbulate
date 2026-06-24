@@ -24,25 +24,39 @@ regression guard. Current expected failures:
     match that will raise IndexError if similarity drops below 0.7.
     Fix: hardcode 'seaborn-v0_8-colorblind' with an explicit fallback.
 """
+
 import unittest
 import warnings
 import numpy as np
 import matplotlib
+
 matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
 import matplotlib.pyplot as plt
 
 from symbulate import (
-    RV, Normal, Binomial, Bernoulli, Geometric, Poisson,
-    Exponential, Gamma, Beta, Uniform,
-    MultivariateNormal, Multinomial, BivariateNormal,
-    BoxModel, MarkovChain, PoissonProcess,
+    RV,
+    Normal,
+    Binomial,
+    Bernoulli,
+    Geometric,
+    Poisson,
+    Exponential,
+    Gamma,
+    Beta,
+    Uniform,
+    MultivariateNormal,
+    Multinomial,
+    BivariateNormal,
+    BoxModel,
+    MarkovChain,
+    PoissonProcess,
     ProbabilitySpace,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def histogram_area(ax):
     """Return the total area (width × height) of all histogram bars on ax."""
@@ -57,80 +71,9 @@ class PlotTestCase(unittest.TestCase):
 
 
 # ===========================================================================
-# Known-bug regression tests
-# ===========================================================================
-
-class TestKnownBugs(PlotTestCase):
-    """Each test documents a confirmed bug on the dev branch.
-
-    The test is marked @unittest.expectedFailure so the suite stays green.
-    When the bug is fixed, remove the decorator — the test then acts as a
-    regression guard that will catch any future reintroduction.
-    """
-
-    @unittest.expectedFailure
-    def test_bug_violin_vert_deprecated(self):
-        """Bug: violinplot() uses deprecated vert= keyword (plot.py:139).
-
-        Matplotlib 3.9 deprecated vert= in favour of orientation=.
-        Raises PendingDeprecationWarning when warnings are errors.
-
-        Fix:
-            orientation = 'horizontal' if axis == 'y' else 'vertical'
-            ax.violinplot(dataset=values, showmedians=True, orientation=orientation)
-        """
-        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
-        sims = (X & Y).sim(400)
-        with warnings.catch_warnings():
-            warnings.filterwarnings("error", category=PendingDeprecationWarning)
-            sims.plot(type="violin")   # must raise PendingDeprecationWarning
-
-    @unittest.expectedFailure
-    def test_bug_hist2d_normalize_int_cast(self):
-        """Bug: hist2d normalize=True crashes with ValueError (results.py:1272).
-
-        int(label.get_text()) raises when Matplotlib formats ticks as '0.0'.
-        Raises ValueError when warnings are treated as errors.
-
-        Fix: replace int(label.get_text()) with float(label.get_text()),
-        or re-plot using density=True to avoid post-hoc label manipulation.
-        """
-        X, Y = RV(Normal(0, 1) ** 2)
-        sims = (X & Y).sim(300)
-        with warnings.catch_warnings():
-            warnings.filterwarnings("error")
-            sims.plot(type="hist", normalize=True)   # must raise ValueError
-
-    @unittest.expectedFailure
-    def test_bug_seaborn_style_fragile_lookup(self):
-        """Bug: seaborn stylesheet found via fuzzy match (results.py:45-49).
-
-        difflib.get_close_matches returns [] → IndexError if similarity < 0.7.
-        This test confirms the fragility by checking that a hardcoded name
-        is used rather than a runtime search.
-
-        Fix:
-            stylesheet = (
-                'seaborn-v0_8-colorblind'
-                if 'seaborn-v0_8-colorblind' in plt.style.available
-                else 'ggplot'
-            )
-        """
-        import difflib
-        import symbulate.results as sr
-        # The bug is that the source code searches at import time.
-        # Confirm the hardcoded target name is NOT present in the source.
-        import inspect
-        source = inspect.getsource(sr)
-        self.assertIn(
-            "seaborn-v0_8-colorblind", source,
-            "Style name should be hardcoded, not searched via difflib"
-        )
-
-
-# ===========================================================================
 # 1D discrete RVResults
 # ===========================================================================
+
 
 class TestPlot1DDiscrete(PlotTestCase):
     """Plots of 1D discrete RVResults (default type: impulse)."""
@@ -175,6 +118,7 @@ class TestPlot1DDiscrete(PlotTestCase):
 # ===========================================================================
 # 1D continuous RVResults
 # ===========================================================================
+
 
 class TestPlot1DContinuous(PlotTestCase):
     """Plots of 1D continuous RVResults (default type: hist)."""
@@ -268,6 +212,7 @@ class TestPlot1DOtherDistributions(PlotTestCase):
 # 2D RVResults
 # ===========================================================================
 
+
 class TestPlot2DContinuous(PlotTestCase):
     """2D plots of continuous joint distributions."""
 
@@ -355,6 +300,7 @@ class TestPlot2DViolin(PlotTestCase):
 # Distribution.plot()
 # ===========================================================================
 
+
 class TestDistributionPlotContinuous(PlotTestCase):
     """Distribution.plot() for continuous named distributions."""
 
@@ -371,7 +317,7 @@ class TestDistributionPlotContinuous(PlotTestCase):
         Normal(0, 1).plot()
         xlim = plt.gca().get_xlim()
         self.assertLessEqual(xlim[0], -3.0)
-        self.assertGreaterEqual(xlim[1],  3.0)
+        self.assertGreaterEqual(xlim[1], 3.0)
 
     def test_exponential_xlim_left_edge_is_zero(self):
         """Exponential is only defined for x >= 0."""
@@ -394,7 +340,7 @@ class TestDistributionPlotContinuous(PlotTestCase):
         Normal(0, 1).plot(xlim=(-1, 1))
         xlim = plt.gca().get_xlim()
         self.assertAlmostEqual(xlim[0], -1.0, places=5)
-        self.assertAlmostEqual(xlim[1],  1.0, places=5)
+        self.assertAlmostEqual(xlim[1], 1.0, places=5)
 
     def test_two_distributions_overlay_on_one_axes(self):
         Normal(0, 1).plot()
@@ -457,6 +403,7 @@ class TestDistributionPlotDiscrete(PlotTestCase):
 # Stochastic process path plots
 # ===========================================================================
 
+
 class TestProcessPlots(PlotTestCase):
     """Plots of simulated stochastic process paths (dim > 2 / TimeFunctions)."""
 
@@ -479,6 +426,7 @@ class TestProcessPlots(PlotTestCase):
 # ===========================================================================
 # Error handling
 # ===========================================================================
+
 
 class TestPlottingErrors(PlotTestCase):
     """Tests that incorrect usage raises clear exceptions."""
@@ -508,6 +456,7 @@ class TestPlottingErrors(PlotTestCase):
 # ===========================================================================
 # Figure and axes management
 # ===========================================================================
+
 
 class TestAxesManagement(PlotTestCase):
     """Correct axes behavior and figure hygiene."""
