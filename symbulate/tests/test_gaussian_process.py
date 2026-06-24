@@ -231,5 +231,94 @@ class TestBrownianMotionProbabilitySpace(unittest.TestCase):
             self.assertEqual(P.draw()(0), 0)
 
 
+class TestGaussianProcessErrors(unittest.TestCase):
+    """Error handling for GaussianProcessProbabilitySpace and GaussianProcess."""
+
+    def test_non_callable_mean_func_raises_type_error(self):
+        """mean_func must be callable, not a plain value."""
+        with self.assertRaises(TypeError):
+            GaussianProcess(mean_func=0, cov_func=lambda s, t: min(s, t))
+
+    def test_non_callable_cov_func_raises_type_error(self):
+        """cov_func must be callable, not a plain value."""
+        with self.assertRaises(TypeError):
+            GaussianProcess(mean_func=lambda t: 0, cov_func=1)
+
+    def test_invalid_index_set_raises_type_error(self):
+        """index_set must be Reals or DiscreteTimeSequence, not a string."""
+        with self.assertRaises(TypeError):
+            GaussianProcess(
+                mean_func=lambda t: 0,
+                cov_func=lambda s, t: min(s, t),
+                index_set="not_an_index_set",
+            )
+
+    def test_invalid_index_set_integer_raises_type_error(self):
+        """index_set must be Reals or DiscreteTimeSequence, not an int."""
+        with self.assertRaises(TypeError):
+            GaussianProcess(
+                mean_func=lambda t: 0,
+                cov_func=lambda s, t: min(s, t),
+                index_set=5,
+            )
+
+    def test_invalid_time_raises_key_error(self):
+        """Evaluating a path outside the index set raises KeyError."""
+        seed()
+        X = GaussianProcess(lambda t: 0, lambda s, t: min(s, t))
+        path = X.draw()
+        with self.assertRaises(KeyError):
+            path(float('inf'))
+
+    def test_valid_construction_does_not_raise(self):
+        """Callable mean/cov and a valid index set must not raise."""
+        seed()
+        X = GaussianProcess(
+            mean_func=lambda t: 0,
+            cov_func=lambda s, t: min(s, t),
+            index_set=DiscreteTimeSequence(fs=4),
+        )
+        path = X.draw()
+        self.assertIsInstance(path[4], float)
+
+
+class TestBrownianMotionErrors(unittest.TestCase):
+    """Error handling for BrownianMotionProbabilitySpace and BrownianMotion."""
+
+    def test_non_numeric_drift_raises_type_error(self):
+        """drift must be a number."""
+        with self.assertRaises(TypeError):
+            BrownianMotion(drift="fast")
+
+    def test_non_numeric_scale_raises_type_error(self):
+        """scale must be a number."""
+        with self.assertRaises(TypeError):
+            BrownianMotion(scale="large")
+
+    def test_zero_scale_raises_value_error(self):
+        """scale=0 would produce a constant process — not allowed."""
+        with self.assertRaises(ValueError):
+            BrownianMotion(scale=0)
+
+    def test_negative_scale_raises_value_error(self):
+        """Negative scale is not physically meaningful."""
+        with self.assertRaises(ValueError):
+            BrownianMotion(scale=-1)
+
+    def test_valid_negative_drift_does_not_raise(self):
+        """Negative drift is valid; only scale must be positive."""
+        seed()
+        B = BrownianMotion(drift=-2.0, scale=0.5)
+        path = B.draw()
+        self.assertIsInstance(path(1.0), float)
+
+    def test_valid_large_scale_does_not_raise(self):
+        """Any positive scale is valid."""
+        seed()
+        B = BrownianMotion(drift=0, scale=10.0)
+        path = B.draw()
+        self.assertIsInstance(path(1.0), float)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -39,8 +39,8 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
 
     Raises
     ------
-    Exception
-        If ``index_set`` is not ``Reals`` or ``DiscreteTimeSequence``.
+    TypeError
+        If ``index_set`` is not a ``Reals`` or ``DiscreteTimeSequence`` instance.
 
     Examples
     --------
@@ -59,8 +59,9 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
     elif isinstance(index_set, Reals):
         base_class = ContinuousTimeFunction
     else:
-        raise Exception(
-            "Index set for Gaussian process must be Reals or " "DiscreteTimeSequence."
+        raise TypeError(
+            f"index_set must be Reals or DiscreteTimeSequence, "
+            f"got {type(index_set).__name__}."
         )
 
     class GaussianProcessResult(base_class):
@@ -119,7 +120,8 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
                 for t in ts:
                     if t not in index_set:
                         raise KeyError(
-                            "Gaussian process is not defined at time %.2f." % t
+                            f"Gaussian process is not defined at time {t}. "
+                            f"Time must be in the index set ({type(index_set).__name__})."
                         )
 
                 # Create an object to store the results
@@ -212,6 +214,13 @@ class GaussianProcessProbabilitySpace(ProbabilitySpace):
     index_set : DiscreteTimeSequence or Reals
         The set of times over which the process is defined.
 
+    Raises
+    ------
+    TypeError
+        If ``mean_func`` or ``cov_func`` is not callable.
+    TypeError
+        If ``index_set`` is not a ``Reals`` or ``DiscreteTimeSequence`` instance.
+
     Examples
     --------
     >>> from symbulate import *
@@ -228,6 +237,21 @@ class GaussianProcessProbabilitySpace(ProbabilitySpace):
 
     def __init__(self, mean_func, cov_func, index_set=Reals()):
         """Create a probability space for a Gaussian process."""
+        if not callable(mean_func):
+            raise TypeError(
+                f"mean_func must be callable (e.g., lambda t: 0), "
+                f"got {type(mean_func).__name__}."
+            )
+        if not callable(cov_func):
+            raise TypeError(
+                f"cov_func must be callable (e.g., lambda s, t: min(s, t)), "
+                f"got {type(cov_func).__name__}."
+            )
+        if not isinstance(index_set, (Reals, DiscreteTimeSequence)):
+            raise TypeError(
+                f"index_set must be Reals or DiscreteTimeSequence, "
+                f"got {type(index_set).__name__}."
+            )
 
         def draw():
             return get_gaussian_process_result(mean_func, cov_func, index_set)
@@ -308,6 +332,13 @@ class BrownianMotionProbabilitySpace(GaussianProcessProbabilitySpace):
     scale : float
         The scale parameter σ. Defaults to 1.
 
+    Raises
+    ------
+    TypeError
+        If ``drift`` or ``scale`` is not a number.
+    ValueError
+        If ``scale`` is not positive.
+
     Examples
     --------
     >>> from symbulate import *
@@ -322,6 +353,19 @@ class BrownianMotionProbabilitySpace(GaussianProcessProbabilitySpace):
 
     def __init__(self, drift=0, scale=1):
         """Create a probability space for Brownian motion."""
+        if not isinstance(drift, (int, float)):
+            raise TypeError(
+                f"drift must be a number, got {type(drift).__name__}."
+            )
+        if not isinstance(scale, (int, float)):
+            raise TypeError(
+                f"scale must be a number, got {type(scale).__name__}."
+            )
+        if scale <= 0:
+            raise ValueError(
+                f"scale must be positive, got {scale}. "
+                "A scale of 0 would give a constant process with no randomness."
+            )
         super().__init__(
             mean_func=lambda t: drift * t, cov_func=lambda s, t: (scale**2) * min(s, t)
         )
