@@ -44,7 +44,8 @@ class Scalar(numbers.Number):
         Raises
         ------
         Exception
-            If the scalar type is not understood.
+            If ``value`` is not an int or float. The message includes the
+            actual value and its type.
 
         Examples
         --------
@@ -58,7 +59,10 @@ class Scalar(numbers.Number):
         elif isinstance(value, (float, np.floating)):
             return Float(value)
         else:
-            raise Exception("Scalar type not understood.")
+            raise Exception(
+                "Scalar expects an int or float, got %r (type %s)."
+                % (value, type(value).__name__)
+            )
 
 
 class Int(int, Scalar):
@@ -563,7 +567,8 @@ class TimeFunction(Arithmetic):
         Raises
         ------
         Exception
-            If ``other`` is a TimeFunction with a different index set.
+            If ``other`` is a TimeFunction with a different index set. The
+            message includes both index set type names.
         Exception
             If ``other`` is not a number, random variable, or TimeFunction.
         """
@@ -572,8 +577,9 @@ class TimeFunction(Arithmetic):
         elif isinstance(other, TimeFunction):
             if self.index_set != other.index_set:
                 raise Exception(
-                    "Operations can only be performed on "
-                    "TimeFunctions with the same index set."
+                    "Operations can only be performed on TimeFunctions with "
+                    "the same index set. Got %s and %s."
+                    % (type(self.index_set).__name__, type(other.index_set).__name__)
                 )
         else:
             raise Exception(
@@ -959,12 +965,13 @@ class DiscreteTimeFunction(TimeFunction):
         Raises
         ------
         KeyError
-            If ``n`` is not an integer.
+            If ``n`` is not an integer. The message suggests using ``f(t)``
+            to evaluate by time instead.
         """
         if not isinstance(n, numbers.Integral):
             raise KeyError(
                 "For a DiscreteTimeFunction f, f[n] returns the "
-                "the nth time sample, so n must be an integer. "
+                "nth time sample, so n must be an integer. "
                 "If you want the value at time t, try f(t) instead."
             )
 
@@ -1028,7 +1035,8 @@ class DiscreteTimeFunction(TimeFunction):
         Raises
         ------
         TypeError
-            If ``n`` is not a valid index type.
+            If ``n`` is not an int, numeric vector, or slice. The message
+            includes the actual value, its type, and the expected types.
 
         Examples
         --------
@@ -1048,8 +1056,9 @@ class DiscreteTimeFunction(TimeFunction):
             )
         else:
             raise TypeError(
-                "Cannot evaluate DiscreteTimeFunction at "
-                "index %s (type %s)." % (n, type(n).__name__)
+                "Cannot evaluate DiscreteTimeFunction at index %s (type %s). "
+                "Expected an int, numeric vector, or slice."
+                % (n, type(n).__name__)
             )
 
     def __call__(self, t):
@@ -1071,7 +1080,9 @@ class DiscreteTimeFunction(TimeFunction):
         Raises
         ------
         TypeError
-            If ``t`` is not a supported input type.
+            If ``t`` is not a number, numeric vector, or
+            ``DiscreteTimeFunction``. The message includes the actual value,
+            its type, and the expected types.
 
         Examples
         --------
@@ -1092,8 +1103,9 @@ class DiscreteTimeFunction(TimeFunction):
             )
         else:
             raise TypeError(
-                "Cannot evaluate DiscreteTimeFunction at "
-                "time %s (type %s)." % (t, type(t).__name__)
+                "Cannot evaluate DiscreteTimeFunction at time %s (type %s). "
+                "Expected a number, numeric vector, or DiscreteTimeFunction."
+                % (t, type(t).__name__)
             )
 
     def apply(self, func):
@@ -1293,7 +1305,9 @@ class ContinuousTimeFunction(TimeFunction):
         Raises
         ------
         TypeError
-            If ``t`` is not a supported input type.
+            If ``t`` is not a number, numeric vector, or
+            ``ContinuousTimeFunction``. The message includes the actual value,
+            its type, and the expected types.
 
         Examples
         --------
@@ -1315,8 +1329,9 @@ class ContinuousTimeFunction(TimeFunction):
             return ContinuousTimeFunction(func=lambda s: self(t(s)))
         else:
             raise TypeError(
-                "Cannot evaluate ContinuousTimeFunction at "
-                "time %s (type %s)." % (t, type(t).__name__)
+                "Cannot evaluate ContinuousTimeFunction at time %s (type %s). "
+                "Expected a number, numeric vector, or ContinuousTimeFunction."
+                % (t, type(t).__name__)
             )
 
     def __getitem__(self, t):
@@ -1481,8 +1496,8 @@ class DiscreteValued:
 
         Raises
         ------
-        NameError
-            If states are not defined.
+        AttributeError
+            If states are not defined for this function.
 
         See Also
         --------
@@ -1498,7 +1513,7 @@ class DiscreteValued:
         (0, 1, 0, ...)
         """
         if not hasattr(self, "states"):
-            raise NameError("States not defined for " "function.")
+            raise AttributeError("States not defined for this function.")
         return self.states
 
     def get_interarrival_times(self):
@@ -1512,8 +1527,8 @@ class DiscreteValued:
 
         Raises
         ------
-        NameError
-            If interarrival times are not defined.
+        AttributeError
+            If interarrival times are not defined for this function.
 
         See Also
         --------
@@ -1530,7 +1545,7 @@ class DiscreteValued:
         (0.23, 1.05, ...)
         """
         if not hasattr(self, "interarrival_times"):
-            raise NameError("Interarrival times not " "defined for function.")
+            raise AttributeError("Interarrival times not defined for this function.")
         return self.interarrival_times
 
     def get_arrival_times(self):
@@ -1547,8 +1562,8 @@ class DiscreteValued:
 
         Raises
         ------
-        NameError
-            If interarrival times are not defined.
+        AttributeError
+            If interarrival times are not defined for this function.
 
         See Also
         --------
@@ -1565,7 +1580,7 @@ class DiscreteValued:
         (0.23, 1.28, ...)
         """
         if not hasattr(self, "interarrival_times"):
-            raise NameError("Interarrival times not " "defined for function.")
+            raise AttributeError("Interarrival times not defined for this function.")
         return self.interarrival_times.cumsum()
 
 
@@ -1635,7 +1650,8 @@ def concat(*args):
     Exception
         If an ``InfiniteTuple`` appears before the last argument.
     TypeError
-        If any argument is not a scalar, vector, or InfiniteTuple.
+        If any argument is not a scalar, vector, or InfiniteTuple. The
+        message identifies the offending argument's index, value, and type.
 
     See Also
     --------
@@ -1677,8 +1693,9 @@ def concat(*args):
             raise Exception("InfiniteTuple must be the last " "argument to concat().")
         else:
             raise TypeError(
-                "Every argument to concat() must be either "
-                "a scalar, a vector, or an InfiniteTuple."
+                "Argument %d to concat() (%r, type %s) is not a scalar, "
+                "a vector, or an InfiniteTuple."
+                % (i, arg, type(arg).__name__)
             )
 
     return Vector(values)
