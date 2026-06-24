@@ -489,11 +489,21 @@ class Statistical:
         float
             The (100q)th quantile of the values.
 
+        Raises
+        ------
+        ValueError
+            If q is not between 0 and 1.
+
         Examples
         --------
         >>> X = RV(Normal(0, 1))
         >>> X.sim(10000).quantile(0.25)
         """
+        if not (0 <= q <= 1):
+            raise ValueError(
+                f"q must be between 0 and 1, got {q}. "
+                "For example, use quantile(0.25) for the 25th percentile."
+            )
         op_func = self._statistic_factory(
             lambda a, axis=None: np.quantile(a, q=q, axis=axis)
         )
@@ -514,6 +524,11 @@ class Statistical:
         -------
         float
             The (100q)th percentile of the values.
+
+        Raises
+        ------
+        ValueError
+            If q is not between 0 and 1.
 
         Examples
         --------
@@ -1027,11 +1042,22 @@ class Filterable:
         int
             Number of elements for which func returns True.
 
+        Raises
+        ------
+        TypeError
+            If func is not callable.
+
         Examples
         --------
         >>> X = RV(Normal(0, 1))
         >>> X.sim(10000).count(lambda x: x > 0)
         """
+        if not callable(func):
+            raise TypeError(
+                "func must be a callable (e.g., a lambda or function), "
+                f"but got {type(func).__name__}. "
+                "For example, use count(lambda x: x > 0)."
+            )
         return len(self.filter(func))
 
     def count_eq(self, value):
@@ -1199,12 +1225,18 @@ class Transformable:
         Parameters
         ----------
         ndigits : int, optional
-            Number of decimal places. If None, rounds to the nearest integer.
+            Number of decimal places. Must be a non-negative integer.
+            If None, rounds to the nearest integer.
 
         Returns
         -------
         RV or RandomProcess
             Element-wise rounded values.
+
+        Raises
+        ------
+        ValueError
+            If ndigits is not a non-negative integer.
 
         Examples
         --------
@@ -1212,6 +1244,10 @@ class Transformable:
         >>> round(X).draw()
         >>> round(X, 2).draw()
         """
+        if ndigits is not None and (not isinstance(ndigits, int) or ndigits < 0):
+            raise ValueError(
+                f"ndigits must be a non-negative integer, got {ndigits!r}."
+            )
         if ndigits is None:
             return self.apply(round)
         return self.apply(lambda x: round(x, ndigits))
