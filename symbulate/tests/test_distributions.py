@@ -2,6 +2,7 @@ import math
 import unittest
 import numpy as np
 import scipy.stats as stats
+import warnings
 
 from symbulate import *
 from symbulate import distributions
@@ -167,7 +168,12 @@ class TestGeometric(unittest.TestCase):
         self.assertRaises(Exception, lambda: Geometric(p=0))
 
     def test_Geometric_error_p_one(self):
-        self.assertRaises(Exception, lambda: Geometric(p=1))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            X = Geometric(p=1)
+            sims = X.sim(100)
+        for value in sims:
+            self.assertEqual(value, 1)
 
     def test_Geometric_error_p_greater_than_one(self):
         self.assertRaises(Exception, lambda: Geometric(p=1.5))
@@ -285,7 +291,10 @@ class TestPascal(unittest.TestCase):
 class TestPoisson(unittest.TestCase):
 
     def test_Poisson_error(self):
-        self.assertRaises(Exception, lambda: Poisson(lam=0))
+        X = Poisson(lam=0)
+        sims = X.sim(100)
+        for value in sims:
+            self.assertEqual(value, 0)
 
     def test_Poisson_additive(self):
         distributions.rng = np.random.default_rng(42)
@@ -331,11 +340,30 @@ class TestPoisson(unittest.TestCase):
         X = Poisson(lam=3)
         self.assertAlmostEqual(float(X.pmf(3)), stats.poisson(mu=3).pmf(3))
 
+    def test_Poisson_zero(self):
+        X = Poisson(0)
+
+        sims = X.sim(100)
+
+        for value in sims:
+            self.assertEqual(value, 0)
+
+    def test_Poisson_zero(self):
+        X = Poisson(0)
+
+        sims = X.sim(100)
+
+        for value in sims:
+            self.assertEqual(value, 0)
+
 
 class TestDiscreteUniform(unittest.TestCase):
 
     def test_DiscreteUniform_error_equal(self):
-        self.assertRaises(Exception, lambda: DiscreteUniform(a=5, b=5))
+        X = DiscreteUniform(a=5, b=5)
+        sims = X.sim(100)
+        for value in sims:
+            self.assertEqual(value, 5)
 
     def test_DiscreteUniform_error_reversed(self):
         self.assertRaises(Exception, lambda: DiscreteUniform(a=6, b=3))
@@ -366,6 +394,14 @@ class TestDiscreteUniform(unittest.TestCase):
         X = RV(DiscreteUniform(a=3, b=7))
         sims = X.sim(Nsim)
         self.assertTrue(all(3 <= sim <= 7 for sim in sims))
+
+    def test_DiscreteUniform_degenerate(self):
+        X = DiscreteUniform(3, 3)
+
+        sims = X.sim(100)
+
+        for value in sims:
+            self.assertEqual(value, 3)
 
 
 class TestUniform(unittest.TestCase):
@@ -548,6 +584,24 @@ class TestNormal(unittest.TestCase):
 
     def test_Normal_error_var_negative(self):
         self.assertRaises(Exception, lambda: Normal(mean=0, var=-1.0))
+
+    def test_Normal_sd_zero(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            X = Normal(5, 0)
+            sims = X.sim(100)
+
+        for value in sims:
+            self.assertEqual(value, 5)
+
+    def test_Normal_sd_zero(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            X = Normal(5, 0)
+            sims = X.sim(100)
+
+        for value in sims:
+            self.assertEqual(value, 5)
 
 
 class TestExponential(unittest.TestCase):
@@ -952,12 +1006,24 @@ class TestLognormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_LogNormal_error_sigma_zero(self):
-        self.assertRaises(Exception, lambda: LogNormal(mu=0, sigma=0))
+        X = LogNormal(mu=0, sigma=0)
+        sims = X.sim(100)
+        for value in sims:
+            self.assertAlmostEqual(value, 1.0)
 
     def test_LogNormal_mean(self):
         X = LogNormal(mu=1, sigma=0.5)
         expected_mean = np.exp(1 + 0.5**2 / 2)
         self.assertAlmostEqual(float(X.mean()), expected_mean, places=5)
+
+    def test_LogNormal_sigma_zero(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            X = LogNormal(mu=0, sigma=0)
+            sims = X.sim(100)
+
+        for value in sims:
+            self.assertAlmostEqual(value, 1.0)
 
 
 class TestPareto(unittest.TestCase):

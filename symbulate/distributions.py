@@ -400,7 +400,7 @@ class Geometric(Distribution):
     def __init__(self, p):
         """Initialize a geometric distribution."""
 
-        if 0 < p < 1:
+        if 0 < p <= 1:
             self.p = p
         else:
             raise Exception("p must be between 0 and 1")
@@ -569,7 +569,7 @@ class Poisson(Distribution):
     def __init__(self, lam):
         """Initialize a Poisson distribution."""
 
-        if 0 < lam:
+        if 0 <= lam:
             self.lam = lam
         else:
             raise Exception("Lambda (lam) must be greater than 0")
@@ -618,8 +618,8 @@ class DiscreteUniform(Distribution):
 
         params = {"low": self.a, "high": self.b}
 
-        if a >= b:
-            raise Exception("b cannot be less than or equal to a")
+        if a > b:
+            raise Exception("b cannot be less than a")
 
         super().__init__(params, stats.randint, True)
         self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
@@ -719,18 +719,14 @@ class Normal(Distribution):
             sd = 1.0
 
         if var is None:
-            if sd > 0:
+            if sd >= 0:
                 self.scale = sd
-            elif sd == 0:
-                raise NotImplementedError
             else:
                 raise Exception("sd cannot be less than 0")
 
         else:
-            if var > 0:
+            if var >= 0:
                 self.scale = np.sqrt(var)
-            elif var == 0:
-                raise NotImplementedError
             else:
                 raise Exception("var cannot be less than 0")
 
@@ -1145,7 +1141,22 @@ class LogNormal(Distribution):
 
         self.norm_mean = mu
 
-        if sigma > 0:
+        if sigma == 0:
+            _value = np.exp(mu)
+            self.s = 0
+            self.norm_sd = 0
+            self.discrete = False
+            self.params = {"s": 0, "scale": _value}
+            self.pdf = lambda x: float(x == _value)
+            self.cdf = lambda x: 0.0 if x < _value else 1.0
+            self.mean = lambda: _value
+            self.var = lambda: 0.0
+            self.sd = lambda: 0.0
+            self.median = lambda: _value
+            self.xlim = (0, _value + 1)
+            ProbabilitySpace.__init__(self, lambda: Scalar(_value))
+            return
+        elif sigma > 0:
             self.s = sigma
             self.norm_sd = sigma
         else:
