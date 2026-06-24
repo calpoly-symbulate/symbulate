@@ -7,7 +7,7 @@ Covers:
   - ValueError message mentions "different probability spaces"
   - Same-space pair detected even when not the first two args (inner loop coverage)
   - Return value is a tuple of RV instances
-  - Correct length for 1, 2, and 3 input RVs
+  - Correct length for 2 and 3 input RVs
   - All output RVs share the new joint ProbabilitySpace
   - Output ProbabilitySpace differs from each input's original space
   - Marginal distributions are preserved after AssumeIndependent
@@ -21,12 +21,17 @@ two RVs from the same space (e.g., both unpacked from the same joint distributio
 correctly raises ValueError.  The independence tests below use RVs from separate spaces,
 which is the intended use case.
 """
+
 import unittest
 import numpy as np
 import scipy.stats as stats
 
 from symbulate import (
-    RV, Normal, Exponential, Binomial, BoxModel,
+    RV,
+    Normal,
+    Exponential,
+    Binomial,
+    BoxModel,
     AssumeIndependent,
 )
 from symbulate import distributions
@@ -37,6 +42,7 @@ Nsim = 10000
 # ===========================================================================
 # Error handling
 # ===========================================================================
+
 
 class TestAssumeIndependentErrors(unittest.TestCase):
     """TypeError and ValueError raised for invalid inputs."""
@@ -56,18 +62,21 @@ class TestAssumeIndependentErrors(unittest.TestCase):
 
     def test_non_rv_distribution_raises_type_error(self):
         """A Distribution not wrapped in RV must raise TypeError."""
-        self.assertRaises(TypeError, lambda: AssumeIndependent(Normal(0, 1)))
+        X = RV(Normal(0, 1))
+        self.assertRaises(TypeError, lambda: AssumeIndependent(Normal(0, 1), X))
 
     def test_type_error_message_names_int_type(self):
+        X = RV(Normal(0, 1))
         try:
-            AssumeIndependent(42)
+            AssumeIndependent(42, X)
             self.fail("Expected TypeError")
         except TypeError as e:
             self.assertIn("int", str(e))
 
     def test_type_error_message_names_distribution_type(self):
+        X = RV(Normal(0, 1))
         try:
-            AssumeIndependent(Normal(0, 1))
+            AssumeIndependent(Normal(0, 1), X)
             self.fail("Expected TypeError")
         except TypeError as e:
             self.assertIn("Normal", str(e))
@@ -94,10 +103,19 @@ class TestAssumeIndependentErrors(unittest.TestCase):
         except ValueError as e:
             self.assertIn("different probability spaces", str(e))
 
+    def test_too_few_args_value_error_message(self):
+        X = RV(Normal(0, 1))
+        try:
+            AssumeIndependent(X)
+            self.fail("Expected ValueError")
+        except ValueError as e:
+            self.assertIn("two", str(e))
+
 
 # ===========================================================================
 # Return type and structure
 # ===========================================================================
+
 
 class TestAssumeIndependentReturnType(unittest.TestCase):
     """Return type, length, and structural relationships of the output tuple."""
@@ -107,11 +125,9 @@ class TestAssumeIndependentReturnType(unittest.TestCase):
         Y = RV(Exponential(1))
         self.assertIsInstance(AssumeIndependent(X, Y), tuple)
 
-    def test_single_rv_returns_tuple_of_length_one(self):
+    def test_single_rv_raises_value_error(self):
         X = RV(Normal(0, 1))
-        result = AssumeIndependent(X)
-        self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 1)
+        self.assertRaises(ValueError, lambda: AssumeIndependent(X))
 
     def test_two_rvs_returns_length_two(self):
         X = RV(Normal(0, 1))
@@ -153,6 +169,7 @@ class TestAssumeIndependentReturnType(unittest.TestCase):
 # Marginals preserved
 # ===========================================================================
 
+
 class TestAssumeIndependentMarginals(unittest.TestCase):
     """Each output RV has the same marginal distribution as the corresponding input."""
 
@@ -183,14 +200,8 @@ class TestAssumeIndependentMarginals(unittest.TestCase):
         self.assertAlmostEqual(float(sims.mean()), 4.0, delta=0.1)
         self.assertAlmostEqual(float(sims.var()), 10 * 0.4 * 0.6, delta=0.1)
 
-    def test_single_rv_marginal_preserved(self):
-        """AssumeIndependent with one RV: the output still has the original distribution."""
-        distributions.rng = np.random.default_rng(42)
-        X = RV(Normal(5, 1))
-        (X2,) = AssumeIndependent(X)
-        sims = X2.sim(Nsim)
-        pval = stats.kstest(sims, stats.norm(loc=5, scale=1).cdf).pvalue
-        self.assertTrue(pval > 0.01)
+    def test_zero_rvs_raises_value_error(self):
+        self.assertRaises(ValueError, lambda: AssumeIndependent())
 
     def test_third_marginal_in_three_rv_call(self):
         distributions.rng = np.random.default_rng(42)
@@ -206,6 +217,7 @@ class TestAssumeIndependentMarginals(unittest.TestCase):
 # ===========================================================================
 # Independence on the joint space
 # ===========================================================================
+
 
 class TestAssumeIndependentIndependence(unittest.TestCase):
     """RVs from separate spaces remain independent after being joined.
@@ -255,6 +267,7 @@ class TestAssumeIndependentIndependence(unittest.TestCase):
 # Custom functions and closure binding
 # ===========================================================================
 
+
 class TestAssumeIndependentCustomFunctions(unittest.TestCase):
     """Custom func= on RV and loop variable binding are preserved correctly."""
 
@@ -262,23 +275,27 @@ class TestAssumeIndependentCustomFunctions(unittest.TestCase):
         """func=sum on the first RV keeps its effect: output values must be in {0..5}."""
         distributions.rng = np.random.default_rng(42)
         P = BoxModel([0, 1], size=5)
-        X = RV(P, sum)           # sum of 5 coin flips: support {0,1,2,3,4,5}
+        X = RV(P, sum)  # sum of 5 coin flips: support {0,1,2,3,4,5}
         Y = RV(Normal(0, 1))
         X2, _ = AssumeIndependent(X, Y)
         sims = X2.sim(1000)
-        self.assertTrue(all(v in {0, 1, 2, 3, 4, 5} for v in sims),
-                        "sum() was not applied — func= on first RV was lost")
+        self.assertTrue(
+            all(v in {0, 1, 2, 3, 4, 5} for v in sims),
+            "sum() was not applied — func= on first RV was lost",
+        )
 
     def test_custom_func_on_second_rv_preserved(self):
         """func=sum on the second RV keeps its effect: output values must be in {0..5}."""
         distributions.rng = np.random.default_rng(42)
         X = RV(Normal(0, 1))
         P = BoxModel([0, 1], size=5)
-        Y = RV(P, sum)           # sum of 5 coin flips: support {0,1,2,3,4,5}
+        Y = RV(P, sum)  # sum of 5 coin flips: support {0,1,2,3,4,5}
         _, Y2 = AssumeIndependent(X, Y)
         sims = Y2.sim(1000)
-        self.assertTrue(all(v in {0, 1, 2, 3, 4, 5} for v in sims),
-                        "sum() was not applied — func= on second RV was lost")
+        self.assertTrue(
+            all(v in {0, 1, 2, 3, 4, 5} for v in sims),
+            "sum() was not applied — func= on second RV was lost",
+        )
 
     def test_non_identity_func_distributional(self):
         """X = sum of 5 Bernoulli(0.4) trials after AssumeIndependent ~ Binomial(5, 0.4)."""
@@ -297,8 +314,9 @@ class TestAssumeIndependentCustomFunctions(unittest.TestCase):
             if expected > 5:
                 exp_list.append(expected)
                 obs_list.append(counts[k])
-        pval = stats.chisquare(obs_list,
-                               np.array(exp_list) * sum(obs_list) / sum(exp_list)).pvalue
+        pval = stats.chisquare(
+            obs_list, np.array(exp_list) * sum(obs_list) / sum(exp_list)
+        ).pvalue
         self.assertTrue(pval > 0.01)
 
     def test_closure_binding_correct_for_three_rvs(self):
@@ -315,7 +333,7 @@ class TestAssumeIndependentCustomFunctions(unittest.TestCase):
         Y = RV(Normal(10, 1))
         Z = RV(Normal(20, 1))
         X2, Y2, Z2 = AssumeIndependent(X, Y, Z)
-        self.assertAlmostEqual(float(X2.sim(Nsim).mean()),  0.0, delta=0.1)
+        self.assertAlmostEqual(float(X2.sim(Nsim).mean()), 0.0, delta=0.1)
         self.assertAlmostEqual(float(Y2.sim(Nsim).mean()), 10.0, delta=0.1)
         self.assertAlmostEqual(float(Z2.sim(Nsim).mean()), 20.0, delta=0.1)
 

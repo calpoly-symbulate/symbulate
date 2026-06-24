@@ -24,6 +24,8 @@ def AssumeIndependent(*args):
     TypeError
         If any argument is not an RV.
     ValueError
+        If fewer than two RVs are passed.
+    ValueError
         If any two RVs share the same probability space.
 
     Examples
@@ -33,6 +35,12 @@ def AssumeIndependent(*args):
     >>> X, Y = AssumeIndependent(X, Y)
     >>> (X & Y).sim(10000).plot()
     """
+
+    if len(args) < 2:
+        raise ValueError(
+            "AssumeIndependent(...) requires at least two RVs, "
+            f"but only {len(args)} was passed."
+        )
 
     # Check that none of the RVs are defined on
     # the same probability space.
