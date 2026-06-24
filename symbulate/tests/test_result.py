@@ -483,7 +483,7 @@ class TestDiscreteValued(unittest.TestCase):
 
     def test_get_states_raises_if_missing(self):
         obj = DiscreteValued()
-        with self.assertRaises(NameError):
+        with self.assertRaises(AttributeError):
             obj.get_states()
 
     def test_get_interarrival_times(self):
@@ -493,7 +493,7 @@ class TestDiscreteValued(unittest.TestCase):
 
     def test_get_interarrival_times_raises_if_missing(self):
         obj = DiscreteValued()
-        with self.assertRaises(NameError):
+        with self.assertRaises(AttributeError):
             obj.get_interarrival_times()
 
     def test_get_arrival_times(self):
@@ -504,7 +504,7 @@ class TestDiscreteValued(unittest.TestCase):
 
     def test_get_arrival_times_raises_if_missing(self):
         obj = DiscreteValued()
-        with self.assertRaises(NameError):
+        with self.assertRaises(AttributeError):
             obj.get_arrival_times()
 
 
@@ -644,6 +644,119 @@ class TestIsNumericVector(unittest.TestCase):
 
     def test_numpy_array(self):
         self.assertTrue(is_numeric_vector(np.array([1.0, 2.0])))
+
+
+# ---------------------------------------------------------------------------
+# Error message content
+# ---------------------------------------------------------------------------
+
+class TestScalarErrorMessages(unittest.TestCase):
+
+    def test_bad_type_message_includes_type_name(self):
+        with self.assertRaisesRegex(Exception, "str"):
+            Scalar("hello")
+
+    def test_bad_type_message_includes_value(self):
+        with self.assertRaisesRegex(Exception, "hello"):
+            Scalar("hello")
+
+
+class TestTimeFunctionIndexSetErrorMessages(unittest.TestCase):
+
+    def test_mismatched_index_set_message_includes_both_set_types(self):
+        dtf = DiscreteTimeFunction(lambda n: n)
+        ctf = ContinuousTimeFunction(lambda t: t)
+        with self.assertRaisesRegex(Exception, "DiscreteTimeSequence"):
+            dtf + ctf
+
+    def test_mismatched_index_set_message_includes_other_set_type(self):
+        dtf = DiscreteTimeFunction(lambda n: n)
+        ctf = ContinuousTimeFunction(lambda t: t)
+        with self.assertRaisesRegex(Exception, "Reals"):
+            dtf + ctf
+
+
+class TestDiscreteTimeFunctionErrorMessages(unittest.TestCase):
+
+    def test_non_integer_index_message_suggests_call_syntax(self):
+        f = DiscreteTimeFunction(lambda n: n)
+        with self.assertRaisesRegex(KeyError, r"f\(t\)"):
+            f[1.5]
+
+    def test_getitem_bad_type_message_lists_valid_types(self):
+        f = DiscreteTimeFunction(lambda n: n)
+        with self.assertRaisesRegex(TypeError, "int, numeric vector, or slice"):
+            f["bad"]
+
+    def test_getitem_bad_type_message_includes_actual_type(self):
+        f = DiscreteTimeFunction(lambda n: n)
+        with self.assertRaisesRegex(TypeError, "str"):
+            f["bad"]
+
+    def test_call_bad_type_message_lists_valid_types(self):
+        f = DiscreteTimeFunction(lambda n: n)
+        with self.assertRaisesRegex(TypeError, "number, numeric vector, or DiscreteTimeFunction"):
+            f("bad")
+
+    def test_call_bad_type_message_includes_actual_type(self):
+        f = DiscreteTimeFunction(lambda n: n)
+        with self.assertRaisesRegex(TypeError, "str"):
+            f("bad")
+
+
+class TestContinuousTimeFunctionErrorMessages(unittest.TestCase):
+
+    def test_call_bad_type_message_lists_valid_types(self):
+        f = ContinuousTimeFunction(lambda t: t)
+        with self.assertRaisesRegex(TypeError, "number, numeric vector, or ContinuousTimeFunction"):
+            f("bad")
+
+    def test_call_bad_type_message_includes_actual_type(self):
+        f = ContinuousTimeFunction(lambda t: t)
+        with self.assertRaisesRegex(TypeError, "str"):
+            f("bad")
+
+
+class TestDiscreteValuedErrorMessages(unittest.TestCase):
+
+    def test_get_states_raises_attribute_error(self):
+        with self.assertRaises(AttributeError):
+            DiscreteValued().get_states()
+
+    def test_get_states_message(self):
+        with self.assertRaisesRegex(AttributeError, "States not defined"):
+            DiscreteValued().get_states()
+
+    def test_get_interarrival_times_raises_attribute_error(self):
+        with self.assertRaises(AttributeError):
+            DiscreteValued().get_interarrival_times()
+
+    def test_get_interarrival_times_message(self):
+        with self.assertRaisesRegex(AttributeError, "Interarrival times not defined"):
+            DiscreteValued().get_interarrival_times()
+
+    def test_get_arrival_times_raises_attribute_error(self):
+        with self.assertRaises(AttributeError):
+            DiscreteValued().get_arrival_times()
+
+    def test_get_arrival_times_message(self):
+        with self.assertRaisesRegex(AttributeError, "Interarrival times not defined"):
+            DiscreteValued().get_arrival_times()
+
+
+class TestConcatErrorMessages(unittest.TestCase):
+
+    def test_bad_type_message_includes_argument_index_zero(self):
+        with self.assertRaisesRegex(TypeError, "Argument 0"):
+            concat(object())
+
+    def test_bad_type_message_includes_nonzero_argument_index(self):
+        with self.assertRaisesRegex(TypeError, "Argument 2"):
+            concat(1, 2, object())
+
+    def test_bad_type_message_includes_type_name(self):
+        with self.assertRaisesRegex(TypeError, "object"):
+            concat(object())
 
 
 if __name__ == "__main__":
