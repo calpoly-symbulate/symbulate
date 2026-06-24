@@ -36,6 +36,11 @@ class ProbabilitySpace:
 
     def __init__(self, draw):
         """Initialize the probability space."""
+        if not callable(draw):
+            raise TypeError(
+                "draw must be a callable (e.g., a lambda or function) "
+                f"that returns one outcome, but got {type(draw).__name__}."
+            )
         self.draw = draw
 
     def sim(self, n):
@@ -51,6 +56,11 @@ class ProbabilitySpace:
         Results
             A list-like object containing the simulation results.
 
+        Raises
+        ------
+        ValueError
+            If ``n`` is not a positive integer.
+
         Examples
         --------
         >>> from symbulate import *
@@ -59,6 +69,8 @@ class ProbabilitySpace:
         >>> coin.sim(10)  # doctest: +SKIP
         Results(['H', 'T', 'H', 'H', 'T', 'T', 'H', 'T', 'H', 'T'])
         """
+        if not isinstance(n, int) or n < 1:
+            raise ValueError(f"n must be a positive integer, got {n!r}.")
         return Results(self.draw() for _ in range(n))
 
     def check_same(self, other):
@@ -152,6 +164,11 @@ class ProbabilitySpace:
             A new probability space whose draws produce a Vector of
             ``exponent`` outcomes from the original space.
 
+        Raises
+        ------
+        ValueError
+            If ``exponent`` is not a positive integer or ``float('inf')``.
+
         Examples
         --------
         >>> from symbulate import *
@@ -161,6 +178,10 @@ class ProbabilitySpace:
         >>> three_dice.draw()  # doctest: +SKIP
         Vector([2, 5, 3])
         """
+        if exponent != float("inf") and (not isinstance(exponent, int) or exponent < 1):
+            raise ValueError(
+                f"Exponent must be a positive integer or float('inf'), got {exponent!r}."
+            )
         if exponent == float("inf"):
 
             def draw():
@@ -388,7 +409,11 @@ class BoxModel(ProbabilitySpace):
         TypeError
             If the ``box`` is not specified as either a list or a dict.
         ValueError
-            If the ``size`` exceeds the number of tickets in the box when sampling without replacement.
+            If ``probs`` is provided but its length does not match the number
+            of tickets in the box.
+        ValueError
+            If the ``size`` exceeds the number of tickets in the box when
+            sampling without replacement.
         """
         if isinstance(box, list):
             self.box = box
@@ -400,6 +425,11 @@ class BoxModel(ProbabilitySpace):
             self.probs = None
         else:
             raise TypeError("Box must be specified either as a list or a dict.")
+        if probs is not None and len(probs) != len(self.box):
+            raise ValueError(
+                f"probs must have the same length as box, "
+                f"but got len(probs)={len(probs)} and len(box)={len(self.box)}."
+            )
         self.size = None if size == 1 else size
         self.replace = replace
         self.order_matters = order_matters

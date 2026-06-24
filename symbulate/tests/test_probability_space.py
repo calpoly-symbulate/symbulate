@@ -70,6 +70,35 @@ class TestProbabilitySpace(unittest.TestCase):
         result = (P ** float('inf')).draw()
         self.assertIsInstance(result, InfiniteVector)
 
+    def test_non_callable_draw_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            ProbabilitySpace(5)
+
+    def test_sim_negative_n_raises(self):
+        P = ProbabilitySpace(lambda: 1)
+        with self.assertRaises(ValueError):
+            P.sim(-1)
+
+    def test_sim_zero_n_raises(self):
+        P = ProbabilitySpace(lambda: 1)
+        with self.assertRaises(ValueError):
+            P.sim(0)
+
+    def test_sim_float_n_raises(self):
+        P = ProbabilitySpace(lambda: 1)
+        with self.assertRaises(ValueError):
+            P.sim(2.5)
+
+    def test_pow_zero_raises(self):
+        P = ProbabilitySpace(lambda: 1)
+        with self.assertRaises(ValueError):
+            P ** 0
+
+    def test_pow_negative_raises(self):
+        P = ProbabilitySpace(lambda: 1)
+        with self.assertRaises(ValueError):
+            P ** -1
+
     def test_check_same_passes_for_same_space(self):
         P = ProbabilitySpace(lambda: 1)
         P.check_same(P)  # should not raise
@@ -195,6 +224,10 @@ class TestBoxModel(unittest.TestCase):
     def test_size_exceeds_box_without_replacement_raises(self):
         with self.assertRaises(ValueError):
             BoxModel(['a', 'b', 'c'], size=4, replace=False)
+
+    def test_probs_wrong_length_raises(self):
+        with self.assertRaises(ValueError):
+            BoxModel(['a', 'b', 'c'], probs=[0.5, 0.5])
 
 
 class TestDeckOfCards(unittest.TestCase):
