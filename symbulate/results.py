@@ -147,6 +147,11 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             outcome is the result of applying ``func`` to each
             outcome from the original Results object.
 
+        Raises
+        ------
+        TypeError
+            If ``func`` is not callable.
+
         See Also
         --------
         filter : Return outcomes satisfying a criterion.
@@ -163,6 +168,12 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         Index  Result
         0      4
         """
+        if not callable(func):
+            raise TypeError(
+                "func must be a callable (e.g., a lambda or function), "
+                f"but got {type(func).__name__}. "
+                "For example, use apply(lambda x: x * 2)."
+            )
         return type(self)([func(result) for result in self.results], self.sim_id)
 
     def __getitem__(self, n):
@@ -749,7 +760,10 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
                 if len(self) > 9:
                     table_body += "<tr><td>...</td><td>...</td></tr>"
                     i_last = len(self) - 1
-                    table_body += row_template % (i_last, _truncate(str(self.get(i_last))))
+                    table_body += row_template % (
+                        i_last,
+                        _truncate(str(self.get(i_last))),
+                    )
                 break
         return table_template.format(table_body=table_body)
 
@@ -1106,7 +1120,11 @@ class RVResults(Results):
             if isinstance(type, str):
                 type = (type,)
             elif not isinstance(type, (tuple, list)):
-                raise Exception("I don't know how to plot a " + str(type))
+                raise Exception(
+                    f"Unrecognized plot type {type!r}. "
+                    "Valid types are: 'hist', 'bar', 'impulse', 'density', "
+                    "'rug', 'scatter', 'tile', 'violin', 'marginal'."
+                )
 
         if self.dim == 1:
             # make sure self.array, a Numpy array, has been set
@@ -1252,8 +1270,12 @@ class RVResults(Results):
 
             if "scatter" in type:
                 if jitter:
-                    x = x + rng.normal(loc=0, scale=0.01 * (x.max() - x.min()), size=len(x))
-                    y = y + rng.normal(loc=0, scale=0.01 * (y.max() - y.min()), size=len(y))
+                    x = x + rng.normal(
+                        loc=0, scale=0.01 * (x.max() - x.min()), size=len(x)
+                    )
+                    y = y + rng.normal(
+                        loc=0, scale=0.01 * (y.max() - y.min()), size=len(y)
+                    )
                 ax.scatter(x, y, alpha=alpha, color=color, **kwargs)
             elif "hist" in type:
                 if normalize:

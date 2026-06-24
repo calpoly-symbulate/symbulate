@@ -29,6 +29,7 @@ def make_results(values, sim_id=SIM_ID):
 # _is_hashable
 # ---------------------------------------------------------------------------
 
+
 class TestIsHashable(unittest.TestCase):
 
     def test_int(self):
@@ -51,6 +52,7 @@ class TestIsHashable(unittest.TestCase):
 # _is_boolean_vector
 # ---------------------------------------------------------------------------
 
+
 class TestIsBooleanVector(unittest.TestCase):
 
     def test_all_bool(self):
@@ -72,6 +74,7 @@ class TestIsBooleanVector(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Results.__init__
 # ---------------------------------------------------------------------------
+
 
 class TestResultsInit(unittest.TestCase):
 
@@ -96,6 +99,7 @@ class TestResultsInit(unittest.TestCase):
 # Results.__len__ and __iter__
 # ---------------------------------------------------------------------------
 
+
 class TestResultsLenIter(unittest.TestCase):
 
     def test_len(self):
@@ -111,6 +115,7 @@ class TestResultsLenIter(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Results.get
 # ---------------------------------------------------------------------------
+
 
 class TestResultsGet(unittest.TestCase):
 
@@ -134,6 +139,7 @@ class TestResultsGet(unittest.TestCase):
 # Results.apply
 # ---------------------------------------------------------------------------
 
+
 class TestResultsApply(unittest.TestCase):
 
     def test_apply_doubles(self):
@@ -148,10 +154,15 @@ class TestResultsApply(unittest.TestCase):
         r = Results([1, 2, 3], sim_id=99.0)
         self.assertEqual(r.apply(lambda x: x).sim_id, 99.0)
 
+    def test_apply_non_callable_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            make_results([1, 2, 3]).apply(5)
+
 
 # ---------------------------------------------------------------------------
 # Results.__getitem__
 # ---------------------------------------------------------------------------
+
 
 class TestResultsGetItem(unittest.TestCase):
 
@@ -168,6 +179,7 @@ class TestResultsGetItem(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Results.filter
 # ---------------------------------------------------------------------------
+
 
 class TestResultsFilter(unittest.TestCase):
 
@@ -207,6 +219,7 @@ class TestResultsFilter(unittest.TestCase):
 # Results._get_counts
 # ---------------------------------------------------------------------------
 
+
 class TestResultsGetCounts(unittest.TestCase):
 
     def test_counts_hashable(self):
@@ -228,6 +241,7 @@ class TestResultsGetCounts(unittest.TestCase):
 # Results.tabulate
 # ---------------------------------------------------------------------------
 
+
 class TestResultsTabulate(unittest.TestCase):
 
     def test_tabulate_counts(self):
@@ -248,6 +262,7 @@ class TestResultsTabulate(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Results arithmetic
 # ---------------------------------------------------------------------------
+
 
 class TestResultsArithmetic(unittest.TestCase):
 
@@ -280,6 +295,7 @@ class TestResultsArithmetic(unittest.TestCase):
 # Results comparison
 # ---------------------------------------------------------------------------
 
+
 class TestResultsComparison(unittest.TestCase):
 
     def test_gt_scalar(self):
@@ -298,6 +314,7 @@ class TestResultsComparison(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Results logical
 # ---------------------------------------------------------------------------
+
 
 class TestResultsLogical(unittest.TestCase):
 
@@ -339,6 +356,7 @@ class TestResultsLogical(unittest.TestCase):
 # Results._statistic_factory raises
 # ---------------------------------------------------------------------------
 
+
 class TestResultsStatisticFactory(unittest.TestCase):
 
     def test_mean_raises(self):
@@ -354,6 +372,7 @@ class TestResultsStatisticFactory(unittest.TestCase):
 # Results.plot raises
 # ---------------------------------------------------------------------------
 
+
 class TestResultsPlot(unittest.TestCase):
 
     def test_plot_raises(self):
@@ -364,6 +383,7 @@ class TestResultsPlot(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Results.__repr__ and _repr_html_
 # ---------------------------------------------------------------------------
+
 
 class TestResultsRepr(unittest.TestCase):
 
@@ -400,8 +420,22 @@ class TestResultsRepr(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# RVResults.plot
+# ---------------------------------------------------------------------------
+
+
+class TestRVResultsPlot(unittest.TestCase):
+
+    def test_plot_invalid_type_raises(self):
+        rvr = RVResults([1.0, 2.0, 3.0])
+        with self.assertRaises(Exception):
+            rvr.plot(type=42)
+
+
+# ---------------------------------------------------------------------------
 # RVResults.__init__
 # ---------------------------------------------------------------------------
+
 
 class TestRVResultsInit(unittest.TestCase):
 
@@ -429,6 +463,7 @@ class TestRVResultsInit(unittest.TestCase):
 # RVResults._set_array
 # ---------------------------------------------------------------------------
 
+
 class TestRVResultsSetArray(unittest.TestCase):
 
     def test_set_array_scalars(self):
@@ -451,6 +486,7 @@ class TestRVResultsSetArray(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # RVResults statistics (univariate)
 # ---------------------------------------------------------------------------
+
 
 class TestRVResultsUnivariate(unittest.TestCase):
 
@@ -491,6 +527,7 @@ class TestRVResultsUnivariate(unittest.TestCase):
 # RVResults statistics (multivariate)
 # ---------------------------------------------------------------------------
 
+
 class TestRVResultsMultivariate(unittest.TestCase):
 
     def test_cov_positive_for_perfectly_correlated(self):
@@ -513,6 +550,7 @@ class TestRVResultsMultivariate(unittest.TestCase):
 # RVResults.standardize
 # ---------------------------------------------------------------------------
 
+
 class TestRVResultsStandardize(unittest.TestCase):
 
     def test_standardized_mean_is_zero(self):
@@ -533,6 +571,7 @@ class TestRVResultsStandardize(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # RVResults.tabulate
 # ---------------------------------------------------------------------------
+
 
 class TestRVResultsTabulate(unittest.TestCase):
 
