@@ -1237,3 +1237,337 @@ class TestMultinomial(unittest.TestCase):
         X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
         expected = stats.multinomial(10, [0.5, 0.3, 0.2]).pmf([5, 3, 2])
         self.assertAlmostEqual(float(X.pdf([5, 3, 2])), expected)
+
+
+# ===========================================================================
+# Parameter validation: type guards and helpful error messages
+#
+# Covers the wrong inputs a student is likely to make: a non-number (e.g. a
+# string), a float where a whole number is required, or two mutually
+# exclusive parameters. assertRaisesRegex checks the message text, so a
+# cryptic low-level TypeError (e.g. "'<' not supported between ...") would
+# fail the test rather than pass silently.
+# ===========================================================================
+
+
+class TestNonNumericInputs(unittest.TestCase):
+
+    def test_Bernoulli_p_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "p must be a number", lambda: Bernoulli(p="x")
+        )
+
+    def test_Binomial_n_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "n must be a non-negative integer",
+            lambda: Binomial(n="x", p=0.5),
+        )
+
+    def test_Binomial_p_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "p must be a number", lambda: Binomial(n=5, p="x")
+        )
+
+    def test_Hypergeometric_n_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "n must be a positive integer",
+            lambda: Hypergeometric(n="x", N0=3, N1=3),
+        )
+
+    def test_Hypergeometric_N0_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "N0 must be a non-negative integer",
+            lambda: Hypergeometric(n=2, N0="x", N1=3),
+        )
+
+    def test_Hypergeometric_N1_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "N1 must be a non-negative integer",
+            lambda: Hypergeometric(n=2, N0=3, N1="x"),
+        )
+
+    def test_Geometric_p_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "p must be a number", lambda: Geometric(p="x")
+        )
+
+    def test_NegativeBinomial_r_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "r must be a positive integer",
+            lambda: NegativeBinomial(r="x", p=0.5),
+        )
+
+    def test_NegativeBinomial_p_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "p must be a number", lambda: NegativeBinomial(r=3, p="x")
+        )
+
+    def test_Pascal_r_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "r must be a positive integer", lambda: Pascal(r="x", p=0.5)
+        )
+
+    def test_Pascal_p_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "p must be a number", lambda: Pascal(r=3, p="x")
+        )
+
+    def test_Poisson_lam_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "lam must be a non-negative number", lambda: Poisson(lam="x")
+        )
+
+    def test_DiscreteUniform_a_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "a must be a number", lambda: DiscreteUniform(a="x", b=5)
+        )
+
+    def test_DiscreteUniform_b_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "b must be a number", lambda: DiscreteUniform(a=0, b="x")
+        )
+
+    def test_Uniform_a_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "a must be a number", lambda: Uniform(a="x", b=1)
+        )
+
+    def test_Uniform_b_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "b must be a number", lambda: Uniform(a=0, b="x")
+        )
+
+    def test_Normal_mean_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "mean must be a number", lambda: Normal(mean="x")
+        )
+
+    def test_Normal_sd_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "sd must be a non-negative number", lambda: Normal(sd="x")
+        )
+
+    def test_Normal_var_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "var must be a non-negative number", lambda: Normal(var="x")
+        )
+
+    def test_Exponential_rate_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "rate must be a positive number", lambda: Exponential(rate="x")
+        )
+
+    def test_Exponential_scale_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "scale must be a positive number", lambda: Exponential(scale="x")
+        )
+
+    def test_Gamma_shape_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "shape must be a positive number", lambda: Gamma(shape="x")
+        )
+
+    def test_Gamma_rate_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "rate must be a positive number",
+            lambda: Gamma(shape=2, rate="x"),
+        )
+
+    def test_Gamma_scale_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "scale must be a positive number",
+            lambda: Gamma(shape=2, scale="x"),
+        )
+
+    def test_Beta_a_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "a must be a positive number", lambda: Beta(a="x", b=1)
+        )
+
+    def test_Beta_b_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "b must be a positive number", lambda: Beta(a=1, b="x")
+        )
+
+    def test_StudentT_df_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "df must be a positive number", lambda: StudentT(df="x")
+        )
+
+    def test_ChiSquare_df_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "df must be a positive integer", lambda: ChiSquare(df="x")
+        )
+
+    def test_F_dfN_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "dfN must be a positive number", lambda: F(dfN="x", dfD=5)
+        )
+
+    def test_F_dfD_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "dfD must be a positive number", lambda: F(dfN=5, dfD="x")
+        )
+
+    def test_Cauchy_loc_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "loc must be a number", lambda: Cauchy(loc="x")
+        )
+
+    def test_Cauchy_scale_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "scale must be a positive number", lambda: Cauchy(scale="x")
+        )
+
+    def test_LogNormal_mu_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "mu must be a number", lambda: LogNormal(mu="x")
+        )
+
+    def test_LogNormal_sigma_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "sigma must be a non-negative number",
+            lambda: LogNormal(sigma="x"),
+        )
+
+    def test_Pareto_b_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "b must be a positive number", lambda: Pareto(b="x")
+        )
+
+    def test_Pareto_scale_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "scale must be a positive number",
+            lambda: Pareto(b=2, scale="x"),
+        )
+
+    def test_BivariateNormal_mean1_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "mean1 must be a number", lambda: BivariateNormal(mean1="x")
+        )
+
+    def test_BivariateNormal_corr_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "corr must be a number between -1 and 1",
+            lambda: BivariateNormal(corr="x"),
+        )
+
+    def test_BivariateNormal_sd1_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "sd1 must be a non-negative number",
+            lambda: BivariateNormal(sd1="x"),
+        )
+
+    def test_BivariateNormal_var1_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "var1 must be a non-negative number",
+            lambda: BivariateNormal(var1="x"),
+        )
+
+    def test_BivariateNormal_cov_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "cov must be a number", lambda: BivariateNormal(cov="x")
+        )
+
+    def test_Multinomial_n_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "n must be a non-negative integer",
+            lambda: Multinomial(n="x", p=[0.5, 0.5]),
+        )
+
+
+class TestRateScaleConflict(unittest.TestCase):
+
+    def test_Exponential_both_rate_and_scale(self):
+        self.assertRaisesRegex(
+            Exception, "either rate or scale",
+            lambda: Exponential(rate=2, scale=3),
+        )
+
+    def test_Gamma_both_rate_and_scale(self):
+        self.assertRaisesRegex(
+            Exception, "either rate or scale",
+            lambda: Gamma(shape=2, rate=2, scale=3),
+        )
+
+    def test_Exponential_single_param_still_works(self):
+        self.assertAlmostEqual(float(Exponential().mean()), 1.0)
+        self.assertAlmostEqual(float(Exponential(rate=2).mean()), 0.5)
+        self.assertAlmostEqual(float(Exponential(scale=5).mean()), 5.0)
+
+    def test_Gamma_single_param_still_works(self):
+        self.assertAlmostEqual(float(Gamma(2).mean()), 2.0)
+        self.assertAlmostEqual(float(Gamma(2, scale=5).mean()), 10.0)
+
+    def test_scale_given_leaves_rate_none(self):
+        self.assertIsNone(Exponential(scale=5).rate)
+        self.assertIsNone(Gamma(2, scale=5).rate)
+
+
+class TestNormalSdVarConflict(unittest.TestCase):
+
+    def test_both_sd_and_var_raises(self):
+        self.assertRaisesRegex(
+            ValueError, "sd or var", lambda: Normal(sd=1, var=1)
+        )
+
+    def test_default_is_standard_normal(self):
+        X = Normal()
+        self.assertAlmostEqual(float(X.mean()), 0.0)
+        self.assertAlmostEqual(float(X.sd()), 1.0)
+
+
+class TestIntegerVsRealParameters(unittest.TestCase):
+
+    def test_Hypergeometric_rejects_float_n(self):
+        self.assertRaisesRegex(
+            Exception, "n must be a positive integer",
+            lambda: Hypergeometric(n=2.5, N0=3, N1=3),
+        )
+
+    def test_Hypergeometric_rejects_float_counts(self):
+        self.assertRaisesRegex(
+            Exception, "N0 must be a non-negative integer",
+            lambda: Hypergeometric(n=2, N0=3.5, N1=3),
+        )
+
+    def test_StudentT_allows_non_integer_df(self):
+        # Student's t is legitimately defined for non-integer df.
+        self.assertEqual(StudentT(df=2.5).df, 2.5)
+
+
+class TestPoissonLamZero(unittest.TestCase):
+
+    def test_lam_zero_allowed(self):
+        self.assertAlmostEqual(float(Poisson(lam=0).mean()), 0.0)
+
+    def test_lam_negative_rejected(self):
+        self.assertRaisesRegex(
+            Exception, "non-negative number", lambda: Poisson(lam=-1)
+        )
+
+
+class TestValidBoundaryParameters(unittest.TestCase):
+    """Boundary-valid parameters must be accepted, not over-rejected.
+
+    Each test simply constructs the distribution; if construction raised,
+    the test would error.
+    """
+
+    def test_Bernoulli_boundaries(self):
+        Bernoulli(p=0)
+        Bernoulli(p=1)
+
+    def test_Binomial_boundaries(self):
+        Binomial(n=0, p=0.5)
+        Binomial(n=10, p=0)
+        Binomial(n=10, p=1)
+
+    def test_Poisson_zero(self):
+        Poisson(lam=0)
+
+    def test_DiscreteUniform_equal_bounds(self):
+        DiscreteUniform(a=5, b=5)
+
+    def test_LogNormal_sigma_zero(self):
+        LogNormal(sigma=0)
