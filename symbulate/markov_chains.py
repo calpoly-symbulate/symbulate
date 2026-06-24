@@ -54,9 +54,10 @@ class MarkovChainResult(InfiniteVector, DiscreteValued):
         ------
         Exception
             If any row of ``transition_matrix`` does not sum to 1, any
-            entry is negative, the matrix is not square, or the lengths
+            entry is negative, the matrix is not square, the lengths
             of ``initial_dist`` or ``state_labels`` do not match the
-            number of states.
+            number of states, or ``initial_dist`` is not a valid
+            probability distribution (negative entries or does not sum to 1).
         """
         # Check transition matrix
         for row in transition_matrix:
@@ -76,6 +77,10 @@ class MarkovChainResult(InfiniteVector, DiscreteValued):
                 "length matches the dimensions of the "
                 "transition matrix."
             )
+        if any(p < 0 for p in initial_dist):
+            raise Exception("Initial distribution cannot have negative probabilities.")
+        if abs(sum(initial_dist) - 1) > EPS:
+            raise Exception("Initial distribution must sum to 1.")
         self.initial_dist = initial_dist
         # Process state labels
         if state_labels is not None:
@@ -343,8 +348,10 @@ class ContinuousTimeMarkovChainProbabilitySpace(ProbabilitySpace):
         ------
         Exception
             If any row of ``generator_matrix`` does not sum to 0, any
-            off-diagonal entry is negative, any diagonal entry is positive, the matrix is not square,
-            or the lengths of ``initial_dist`` or ``state_labels`` do not match the number of states.
+            off-diagonal entry is negative, any diagonal entry is positive,
+            the matrix is not square, the lengths of ``initial_dist`` or
+            ``state_labels`` do not match the number of states, or any
+            state is absorbing (rate = 0).
         """
 
         # Check generator matrix
@@ -368,7 +375,7 @@ class ContinuousTimeMarkovChainProbabilitySpace(ProbabilitySpace):
         self.generator_matrix = np.array(generator_matrix)
         m, n = self.generator_matrix.shape
         if m != n:
-            raise Exception("Transition matrix must be square.")
+            raise Exception("Generator matrix must be square.")
         if len(initial_dist) != n:
             raise Exception(
                 "Initial distribution must be a vector whose "
@@ -391,6 +398,12 @@ class ContinuousTimeMarkovChainProbabilitySpace(ProbabilitySpace):
         transition_matrix = []
         for i, row in enumerate(self.generator_matrix):
             rate = -row[i]
+            if rate == 0:
+                raise Exception(
+                    f"State {i} is absorbing (rate = 0). "
+                    "Continuous-time Markov chains with absorbing states "
+                    "are not supported."
+                )
             transition_matrix.append(
                 [p / rate if j != i else 0 for j, p in enumerate(row)]
             )
