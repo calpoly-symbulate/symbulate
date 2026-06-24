@@ -171,5 +171,53 @@ class TestMarginalDistribution(unittest.TestCase):
         self.assertAlmostEqual(N(4).sim(Nsim).mean(), 8.0, delta=0.3)
 
 
+class TestPoissonProcessErrors(unittest.TestCase):
+    """Error handling for PoissonProcessProbabilitySpace and PoissonProcess."""
+
+    def test_string_rate_raises_type_error(self):
+        """rate must be a number, not a string."""
+        with self.assertRaises(TypeError):
+            PoissonProcess(rate="fast")
+
+    def test_none_rate_raises_type_error(self):
+        """rate must be a number, not None."""
+        with self.assertRaises(TypeError):
+            PoissonProcess(rate=None)
+
+    def test_zero_rate_raises_value_error(self):
+        """rate=0 would mean no events ever occur — not allowed."""
+        with self.assertRaises(ValueError):
+            PoissonProcess(rate=0)
+
+    def test_negative_rate_raises_value_error(self):
+        """Negative rate is not physically meaningful."""
+        with self.assertRaises(ValueError):
+            PoissonProcess(rate=-1)
+
+    def test_probability_space_string_rate_raises_type_error(self):
+        """PoissonProcessProbabilitySpace also validates rate type."""
+        with self.assertRaises(TypeError):
+            PoissonProcessProbabilitySpace(rate="high")
+
+    def test_probability_space_zero_rate_raises_value_error(self):
+        """PoissonProcessProbabilitySpace also validates rate > 0."""
+        with self.assertRaises(ValueError):
+            PoissonProcessProbabilitySpace(rate=0)
+
+    def test_valid_integer_rate_does_not_raise(self):
+        """A positive integer rate is valid."""
+        seed()
+        N = PoissonProcess(rate=3)
+        path = N.draw()
+        self.assertGreaterEqual(path(1.0), 0)
+
+    def test_valid_float_rate_does_not_raise(self):
+        """A positive float rate is valid."""
+        seed()
+        N = PoissonProcess(rate=0.5)
+        path = N.draw()
+        self.assertGreaterEqual(path(1.0), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
