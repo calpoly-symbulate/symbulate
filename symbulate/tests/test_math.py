@@ -4,17 +4,41 @@ Covers scalar math operations, statistical summary functions,
 quantile/order statistics, counting helpers, and TypeError/ValueError
 guards. All tests use concrete lists with known correct answers.
 """
+
 import math
 import unittest
 
 from symbulate.math import (
-    sqrt, exp, log, sin, cos, factorial,
-    mean, var, sd, median, min_max_diff, med_abs_dev,
-    quantile, iqr, orderstatistics,
-    skewness, kurtosis, moment, trimmed_mean,
-    count, count_eq, count_neq, count_lt, count_gt, count_geq, count_leq,
+    sqrt,
+    exp,
+    log,
+    sin,
+    cos,
+    factorial,
+    mean,
+    var,
+    sd,
+    median,
+    min_max_diff,
+    med_abs_dev,
+    quantile,
+    iqr,
+    orderstatistics,
+    skewness,
+    kurtosis,
+    moment,
+    trimmed_mean,
+    count,
+    count_eq,
+    count_neq,
+    count_lt,
+    count_gt,
+    count_geq,
+    count_leq,
     comparefun,
-    interarrival_times, arrival_times, states,
+    interarrival_times,
+    arrival_times,
+    states,
 )
 
 
@@ -142,6 +166,14 @@ class TestQuantileFunctions(unittest.TestCase):
         with self.assertRaises(ValueError):
             orderstatistics(-1)
 
+    def test_quantile_above_one_raises(self):
+        with self.assertRaises(ValueError):
+            quantile(25)
+
+    def test_quantile_negative_raises(self):
+        with self.assertRaises(ValueError):
+            quantile(-0.1)
+
 
 class TestHigherOrderStats(unittest.TestCase):
 
@@ -168,6 +200,10 @@ class TestHigherOrderStats(unittest.TestCase):
     def test_trimmed_mean_removes_extremes(self):
         # trimming the top and bottom 20% of [1,2,3,4,5] leaves [2,3,4]
         self.assertAlmostEqual(trimmed_mean(0.2)([1, 2, 3, 4, 5]), 3.0)
+
+    def test_trimmed_mean_out_of_range_raises(self):
+        with self.assertRaises(ValueError):
+            trimmed_mean(0.6)
 
 
 class TestCountingFunctions(unittest.TestCase):
@@ -199,8 +235,13 @@ class TestCountingFunctions(unittest.TestCase):
     def test_count_default_counts_all(self):
         self.assertEqual(count()(self.RANGE), 5)
 
+    def test_count_non_callable_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            count(5)
+
     def test_comparefun_gt(self):
         import operator
+
         self.assertEqual(comparefun(self.RANGE, operator.gt, 3), 2)
 
 
@@ -219,5 +260,5 @@ class TestProcessHelperTypeErrors(unittest.TestCase):
             states([1, 2, 3])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

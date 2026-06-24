@@ -277,12 +277,22 @@ def quantile(q):
         A function that accepts an iterable of floats and returns
         the ``q``-th quantile.
 
+    Raises
+    ------
+    ValueError
+        If ``q`` is not in the range [0, 1].
+
     Examples
     --------
     >>> q25 = quantile(0.25)
     >>> q25([1, 2, 3, 4, 5])
     2.0
     """
+    if not (0 <= q <= 1):
+        raise ValueError(
+            f"q must be between 0 and 1, got {q}. "
+            "For example, use quantile(0.25) for the 25th percentile."
+        )
     return lambda x: np.quantile(x, q)
 
 
@@ -447,12 +457,22 @@ def trimmed_mean(alpha):
         A function that accepts an iterable of floats and returns the
         mean after trimming ``alpha`` from each tail.
 
+    Raises
+    ------
+    ValueError
+        If ``alpha`` is not in the range [0, 0.5).
+
     Examples
     --------
     >>> tm = trimmed_mean(0.1)
     >>> tm([1, 2, 3, 4, 5])
     3.0
     """
+    if not (0 <= alpha < 0.5):
+        raise ValueError(
+            f"alpha must be in [0, 0.5), got {alpha}. "
+            "For example, use trimmed_mean(0.1) to trim 10% from each tail."
+        )
     return lambda x: stats.trim_mean(x, alpha)
 
 
@@ -499,11 +519,22 @@ def count(func=lambda x: True):
         A function that accepts an iterable and returns the number of
         elements for which ``func`` returns ``True``.
 
+    Raises
+    ------
+    TypeError
+        If ``func`` is not callable.
+
     Examples
     --------
     >>> count(lambda x: x > 3)([1, 2, 3, 4, 5])
     2
     """
+    if not callable(func):
+        raise TypeError(
+            "func must be a callable (e.g., a lambda or function), "
+            f"but got {type(func).__name__}. "
+            "For example, use count(lambda x: x > 0)."
+        )
 
     def _func(x):
         return sum(1 for i in x if func(i))
@@ -733,7 +764,7 @@ def arrival_times(continuous_time_function):
         and isinstance(continuous_time_function, DiscreteValued)
     ):
         raise TypeError(
-            "Interarrival times are only defined for "
+            "Arrival times are only defined for "
             "continuous-time, discrete-valued functions."
         )
     return continuous_time_function.get_arrival_times()
