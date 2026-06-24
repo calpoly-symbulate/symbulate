@@ -236,11 +236,16 @@ class Bernoulli(Distribution):
     """
 
     def __init__(self, p):
-        """Initialize a Bernoulli distribution."""
-        if 0 <= p <= 1:
-            self.p = p
-        else:
-            raise Exception("p must be between 0 and 1")
+        """Initialize a Bernoulli distribution.
+
+        Raises
+        ------
+        Exception
+            If ``p`` is not a number between 0 and 1.
+        """
+        if not isinstance(p, numbers.Real) or not 0 <= p <= 1:
+            raise Exception("p must be a number between 0 and 1")
+        self.p = p
 
         params = {"p": p}
         super().__init__(params, stats.bernoulli, True)
@@ -285,17 +290,22 @@ class Binomial(Distribution):
     """
 
     def __init__(self, n, p):
-        """Initialize a binomial distribution."""
+        """Initialize a binomial distribution.
 
-        if n >= 0 and isinstance(n, numbers.Integral):
-            self.n = n
-        else:
+        Raises
+        ------
+        Exception
+            If ``n`` is not a non-negative integer, or ``p`` is not a
+            number between 0 and 1.
+        """
+
+        if not isinstance(n, numbers.Integral) or n < 0:
             raise Exception("n must be a non-negative integer")
+        self.n = n
 
-        if 0 <= p <= 1:
-            self.p = p
-        else:
-            raise Exception("p must be between 0 and 1")
+        if not isinstance(p, numbers.Real) or not 0 <= p <= 1:
+            raise Exception("p must be a number between 0 and 1")
+        self.p = p
 
         params = {"n": n, "p": p}
         super().__init__(params, stats.binom, True)
@@ -340,22 +350,26 @@ class Hypergeometric(Distribution):
     """
 
     def __init__(self, n, N0, N1):
-        """Initialize a hypergeometric distribution."""
+        """Initialize a hypergeometric distribution.
 
-        if n > 0 and isinstance(n, numbers.Integral):
-            self.n = n
-        else:
+        Raises
+        ------
+        Exception
+            If ``n`` is not a positive integer; if ``N0`` or ``N1`` is not
+            a non-negative integer; or if ``N0 + N1`` is less than ``n``.
+        """
+
+        if not isinstance(n, numbers.Integral) or n <= 0:
             raise Exception("n must be a positive integer")
+        self.n = n
 
-        if N0 >= 0 and isinstance(N0, numbers.Integral):
-            self.N0 = N0
-        else:
+        if not isinstance(N0, numbers.Integral) or N0 < 0:
             raise Exception("N0 must be a non-negative integer")
+        self.N0 = N0
 
-        if N1 >= 0 and isinstance(N1, numbers.Integral):
-            self.N1 = N1
-        else:
+        if not isinstance(N1, numbers.Integral) or N1 < 0:
             raise Exception("N1 must be a non-negative integer")
+        self.N1 = N1
 
         params = {"M": N0 + N1, "n": N1, "N": n}
 
@@ -398,12 +412,17 @@ class Geometric(Distribution):
     """
 
     def __init__(self, p):
-        """Initialize a geometric distribution."""
+        """Initialize a geometric distribution.
 
-        if 0 < p <= 1:
-            self.p = p
-        else:
-            raise Exception("p must be between 0 and 1")
+        Raises
+        ------
+        Exception
+            If ``p`` is not a number between 0 and 1.
+        """
+
+        if not isinstance(p, numbers.Real) or not 0 < p <= 1:
+            raise Exception("p must be a number between 0 and 1")
+        self.p = p
 
         params = {"p": p}
         super().__init__(params, stats.geom, True)
@@ -445,17 +464,22 @@ class NegativeBinomial(Distribution):
     """
 
     def __init__(self, r, p):
-        """Initialize a negative binomial distribution."""
+        """Initialize a negative binomial distribution.
 
-        if 0 < r and isinstance(r, numbers.Integral):
-            self.r = r
-        else:
+        Raises
+        ------
+        Exception
+            If ``r`` is not a positive integer, or ``p`` is not a number
+            between 0 and 1.
+        """
+
+        if not isinstance(r, numbers.Integral) or r <= 0:
             raise Exception("r must be a positive integer")
+        self.r = r
 
-        if 0 < p <= 1:
-            self.p = p
-        else:
-            raise Exception("p must be between 0 and 1")
+        if not isinstance(p, numbers.Real) or not 0 < p <= 1:
+            raise Exception("p must be a number between 0 and 1")
+        self.p = p
 
         params = {"n": r, "p": p, "loc": r}
         super().__init__(params, stats.nbinom, True)
@@ -519,17 +543,22 @@ class Pascal(Distribution):
     """
 
     def __init__(self, r, p):
-        """Initialize a Pascal distribution."""
+        """Initialize a Pascal distribution.
 
-        if 0 < r and isinstance(r, numbers.Integral):
-            self.r = r
-        else:
+        Raises
+        ------
+        Exception
+            If ``r`` is not a positive integer, or ``p`` is not a number
+            between 0 and 1.
+        """
+
+        if not isinstance(r, numbers.Integral) or r <= 0:
             raise Exception("r must be a positive integer")
+        self.r = r
 
-        if 0 < p <= 1:
-            self.p = p
-        else:
-            raise Exception("p must be between 0 and 1")
+        if not isinstance(p, numbers.Real) or not 0 < p <= 1:
+            raise Exception("p must be a number between 0 and 1")
+        self.p = p
 
         params = {"n": r, "p": p}
         super().__init__(params, stats.nbinom, True)
@@ -546,13 +575,14 @@ class Poisson(Distribution):
     Parameters
     ----------
     lam : float
-        Average number of events per interval (λ). Must be positive.
+        Average number of events per interval (λ). Must be a non-negative
+        number; ``lam=0`` gives a point mass at 0.
 
     Attributes
     ----------
     lam : float
         Average number of events per interval (the rate parameter,
-        often written as λ). Must be positive.
+        often written as λ). Must be non-negative.
 
     Examples
     --------
@@ -567,12 +597,17 @@ class Poisson(Distribution):
     """
 
     def __init__(self, lam):
-        """Initialize a Poisson distribution."""
+        """Initialize a Poisson distribution.
 
-        if 0 <= lam:
-            self.lam = lam
-        else:
-            raise Exception("Lambda (lam) must be greater than 0")
+        Raises
+        ------
+        Exception
+            If ``lam`` is not a non-negative number.
+        """
+
+        if not isinstance(lam, numbers.Real) or lam < 0:
+            raise Exception("lam must be a non-negative number")
+        self.lam = lam
 
         params = {"mu": lam}
         super().__init__(params, stats.poisson, True)
@@ -612,14 +647,24 @@ class DiscreteUniform(Distribution):
     """
 
     def __init__(self, a=0, b=1):
-        """Initialize a discrete uniform distribution."""
+        """Initialize a discrete uniform distribution.
+
+        Raises
+        ------
+        Exception
+            If ``a`` or ``b`` is not a number, or if ``b`` is less than ``a``.
+        """
+        if not isinstance(a, numbers.Real):
+            raise Exception("a must be a number")
+        if not isinstance(b, numbers.Real):
+            raise Exception("b must be a number")
+        if a > b:
+            raise Exception("b cannot be less than a")
+
         self.a = a
         self.b = b + 1
 
         params = {"low": self.a, "high": self.b}
-
-        if a > b:
-            raise Exception("b cannot be less than a")
 
         super().__init__(params, stats.randint, True)
         self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
@@ -660,14 +705,24 @@ class Uniform(Distribution):
     """
 
     def __init__(self, a=0.0, b=1.0):
-        """Initialize a uniform distribution."""
+        """Initialize a uniform distribution.
+
+        Raises
+        ------
+        Exception
+            If ``a`` or ``b`` is not a number, or if ``b`` is less than ``a``.
+        """
+        if not isinstance(a, numbers.Real):
+            raise Exception("a must be a number")
+        if not isinstance(b, numbers.Real):
+            raise Exception("b must be a number")
+        if a > b:
+            raise Exception("b cannot be less than a")
+
         self.a = a
         self.b = b
 
         params = {"loc": a, "scale": b - a}
-
-        if a > b:
-            raise Exception("b cannot be less than a")
 
         super().__init__(params, stats.uniform, False)
         self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
@@ -685,15 +740,24 @@ class Normal(Distribution):
     mean : float, optional
         Mean of the distribution. Default is 0.0.
     sd : float, optional
-        Standard deviation. Must be positive. Default is 1.0.
+        Standard deviation. Must be a non-negative number. Mutually
+        exclusive with ``var``. Default is 1.0 (used when neither ``sd``
+        nor ``var`` is given).
     var : float, optional
-        Variance. If provided, overrides ``sd``. Must be positive.
+        Variance. Must be a non-negative number. Mutually exclusive
+        with ``sd``.
 
     Attributes
     ----------
     scale : float
         The standard deviation used internally, regardless of whether
         ``sd`` or ``var`` was passed in.
+
+    Notes
+    -----
+    ``quantile(0)`` and ``quantile(1)`` return ``-inf`` and ``+inf``;
+    quantile arguments outside ``[0, 1]`` return ``nan`` (standard scipy
+    behavior).
 
     Examples
     --------
@@ -710,7 +774,16 @@ class Normal(Distribution):
     """
 
     def __init__(self, mean=0.0, sd=None, var=None):
-        """Initialize a normal distribution."""
+        """Initialize a normal distribution.
+
+        Raises
+        ------
+        ValueError
+            If both ``sd`` and ``var`` are specified.
+        Exception
+            If ``mean`` is not a number, or the supplied ``sd`` or ``var``
+            is not a non-negative number.
+        """
 
         if sd is not None and var is not None:
             raise ValueError("Specify sd or var, but not both.")
@@ -718,17 +791,17 @@ class Normal(Distribution):
         if sd is None and var is None:
             sd = 1.0
 
-        if var is None:
-            if sd >= 0:
-                self.scale = sd
-            else:
-                raise Exception("sd cannot be less than 0")
+        if not isinstance(mean, numbers.Real):
+            raise Exception("mean must be a number")
 
+        if var is None:
+            if not isinstance(sd, numbers.Real) or sd < 0:
+                raise Exception("sd must be a non-negative number")
+            self.scale = sd
         else:
-            if var >= 0:
-                self.scale = np.sqrt(var)
-            else:
-                raise Exception("var cannot be less than 0")
+            if not isinstance(var, numbers.Real) or var < 0:
+                raise Exception("var must be a non-negative number")
+            self.scale = np.sqrt(var)
 
         params = {"loc": mean, "scale": self.scale}
         super().__init__(params, stats.norm, False)
@@ -747,8 +820,8 @@ class Exponential(Distribution):
         Rate parameter λ. Must be positive. Default is 1.0.
         Mutually exclusive with ``scale``.
     scale : float, optional
-        Scale parameter 1/λ. If provided, overrides ``rate``.
-        Must be positive.
+        Scale parameter 1/λ. Must be a positive number. Mutually
+        exclusive with ``rate``.
 
     Attributes
     ----------
@@ -771,22 +844,34 @@ class Exponential(Distribution):
     0.423
     """
 
-    def __init__(self, rate=1.0, scale=None):
-        """Initialize an exponential distribution."""
+    def __init__(self, rate=None, scale=None):
+        """Initialize an exponential distribution.
+
+        Raises
+        ------
+        Exception
+            If both ``rate`` and ``scale`` are specified, or the supplied
+            ``rate`` or ``scale`` is not a positive number.
+        """
+
+        if rate is not None and scale is not None:
+            raise Exception("Specify either rate or scale, not both.")
+        if rate is None and scale is None:
+            rate = 1.0
 
         if scale is None:
-            if rate > 0:
-                self.rate = rate
-                self.scale = scale
-            else:
-                raise Exception("rate must be positive")
+            if not isinstance(rate, numbers.Real) or rate <= 0:
+                raise Exception("rate must be a positive number")
+            self.rate = rate
+            self.scale = None
+            params = {"scale": 1.0 / rate}
         else:
-            if scale > 0:
-                self.scale = scale
-            else:
-                raise Exception("scale must be positive")
+            if not isinstance(scale, numbers.Real) or scale <= 0:
+                raise Exception("scale must be a positive number")
+            self.rate = None
+            self.scale = scale
+            params = {"scale": scale}
 
-        params = {"scale": 1.0 / rate if scale is None else scale}
         super().__init__(params, stats.expon, False)
         self.xlim = (
             0,
@@ -808,8 +893,8 @@ class Gamma(Distribution):
     rate : float, optional
         Rate parameter λ. Default is 1.0. Mutually exclusive with ``scale``.
     scale : float, optional
-        Scale parameter 1/λ. If provided, overrides ``rate``.
-        Must be positive.
+        Scale parameter 1/λ. Must be a positive number. Mutually
+        exclusive with ``rate``.
 
     Attributes
     ----------
@@ -832,27 +917,39 @@ class Gamma(Distribution):
     1.52
     """
 
-    def __init__(self, shape, rate=1.0, scale=None):
-        """Initialize a gamma distribution."""
+    def __init__(self, shape, rate=None, scale=None):
+        """Initialize a gamma distribution.
 
-        if 0 < shape:
-            self.shape = shape
-        else:
-            raise Exception("shape parameter must be positive")
+        Raises
+        ------
+        Exception
+            If ``shape`` is not a positive number; if both ``rate`` and
+            ``scale`` are specified; or if the supplied ``rate`` or
+            ``scale`` is not a positive number.
+        """
+
+        if not isinstance(shape, numbers.Real) or shape <= 0:
+            raise Exception("shape must be a positive number")
+        self.shape = shape
+
+        if rate is not None and scale is not None:
+            raise Exception("Specify either rate or scale, not both.")
+        if rate is None and scale is None:
+            rate = 1.0
 
         if scale is None:
-            if rate > 0:
-                self.rate = rate
-                self.scale = scale
-            else:
-                raise Exception("rate must be positive")
+            if not isinstance(rate, numbers.Real) or rate <= 0:
+                raise Exception("rate must be a positive number")
+            self.rate = rate
+            self.scale = None
+            params = {"a": shape, "scale": 1.0 / rate}
         else:
-            if scale > 0:
-                self.scale = scale
-            else:
-                raise Exception("scale must be positive")
+            if not isinstance(scale, numbers.Real) or scale <= 0:
+                raise Exception("scale must be a positive number")
+            self.rate = None
+            self.scale = scale
+            params = {"a": shape, "scale": scale}
 
-        params = {"a": shape, "scale": 1.0 / rate if scale is None else scale}
         super().__init__(params, stats.gamma, False)
         self.xlim = (0, self.xlim[1])  # Gamma distributions are not defined for x < 0
 
@@ -891,17 +988,21 @@ class Beta(Distribution):
     """
 
     def __init__(self, a, b):
-        """Initialize a beta distribution."""
+        """Initialize a beta distribution.
 
-        if 0 < a:
-            self.a = a
-        else:
-            raise Exception("a must be positive")
+        Raises
+        ------
+        Exception
+            If ``a`` or ``b`` is not a positive number.
+        """
 
-        if 0 < b:
-            self.b = b
-        else:
-            raise Exception("b must be positive")
+        if not isinstance(a, numbers.Real) or a <= 0:
+            raise Exception("a must be a positive number")
+        self.a = a
+
+        if not isinstance(b, numbers.Real) or b <= 0:
+            raise Exception("b must be a positive number")
+        self.b = b
 
         params = {"a": a, "b": b}
         super().__init__(params, stats.beta, False)
@@ -926,6 +1027,11 @@ class StudentT(Distribution):
     df : int or float
         Degrees of freedom. Must be positive.
 
+    Notes
+    -----
+    The mean is undefined for ``df = 1`` (the Cauchy case); ``mean()``,
+    ``var()``, and ``sd()`` return ``nan`` there.
+
     Examples
     --------
     >>> from symbulate import *
@@ -937,11 +1043,16 @@ class StudentT(Distribution):
     """
 
     def __init__(self, df):
-        """Initialize a Student's t-distribution."""
-        if df > 0:
-            self.df = df
-        else:
-            raise Exception("df must be greater than 0")
+        """Initialize a Student's t-distribution.
+
+        Raises
+        ------
+        Exception
+            If ``df`` is not a positive number.
+        """
+        if not isinstance(df, numbers.Real) or df <= 0:
+            raise Exception("df must be a positive number")
+        self.df = df
 
         params = {"df": df}
         super().__init__(params, stats.t, False)
@@ -981,11 +1092,16 @@ class ChiSquare(Distribution):
     """
 
     def __init__(self, df):
-        """Initialize a chi-square distribution."""
-        if df > 0 and isinstance(df, numbers.Integral):
-            self.df = df
-        else:
+        """Initialize a chi-square distribution.
+
+        Raises
+        ------
+        Exception
+            If ``df`` is not a positive integer.
+        """
+        if not isinstance(df, numbers.Integral) or df <= 0:
             raise Exception("df must be a positive integer")
+        self.df = df
 
         params = {"df": df}
         super().__init__(params, stats.chi2, False)
@@ -1027,17 +1143,21 @@ class F(Distribution):
     """
 
     def __init__(self, dfN, dfD):
-        """Initialize an F-distribution."""
+        """Initialize an F-distribution.
 
-        if dfN > 0:
-            self.dfN = dfN
-        else:
-            raise Exception("dfN must be greater than 0")
+        Raises
+        ------
+        Exception
+            If ``dfN`` or ``dfD`` is not a positive number.
+        """
 
-        if dfD > 0:
-            self.dfD = dfD
-        else:
-            raise Exception("dfD must be greater than 0")
+        if not isinstance(dfN, numbers.Real) or dfN <= 0:
+            raise Exception("dfN must be a positive number")
+        self.dfN = dfN
+
+        if not isinstance(dfD, numbers.Real) or dfD <= 0:
+            raise Exception("dfD must be a positive number")
+        self.dfD = dfD
 
         params = {"dfn": dfN, "dfd": dfD}
         super().__init__(params, stats.f, False)
@@ -1056,7 +1176,8 @@ class Cauchy(Distribution):
     loc : float, optional
         Location parameter (center of the distribution). Default is 0.
     scale : float, optional
-        Scale parameter (controls the spread). Default is 1.
+        Scale parameter (controls the spread). Must be a positive number.
+        Default is 1.
 
     Attributes
     ----------
@@ -1064,6 +1185,11 @@ class Cauchy(Distribution):
         Location parameter (center of the distribution). Default is 0.
     scale : float
         Scale parameter (controls the spread). Default is 1.
+
+    Notes
+    -----
+    The Cauchy distribution has no finite moments: ``mean()`` and ``var()``
+    are undefined (return ``nan``).
 
     Examples
     --------
@@ -1076,7 +1202,17 @@ class Cauchy(Distribution):
     """
 
     def __init__(self, loc=0, scale=1):
-        """Initialize a Cauchy distribution."""
+        """Initialize a Cauchy distribution.
+
+        Raises
+        ------
+        Exception
+            If ``loc`` is not a number, or ``scale`` is not a positive number.
+        """
+        if not isinstance(loc, numbers.Real):
+            raise Exception("loc must be a number")
+        if not isinstance(scale, numbers.Real) or scale <= 0:
+            raise Exception("scale must be a positive number")
         self.loc = loc
         self.scale = scale
 
@@ -1114,8 +1250,9 @@ class LogNormal(Distribution):
     mu : float, optional
         Mean of the underlying normal distribution. Default is 0.0.
     sigma : float, optional
-        Standard deviation of the underlying normal distribution.
-        Must be positive. Default is 1.0.
+        Standard deviation of the underlying normal distribution. Must be
+        a non-negative number (``sigma=0`` gives a point mass at
+        ``exp(mu)``). Default is 1.0.
 
     Attributes
     ----------
@@ -1137,7 +1274,19 @@ class LogNormal(Distribution):
     """
 
     def __init__(self, mu=0.0, sigma=1.0):
-        """Initialize a log-normal distribution."""
+        """Initialize a log-normal distribution.
+
+        Raises
+        ------
+        Exception
+            If ``mu`` is not a number, or ``sigma`` is not a non-negative
+            number.
+        """
+
+        if not isinstance(mu, numbers.Real):
+            raise Exception("mu must be a number")
+        if not isinstance(sigma, numbers.Real) or sigma < 0:
+            raise Exception("sigma must be a non-negative number")
 
         self.norm_mean = mu
 
@@ -1156,11 +1305,9 @@ class LogNormal(Distribution):
             self.xlim = (0, _value + 1)
             ProbabilitySpace.__init__(self, lambda: Scalar(_value))
             return
-        elif sigma > 0:
+        else:
             self.s = sigma
             self.norm_sd = sigma
-        else:
-            raise Exception("sigma must be greater than 0")
 
         params = {"s": self.s, "scale": np.exp(mu)}
         super().__init__(params, stats.lognorm, False)
@@ -1192,6 +1339,11 @@ class Pareto(Distribution):
     scale : float
         Minimum possible value (lower bound of the support).
 
+    Notes
+    -----
+    The mean is finite only when ``b > 1``; for ``b <= 1`` it diverges to
+    ``inf``. The variance is finite only when ``b > 2``.
+
     Examples
     --------
     >>> from symbulate import *
@@ -1203,17 +1355,21 @@ class Pareto(Distribution):
     """
 
     def __init__(self, b=1.0, scale=1.0):
-        """Initialize a Pareto distribution."""
+        """Initialize a Pareto distribution.
 
-        if b > 0:
-            self.b = b
-        else:
-            raise Exception("b must be greater than 0")
+        Raises
+        ------
+        Exception
+            If ``b`` or ``scale`` is not a positive number.
+        """
 
-        if scale > 0:
-            self.scale = scale
-        else:
-            raise Exception("scale must be greater than 0")
+        if not isinstance(b, numbers.Real) or b <= 0:
+            raise Exception("b must be a positive number")
+        self.b = b
+
+        if not isinstance(scale, numbers.Real) or scale <= 0:
+            raise Exception("scale must be a positive number")
+        self.scale = scale
 
         params = {"b": self.b, "scale": self.scale}
         super().__init__(params, stats.pareto, False)
@@ -1451,26 +1607,41 @@ class BivariateNormal(MultivariateNormal):
         var2=None,
         cov=None,
     ):
-        """Initialize a bivariate normal distribution."""
+        """Initialize a bivariate normal distribution.
 
-        if not -1 <= corr <= 1:
-            raise Exception("Correlation must be " "between -1 and 1.")
+        Raises
+        ------
+        Exception
+            If ``mean1``, ``mean2``, or ``cov`` is not a number; if ``corr``
+            is not a number between -1 and 1; or if ``sd1``, ``sd2``,
+            ``var1``, or ``var2`` is not a non-negative number.
+        """
+
+        if not isinstance(mean1, numbers.Real):
+            raise Exception("mean1 must be a number")
+        if not isinstance(mean2, numbers.Real):
+            raise Exception("mean2 must be a number")
+        if not isinstance(corr, numbers.Real) or not -1 <= corr <= 1:
+            raise Exception("corr must be a number between -1 and 1")
+        if not isinstance(sd1, numbers.Real) or sd1 < 0:
+            raise Exception("sd1 must be a non-negative number")
+        if not isinstance(sd2, numbers.Real) or sd2 < 0:
+            raise Exception("sd2 must be a non-negative number")
 
         self.mean = [mean1, mean2]
 
-        if sd1 < 0:
-            raise Exception("sd1 cannot be less than 0")
-        if sd2 < 0:
-            raise Exception("sd2 cannot be less than 0")
-
         if var1 is None:
             var1 = sd1**2
+        elif not isinstance(var1, numbers.Real) or var1 < 0:
+            raise Exception("var1 must be a non-negative number")
         if var2 is None:
             var2 = sd2**2
-        if var1 < 0 or var2 < 0:
-            raise Exception("var1 and var2 cannot be negative")
+        elif not isinstance(var2, numbers.Real) or var2 < 0:
+            raise Exception("var2 must be a non-negative number")
         if cov is None:
             cov = corr * np.sqrt(var1 * var2)
+        elif not isinstance(cov, numbers.Real):
+            raise Exception("cov must be a number")
         self.cov = [[var1, cov], [cov, var2]]
         self.discrete = False
         self.pdf = lambda x: stats.multivariate_normal(self.mean, self.cov).pdf(x)
@@ -1507,11 +1678,17 @@ class Multinomial(Distribution):
     """
 
     def __init__(self, n, p):
-        """Initialize a multinomial distribution."""
-        if n >= 0 and isinstance(n, numbers.Integral):
-            self.n = n
-        else:
+        """Initialize a multinomial distribution.
+
+        Raises
+        ------
+        Exception
+            If ``n`` is not a non-negative integer, or the elements of ``p``
+            are not non-negative numbers summing to 1.
+        """
+        if not isinstance(n, numbers.Integral) or n < 0:
             raise Exception("n must be a non-negative integer")
+        self.n = n
 
         if sum(p) == 1 and min(p) >= 0:
             self.p = p
