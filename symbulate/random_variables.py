@@ -45,6 +45,11 @@ class RV(Arithmetic, Transformable, Comparable):
 
     def __init__(self, prob_space, func=lambda x: x):
         """Create a random variable."""
+        if not callable(func):
+            raise TypeError(
+                "func must be a callable (e.g., a lambda or function), "
+                f"but got {type(func).__name__}."
+            )
         self.prob_space = prob_space
         self.func = func
 
@@ -80,6 +85,11 @@ class RV(Arithmetic, Transformable, Comparable):
         RVResults
             A list-like object containing the simulation results.
 
+        Raises
+        ------
+        ValueError
+            If ``n`` is not a positive integer.
+
         Examples
         --------
         >>> from symbulate import *
@@ -88,6 +98,8 @@ class RV(Arithmetic, Transformable, Comparable):
         >>> X = RV(Normal(0, 1))
         >>> X.sim(3)  # doctest: +SKIP
         """
+        if not isinstance(n, int) or n < 1:
+            raise ValueError(f"n must be a positive integer, got {n!r}.")
         return RVResults(self.draw() for _ in range(n))
 
     def __call__(self, outcome):
@@ -400,7 +412,11 @@ class RV(Arithmetic, Transformable, Comparable):
         if isinstance(condition_event, Event):
             return RVConditional(self, condition_event)
         else:
-            raise NotImplementedError
+            raise NotImplementedError(
+                "The right side of | must be an Event (e.g., X > 0), "
+                f"but got {type(condition_event).__name__}. "
+                "For example, use (X | (X > 0)) to condition on X being positive."
+            )
 
 
 class RVConditional(RV):

@@ -58,6 +58,10 @@ class TestRVInit(unittest.TestCase):
         X = RV(Normal(mean=0, sd=1), f)
         self.assertIs(X.func, f)
 
+    def test_non_callable_func_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            RV(Normal(mean=0, sd=1), 5)
+
 
 class TestRVDraw(unittest.TestCase):
 
@@ -121,6 +125,16 @@ class TestRVSim(unittest.TestCase):
         cdf = stats.expon(scale=0.5).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
+
+    def test_sim_negative_n_raises(self):
+        X = RV(Normal(mean=0, sd=1))
+        with self.assertRaises(ValueError):
+            X.sim(-1)
+
+    def test_sim_float_n_raises(self):
+        X = RV(Normal(mean=0, sd=1))
+        with self.assertRaises(ValueError):
+            X.sim(2.5)
 
 
 class TestRVCall(unittest.TestCase):
