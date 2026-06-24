@@ -133,6 +133,54 @@ class TestDiscreteTimeSequence(unittest.TestCase):
         self.assertNotEqual(DiscreteTimeSequence(4), Reals())
 
 
+class TestDiscreteTimeSequenceErrors(unittest.TestCase):
+    """Error handling for DiscreteTimeSequence construction."""
+
+    def test_string_fs_raises_type_error(self):
+        """fs must be a number, not a string."""
+        with self.assertRaises(TypeError):
+            DiscreteTimeSequence(fs="4")
+
+    def test_none_fs_raises_type_error(self):
+        """fs must be a number, not None."""
+        with self.assertRaises(TypeError):
+            DiscreteTimeSequence(fs=None)
+
+    def test_zero_fs_raises_value_error(self):
+        """fs=0 would cause division by zero — not allowed."""
+        with self.assertRaises(ValueError):
+            DiscreteTimeSequence(fs=0)
+
+    def test_negative_fs_raises_value_error(self):
+        """Negative sampling frequency is not physically meaningful."""
+        with self.assertRaises(ValueError):
+            DiscreteTimeSequence(fs=-1)
+
+    def test_valid_integer_fs_does_not_raise(self):
+        """Any positive integer fs is valid."""
+        ts = DiscreteTimeSequence(fs=4)
+        self.assertEqual(ts[4], 1.0)
+
+    def test_valid_float_fs_does_not_raise(self):
+        """Any positive float fs is valid."""
+        ts = DiscreteTimeSequence(fs=0.5)
+        self.assertEqual(ts[1], 2.0)
+
+
+class TestIndexSetKeyError(unittest.TestCase):
+    """KeyError messages from IndexSet.__getitem__."""
+
+    def test_reals_getitem_raises_for_infinity(self):
+        """KeyError names the set type when the value is not in Reals."""
+        with self.assertRaises(KeyError):
+            Reals()[float('inf')]
+
+    def test_naturals_getitem_raises_for_negative(self):
+        """KeyError names the set type when the value is not in Naturals."""
+        with self.assertRaises(KeyError):
+            Naturals()[-1]
+
+
 class TestIntegers(unittest.TestCase):
 
     def test_is_discrete_time_sequence(self):

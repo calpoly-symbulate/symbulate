@@ -29,7 +29,7 @@ class IndexSet:
         Raises
         ------
         KeyError
-            If t is not in the index set.
+            If t is not in the index set, with a message naming the set type.
 
         Examples
         --------
@@ -41,7 +41,9 @@ class IndexSet:
         if t in self:
             return t
         else:
-            raise KeyError("Time %.2f not in index set." % t)
+            raise KeyError(
+                f"{type(self).__name__} does not contain {t!r}."
+            )
 
     def __contains__(self, value):
         """Check whether a value belongs to the index set.
@@ -183,10 +185,26 @@ class DiscreteTimeSequence(IndexSet):
     ----------
     fs : numeric
         The sampling frequency.
+
+    Raises
+    ------
+    TypeError
+        If ``fs`` is not a number.
+    ValueError
+        If ``fs`` is not positive.
     """
 
     def __init__(self, fs):
         """Initialize a DiscreteTimeSequence with a given sampling frequency."""
+        if not isinstance(fs, (int, float)):
+            raise TypeError(
+                f"fs must be a positive number, got {type(fs).__name__}."
+            )
+        if fs <= 0:
+            raise ValueError(
+                f"fs must be positive, got {fs}. "
+                "fs is the sampling frequency (time steps per unit)."
+            )
         self.fs = fs
 
     def __getitem__(self, n):
