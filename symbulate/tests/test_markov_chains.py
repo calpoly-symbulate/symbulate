@@ -10,6 +10,7 @@ Reproducibility: the discrete chain draws through ``markov_chains.rng``
 and the continuous chain additionally draws interarrival times through
 ``distributions.rng``, so the ``seed`` helper reseeds both.
 """
+
 import unittest
 
 import numpy as np
@@ -58,8 +59,8 @@ def seed(value=42):
 
 
 # Deterministic 2-state matrices for assertions that don't need a seed.
-STAY = [[1.0, 0.0], [0.0, 1.0]]      # identity: never leaves its start state
-SWAP = [[0.0, 1.0], [1.0, 0.0]]      # always flips state each step
+STAY = [[1.0, 0.0], [0.0, 1.0]]  # identity: never leaves its start state
+SWAP = [[0.0, 1.0], [1.0, 0.0]]  # always flips state each step
 
 
 class TestMarkovChainResultValidation(unittest.TestCase):
@@ -82,14 +83,18 @@ class TestMarkovChainResultValidation(unittest.TestCase):
         )
 
     def test_initial_dist_length_must_match(self):
-        self.assertRaises(
-            Exception, lambda: MarkovChainResult(STAY, [1.0])
-        )
+        self.assertRaises(Exception, lambda: MarkovChainResult(STAY, [1.0]))
 
     def test_state_labels_length_must_match(self):
         self.assertRaises(
             Exception, lambda: MarkovChainResult(STAY, [1.0, 0.0], state_labels=["A"])
         )
+
+    def test_initial_dist_cannot_be_negative(self):
+        self.assertRaises(Exception, lambda: MarkovChainResult(STAY, [-0.5, 1.5]))
+
+    def test_initial_dist_must_sum_to_one(self):
+        self.assertRaises(Exception, lambda: MarkovChainResult(STAY, [0.5, 0.3]))
 
 
 class TestMarkovChainResultBehavior(unittest.TestCase):
@@ -246,6 +251,14 @@ class TestContinuousTimeMarkovChainProbabilitySpaceValidation(unittest.TestCase)
             Exception,
             lambda: ContinuousTimeMarkovChainProbabilitySpace(
                 Q2, [1.0, 0.0], state_labels=["A"]
+            ),
+        )
+
+    def test_absorbing_state_raises(self):
+        self.assertRaises(
+            Exception,
+            lambda: ContinuousTimeMarkovChainProbabilitySpace(
+                [[0.0, 0.0], [1.0, -1.0]], [0.5, 0.5]
             ),
         )
 
