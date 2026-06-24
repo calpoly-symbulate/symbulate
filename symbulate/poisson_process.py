@@ -75,6 +75,13 @@ class PoissonProcessProbabilitySpace(ProbabilitySpace):
     rate : float
         The rate parameter of the Poisson process.
 
+    Raises
+    ------
+    TypeError
+        If ``rate`` is not a number.
+    ValueError
+        If ``rate`` is not positive.
+
     Examples
     --------
     >>> from symbulate import *
@@ -86,6 +93,15 @@ class PoissonProcessProbabilitySpace(ProbabilitySpace):
 
     def __init__(self, rate):
         """Create a probability space for a Poisson process."""
+        if not isinstance(rate, (int, float)):
+            raise TypeError(
+                f"rate must be a positive number, got {type(rate).__name__}."
+            )
+        if rate <= 0:
+            raise ValueError(
+                f"rate must be positive, got {rate}. "
+                "The rate controls how often events occur per unit time."
+            )
         self.rate = rate
 
         def draw():
@@ -107,6 +123,13 @@ class PoissonProcess(RandomProcess, RV):
     ----------
     rate : float
         The rate parameter of the Poisson process.
+
+    Raises
+    ------
+    TypeError
+        If ``rate`` is not a number.
+    ValueError
+        If ``rate`` is not positive.
 
     Examples
     --------
