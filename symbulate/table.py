@@ -81,7 +81,26 @@ class Table(dict, Arithmetic):
 
     def __init__(self, hash_map, outcomes=None, normalize=False,
                  outcome_column="Outcome"):
-        """Initialize a Table from a mapping of outcomes to counts."""
+        """Initialize a Table from a mapping of outcomes to counts.
+
+        Parameters
+        ----------
+        hash_map : dict
+            Mapping from outcomes to their counts or frequencies.
+        outcomes : list, optional
+            Ordered list of all possible outcomes. Outcomes absent from
+            ``hash_map`` are assigned a value of 0.
+        normalize : bool, optional
+            If ``True``, divide each count by the total so entries become
+            relative frequencies. Defaults to ``False``.
+        outcome_column : str, optional
+            Label for the outcomes column. Defaults to ``"Outcome"``.
+
+        Raises
+        ------
+        ValueError
+            If ``normalize=True`` and the counts in ``hash_map`` sum to zero.
+        """
         self.outcomes = outcomes
         self.outcome_column = outcome_column
         if outcomes is None:
@@ -95,8 +114,13 @@ class Table(dict, Arithmetic):
                 )
                 
         if normalize:
+            total = sum(hash_map.values())
+            if total == 0:
+                raise ValueError(
+                    "Cannot normalize a Table whose counts sum to zero."
+                )
             for key in self.ordered_keys():
-                self[key] /= sum(hash_map.values())
+                self[key] /= total
             self.value_column = 'Relative Frequency'
         else:
             self.value_column = 'Frequency'
@@ -135,8 +159,13 @@ class Table(dict, Arithmetic):
         return keys
     
     def __repr__(self):
-        """Return a plain-text table representation."""
+        """Return a plain-text table representation.
+
+        Returns a header-only ``(empty)`` string when the table has no rows.
+        """
         keys = self.ordered_keys()
+        if not keys:
+            return f"{self.outcome_column} {self.value_column}\n(empty)"
         keys_strings = [str(x) for x in keys]
         max_key_length = len(max(keys_strings, key=len))
 
