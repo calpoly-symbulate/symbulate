@@ -1,7 +1,7 @@
 import warnings
 
 from .base import Arithmetic, Transformable, Comparable
-from .probability_space import Event
+from .probability_space import Event, ProbabilitySpace
 from .result import Vector, join, is_scalar, is_numeric_vector, TimeFunction
 from .results import RVResults
 
@@ -338,6 +338,11 @@ class RV(Arithmetic, Transformable, Comparable):
             def _func(outcome):
                 return join(self.func(outcome), other.func(outcome))
 
+        elif isinstance(other, Event):
+
+            def _func(outcome):
+                return join(self.func(outcome), other.func(outcome))
+
         elif is_scalar(other):
 
             def _func(outcome):
@@ -349,7 +354,7 @@ class RV(Arithmetic, Transformable, Comparable):
                 return join(self.func(outcome), other)
 
         else:
-            raise Exception("Joint distributions are only defined for RVs.")
+            raise Exception("Joint distributions are only defined for RVs and events.")
         return RV(self.prob_space, _func)
 
     def __rand__(self, other):
@@ -379,6 +384,12 @@ class RV(Arithmetic, Transformable, Comparable):
 
             def _func(outcome):
                 return join(other, self.func(outcome))
+
+        elif isinstance(other, ProbabilitySpace):
+            other.check_same(self.prob_space)
+
+            def _func(outcome):
+                return join(outcome, self.func(outcome))
 
         else:
             raise Exception("Joint distributions are only defined for RVs and scalars.")
