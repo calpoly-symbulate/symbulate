@@ -1222,7 +1222,7 @@ class TestMultinomial(unittest.TestCase):
         p = [0.3, 0.5, 0.2]
         n = 15
         X0, X1, X2 = RV(Multinomial(n=n, p=p))
-        for i, (rv, pi) in enumerate(zip([X0, X1, X2], p)):
+        for rv, pi in zip([X0, X1, X2], p):
             sims = rv.sim(Nsim)
             expected_mean = n * pi
             expected_var = n * pi * (1 - pi)
@@ -1259,7 +1259,8 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_Binomial_n_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "n must be a non-negative integer",
+            Exception,
+            "n must be a non-negative integer",
             lambda: Binomial(n="x", p=0.5),
         )
 
@@ -1270,19 +1271,22 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_Hypergeometric_n_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "n must be a positive integer",
+            Exception,
+            "n must be a positive integer",
             lambda: Hypergeometric(n="x", N0=3, N1=3),
         )
 
     def test_Hypergeometric_N0_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "N0 must be a non-negative integer",
+            Exception,
+            "N0 must be a non-negative integer",
             lambda: Hypergeometric(n=2, N0="x", N1=3),
         )
 
     def test_Hypergeometric_N1_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "N1 must be a non-negative integer",
+            Exception,
+            "N1 must be a non-negative integer",
             lambda: Hypergeometric(n=2, N0=3, N1="x"),
         )
 
@@ -1293,7 +1297,8 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_NegativeBinomial_r_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "r must be a positive integer",
+            Exception,
+            "r must be a positive integer",
             lambda: NegativeBinomial(r="x", p=0.5),
         )
 
@@ -1369,13 +1374,15 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_Gamma_rate_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "rate must be a positive number",
+            Exception,
+            "rate must be a positive number",
             lambda: Gamma(shape=2, rate="x"),
         )
 
     def test_Gamma_scale_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "scale must be a positive number",
+            Exception,
+            "scale must be a positive number",
             lambda: Gamma(shape=2, scale="x"),
         )
 
@@ -1426,7 +1433,8 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_LogNormal_sigma_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "sigma must be a non-negative number",
+            Exception,
+            "sigma must be a non-negative number",
             lambda: LogNormal(sigma="x"),
         )
 
@@ -1437,7 +1445,8 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_Pareto_scale_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "scale must be a positive number",
+            Exception,
+            "scale must be a positive number",
             lambda: Pareto(b=2, scale="x"),
         )
 
@@ -1448,19 +1457,22 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_BivariateNormal_corr_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "corr must be a number between -1 and 1",
+            Exception,
+            "corr must be a number between -1 and 1",
             lambda: BivariateNormal(corr="x"),
         )
 
     def test_BivariateNormal_sd1_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "sd1 must be a non-negative number",
+            Exception,
+            "sd1 must be a non-negative number",
             lambda: BivariateNormal(sd1="x"),
         )
 
     def test_BivariateNormal_var1_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "var1 must be a non-negative number",
+            Exception,
+            "var1 must be a non-negative number",
             lambda: BivariateNormal(var1="x"),
         )
 
@@ -1471,7 +1483,8 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_Multinomial_n_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "n must be a non-negative integer",
+            Exception,
+            "n must be a non-negative integer",
             lambda: Multinomial(n="x", p=[0.5, 0.5]),
         )
 
@@ -1480,13 +1493,15 @@ class TestRateScaleConflict(unittest.TestCase):
 
     def test_Exponential_both_rate_and_scale(self):
         self.assertRaisesRegex(
-            Exception, "either rate or scale",
+            Exception,
+            "either rate or scale",
             lambda: Exponential(rate=2, scale=3),
         )
 
     def test_Gamma_both_rate_and_scale(self):
         self.assertRaisesRegex(
-            Exception, "either rate or scale",
+            Exception,
+            "either rate or scale",
             lambda: Gamma(shape=2, rate=2, scale=3),
         )
 
@@ -1503,13 +1518,44 @@ class TestRateScaleConflict(unittest.TestCase):
         self.assertIsNone(Exponential(scale=5).rate)
         self.assertIsNone(Gamma(2, scale=5).rate)
 
+    def test_Exponential_consistent_rate_scale_warns(self):
+        with self.assertWarns(UserWarning):
+            Exponential(rate=2, scale=0.5)
+
+    def test_Exponential_consistent_rate_scale_correct_distribution(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            X = Exponential(rate=2, scale=0.5)
+        self.assertAlmostEqual(float(X.mean()), 0.5)
+
+    def test_Gamma_consistent_rate_scale_warns(self):
+        with self.assertWarns(UserWarning):
+            Gamma(shape=3, rate=2, scale=0.5)
+
+    def test_Gamma_consistent_rate_scale_correct_distribution(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            X = Gamma(shape=3, rate=2, scale=0.5)
+        self.assertAlmostEqual(float(X.mean()), 1.5)
+
 
 class TestNormalSdVarConflict(unittest.TestCase):
 
-    def test_both_sd_and_var_raises(self):
-        self.assertRaisesRegex(
-            ValueError, "sd or var", lambda: Normal(sd=1, var=1)
-        )
+    def test_both_sd_and_var_inconsistent_raises(self):
+        self.assertRaisesRegex(ValueError, "sd or var", lambda: Normal(sd=2, var=1))
+
+    def test_both_sd_and_var_consistent_warns(self):
+        with self.assertWarns(UserWarning):
+            Normal(sd=2, var=4)
+
+    def test_both_sd_and_var_consistent_correct_distribution(self):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            X = Normal(sd=2, var=4)
+        self.assertAlmostEqual(float(X.sd()), 2.0)
+        self.assertAlmostEqual(float(X.var()), 4.0)
 
     def test_default_is_standard_normal(self):
         X = Normal()
@@ -1521,13 +1567,15 @@ class TestIntegerVsRealParameters(unittest.TestCase):
 
     def test_Hypergeometric_rejects_float_n(self):
         self.assertRaisesRegex(
-            Exception, "n must be a positive integer",
+            Exception,
+            "n must be a positive integer",
             lambda: Hypergeometric(n=2.5, N0=3, N1=3),
         )
 
     def test_Hypergeometric_rejects_float_counts(self):
         self.assertRaisesRegex(
-            Exception, "N0 must be a non-negative integer",
+            Exception,
+            "N0 must be a non-negative integer",
             lambda: Hypergeometric(n=2, N0=3.5, N1=3),
         )
 

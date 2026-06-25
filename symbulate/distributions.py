@@ -1,4 +1,6 @@
+import math
 import numbers
+import warnings
 import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
@@ -779,14 +781,23 @@ class Normal(Distribution):
         Raises
         ------
         ValueError
-            If both ``sd`` and ``var`` are specified.
+            If both ``sd`` and ``var`` are specified with inconsistent values.
         Exception
             If ``mean`` is not a number, or the supplied ``sd`` or ``var``
             is not a non-negative number.
+
+        Warns
+        -----
+        UserWarning
+            If both ``sd`` and ``var`` are specified but are consistent
+            (i.e. ``sd == sqrt(var)``). Use only one.
         """
 
         if sd is not None and var is not None:
-            raise ValueError("Specify sd or var, but not both.")
+            if not math.isclose(sd**2, var):
+                raise ValueError("Specify sd or var, but not both.")
+            warnings.warn("Both sd and var were provided. Use only one.", UserWarning)
+            var = None
 
         if sd is None and var is None:
             sd = 1.0
@@ -850,12 +861,25 @@ class Exponential(Distribution):
         Raises
         ------
         Exception
-            If both ``rate`` and ``scale`` are specified, or the supplied
-            ``rate`` or ``scale`` is not a positive number.
+            If both ``rate`` and ``scale`` are specified with inconsistent
+            values, or the supplied ``rate`` or ``scale`` is not a positive
+            number.
+
+        Warns
+        -----
+        UserWarning
+            If both ``rate`` and ``scale`` are specified but are consistent
+            (i.e. ``scale == 1/rate``). Use only one.
         """
 
         if rate is not None and scale is not None:
-            raise Exception("Specify either rate or scale, not both.")
+            if not math.isclose(scale, 1.0 / rate):
+                raise Exception("Specify either rate or scale, not both.")
+            warnings.warn(
+                "Both rate and scale were provided. Use only one.", UserWarning
+            )
+            scale = None
+
         if rate is None and scale is None:
             rate = 1.0
 
@@ -924,8 +948,14 @@ class Gamma(Distribution):
         ------
         Exception
             If ``shape`` is not a positive number; if both ``rate`` and
-            ``scale`` are specified; or if the supplied ``rate`` or
-            ``scale`` is not a positive number.
+            ``scale`` are specified with inconsistent values; or if the
+            supplied ``rate`` or ``scale`` is not a positive number.
+
+        Warns
+        -----
+        UserWarning
+            If both ``rate`` and ``scale`` are specified but are consistent
+            (i.e. ``scale == 1/rate``). Use only one.
         """
 
         if not isinstance(shape, numbers.Real) or shape <= 0:
@@ -933,7 +963,13 @@ class Gamma(Distribution):
         self.shape = shape
 
         if rate is not None and scale is not None:
-            raise Exception("Specify either rate or scale, not both.")
+            if not math.isclose(scale, 1.0 / rate):
+                raise Exception("Specify either rate or scale, not both.")
+            warnings.warn(
+                "Both rate and scale were provided. Use only one.", UserWarning
+            )
+            scale = None
+
         if rate is None and scale is None:
             rate = 1.0
 
