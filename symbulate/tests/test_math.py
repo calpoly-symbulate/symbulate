@@ -8,6 +8,8 @@ guards. All tests use concrete lists with known correct answers.
 import math
 import unittest
 
+from symbulate import RV, Normal
+
 from symbulate.math import (
     sqrt,
     exp,
@@ -24,6 +26,7 @@ from symbulate.math import (
     quantile,
     quartiles,
     deciles,
+    is_discrete,
     iqr,
     orderstatistics,
     skewness,
@@ -337,6 +340,47 @@ class TestQuantileFunctions(unittest.TestCase):
     def test_deciles_non_numeric_raises(self):
         with self.assertRaises(TypeError):
             deciles([1, 2, "a"])
+
+
+class TestIsDiscrete(unittest.TestCase):
+
+    def test_integer_list_is_discrete(self):
+        self.assertTrue(is_discrete([0, 1, 1, 0, 1]))
+
+    def test_whole_number_floats_are_discrete(self):
+        self.assertTrue(is_discrete([0.0, 1.0, 2.0]))
+
+    def test_non_whole_floats_are_not_discrete(self):
+        self.assertFalse(is_discrete([0.5, 1.2, 3.7]))
+
+    def test_mixed_int_and_float_whole_is_discrete(self):
+        self.assertTrue(is_discrete([0, 1.0, 2, 3.0]))
+
+    def test_single_element_discrete(self):
+        self.assertTrue(is_discrete([1]))
+
+    def test_mixed_whole_and_non_whole_is_not_discrete(self):
+        self.assertFalse(is_discrete([1, 2, 3.5]))
+
+    def test_rv_input_raises(self):
+        with self.assertRaises(TypeError):
+            is_discrete(RV(Normal(0, 1)))
+
+    def test_scalar_input_raises(self):
+        with self.assertRaises(TypeError):
+            is_discrete(3)
+
+    def test_none_input_raises(self):
+        with self.assertRaises(TypeError):
+            is_discrete(None)
+
+    def test_empty_raises(self):
+        with self.assertRaises(ValueError):
+            is_discrete([])
+
+    def test_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            is_discrete(["a", "b"])
 
 
 class TestHigherOrderStats(unittest.TestCase):
