@@ -123,7 +123,7 @@ def mean(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the mean with one value is unnecessary.")
-    if not hasattr(x, '__iter__'):
+    if not hasattr(x, "__iter__"):
         raise TypeError("mean requires an iterable collection.")
     if len(x) == 0:
         raise ValueError("mean requires a non-empty collection.")
@@ -178,7 +178,7 @@ def var(x):
     >>> var([2, 4, 4, 4, 5, 5, 7, 9])
     4.0
     """
-    if not hasattr(x, '__iter__'):
+    if not hasattr(x, "__iter__"):
         raise TypeError("var requires an iterable collection.")
     if len(x) == 0:
         raise ValueError("var requires a non-empty collection.")
@@ -214,7 +214,7 @@ def sd(x):
     >>> sd([2, 4, 4, 4, 5, 5, 7, 9])
     2.0
     """
-    if not hasattr(x, '__iter__'):
+    if not hasattr(x, "__iter__"):
         raise TypeError("sd requires an iterable collection.")
     if len(x) == 0:
         raise ValueError("sd requires a non-empty collection.")
@@ -251,7 +251,7 @@ def median(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the median of one value is unnecessary.")
-    if not hasattr(x, '__iter__'):
+    if not hasattr(x, "__iter__"):
         raise TypeError("median requires an iterable collection.")
     if len(x) == 0:
         raise ValueError("median requires a non-empty collection.")
@@ -288,7 +288,7 @@ def min_max_diff(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the range of one value is unnecessary.")
-    if not hasattr(x, '__iter__'):
+    if not hasattr(x, "__iter__"):
         raise TypeError("min_max_diff requires an iterable collection.")
     if len(x) == 0:
         raise ValueError("min_max_diff requires a non-empty collection.")
@@ -350,6 +350,59 @@ def quantile(q):
             "For example, use quantile(0.25) for the 25th percentile."
         )
     return lambda x: np.quantile(x, q)
+
+
+def is_discrete(x):
+    """Determine whether a collection of values appears to be discrete.
+
+    Returns ``True`` if every value in ``x`` is an integer or a float
+    whose value is a whole number (e.g. ``2.0``). This correctly
+    identifies simulated results from discrete distributions such as
+    ``Bernoulli``, ``Binomial``, and ``Poisson``.
+
+    Parameters
+    ----------
+    x : iterable of int or float
+        The simulated values to inspect. Must be non-empty.
+
+    Returns
+    -------
+    bool
+        ``True`` if all values are whole numbers, ``False`` otherwise.
+
+    Raises
+    ------
+    TypeError
+        If ``x`` is an ``RV`` (use ``X.sim(n)`` first), a single real
+        number, not iterable, or contains non-numeric values.
+    ValueError
+        If ``x`` is empty.
+
+    Examples
+    --------
+    >>> is_discrete([0, 1, 1, 0, 1])
+    True
+    >>> is_discrete([0.5, 1.2, 3.7])
+    False
+    """
+    if isinstance(x, RV):
+        raise TypeError(
+            "is_discrete requires simulated results, not an RV. " "Use X.sim(n) first."
+        )
+    if isinstance(x, numbers.Real):
+        raise TypeError(
+            "is_discrete requires a collection of values, not a single number."
+        )
+    if not hasattr(x, "__iter__"):
+        raise TypeError("is_discrete requires an iterable collection.")
+    x = list(x)
+    if len(x) == 0:
+        raise ValueError("is_discrete requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("is_discrete requires a collection of numeric values.")
+    return all(
+        isinstance(v, int) or (isinstance(v, float) and v.is_integer()) for v in x
+    )
 
 
 def quartiles(x):
@@ -448,7 +501,7 @@ def iqr(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the iqr of one value is unnecessary.")
-    if not hasattr(x, '__iter__'):
+    if not hasattr(x, "__iter__"):
         raise TypeError("iqr requires an iterable collection.")
     if len(x) == 0:
         raise ValueError("iqr requires a non-empty collection.")
@@ -519,7 +572,7 @@ def skewness(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Finding the skewness of one value is unnecessary.")
-    if not hasattr(x, '__iter__'):
+    if not hasattr(x, "__iter__"):
         raise TypeError("skewness requires an iterable collection.")
     if len(x) == 0:
         raise ValueError("skewness requires a non-empty collection.")
@@ -559,7 +612,7 @@ def kurtosis(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Finding the kurtosis of one value is unnecessary.")
-    if not hasattr(x, '__iter__'):
+    if not hasattr(x, "__iter__"):
         raise TypeError("kurtosis requires an iterable collection.")
     if len(x) == 0:
         raise ValueError("kurtosis requires a non-empty collection.")
