@@ -1619,3 +1619,81 @@ class TestValidBoundaryParameters(unittest.TestCase):
 
     def test_LogNormal_sigma_zero(self):
         LogNormal(sigma=0)
+
+
+# ===========================================================================
+# Stacked error messages
+#
+# When a student gets more than one parameter wrong, every mistake should be
+# reported in a single exception (under an "Invalid parameters:" header) so
+# they can fix them all at once instead of one error at a time. A single bad
+# parameter must still raise its plain message, with no header.
+# ===========================================================================
+
+
+class TestStackedErrorMessages(unittest.TestCase):
+
+    def test_single_error_has_no_header(self):
+        # One bad parameter -> the message is unchanged (no "Invalid parameters").
+        with self.assertRaises(Exception) as cm:
+            Binomial(n=5, p="x")
+        self.assertEqual(str(cm.exception), "p must be a number between 0 and 1")
+
+    def test_multiple_errors_have_header(self):
+        with self.assertRaises(Exception) as cm:
+            Binomial(n=-1, p=2)
+        self.assertIn("Invalid parameters:", str(cm.exception))
+
+    def test_Binomial_stacks_n_and_p(self):
+        with self.assertRaises(Exception) as cm:
+            Binomial(n=-1, p=2)
+        message = str(cm.exception)
+        self.assertIn("n must be a non-negative integer", message)
+        self.assertIn("p must be a number between 0 and 1", message)
+
+    def test_Beta_stacks_a_and_b(self):
+        with self.assertRaises(Exception) as cm:
+            Beta(a=-1, b="x")
+        message = str(cm.exception)
+        self.assertIn("a must be a positive number", message)
+        self.assertIn("b must be a positive number", message)
+
+    def test_Gamma_stacks_shape_and_rate(self):
+        with self.assertRaises(Exception) as cm:
+            Gamma(shape=-5, rate=-10)
+        message = str(cm.exception)
+        self.assertIn("shape must be a positive number", message)
+        self.assertIn("rate must be a positive number", message)
+
+    def test_Hypergeometric_stacks_all_three(self):
+        with self.assertRaises(Exception) as cm:
+            Hypergeometric(n=-1, N0="x", N1=-2)
+        message = str(cm.exception)
+        self.assertIn("n must be a positive integer", message)
+        self.assertIn("N0 must be a non-negative integer", message)
+        self.assertIn("N1 must be a non-negative integer", message)
+
+    def test_BivariateNormal_stacks_multiple(self):
+        with self.assertRaises(Exception) as cm:
+            BivariateNormal(mean1="x", corr=5, sd1=-1)
+        message = str(cm.exception)
+        self.assertIn("mean1 must be a number", message)
+        self.assertIn("corr must be a number between -1 and 1", message)
+        self.assertIn("sd1 must be a non-negative number", message)
+
+    def test_Multinomial_stacks_n_and_p(self):
+        with self.assertRaises(Exception) as cm:
+            Multinomial(n=-1, p=[0.5, 0.6])
+        message = str(cm.exception)
+        self.assertIn("n must be a non-negative integer", message)
+        self.assertIn("Elements of p must be non-negative", message)
+
+    def test_conflict_reported_alone(self):
+        # A structural conflict (both rate and scale) is reported by itself,
+        # even when another parameter is also invalid: the contradiction must
+        # be resolved before the value checks are meaningful.
+        with self.assertRaises(Exception) as cm:
+            Gamma(shape=-5, rate=2, scale=3)
+        message = str(cm.exception)
+        self.assertIn("Specify either rate or scale", message)
+        self.assertNotIn("shape must be a positive number", message)

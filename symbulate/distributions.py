@@ -12,6 +12,49 @@ from .result import Scalar, Vector, InfiniteVector
 rng = np.random.default_rng()
 
 
+def _validate(*checks):
+    """Collect all failed parameter checks and report them together.
+
+    Each argument is a ``(failed, message)`` pair, where ``failed`` is a
+    boolean that is ``True`` when the parameter is invalid. Every message
+    whose check failed is gathered and raised in a single ``Exception``,
+    so a student who mistypes more than one parameter sees all of their
+    mistakes at once instead of fixing them one error at a time.
+
+    A single failure raises that message on its own (identical to the old
+    per-parameter checks); two or more are listed under a short header.
+
+    Parameters
+    ----------
+    *checks : tuple of (bool, str)
+        One ``(failed, message)`` pair per parameter check.
+
+    Raises
+    ------
+    Exception
+        If any check failed. With one failure the message is raised as-is;
+        with several, they are listed under an ``"Invalid parameters:"``
+        header, one indented bullet per failed check.
+
+    Notes
+    -----
+    Each ``failed`` expression should test the parameter's type before its
+    value (e.g. ``not isinstance(p, numbers.Real) or p < 0``) so the
+    short-circuit avoids a cryptic ``TypeError`` when the value is, say, a
+    string. The expressions are evaluated by the caller before being passed
+    in, so any cross-parameter comparison (``a > b``) must itself be guarded
+    by an ``isinstance`` check.
+    """
+    errors = [message for failed, message in checks if failed]
+    if not errors:
+        return
+    if len(errors) == 1:
+        raise Exception(errors[0])
+    raise Exception(
+        "Invalid parameters:\n" + "\n".join("  - " + e for e in errors)
+    )
+
+
 class Distribution(ProbabilitySpace):
     """Base class for all probability distributions in Symbulate.
 
@@ -245,8 +288,10 @@ class Bernoulli(Distribution):
         Exception
             If ``p`` is not a number between 0 and 1.
         """
-        if not isinstance(p, numbers.Real) or not 0 <= p <= 1:
-            raise Exception("p must be a number between 0 and 1")
+        _validate(
+            (not isinstance(p, numbers.Real) or not 0 <= p <= 1,
+             "p must be a number between 0 and 1"),
+        )
         self.p = p
 
         params = {"p": p}
@@ -301,12 +346,13 @@ class Binomial(Distribution):
             number between 0 and 1.
         """
 
-        if not isinstance(n, numbers.Integral) or n < 0:
-            raise Exception("n must be a non-negative integer")
+        _validate(
+            (not isinstance(n, numbers.Integral) or n < 0,
+             "n must be a non-negative integer"),
+            (not isinstance(p, numbers.Real) or not 0 <= p <= 1,
+             "p must be a number between 0 and 1"),
+        )
         self.n = n
-
-        if not isinstance(p, numbers.Real) or not 0 <= p <= 1:
-            raise Exception("p must be a number between 0 and 1")
         self.p = p
 
         params = {"n": n, "p": p}
@@ -361,22 +407,24 @@ class Hypergeometric(Distribution):
             a non-negative integer; or if ``N0 + N1`` is less than ``n``.
         """
 
-        if not isinstance(n, numbers.Integral) or n <= 0:
-            raise Exception("n must be a positive integer")
+        _validate(
+            (not isinstance(n, numbers.Integral) or n <= 0,
+             "n must be a positive integer"),
+            (not isinstance(N0, numbers.Integral) or N0 < 0,
+             "N0 must be a non-negative integer"),
+            (not isinstance(N1, numbers.Integral) or N1 < 0,
+             "N1 must be a non-negative integer"),
+            (isinstance(n, numbers.Integral)
+             and isinstance(N0, numbers.Integral)
+             and isinstance(N1, numbers.Integral)
+             and N0 + N1 < n,
+             "N0 + N1 cannot be less than the sample size n"),
+        )
         self.n = n
-
-        if not isinstance(N0, numbers.Integral) or N0 < 0:
-            raise Exception("N0 must be a non-negative integer")
         self.N0 = N0
-
-        if not isinstance(N1, numbers.Integral) or N1 < 0:
-            raise Exception("N1 must be a non-negative integer")
         self.N1 = N1
 
         params = {"M": N0 + N1, "n": N1, "N": n}
-
-        if N0 + N1 < n:
-            raise Exception("N0 + N1 cannot be less than the sample size n")
 
         super().__init__(params, stats.hypergeom, True)
         self.xlim = (
@@ -422,8 +470,10 @@ class Geometric(Distribution):
             If ``p`` is not a number between 0 and 1.
         """
 
-        if not isinstance(p, numbers.Real) or not 0 < p <= 1:
-            raise Exception("p must be a number between 0 and 1")
+        _validate(
+            (not isinstance(p, numbers.Real) or not 0 < p <= 1,
+             "p must be a number between 0 and 1"),
+        )
         self.p = p
 
         params = {"p": p}
@@ -475,12 +525,13 @@ class NegativeBinomial(Distribution):
             between 0 and 1.
         """
 
-        if not isinstance(r, numbers.Integral) or r <= 0:
-            raise Exception("r must be a positive integer")
+        _validate(
+            (not isinstance(r, numbers.Integral) or r <= 0,
+             "r must be a positive integer"),
+            (not isinstance(p, numbers.Real) or not 0 < p <= 1,
+             "p must be a number between 0 and 1"),
+        )
         self.r = r
-
-        if not isinstance(p, numbers.Real) or not 0 < p <= 1:
-            raise Exception("p must be a number between 0 and 1")
         self.p = p
 
         params = {"n": r, "p": p, "loc": r}
@@ -554,12 +605,13 @@ class Pascal(Distribution):
             between 0 and 1.
         """
 
-        if not isinstance(r, numbers.Integral) or r <= 0:
-            raise Exception("r must be a positive integer")
+        _validate(
+            (not isinstance(r, numbers.Integral) or r <= 0,
+             "r must be a positive integer"),
+            (not isinstance(p, numbers.Real) or not 0 < p <= 1,
+             "p must be a number between 0 and 1"),
+        )
         self.r = r
-
-        if not isinstance(p, numbers.Real) or not 0 < p <= 1:
-            raise Exception("p must be a number between 0 and 1")
         self.p = p
 
         params = {"n": r, "p": p}
@@ -607,8 +659,10 @@ class Poisson(Distribution):
             If ``lam`` is not a non-negative number.
         """
 
-        if not isinstance(lam, numbers.Real) or lam < 0:
-            raise Exception("lam must be a non-negative number")
+        _validate(
+            (not isinstance(lam, numbers.Real) or lam < 0,
+             "lam must be a non-negative number"),
+        )
         self.lam = lam
 
         params = {"mu": lam}
@@ -656,12 +710,12 @@ class DiscreteUniform(Distribution):
         Exception
             If ``a`` or ``b`` is not a number, or if ``b`` is less than ``a``.
         """
-        if not isinstance(a, numbers.Real):
-            raise Exception("a must be a number")
-        if not isinstance(b, numbers.Real):
-            raise Exception("b must be a number")
-        if a > b:
-            raise Exception("b cannot be less than a")
+        _validate(
+            (not isinstance(a, numbers.Real), "a must be a number"),
+            (not isinstance(b, numbers.Real), "b must be a number"),
+            (isinstance(a, numbers.Real) and isinstance(b, numbers.Real) and a > b,
+             "b cannot be less than a"),
+        )
 
         self.a = a
         self.b = b + 1
@@ -714,12 +768,12 @@ class Uniform(Distribution):
         Exception
             If ``a`` or ``b`` is not a number, or if ``b`` is less than ``a``.
         """
-        if not isinstance(a, numbers.Real):
-            raise Exception("a must be a number")
-        if not isinstance(b, numbers.Real):
-            raise Exception("b must be a number")
-        if a > b:
-            raise Exception("b cannot be less than a")
+        _validate(
+            (not isinstance(a, numbers.Real), "a must be a number"),
+            (not isinstance(b, numbers.Real), "b must be a number"),
+            (isinstance(a, numbers.Real) and isinstance(b, numbers.Real) and a > b,
+             "b cannot be less than a"),
+        )
 
         self.a = a
         self.b = b
@@ -794,7 +848,8 @@ class Normal(Distribution):
         """
 
         if sd is not None and var is not None:
-            if not math.isclose(sd**2, var):
+            if not (isinstance(sd, numbers.Real) and isinstance(var, numbers.Real)
+                    and math.isclose(sd**2, var)):
                 raise ValueError("Specify sd or var, but not both.")
             warnings.warn("Both sd and var were provided. Use only one.", UserWarning)
             var = None
@@ -802,16 +857,19 @@ class Normal(Distribution):
         if sd is None and var is None:
             sd = 1.0
 
-        if not isinstance(mean, numbers.Real):
-            raise Exception("mean must be a number")
-
         if var is None:
-            if not isinstance(sd, numbers.Real) or sd < 0:
-                raise Exception("sd must be a non-negative number")
+            _validate(
+                (not isinstance(mean, numbers.Real), "mean must be a number"),
+                (not isinstance(sd, numbers.Real) or sd < 0,
+                 "sd must be a non-negative number"),
+            )
             self.scale = sd
         else:
-            if not isinstance(var, numbers.Real) or var < 0:
-                raise Exception("var must be a non-negative number")
+            _validate(
+                (not isinstance(mean, numbers.Real), "mean must be a number"),
+                (not isinstance(var, numbers.Real) or var < 0,
+                 "var must be a non-negative number"),
+            )
             self.scale = np.sqrt(var)
 
         params = {"loc": mean, "scale": self.scale}
@@ -873,7 +931,8 @@ class Exponential(Distribution):
         """
 
         if rate is not None and scale is not None:
-            if not math.isclose(scale, 1.0 / rate):
+            if not (isinstance(rate, numbers.Real) and isinstance(scale, numbers.Real)
+                    and math.isclose(scale, 1.0 / rate)):
                 raise Exception("Specify either rate or scale, not both.")
             warnings.warn(
                 "Both rate and scale were provided. Use only one.", UserWarning
@@ -884,14 +943,18 @@ class Exponential(Distribution):
             rate = 1.0
 
         if scale is None:
-            if not isinstance(rate, numbers.Real) or rate <= 0:
-                raise Exception("rate must be a positive number")
+            _validate(
+                (not isinstance(rate, numbers.Real) or rate <= 0,
+                 "rate must be a positive number"),
+            )
             self.rate = rate
             self.scale = None
             params = {"scale": 1.0 / rate}
         else:
-            if not isinstance(scale, numbers.Real) or scale <= 0:
-                raise Exception("scale must be a positive number")
+            _validate(
+                (not isinstance(scale, numbers.Real) or scale <= 0,
+                 "scale must be a positive number"),
+            )
             self.rate = None
             self.scale = scale
             params = {"scale": scale}
@@ -958,12 +1021,9 @@ class Gamma(Distribution):
             (i.e. ``scale == 1/rate``). Use only one.
         """
 
-        if not isinstance(shape, numbers.Real) or shape <= 0:
-            raise Exception("shape must be a positive number")
-        self.shape = shape
-
         if rate is not None and scale is not None:
-            if not math.isclose(scale, 1.0 / rate):
+            if not (isinstance(rate, numbers.Real) and isinstance(scale, numbers.Real)
+                    and math.isclose(scale, 1.0 / rate)):
                 raise Exception("Specify either rate or scale, not both.")
             warnings.warn(
                 "Both rate and scale were provided. Use only one.", UserWarning
@@ -974,14 +1034,24 @@ class Gamma(Distribution):
             rate = 1.0
 
         if scale is None:
-            if not isinstance(rate, numbers.Real) or rate <= 0:
-                raise Exception("rate must be a positive number")
+            _validate(
+                (not isinstance(shape, numbers.Real) or shape <= 0,
+                 "shape must be a positive number"),
+                (not isinstance(rate, numbers.Real) or rate <= 0,
+                 "rate must be a positive number"),
+            )
+            self.shape = shape
             self.rate = rate
             self.scale = None
             params = {"a": shape, "scale": 1.0 / rate}
         else:
-            if not isinstance(scale, numbers.Real) or scale <= 0:
-                raise Exception("scale must be a positive number")
+            _validate(
+                (not isinstance(shape, numbers.Real) or shape <= 0,
+                 "shape must be a positive number"),
+                (not isinstance(scale, numbers.Real) or scale <= 0,
+                 "scale must be a positive number"),
+            )
+            self.shape = shape
             self.rate = None
             self.scale = scale
             params = {"a": shape, "scale": scale}
@@ -1032,12 +1102,13 @@ class Beta(Distribution):
             If ``a`` or ``b`` is not a positive number.
         """
 
-        if not isinstance(a, numbers.Real) or a <= 0:
-            raise Exception("a must be a positive number")
+        _validate(
+            (not isinstance(a, numbers.Real) or a <= 0,
+             "a must be a positive number"),
+            (not isinstance(b, numbers.Real) or b <= 0,
+             "b must be a positive number"),
+        )
         self.a = a
-
-        if not isinstance(b, numbers.Real) or b <= 0:
-            raise Exception("b must be a positive number")
         self.b = b
 
         params = {"a": a, "b": b}
@@ -1086,8 +1157,10 @@ class StudentT(Distribution):
         Exception
             If ``df`` is not a positive number.
         """
-        if not isinstance(df, numbers.Real) or df <= 0:
-            raise Exception("df must be a positive number")
+        _validate(
+            (not isinstance(df, numbers.Real) or df <= 0,
+             "df must be a positive number"),
+        )
         self.df = df
 
         params = {"df": df}
@@ -1135,8 +1208,10 @@ class ChiSquare(Distribution):
         Exception
             If ``df`` is not a positive integer.
         """
-        if not isinstance(df, numbers.Integral) or df <= 0:
-            raise Exception("df must be a positive integer")
+        _validate(
+            (not isinstance(df, numbers.Integral) or df <= 0,
+             "df must be a positive integer"),
+        )
         self.df = df
 
         params = {"df": df}
@@ -1187,12 +1262,13 @@ class F(Distribution):
             If ``dfN`` or ``dfD`` is not a positive number.
         """
 
-        if not isinstance(dfN, numbers.Real) or dfN <= 0:
-            raise Exception("dfN must be a positive number")
+        _validate(
+            (not isinstance(dfN, numbers.Real) or dfN <= 0,
+             "dfN must be a positive number"),
+            (not isinstance(dfD, numbers.Real) or dfD <= 0,
+             "dfD must be a positive number"),
+        )
         self.dfN = dfN
-
-        if not isinstance(dfD, numbers.Real) or dfD <= 0:
-            raise Exception("dfD must be a positive number")
         self.dfD = dfD
 
         params = {"dfn": dfN, "dfd": dfD}
@@ -1245,10 +1321,11 @@ class Cauchy(Distribution):
         Exception
             If ``loc`` is not a number, or ``scale`` is not a positive number.
         """
-        if not isinstance(loc, numbers.Real):
-            raise Exception("loc must be a number")
-        if not isinstance(scale, numbers.Real) or scale <= 0:
-            raise Exception("scale must be a positive number")
+        _validate(
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (not isinstance(scale, numbers.Real) or scale <= 0,
+             "scale must be a positive number"),
+        )
         self.loc = loc
         self.scale = scale
 
@@ -1319,10 +1396,11 @@ class LogNormal(Distribution):
             number.
         """
 
-        if not isinstance(mu, numbers.Real):
-            raise Exception("mu must be a number")
-        if not isinstance(sigma, numbers.Real) or sigma < 0:
-            raise Exception("sigma must be a non-negative number")
+        _validate(
+            (not isinstance(mu, numbers.Real), "mu must be a number"),
+            (not isinstance(sigma, numbers.Real) or sigma < 0,
+             "sigma must be a non-negative number"),
+        )
 
         self.norm_mean = mu
 
@@ -1399,12 +1477,13 @@ class Pareto(Distribution):
             If ``b`` or ``scale`` is not a positive number.
         """
 
-        if not isinstance(b, numbers.Real) or b <= 0:
-            raise Exception("b must be a positive number")
+        _validate(
+            (not isinstance(b, numbers.Real) or b <= 0,
+             "b must be a positive number"),
+            (not isinstance(scale, numbers.Real) or scale <= 0,
+             "scale must be a positive number"),
+        )
         self.b = b
-
-        if not isinstance(scale, numbers.Real) or scale <= 0:
-            raise Exception("scale must be a positive number")
         self.scale = scale
 
         params = {"b": self.b, "scale": self.scale}
@@ -1653,31 +1732,33 @@ class BivariateNormal(MultivariateNormal):
             ``var1``, or ``var2`` is not a non-negative number.
         """
 
-        if not isinstance(mean1, numbers.Real):
-            raise Exception("mean1 must be a number")
-        if not isinstance(mean2, numbers.Real):
-            raise Exception("mean2 must be a number")
-        if not isinstance(corr, numbers.Real) or not -1 <= corr <= 1:
-            raise Exception("corr must be a number between -1 and 1")
-        if not isinstance(sd1, numbers.Real) or sd1 < 0:
-            raise Exception("sd1 must be a non-negative number")
-        if not isinstance(sd2, numbers.Real) or sd2 < 0:
-            raise Exception("sd2 must be a non-negative number")
+        _validate(
+            (not isinstance(mean1, numbers.Real), "mean1 must be a number"),
+            (not isinstance(mean2, numbers.Real), "mean2 must be a number"),
+            (not isinstance(corr, numbers.Real) or not -1 <= corr <= 1,
+             "corr must be a number between -1 and 1"),
+            (not isinstance(sd1, numbers.Real) or sd1 < 0,
+             "sd1 must be a non-negative number"),
+            (not isinstance(sd2, numbers.Real) or sd2 < 0,
+             "sd2 must be a non-negative number"),
+            (var1 is not None and (not isinstance(var1, numbers.Real) or var1 < 0),
+             "var1 must be a non-negative number"),
+            (var2 is not None and (not isinstance(var2, numbers.Real) or var2 < 0),
+             "var2 must be a non-negative number"),
+            (cov is not None and not isinstance(cov, numbers.Real),
+             "cov must be a number"),
+        )
 
         self.mean = [mean1, mean2]
 
+        # var1/var2 default to sd**2, and cov defaults to corr*sqrt(var1*var2);
+        # every value used below has been validated above.
         if var1 is None:
             var1 = sd1**2
-        elif not isinstance(var1, numbers.Real) or var1 < 0:
-            raise Exception("var1 must be a non-negative number")
         if var2 is None:
             var2 = sd2**2
-        elif not isinstance(var2, numbers.Real) or var2 < 0:
-            raise Exception("var2 must be a non-negative number")
         if cov is None:
             cov = corr * np.sqrt(var1 * var2)
-        elif not isinstance(cov, numbers.Real):
-            raise Exception("cov must be a number")
         self.cov = [[var1, cov], [cov, var2]]
         self.discrete = False
         self.pdf = lambda x: stats.multivariate_normal(self.mean, self.cov).pdf(x)
@@ -1722,14 +1803,21 @@ class Multinomial(Distribution):
             If ``n`` is not a non-negative integer, or the elements of ``p``
             are not non-negative numbers summing to 1.
         """
-        if not isinstance(n, numbers.Integral) or n < 0:
-            raise Exception("n must be a non-negative integer")
-        self.n = n
+        # ``p`` is array-like, so guard the sum/min so a non-numeric or empty
+        # ``p`` reports the helpful message instead of a cryptic error and can
+        # be stacked alongside an invalid ``n``.
+        try:
+            bad_p = not (sum(p) == 1 and min(p) >= 0)
+        except (TypeError, ValueError):
+            bad_p = True
 
-        if sum(p) == 1 and min(p) >= 0:
-            self.p = p
-        else:
-            raise Exception("Elements of p must be non-negative" + " and sum to 1.")
+        _validate(
+            (not isinstance(n, numbers.Integral) or n < 0,
+             "n must be a non-negative integer"),
+            (bad_p, "Elements of p must be non-negative and sum to 1."),
+        )
+        self.n = n
+        self.p = p
 
         self.discrete = False
         self.pdf = lambda x: stats.multinomial(n, p).pmf(x)
