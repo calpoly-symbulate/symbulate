@@ -78,6 +78,11 @@ def log(value, base=e):
     float or RV or Tuple or TimeFunction or Results
         The logarithm of ``value`` in the given ``base``.
 
+    Raises
+    ------
+    ValueError
+        If ``base`` is not a positive number other than 1.
+
     Examples
     --------
     >>> log(math.e)
@@ -85,6 +90,8 @@ def log(value, base=e):
     >>> X = RV(Normal(0, 1))
     >>> log(X ** 2).draw()
     """
+    if not isinstance(base, numbers.Real) or base <= 0 or base == 1:
+        raise ValueError("base must be a positive number other than 1.")
     return operation_factory(lambda x: math.log(x, base))(value)
 
 
@@ -94,7 +101,7 @@ def mean(x):
     Parameters
     ----------
     x : iterable of float
-        The values to average. Must contain more than one element.
+        The values to average. Must be non-empty.
 
     Returns
     -------
@@ -104,7 +111,10 @@ def mean(x):
     Raises
     ------
     TypeError
-        If ``x`` is a single real number.
+        If ``x`` is a single real number, not iterable, or contains
+        non-numeric values.
+    ValueError
+        If ``x`` is empty.
 
     Examples
     --------
@@ -113,8 +123,13 @@ def mean(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the mean with one value is unnecessary.")
-    else:
-        return sum(x) / len(x)
+    if not hasattr(x, '__iter__'):
+        raise TypeError("mean requires an iterable collection.")
+    if len(x) == 0:
+        raise ValueError("mean requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("mean requires a collection of numeric values.")
+    return sum(x) / len(x)
 
 
 def cumsum(x):
@@ -144,18 +159,31 @@ def var(x):
     Parameters
     ----------
     x : iterable of float
-        The values for which to compute the variance.
+        The values for which to compute the variance. Must be non-empty.
 
     Returns
     -------
     float
         The population variance of ``x``.
 
+    Raises
+    ------
+    TypeError
+        If ``x`` is not iterable or contains non-numeric values.
+    ValueError
+        If ``x`` is empty.
+
     Examples
     --------
     >>> var([2, 4, 4, 4, 5, 5, 7, 9])
     4.0
     """
+    if not hasattr(x, '__iter__'):
+        raise TypeError("var requires an iterable collection.")
+    if len(x) == 0:
+        raise ValueError("var requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("var requires a collection of numeric values.")
     mu = mean(x)
     return mean([(i - mu) ** 2 for i in x])
 
@@ -166,18 +194,32 @@ def sd(x):
     Parameters
     ----------
     x : iterable of float
-        The values for which to compute the standard deviation.
+        The values for which to compute the standard deviation. Must be
+        non-empty.
 
     Returns
     -------
     float
         The population standard deviation of ``x``.
 
+    Raises
+    ------
+    TypeError
+        If ``x`` is not iterable or contains non-numeric values.
+    ValueError
+        If ``x`` is empty.
+
     Examples
     --------
     >>> sd([2, 4, 4, 4, 5, 5, 7, 9])
     2.0
     """
+    if not hasattr(x, '__iter__'):
+        raise TypeError("sd requires an iterable collection.")
+    if len(x) == 0:
+        raise ValueError("sd requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("sd requires a collection of numeric values.")
     return math.sqrt(var(x))
 
 
@@ -187,8 +229,7 @@ def median(x):
     Parameters
     ----------
     x : iterable of float
-        The values for which to compute the median. Must contain
-        more than one element.
+        The values for which to compute the median. Must be non-empty.
 
     Returns
     -------
@@ -198,7 +239,10 @@ def median(x):
     Raises
     ------
     TypeError
-        If ``x`` is a single real number.
+        If ``x`` is a single real number, not iterable, or contains
+        non-numeric values.
+    ValueError
+        If ``x`` is empty.
 
     Examples
     --------
@@ -207,8 +251,13 @@ def median(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the median of one value is unnecessary.")
-    else:
-        return np.median(x)
+    if not hasattr(x, '__iter__'):
+        raise TypeError("median requires an iterable collection.")
+    if len(x) == 0:
+        raise ValueError("median requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("median requires a collection of numeric values.")
+    return np.median(x)
 
 
 def min_max_diff(x):
@@ -217,8 +266,7 @@ def min_max_diff(x):
     Parameters
     ----------
     x : iterable of float
-        The values for which to compute the range. Must contain
-        more than one element.
+        The values for which to compute the range. Must be non-empty.
 
     Returns
     -------
@@ -228,7 +276,10 @@ def min_max_diff(x):
     Raises
     ------
     TypeError
-        If ``x`` is a single real number.
+        If ``x`` is a single real number, not iterable, or contains
+        non-numeric values.
+    ValueError
+        If ``x`` is empty.
 
     Examples
     --------
@@ -237,8 +288,13 @@ def min_max_diff(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the range of one value is unnecessary.")
-    else:
-        return max(x) - min(x)
+    if not hasattr(x, '__iter__'):
+        raise TypeError("min_max_diff requires an iterable collection.")
+    if len(x) == 0:
+        raise ValueError("min_max_diff requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("min_max_diff requires a collection of numeric values.")
+    return max(x) - min(x)
 
 
 def med_abs_dev(x):
@@ -302,7 +358,7 @@ def quartiles(x):
     Parameters
     ----------
     x : iterable of float
-        The values to summarize.
+        The values to summarize. Must be non-empty.
 
     Returns
     -------
@@ -310,11 +366,23 @@ def quartiles(x):
         A dictionary mapping each quartile probability (0, 0.25, 0.50, 0.75, 1)
         to its value.
 
+    Raises
+    ------
+    TypeError
+        If ``x`` contains non-numeric values.
+    ValueError
+        If ``x`` is empty.
+
     Examples
     --------
     >>> quartiles([1, 2, 3, 4, 5])
     {0.0: 1.0, 0.25: 2.0, 0.5: 3.0, 0.75: 4.0, 1.0: 5.0}
     """
+    x = list(x)
+    if len(x) == 0:
+        raise ValueError("quartiles requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("quartiles requires a collection of numeric values.")
     return {q: float(np.quantile(x, q)) for q in [0.00, 0.25, 0.50, 0.75, 1.00]}
 
 
@@ -324,7 +392,7 @@ def deciles(x):
     Parameters
     ----------
     x : iterable of float
-        The values to summarize.
+        The values to summarize. Must be non-empty.
 
     Returns
     -------
@@ -332,11 +400,23 @@ def deciles(x):
         A dictionary mapping each decile probability (0 through 1 by 0.1)
         to its value.
 
+    Raises
+    ------
+    TypeError
+        If ``x`` contains non-numeric values.
+    ValueError
+        If ``x`` is empty.
+
     Examples
     --------
     >>> deciles([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     {0.0: 1.0, 0.1: 1.9, 0.2: 2.8, 0.3: 3.7, 0.4: 4.6, 0.5: 5.5, 0.6: 6.4, 0.7: 7.3, 0.8: 8.2, 0.9: 9.1, 1.0: 10.0}
     """
+    x = list(x)
+    if len(x) == 0:
+        raise ValueError("deciles requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("deciles requires a collection of numeric values.")
     return {round(q / 10, 1): float(np.quantile(x, q / 10)) for q in range(0, 11)}
 
 
@@ -346,8 +426,7 @@ def iqr(x):
     Parameters
     ----------
     x : iterable of float
-        The values for which to compute the IQR. Must contain
-        more than one element.
+        The values for which to compute the IQR. Must be non-empty.
 
     Returns
     -------
@@ -357,7 +436,10 @@ def iqr(x):
     Raises
     ------
     TypeError
-        If ``x`` is a single real number.
+        If ``x`` is a single real number, not iterable, or contains
+        non-numeric values.
+    ValueError
+        If ``x`` is empty.
 
     Examples
     --------
@@ -366,9 +448,14 @@ def iqr(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Taking the iqr of one value is unnecessary.")
-    else:
-        q75, q25 = np.quantile(x, [0.75, 0.25])
-        return q75 - q25
+    if not hasattr(x, '__iter__'):
+        raise TypeError("iqr requires an iterable collection.")
+    if len(x) == 0:
+        raise ValueError("iqr requires a non-empty collection.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("iqr requires a collection of numeric values.")
+    q75, q25 = np.quantile(x, [0.75, 0.25])
+    return q75 - q25
 
 
 def orderstatistics(n):
@@ -410,7 +497,7 @@ def skewness(x):
     ----------
     x : iterable of float
         The values for which to compute the skewness. Must contain
-        more than one element.
+        at least 3 values.
 
     Returns
     -------
@@ -420,7 +507,10 @@ def skewness(x):
     Raises
     ------
     TypeError
-        If ``x`` is a single real number.
+        If ``x`` is a single real number, not iterable, or contains
+        non-numeric values.
+    ValueError
+        If ``x`` is empty or contains fewer than 3 values.
 
     Examples
     --------
@@ -429,8 +519,15 @@ def skewness(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Finding the skewness of one value is unnecessary.")
-    else:
-        return stats.skew(x)
+    if not hasattr(x, '__iter__'):
+        raise TypeError("skewness requires an iterable collection.")
+    if len(x) == 0:
+        raise ValueError("skewness requires a non-empty collection.")
+    if len(x) < 3:
+        raise ValueError("skewness requires at least 3 values.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("skewness requires a collection of numeric values.")
+    return stats.skew(x)
 
 
 def kurtosis(x):
@@ -440,7 +537,7 @@ def kurtosis(x):
     ----------
     x : iterable of float
         The values for which to compute the kurtosis. Must contain
-        more than one element.
+        at least 4 values.
 
     Returns
     -------
@@ -450,7 +547,10 @@ def kurtosis(x):
     Raises
     ------
     TypeError
-        If ``x`` is a single real number.
+        If ``x`` is a single real number, not iterable, or contains
+        non-numeric values.
+    ValueError
+        If ``x`` is empty or contains fewer than 4 values.
 
     Examples
     --------
@@ -459,8 +559,15 @@ def kurtosis(x):
     """
     if isinstance(x, numbers.Real):
         raise TypeError("Finding the kurtosis of one value is unnecessary.")
-    else:
-        return stats.kurtosis(x)
+    if not hasattr(x, '__iter__'):
+        raise TypeError("kurtosis requires an iterable collection.")
+    if len(x) == 0:
+        raise ValueError("kurtosis requires a non-empty collection.")
+    if len(x) < 4:
+        raise ValueError("kurtosis requires at least 4 values.")
+    if not all(isinstance(v, numbers.Real) for v in x):
+        raise TypeError("kurtosis requires a collection of numeric values.")
+    return stats.kurtosis(x)
 
 
 def moment(k):
@@ -477,12 +584,23 @@ def moment(k):
         A function that accepts an iterable of floats and returns the
         ``k``-th central moment.
 
+    Raises
+    ------
+    TypeError
+        If ``k`` is not an integer.
+    ValueError
+        If ``k`` is negative.
+
     Examples
     --------
     >>> second_moment = moment(2)
     >>> second_moment([1, 2, 3, 4, 5])
     2.0
     """
+    if not isinstance(k, int):
+        raise TypeError("k must be an integer.")
+    if k < 0:
+        raise ValueError("k must be a non-negative integer.")
     return lambda x: stats.moment(x, order=k)
 
 

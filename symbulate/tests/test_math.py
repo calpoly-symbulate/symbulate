@@ -70,6 +70,22 @@ class TestScalarMath(unittest.TestCase):
     def test_factorial_five(self):
         self.assertEqual(factorial(5), 120)
 
+    def test_log_base_zero_raises(self):
+        with self.assertRaises(ValueError):
+            log(8, 0)
+
+    def test_log_base_one_raises(self):
+        with self.assertRaises(ValueError):
+            log(8, 1)
+
+    def test_log_base_negative_raises(self):
+        with self.assertRaises(ValueError):
+            log(8, -2)
+
+    def test_log_base_non_numeric_raises(self):
+        with self.assertRaises(ValueError):
+            log(8, "e")
+
 
 class TestStatisticalFunctions(unittest.TestCase):
 
@@ -130,6 +146,110 @@ class TestStatisticalErrors(unittest.TestCase):
     def test_kurtosis_single_value_raises(self):
         with self.assertRaises(TypeError):
             kurtosis(3)
+
+    def test_mean_empty_raises(self):
+        with self.assertRaises(ValueError):
+            mean([])
+
+    def test_mean_non_iterable_raises(self):
+        with self.assertRaises(TypeError):
+            mean(None)
+
+    def test_mean_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            mean(["a", "b"])
+
+    def test_median_empty_raises(self):
+        with self.assertRaises(ValueError):
+            median([])
+
+    def test_median_non_iterable_raises(self):
+        with self.assertRaises(TypeError):
+            median(None)
+
+    def test_median_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            median(["a", "b"])
+
+    def test_min_max_diff_empty_raises(self):
+        with self.assertRaises(ValueError):
+            min_max_diff([])
+
+    def test_min_max_diff_non_iterable_raises(self):
+        with self.assertRaises(TypeError):
+            min_max_diff(None)
+
+    def test_min_max_diff_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            min_max_diff(["a", "b"])
+
+    def test_var_empty_raises(self):
+        with self.assertRaises(ValueError):
+            var([])
+
+    def test_var_non_iterable_raises(self):
+        with self.assertRaises(TypeError):
+            var(None)
+
+    def test_var_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            var(["a", "b"])
+
+    def test_sd_empty_raises(self):
+        with self.assertRaises(ValueError):
+            sd([])
+
+    def test_sd_non_iterable_raises(self):
+        with self.assertRaises(TypeError):
+            sd(None)
+
+    def test_sd_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            sd(["a", "b"])
+
+    def test_iqr_empty_raises(self):
+        with self.assertRaises(ValueError):
+            iqr([])
+
+    def test_iqr_non_iterable_raises(self):
+        with self.assertRaises(TypeError):
+            iqr(None)
+
+    def test_iqr_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            iqr(["a", "b"])
+
+    def test_skewness_empty_raises(self):
+        with self.assertRaises(ValueError):
+            skewness([])
+
+    def test_skewness_too_few_raises(self):
+        with self.assertRaises(ValueError):
+            skewness([1, 2])
+
+    def test_skewness_non_iterable_raises(self):
+        with self.assertRaises(TypeError):
+            skewness(None)
+
+    def test_skewness_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            skewness(["a", "b", "c"])
+
+    def test_kurtosis_empty_raises(self):
+        with self.assertRaises(ValueError):
+            kurtosis([])
+
+    def test_kurtosis_too_few_raises(self):
+        with self.assertRaises(ValueError):
+            kurtosis([1, 2, 3])
+
+    def test_kurtosis_non_iterable_raises(self):
+        with self.assertRaises(TypeError):
+            kurtosis(None)
+
+    def test_kurtosis_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            kurtosis(["a", "b", "c", "d"])
 
 
 class TestQuantileFunctions(unittest.TestCase):
@@ -202,6 +322,22 @@ class TestQuantileFunctions(unittest.TestCase):
         d = deciles(self.DATA)
         self.assertAlmostEqual(d[0.5], 3.0)
 
+    def test_quartiles_empty_raises(self):
+        with self.assertRaises(ValueError):
+            quartiles([])
+
+    def test_deciles_empty_raises(self):
+        with self.assertRaises(ValueError):
+            deciles([])
+
+    def test_quartiles_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            quartiles([1, 2, "a"])
+
+    def test_deciles_non_numeric_raises(self):
+        with self.assertRaises(TypeError):
+            deciles([1, 2, "a"])
+
 
 class TestHigherOrderStats(unittest.TestCase):
 
@@ -232,6 +368,14 @@ class TestHigherOrderStats(unittest.TestCase):
     def test_trimmed_mean_out_of_range_raises(self):
         with self.assertRaises(ValueError):
             trimmed_mean(0.6)
+
+    def test_moment_non_integer_k_raises(self):
+        with self.assertRaises(TypeError):
+            moment(2.5)
+
+    def test_moment_negative_k_raises(self):
+        with self.assertRaises(ValueError):
+            moment(-1)
 
 
 class TestCountingFunctions(unittest.TestCase):
