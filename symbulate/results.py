@@ -337,7 +337,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
                 counts[outcome] = 1
         return counts
 
-    def tabulate(self, outcomes=None, normalize=False):
+    def tabulate(self, outcomes=None, normalize=False, bin=False):
         """Count how many times each outcome appears.
 
         Parameters
@@ -346,16 +346,23 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             Outcomes to include in the table. By default,
             tabulates all outcomes that appear in the Results.
             Use this option to include outcomes that may not
-            appear in the Results.
+            appear in the Results. Ignored when ``bin=True``.
         normalize : bool, default False
             If True, return relative frequencies. If False,
             return counts.
+        bin : bool, default False
+            If True, group numeric results into decile bins (ten
+            ranges split at the 10th, 20th, ..., 90th percentiles)
+            for a compact summary of continuous values. If False,
+            tabulate each distinct outcome exactly (the default;
+            appropriate for discrete results).
 
         Returns
         -------
         Table
             A Table mapping each observed outcome to its count
-            or relative frequency.
+            or relative frequency. When ``bin=True``, the keys
+            are decile range labels (e.g. ``"[0.1, 0.5)"``).
 
         See Also
         --------
@@ -377,7 +384,24 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         Show relative frequencies instead of counts:
 
         >>> results.tabulate(normalize=True)  # doctest: +SKIP
+
+        Summarize continuous results with decile bins:
+
+        >>> RV(Normal(0, 1)).sim(1000).tabulate(bin=True)  # doctest: +SKIP
         """
+        if bin:
+            # Bin numeric results into deciles for a compact summary.
+            # (The quartile/decile choice can be revisited later.)
+            from .math import deciles
+            edges = list(deciles(self.results).values())
+            counts, edges = np.histogram(self.results, bins=edges)
+            hash_map, labels = {}, []
+            for i, count in enumerate(counts):
+                closing = "]" if i == len(counts) - 1 else ")"
+                label = f"[{edges[i]:.4g}, {edges[i + 1]:.4g}{closing}"
+                labels.append(label)
+                hash_map[label] = int(count)
+            return Table(hash_map, labels, normalize, "Bin")
         return Table(self._get_counts(), outcomes, normalize)
 
     # The Filterable superclass will use this to define all of the
@@ -1019,7 +1043,7 @@ class RVResults(Results):
         else:
             raise Exception("Could not standardize the given results.")
 
-    def tabulate(self, outcomes=None, normalize=False):
+    def tabulate(self, outcomes=None, normalize=False, bin=False):
         """Count how many times each outcome appears.
 
         Parameters
@@ -1028,16 +1052,24 @@ class RVResults(Results):
             Outcomes to include in the table. By default,
             tabulates all outcomes that appear in the Results.
             Use this option to include outcomes that may not
-            appear in the Results.
+            appear in the Results. Ignored when ``bin=True``.
         normalize : bool, default False
             If True, return relative frequencies. If False,
             return counts.
+        bin : bool, default False
+            If True, group numeric results into decile bins (ten
+            ranges split at the 10th, 20th, ..., 90th percentiles)
+            for a compact summary of continuous values. If False,
+            tabulate each distinct value exactly (the default;
+            appropriate for discrete results).
 
         Returns
         -------
         Table
             A Table mapping each observed value to its count or
             relative frequency, labeled "Value" in the header.
+            When ``bin=True``, the keys are decile range labels
+            (e.g. ``"[0.1, 0.5)"``) under a "Bin" header.
 
         See Also
         --------
@@ -1057,7 +1089,24 @@ class RVResults(Results):
         Show relative frequencies:
 
         >>> sims.tabulate(normalize=True)  # doctest: +SKIP
+
+        Summarize continuous results with decile bins:
+
+        >>> RV(Normal(0, 1)).sim(1000).tabulate(bin=True)  # doctest: +SKIP
         """
+        if bin:
+            # Bin numeric results into deciles for a compact summary.
+            # (The quartile/decile choice can be revisited later.)
+            from .math import deciles
+            edges = list(deciles(self.results).values())
+            counts, edges = np.histogram(self.results, bins=edges)
+            hash_map, labels = {}, []
+            for i, count in enumerate(counts):
+                closing = "]" if i == len(counts) - 1 else ")"
+                label = f"[{edges[i]:.4g}, {edges[i + 1]:.4g}{closing}"
+                labels.append(label)
+                hash_map[label] = int(count)
+            return Table(hash_map, labels, normalize, "Bin")
         return Table(self._get_counts(), outcomes, normalize, "Value")
 
     def plot(
