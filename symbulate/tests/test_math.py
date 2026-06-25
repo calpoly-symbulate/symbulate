@@ -22,6 +22,8 @@ from symbulate.math import (
     min_max_diff,
     med_abs_dev,
     quantile,
+    quartiles,
+    deciles,
     iqr,
     orderstatistics,
     skewness,
@@ -173,6 +175,32 @@ class TestQuantileFunctions(unittest.TestCase):
     def test_quantile_negative_raises(self):
         with self.assertRaises(ValueError):
             quantile(-0.1)
+
+    def test_quartiles_keys(self):
+        self.assertEqual(set(quartiles(self.DATA).keys()), {0.0, 0.25, 0.5, 0.75, 1.0})
+
+    def test_quartiles_values(self):
+        q = quartiles(self.DATA)
+        self.assertAlmostEqual(q[0.0], 1.0)
+        self.assertAlmostEqual(q[0.25], 2.0)
+        self.assertAlmostEqual(q[0.5], 3.0)
+        self.assertAlmostEqual(q[0.75], 4.0)
+        self.assertAlmostEqual(q[1.0], 5.0)
+
+    def test_deciles_keys(self):
+        self.assertEqual(
+            set(deciles(self.DATA).keys()),
+            {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
+        )
+
+    def test_deciles_min_max(self):
+        d = deciles(self.DATA)
+        self.assertAlmostEqual(d[0.0], 1.0)
+        self.assertAlmostEqual(d[1.0], 5.0)
+
+    def test_deciles_median(self):
+        d = deciles(self.DATA)
+        self.assertAlmostEqual(d[0.5], 3.0)
 
 
 class TestHigherOrderStats(unittest.TestCase):

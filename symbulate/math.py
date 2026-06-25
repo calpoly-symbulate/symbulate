@@ -296,6 +296,50 @@ def quantile(q):
     return lambda x: np.quantile(x, q)
 
 
+def quartiles(x):
+    """Compute the quartiles of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values to summarize.
+
+    Returns
+    -------
+    dict
+        A dictionary mapping each quartile probability (0, 0.25, 0.50, 0.75, 1)
+        to its value.
+
+    Examples
+    --------
+    >>> quartiles([1, 2, 3, 4, 5])
+    {0.0: 1.0, 0.25: 2.0, 0.5: 3.0, 0.75: 4.0, 1.0: 5.0}
+    """
+    return {q: float(np.quantile(x, q)) for q in [0.00, 0.25, 0.50, 0.75, 1.00]}
+
+
+def deciles(x):
+    """Compute the deciles of a collection of values.
+
+    Parameters
+    ----------
+    x : iterable of float
+        The values to summarize.
+
+    Returns
+    -------
+    dict
+        A dictionary mapping each decile probability (0 through 1 by 0.1)
+        to its value.
+
+    Examples
+    --------
+    >>> deciles([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    {0.0: 1.0, 0.1: 1.9, 0.2: 2.8, 0.3: 3.7, 0.4: 4.6, 0.5: 5.5, 0.6: 6.4, 0.7: 7.3, 0.8: 8.2, 0.9: 9.1, 1.0: 10.0}
+    """
+    return {round(q / 10, 1): float(np.quantile(x, q / 10)) for q in range(0, 11)}
+
+
 def iqr(x):
     """Compute the interquartile range (IQR) of a collection of values.
 
