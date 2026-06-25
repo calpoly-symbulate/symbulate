@@ -2,7 +2,7 @@ import warnings
 
 from .base import Arithmetic, Transformable, Comparable
 from .probability_space import Event
-from .result import Vector, join, is_scalar, is_numeric_vector
+from .result import Vector, join, is_scalar, is_numeric_vector, TimeFunction
 from .results import RVResults
 
 
@@ -313,8 +313,8 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Parameters
         ----------
-        other : RV or scalar
-            The other random variable or constant to join with.
+        other : RV, scalar, or TimeFunction
+            The other random variable, constant, or time function to join with.
 
         Returns
         -------
@@ -324,7 +324,7 @@ class RV(Arithmetic, Transformable, Comparable):
         Raises
         ------
         Exception
-            If other is not an RV or scalar.
+            If other is not an RV, scalar, or TimeFunction.
 
         Examples
         --------
@@ -343,20 +343,25 @@ class RV(Arithmetic, Transformable, Comparable):
             def _func(outcome):
                 return join(self.func(outcome), other)
 
+        elif isinstance(other, TimeFunction):
+
+            def _func(outcome):
+                return join(self.func(outcome), other)
+
         else:
             raise Exception("Joint distributions are only defined for RVs.")
         return RV(self.prob_space, _func)
 
     def __rand__(self, other):
-        """Support scalar & RV by forming a joint distribution.
+        """Support scalar & RV or TimeFunction & RV by forming a joint distribution.
 
-        Called when a scalar appears on the left side of ``&``
-        (e.g., ``3 & X``).
+        Called when a scalar or TimeFunction appears on the left side of ``&``
+        (e.g., ``3 & X`` or ``t & X``).
 
         Parameters
         ----------
-        other : scalar
-            The constant to join on the left side.
+        other : scalar or TimeFunction
+            The constant or time function to join on the left side.
 
         Returns
         -------
@@ -370,7 +375,7 @@ class RV(Arithmetic, Transformable, Comparable):
         >>> Z = 3 & X
         """
         self.check_same_prob_space(other)
-        if is_scalar(other):
+        if is_scalar(other) or isinstance(other, TimeFunction):
 
             def _func(outcome):
                 return join(other, self.func(outcome))

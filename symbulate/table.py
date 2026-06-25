@@ -4,10 +4,10 @@ This module defines a data structure, Table, that stores the
 output of a .tabulate() operation.  Typically, Table stores
 the possible outcomes and their counts or relative frequencies.
 """
+
 from .base import Arithmetic
 
-
-TABLE_TEMPLATE = '''
+TABLE_TEMPLATE = """
 <table>
   <thead>
     <th width="80%">{outcome_column}</th>
@@ -17,7 +17,7 @@ TABLE_TEMPLATE = '''
     {table_body}
   </tbody>
 </table>
-'''
+"""
 
 
 def _get_row_html(outcome, count):
@@ -79,22 +79,10 @@ class Table(dict, Arithmetic):
       Total  100
     """
 
-    def __init__(self, hash_map, outcomes=None, normalize=False,
-                 outcome_column="Outcome"):
+    def __init__(
+        self, hash_map, outcomes=None, normalize=False, outcome_column="Outcome"
+    ):
         """Initialize a Table from a mapping of outcomes to counts.
-
-        Parameters
-        ----------
-        hash_map : dict
-            Mapping from outcomes to their counts or frequencies.
-        outcomes : list, optional
-            Ordered list of all possible outcomes. Outcomes absent from
-            ``hash_map`` are assigned a value of 0.
-        normalize : bool, optional
-            If ``True``, divide each count by the total so entries become
-            relative frequencies. Defaults to ``False``.
-        outcome_column : str, optional
-            Label for the outcomes column. Defaults to ``"Outcome"``.
 
         Raises
         ------
@@ -108,23 +96,18 @@ class Table(dict, Arithmetic):
                 self[outcome] = count
         else:
             for outcome in outcomes:
-                self[outcome] = (
-                    hash_map[outcome] if outcome in hash_map
-                    else 0
-                )
-                
+                self[outcome] = hash_map[outcome] if outcome in hash_map else 0
+
         if normalize:
             total = sum(hash_map.values())
             if total == 0:
-                raise ValueError(
-                    "Cannot normalize a Table whose counts sum to zero."
-                )
+                raise ValueError("Cannot normalize a Table whose counts sum to zero.")
             for key in self.ordered_keys():
                 self[key] /= total
-            self.value_column = 'Relative Frequency'
+            self.value_column = "Relative Frequency"
         else:
-            self.value_column = 'Frequency'
-                
+            self.value_column = "Frequency"
+
     def ordered_keys(self):
         """Return outcome keys in sorted or declaration order.
 
@@ -157,7 +140,7 @@ class Table(dict, Arithmetic):
             keys = self.outcomes
 
         return keys
-    
+
     def __repr__(self):
         """Return a plain-text table representation.
 
@@ -173,33 +156,32 @@ class Table(dict, Arithmetic):
 
         for i, key in enumerate(keys):
             if len(str(key)) <= len(self.outcome_column):
-                outcome_space = ' ' * (len(self.outcome_column) - len(str(key)))
+                outcome_space = " " * (len(self.outcome_column) - len(str(key)))
             else:
-                outcome_space = ' ' * (max_key_length - len(str(key)))
+                outcome_space = " " * (max_key_length - len(str(key)))
             table_rows.append(f"{key}{outcome_space} {self[key]}")
 
             if i >= 18:
                 last_outcome = str(keys[-1])
                 last_value = str(self[keys[-1]])
                 table_rows.append(f"...{outcome_space} ...")
-                table_rows.append(f"{last_outcome}{outcome_space} "
-                                  f"{last_value}")
+                table_rows.append(f"{last_outcome}{outcome_space} " f"{last_value}")
                 break
 
         if max_key_length <= len(self.outcome_column):
-            outcome_header_space = ' '
-            total_row_space = ' ' * (len(self.outcome_column) - len('Total'))
+            outcome_header_space = " "
+            total_row_space = " " * (len(self.outcome_column) - len("Total"))
         else:
-            outcome_header_space = ' ' * (max_key_length -
-                                          len(self.outcome_column) + 1)
-            total_row_space = ' ' * (max_key_length - len('Total'))
+            outcome_header_space = " " * (max_key_length - len(self.outcome_column) + 1)
+            total_row_space = " " * (max_key_length - len("Total"))
 
         total = str(sum(self.values()))
         table_rows.append(f"{total_row_space}Total {total}")
-        table_rows.insert(0, f"{self.outcome_column}{outcome_header_space}"
-                             f"{self.value_column}")
+        table_rows.insert(
+            0, f"{self.outcome_column}{outcome_header_space}" f"{self.value_column}"
+        )
 
-        return '\n'.join(table_rows)
+        return "\n".join(table_rows)
 
     def _repr_html_(self):
         """Return an HTML table representation for Jupyter notebooks."""
@@ -218,9 +200,11 @@ class Table(dict, Arithmetic):
         table_body += _get_row_html("<b>Total</b>", f"<b>{total}</b>")
 
         # return HTML for entire table
-        return TABLE_TEMPLATE.format(outcome_column = self.outcome_column,
-                                     value_column = self.value_column,
-                                     table_body=table_body)
+        return TABLE_TEMPLATE.format(
+            outcome_column=self.outcome_column,
+            value_column=self.value_column,
+            table_body=table_body,
+        )
 
     def _operation_factory(self, op):
         """Return a function that applies ``op`` element-wise to all values.
@@ -244,7 +228,7 @@ class Table(dict, Arithmetic):
             return Table(
                 {outcome: op(count, other) for outcome, count in self.items()},
                 self.outcomes,
-                outcome_column=self.outcome_column
+                outcome_column=self.outcome_column,
             )
 
         return _op_func

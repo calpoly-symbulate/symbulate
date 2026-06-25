@@ -418,6 +418,44 @@ class TestRVJoint(unittest.TestCase):
         val = Z.draw()
         self.assertEqual(len(val), 2)
 
+    def test_and_rv_timefunc_returns_rv(self):
+        X = RV(Normal(mean=0, sd=1))
+        t = InfiniteVector(lambda n: n ** 2)
+        Z = X & t
+        self.assertIsInstance(Z, RV)
+
+    def test_and_rv_timefunc_draw_length(self):
+        seed()
+        X = RV(Normal(mean=0, sd=1))
+        t = InfiniteVector(lambda n: n ** 2)
+        Z = X & t
+        val = Z.draw()
+        self.assertEqual(len(val), 2)
+
+    def test_and_rv_timefunc_second_component_constant(self):
+        seed()
+        X = RV(Normal(mean=0, sd=1))
+        t = InfiniteVector(lambda n: n ** 2)
+        Z = X & t
+        sims = Z.sim(100)
+        self.assertTrue(all(v[1] is t for v in sims))
+
+    def test_rand_timefunc_first_component_constant(self):
+        seed()
+        X = RV(Normal(mean=0, sd=1))
+        t = InfiniteVector(lambda n: n ** 2)
+        Z = t & X
+        sims = Z.sim(100)
+        self.assertTrue(all(v[0] is t for v in sims))
+
+    def test_rand_timefunc_draw_length(self):
+        seed()
+        X = RV(Normal(mean=0, sd=1))
+        t = InfiniteVector(lambda n: n ** 2)
+        Z = t & X
+        val = Z.draw()
+        self.assertEqual(len(val), 2)
+
     def test_and_non_rv_non_scalar_raises(self):
         X = RV(Normal(mean=0, sd=1))
         with self.assertRaises(Exception):
