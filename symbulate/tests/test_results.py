@@ -258,7 +258,7 @@ class TestResultsTabulate(unittest.TestCase):
         self.assertEqual(table["H"], 2)
         self.assertEqual(table["T"], 0)
 
-    def test_tabulate_bin_creates_ten_decile_bins(self):
+    def test_tabulate_bin_creates_ten_equal_width_bins(self):
         table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True)
         self.assertEqual(len(table), 10)
 
@@ -276,6 +276,23 @@ class TestResultsTabulate(unittest.TestCase):
             [float(i) for i in range(1, 101)]
         ).tabulate(bin=True, normalize=True)
         self.assertAlmostEqual(sum(table.values()), 1.0)
+
+    def test_tabulate_bin_equal_counts_for_uniform_data(self):
+        # 100 evenly-spaced floats → 10 equal-width bins should each get 10 counts
+        data = [float(i) for i in range(0, 100)]
+        table = make_results(data).tabulate(bin=True)
+        counts = list(table.values())
+        self.assertEqual(min(counts), max(counts))
+
+    def test_tabulate_bin_last_label_closed(self):
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        labels = list(table.keys())
+        self.assertTrue(labels[-1].endswith("]"))
+
+    def test_tabulate_bin_non_last_labels_half_open(self):
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        labels = list(table.keys())
+        self.assertTrue(all(label.endswith(")") for label in labels[:-1]))
 
 
 # ---------------------------------------------------------------------------
@@ -603,7 +620,7 @@ class TestRVResultsTabulate(unittest.TestCase):
         table = RVResults([1, 2, 2]).tabulate(normalize=True)
         self.assertAlmostEqual(table[2], 2 / 3)
 
-    def test_tabulate_bin_creates_ten_decile_bins(self):
+    def test_tabulate_bin_creates_ten_equal_width_bins(self):
         table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True)
         self.assertEqual(len(table), 10)
         self.assertEqual(sum(table.values()), 100)
@@ -617,6 +634,30 @@ class TestRVResultsTabulate(unittest.TestCase):
             [float(i) for i in range(1, 101)]
         ).tabulate(bin=True, normalize=True)
         self.assertAlmostEqual(sum(table.values()), 1.0)
+
+    def test_tabulate_bin_equal_counts_for_uniform_data(self):
+        data = [float(i) for i in range(0, 100)]
+        table = RVResults(data).tabulate(bin=True)
+        counts = list(table.values())
+        self.assertEqual(min(counts), max(counts))
+
+    def test_tabulate_bin_labels_span_data_range(self):
+        data = [float(i) for i in range(0, 100)]
+        table = RVResults(data).tabulate(bin=True)
+        labels = list(table.keys())
+        # first label starts at 0 and last label ends at 99
+        self.assertTrue(labels[0].startswith("[0"))
+        self.assertTrue(labels[-1].endswith("]"))
+
+    def test_tabulate_bin_last_label_closed(self):
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        labels = list(table.keys())
+        self.assertTrue(labels[-1].endswith("]"))
+
+    def test_tabulate_bin_non_last_labels_half_open(self):
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        labels = list(table.keys())
+        self.assertTrue(all(label.endswith(")") for label in labels[:-1]))
 
 
 if __name__ == "__main__":
