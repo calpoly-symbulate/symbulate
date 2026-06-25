@@ -258,6 +258,25 @@ class TestResultsTabulate(unittest.TestCase):
         self.assertEqual(table["H"], 2)
         self.assertEqual(table["T"], 0)
 
+    def test_tabulate_bin_creates_ten_decile_bins(self):
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        self.assertEqual(len(table), 10)
+
+    def test_tabulate_bin_total_equals_n(self):
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        self.assertEqual(sum(table.values()), 100)
+
+    def test_tabulate_bin_uses_bin_column_and_string_labels(self):
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        self.assertEqual(table.outcome_column, "Bin")
+        self.assertTrue(all(isinstance(key, str) for key in table.keys()))
+
+    def test_tabulate_bin_normalize_sums_to_one(self):
+        table = make_results(
+            [float(i) for i in range(1, 101)]
+        ).tabulate(bin=True, normalize=True)
+        self.assertAlmostEqual(sum(table.values()), 1.0)
+
 
 # ---------------------------------------------------------------------------
 # Results arithmetic
@@ -583,6 +602,21 @@ class TestRVResultsTabulate(unittest.TestCase):
     def test_tabulate_normalize(self):
         table = RVResults([1, 2, 2]).tabulate(normalize=True)
         self.assertAlmostEqual(table[2], 2 / 3)
+
+    def test_tabulate_bin_creates_ten_decile_bins(self):
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        self.assertEqual(len(table), 10)
+        self.assertEqual(sum(table.values()), 100)
+
+    def test_tabulate_bin_uses_bin_column(self):
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True)
+        self.assertEqual(table.outcome_column, "Bin")
+
+    def test_tabulate_bin_normalize_sums_to_one(self):
+        table = RVResults(
+            [float(i) for i in range(1, 101)]
+        ).tabulate(bin=True, normalize=True)
+        self.assertAlmostEqual(sum(table.values()), 1.0)
 
 
 if __name__ == "__main__":
