@@ -7,6 +7,7 @@ random process.
 """
 
 import time
+import warnings
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -337,7 +338,9 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
                 counts[outcome] = 1
         return counts
 
-    def tabulate(self, outcomes=None, normalize=False, bin=False):
+    def tabulate(
+        self, outcomes=None, normalize=False, bin=False, nbins=None, binwidth=None
+    ):
         """Count how many times each outcome appears.
 
         Parameters
@@ -351,17 +354,33 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             If True, return relative frequencies. If False,
             return counts.
         bin : bool, default False
-            If True, group numeric results into 10 equal-width bins
+            If True, group numeric results into equal-width bins
             for a compact summary of continuous values. If False,
             tabulate each distinct outcome exactly (the default;
             appropriate for discrete results).
+        nbins : int, optional
+            Number of equal-width bins to use when ``bin=True``.
+            Defaults to 10. Cannot be used together with ``binwidth``.
+        binwidth : float, optional
+            Width of each bin when ``bin=True``; the number of bins
+            is determined automatically from the data range. Cannot
+            be used together with ``nbins``.
 
         Returns
         -------
         Table
             A Table mapping each observed outcome to its count
             or relative frequency. When ``bin=True``, the keys
-            are interval labels (e.g. ``"[0.1, 0.5)"``).
+            are interval labels of the form ``"[a, b)"`` for all
+            bins except the last, which is ``"[a, b]"`` (closed
+            on both ends so the maximum value is included).
+
+        Raises
+        ------
+        ValueError
+            If both ``nbins`` and ``binwidth`` are specified.
+        UserWarning
+            If ``nbins`` or ``binwidth`` are specified when ``bin=False``.
 
         See Also
         --------
@@ -387,9 +406,33 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         Summarize continuous results with equal-width bins:
 
         >>> RV(Normal(0, 1)).sim(1000).tabulate(bin=True)  # doctest: +SKIP
+
+        Use a custom number of bins:
+
+        >>> RV(Normal(0, 1)).sim(1000).tabulate(bin=True, nbins=20)  # doctest: +SKIP
+
+        Use a custom bin width:
+
+        >>> RV(Normal(0, 1)).sim(1000).tabulate(bin=True, binwidth=0.5)  # doctest: +SKIP
         """
+        if nbins is not None and binwidth is not None:
+            raise ValueError(
+                "Cannot specify both nbins and binwidth. "
+                "Use nbins to set the number of bins, or binwidth to set the bin width."
+            )
+        if not bin and (nbins is not None or binwidth is not None):
+            warnings.warn(
+                "nbins and binwidth have no effect when bin=False.",
+                UserWarning,
+                stacklevel=2,
+            )
         if bin:
-            counts, edges = np.histogram(self.results, bins=10)
+            if binwidth is not None:
+                data_range = max(self.results) - min(self.results)
+                n = max(1, int(np.ceil(data_range / binwidth)))
+            else:
+                n = nbins if nbins is not None else 10
+            counts, edges = np.histogram(self.results, bins=n)
             hash_map, labels = {}, []
             for i, count in enumerate(counts):
                 closing = "]" if i == len(counts) - 1 else ")"
@@ -1038,7 +1081,9 @@ class RVResults(Results):
         else:
             raise Exception("Could not standardize the given results.")
 
-    def tabulate(self, outcomes=None, normalize=False, bin=False):
+    def tabulate(
+        self, outcomes=None, normalize=False, bin=False, nbins=None, binwidth=None
+    ):
         """Count how many times each outcome appears.
 
         Parameters
@@ -1052,18 +1097,34 @@ class RVResults(Results):
             If True, return relative frequencies. If False,
             return counts.
         bin : bool, default False
-            If True, group numeric results into 10 equal-width bins
+            If True, group numeric results into equal-width bins
             for a compact summary of continuous values. If False,
             tabulate each distinct value exactly (the default;
             appropriate for discrete results).
+        nbins : int, optional
+            Number of equal-width bins to use when ``bin=True``.
+            Defaults to 10. Cannot be used together with ``binwidth``.
+        binwidth : float, optional
+            Width of each bin when ``bin=True``; the number of bins
+            is determined automatically from the data range. Cannot
+            be used together with ``nbins``.
 
         Returns
         -------
         Table
             A Table mapping each observed value to its count or
             relative frequency, labeled "Value" in the header.
-            When ``bin=True``, the keys are interval labels
-            (e.g. ``"[0.1, 0.5)"``) under a "Bin" header.
+            When ``bin=True``, the keys are interval labels of
+            the form ``"[a, b)"`` for all bins except the last,
+            which is ``"[a, b]"`` (closed on both ends so the
+            maximum value is included), under a "Bin" header.
+
+        Raises
+        ------
+        ValueError
+            If both ``nbins`` and ``binwidth`` are specified.
+        UserWarning
+            If ``nbins`` or ``binwidth`` are specified when ``bin=False``.
 
         See Also
         --------
@@ -1087,9 +1148,33 @@ class RVResults(Results):
         Summarize continuous results with equal-width bins:
 
         >>> RV(Normal(0, 1)).sim(1000).tabulate(bin=True)  # doctest: +SKIP
+
+        Use a custom number of bins:
+
+        >>> RV(Normal(0, 1)).sim(1000).tabulate(bin=True, nbins=20)  # doctest: +SKIP
+
+        Use a custom bin width:
+
+        >>> RV(Normal(0, 1)).sim(1000).tabulate(bin=True, binwidth=0.5)  # doctest: +SKIP
         """
+        if nbins is not None and binwidth is not None:
+            raise ValueError(
+                "Cannot specify both nbins and binwidth. "
+                "Use nbins to set the number of bins, or binwidth to set the bin width."
+            )
+        if not bin and (nbins is not None or binwidth is not None):
+            warnings.warn(
+                "nbins and binwidth have no effect when bin=False.",
+                UserWarning,
+                stacklevel=2,
+            )
         if bin:
-            counts, edges = np.histogram(self.results, bins=10)
+            if binwidth is not None:
+                data_range = max(self.results) - min(self.results)
+                n = max(1, int(np.ceil(data_range / binwidth)))
+            else:
+                n = nbins if nbins is not None else 10
+            counts, edges = np.histogram(self.results, bins=n)
             hash_map, labels = {}, []
             for i, count in enumerate(counts):
                 closing = "]" if i == len(counts) - 1 else ")"
