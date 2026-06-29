@@ -6,6 +6,7 @@ probability space or realizations of a random variable /
 random process.
 """
 
+import sys
 import time
 import warnings
 
@@ -83,6 +84,34 @@ def _is_boolean_vector(vector):
         ``numpy.bool_``, False otherwise.
     """
     return all(isinstance(x, (bool, np.bool_)) for x in vector)
+
+
+def _sim_with_progress(draw_func, n, progress_delay=5.0, bar_width=30):
+    """Run n draws, showing a live progress bar on stderr if simulation takes longer than progress_delay seconds."""
+    start = time.monotonic()
+    showed_progress = False
+    draws = []
+
+    def _render_bar(done):
+        filled = int(bar_width * done / n)
+        bar = "█" * filled + "░" * (bar_width - filled)
+        pct = int(100 * done / n)
+        sys.stderr.write(f"\rSimulating... [{bar}] {done}/{n} ({pct}%)")
+        sys.stderr.flush()
+
+    for i in range(n):
+        draws.append(draw_func())
+        if not showed_progress and time.monotonic() - start >= progress_delay:
+            showed_progress = True
+        if showed_progress:
+            _render_bar(i + 1)
+
+    if showed_progress:
+        _render_bar(n)
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+
+    return draws
 
 
 class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transformable):
