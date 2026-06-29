@@ -1,4 +1,20 @@
-from .probability_space import ProbabilitySpace, BoxModel, DeckOfCards
+from .probability_space import (
+    ProbabilitySpace,
+    BoxModel,
+    DeckOfCards,
+    POKER_HANDS,
+    classify_hand,
+    is_royal_flush,
+    is_straight_flush,
+    is_four_of_a_kind,
+    is_full_house,
+    is_flush,
+    is_straight,
+    is_three_of_a_kind,
+    is_two_pair,
+    is_pair,
+    is_high_card,
+)
 from .random_variables import RV
 from .random_processes import RandomProcess
 from .distributions import (
