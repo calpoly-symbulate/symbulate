@@ -1,3 +1,5 @@
+from collections import Counter
+
 import numpy as np
 
 rng = np.random.default_rng()
@@ -526,3 +528,196 @@ class DeckOfCards(BoxModel):
             for suit in ["Diamonds", "Hearts", "Clubs", "Spades"]:
                 box.append((rank, suit))
         super().__init__(box, size, replace, probs=None, order_matters=order_matters)
+
+
+# ----------------------------------------------------------------------------
+# Poker hands
+#
+# Helpers for classifying a 5-card poker hand drawn from a DeckOfCards. These
+# are plain functions (not methods) so they slot into Symbulate's usual flow:
+# wrap a deck in an RV and apply one of them, e.g.
+#
+#     deck = DeckOfCards(size=5)
+#     RV(deck).apply(is_full_house).sim(10000).mean()        # P(full house)
+#     RV(deck).apply(classify_hand).sim(10000).tabulate()    # all categories
+# ----------------------------------------------------------------------------
+
+# Numeric value of each card rank, used to detect straights.
+_RANK_VALUES = {rank: rank for rank in range(2, 11)}
+_RANK_VALUES.update({"J": 11, "Q": 12, "K": 13, "A": 14})
+
+# Poker hand categories, ordered from best to worst. ``classify_hand``
+# returns exactly one of these strings.
+POKER_HANDS = (
+    "royal flush",
+    "straight flush",
+    "four of a kind",
+    "full house",
+    "flush",
+    "straight",
+    "three of a kind",
+    "two pair",
+    "pair",
+    "high card",
+)
+
+
+def _rank_value(rank):
+    """Map a single card rank to its numeric value (2 through 14).
+
+    Parameters
+    ----------
+    rank : int or str
+        A card rank: an integer 2-10, or one of ``'J'``, ``'Q'``,
+        ``'K'``, ``'A'``.
+
+    Returns
+    -------
+    int
+        The numeric value of the rank, where ``'J'`` is 11, ``'Q'`` is
+        12, ``'K'`` is 13, and ``'A'`` is 14.
+
+    Raises
+    ------
+    ValueError
+        If ``rank`` is not a recognized card rank.
+    """
+    try:
+        return _RANK_VALUES[rank]
+    except (KeyError, TypeError):
+        raise ValueError(
+            f"{rank!r} is not a valid card rank. Ranks must be the integers "
+            "2 through 10 or one of 'J', 'Q', 'K', 'A', as produced by "
+            "DeckOfCards."
+        )
+
+
+def classify_hand(hand):
+    """Classify a 5-card poker hand into its single best category.
+
+    Parameters
+    ----------
+    hand : iterable of (rank, suit)
+        A poker hand of exactly 5 cards, such as one draw from
+        ``DeckOfCards(size=5)``. Each card is a ``(rank, suit)`` tuple.
+
+    Returns
+    -------
+    str
+        One of the categories in ``POKER_HANDS``. The categories are
+        mutually exclusive and the *best* one is returned, so a hand
+        with three of one rank and two of another is ``'full house'``,
+        never ``'pair'`` or ``'three of a kind'``.
+
+    Raises
+    ------
+    ValueError
+        If the hand does not contain exactly 5 cards, or a card has an
+        unrecognized rank.
+
+    Examples
+    --------
+    >>> classify_hand([(10, 'Hearts'), ('J', 'Hearts'), ('Q', 'Hearts'),
+    ...                 ('K', 'Hearts'), ('A', 'Hearts')])
+    'royal flush'
+    >>> classify_hand([(3, 'Clubs'), (3, 'Hearts'), (3, 'Spades'),
+    ...                 (8, 'Clubs'), (8, 'Diamonds')])
+    'full house'
+    >>> classify_hand([('A', 'Clubs'), (2, 'Hearts'), (3, 'Spades'),
+    ...                 (4, 'Clubs'), (5, 'Diamonds')])
+    'straight'
+    """
+    cards = list(hand)
+    if len(cards) != 5:
+        raise ValueError(
+            "A poker hand must consist of exactly 5 cards, but got "
+            f"{len(cards)}. Draw a hand with DeckOfCards(size=5)."
+        )
+    values = sorted(_rank_value(card[0]) for card in cards)
+    suits = [card[1] for card in cards]
+
+    is_flush = len(set(suits)) == 1
+
+    distinct = sorted(set(values))
+    is_straight = len(distinct) == 5 and distinct[-1] - distinct[0] == 4
+    # The Ace can also play low in the "wheel" straight A-2-3-4-5.
+    is_straight = is_straight or set(values) == {14, 2, 3, 4, 5}
+
+    # Rank-count pattern in descending order, e.g. [3, 2] for a full
+    # house, [2, 2, 1] for two pair, [2, 1, 1, 1] for a single pair.
+    count_pattern = sorted(Counter(values).values(), reverse=True)
+
+    if is_straight and is_flush:
+        # A 10-J-Q-K-A straight flush is the special case of a royal flush.
+        if set(values) == {10, 11, 12, 13, 14}:
+            return "royal flush"
+        return "straight flush"
+    if count_pattern[0] == 4:
+        return "four of a kind"
+    if count_pattern == [3, 2]:
+        return "full house"
+    if is_flush:
+        return "flush"
+    if is_straight:
+        return "straight"
+    if count_pattern[0] == 3:
+        return "three of a kind"
+    if count_pattern == [2, 2, 1]:
+        return "two pair"
+    if count_pattern == [2, 1, 1, 1]:
+        return "pair"
+    return "high card"
+
+
+def is_royal_flush(hand):
+    """Return True if the hand is a royal flush (10-J-Q-K-A, one suit)."""
+    return classify_hand(hand) == "royal flush"
+
+
+def is_straight_flush(hand):
+    """Return True if the hand is a straight flush (but not a royal flush)."""
+    return classify_hand(hand) == "straight flush"
+
+
+def is_four_of_a_kind(hand):
+    """Return True if the hand is four of a kind."""
+    return classify_hand(hand) == "four of a kind"
+
+
+def is_full_house(hand):
+    """Return True if the hand is a full house (three of a kind plus a pair)."""
+    return classify_hand(hand) == "full house"
+
+
+def is_flush(hand):
+    """Return True if the hand is a flush (but not a straight or royal flush)."""
+    return classify_hand(hand) == "flush"
+
+
+def is_straight(hand):
+    """Return True if the hand is a straight (but not a straight flush)."""
+    return classify_hand(hand) == "straight"
+
+
+def is_three_of_a_kind(hand):
+    """Return True if the hand's best category is exactly three of a kind."""
+    return classify_hand(hand) == "three of a kind"
+
+
+def is_two_pair(hand):
+    """Return True if the hand's best category is exactly two pair."""
+    return classify_hand(hand) == "two pair"
+
+
+def is_pair(hand):
+    """Return True if the hand's best category is exactly one pair.
+
+    Because categories are mutually exclusive, a full house or two pair
+    returns ``False`` here (they are not *just* a pair).
+    """
+    return classify_hand(hand) == "pair"
+
+
+def is_high_card(hand):
+    """Return True if the hand is high card (none of the other categories)."""
+    return classify_hand(hand) == "high card"

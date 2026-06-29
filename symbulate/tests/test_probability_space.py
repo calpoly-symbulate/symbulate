@@ -269,5 +269,112 @@ class TestDeckOfCards(unittest.TestCase):
         self.assertEqual(len(result), 5)
 
 
+class TestPokerHands(unittest.TestCase):
+
+    # One fixed, hand-built example of each category. Deterministic — no
+    # simulation, so these assert exact behavior.
+    HANDS = {
+        "royal flush": [(10, 'Hearts'), ('J', 'Hearts'), ('Q', 'Hearts'),
+                        ('K', 'Hearts'), ('A', 'Hearts')],
+        "straight flush": [(5, 'Clubs'), (6, 'Clubs'), (7, 'Clubs'),
+                           (8, 'Clubs'), (9, 'Clubs')],
+        "four of a kind": [(7, 'Clubs'), (7, 'Hearts'), (7, 'Spades'),
+                           (7, 'Diamonds'), (2, 'Clubs')],
+        "full house": [(3, 'Clubs'), (3, 'Hearts'), (3, 'Spades'),
+                       (8, 'Clubs'), (8, 'Diamonds')],
+        "flush": [(2, 'Spades'), (5, 'Spades'), (7, 'Spades'),
+                  (9, 'Spades'), ('J', 'Spades')],
+        "straight": [(4, 'Clubs'), (5, 'Hearts'), (6, 'Spades'),
+                     (7, 'Clubs'), (8, 'Diamonds')],
+        "three of a kind": [('Q', 'Clubs'), ('Q', 'Hearts'), ('Q', 'Spades'),
+                            (2, 'Clubs'), (5, 'Diamonds')],
+        "two pair": [(9, 'Clubs'), (9, 'Hearts'), (4, 'Spades'),
+                     (4, 'Clubs'), ('K', 'Diamonds')],
+        "pair": [(6, 'Clubs'), (6, 'Hearts'), (2, 'Spades'),
+                 (9, 'Clubs'), ('J', 'Diamonds')],
+        "high card": [(2, 'Clubs'), (5, 'Hearts'), (7, 'Spades'),
+                      (9, 'Clubs'), ('J', 'Diamonds')],
+    }
+
+    PREDICATES = {
+        "royal flush": is_royal_flush,
+        "straight flush": is_straight_flush,
+        "four of a kind": is_four_of_a_kind,
+        "full house": is_full_house,
+        "flush": is_flush,
+        "straight": is_straight,
+        "three of a kind": is_three_of_a_kind,
+        "two pair": is_two_pair,
+        "pair": is_pair,
+        "high card": is_high_card,
+    }
+
+    def test_classify_each_category(self):
+        for category, hand in self.HANDS.items():
+            with self.subTest(category=category):
+                self.assertEqual(classify_hand(hand), category)
+
+    def test_matching_predicate_true(self):
+        # The is_X for a hand's own category returns True...
+        for category, hand in self.HANDS.items():
+            with self.subTest(category=category):
+                self.assertIs(self.PREDICATES[category](hand), True)
+
+    def test_other_predicates_false(self):
+        # ...and every other is_X returns False (mutually exclusive).
+        for category, hand in self.HANDS.items():
+            for other, predicate in self.PREDICATES.items():
+                if other == category:
+                    continue
+                with self.subTest(hand=category, predicate=other):
+                    self.assertIs(predicate(hand), False)
+
+    def test_every_category_is_in_poker_hands(self):
+        self.assertEqual(set(self.HANDS), set(POKER_HANDS))
+
+    def test_wheel_straight_ace_low(self):
+        # A-2-3-4-5 is a straight even though the Ace is high-valued.
+        wheel = [('A', 'Clubs'), (2, 'Hearts'), (3, 'Spades'),
+                 (4, 'Clubs'), (5, 'Diamonds')]
+        self.assertEqual(classify_hand(wheel), "straight")
+
+    def test_ace_high_straight(self):
+        # 10-J-Q-K-A across suits is a plain straight, not a flush.
+        hand = [(10, 'Clubs'), ('J', 'Hearts'), ('Q', 'Spades'),
+                ('K', 'Clubs'), ('A', 'Diamonds')]
+        self.assertEqual(classify_hand(hand), "straight")
+
+    def test_full_house_is_not_a_pair(self):
+        # Exclusivity: a full house is not reported as a pair.
+        self.assertFalse(is_pair(self.HANDS["full house"]))
+
+    def test_straight_flush_is_not_flush_or_straight(self):
+        sf = self.HANDS["straight flush"]
+        self.assertFalse(is_flush(sf))
+        self.assertFalse(is_straight(sf))
+
+    def test_too_few_cards_raises(self):
+        with self.assertRaises(ValueError):
+            classify_hand([(2, 'Clubs'), (3, 'Hearts'), (4, 'Spades'),
+                           (5, 'Clubs')])
+
+    def test_too_many_cards_raises(self):
+        with self.assertRaises(ValueError):
+            classify_hand([(2, 'Clubs'), (3, 'Hearts'), (4, 'Spades'),
+                           (5, 'Clubs'), (6, 'Diamonds'), (7, 'Hearts'),
+                           (8, 'Spades')])
+
+    def test_invalid_rank_raises(self):
+        with self.assertRaises(ValueError):
+            classify_hand([('Z', 'Clubs'), (3, 'Hearts'), (4, 'Spades'),
+                           (5, 'Clubs'), (6, 'Diamonds')])
+
+    def test_works_on_a_real_draw(self):
+        # classify_hand should accept a Vector straight from a deck draw.
+        seed()
+        hand = DeckOfCards(size=5).draw()
+        self.assertIn(classify_hand(hand), POKER_HANDS)
+
+
 if __name__ == '__main__':
     unittest.main()
