@@ -294,6 +294,35 @@ class TestResultsTabulate(unittest.TestCase):
         labels = list(table.keys())
         self.assertTrue(all(label.endswith(")") for label in labels[:-1]))
 
+    def test_tabulate_nbins_creates_correct_number_of_bins(self):
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5)
+        self.assertEqual(len(table), 5)
+
+    def test_tabulate_nbins_total_equals_n(self):
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5)
+        self.assertEqual(sum(table.values()), 100)
+
+    def test_tabulate_binwidth_creates_correct_number_of_bins(self):
+        # range is 1..100 = 99, binwidth=10 → ceil(99/10) = 10 bins
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, binwidth=10)
+        self.assertEqual(len(table), 10)
+
+    def test_tabulate_binwidth_total_equals_n(self):
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, binwidth=10)
+        self.assertEqual(sum(table.values()), 100)
+
+    def test_tabulate_nbins_and_binwidth_raises(self):
+        with self.assertRaises(ValueError):
+            make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5, binwidth=10)
+
+    def test_tabulate_nbins_without_bin_warns(self):
+        with self.assertWarns(UserWarning):
+            make_results([float(i) for i in range(1, 101)]).tabulate(nbins=5)
+
+    def test_tabulate_binwidth_without_bin_warns(self):
+        with self.assertWarns(UserWarning):
+            make_results([float(i) for i in range(1, 101)]).tabulate(binwidth=10)
+
 
 # ---------------------------------------------------------------------------
 # Results arithmetic
@@ -658,6 +687,35 @@ class TestRVResultsTabulate(unittest.TestCase):
         table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True)
         labels = list(table.keys())
         self.assertTrue(all(label.endswith(")") for label in labels[:-1]))
+
+    def test_tabulate_nbins_creates_correct_number_of_bins(self):
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5)
+        self.assertEqual(len(table), 5)
+
+    def test_tabulate_nbins_total_equals_n(self):
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5)
+        self.assertEqual(sum(table.values()), 100)
+
+    def test_tabulate_binwidth_creates_correct_number_of_bins(self):
+        # range is 1..100 = 99, binwidth=10 → ceil(99/10) = 10 bins
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True, binwidth=10)
+        self.assertEqual(len(table), 10)
+
+    def test_tabulate_binwidth_total_equals_n(self):
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True, binwidth=10)
+        self.assertEqual(sum(table.values()), 100)
+
+    def test_tabulate_nbins_and_binwidth_raises(self):
+        with self.assertRaises(ValueError):
+            RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5, binwidth=10)
+
+    def test_tabulate_nbins_without_bin_warns(self):
+        with self.assertWarns(UserWarning):
+            RVResults([float(i) for i in range(1, 101)]).tabulate(nbins=5)
+
+    def test_tabulate_binwidth_without_bin_warns(self):
+        with self.assertWarns(UserWarning):
+            RVResults([float(i) for i in range(1, 101)]).tabulate(binwidth=10)
 
 
 if __name__ == "__main__":
