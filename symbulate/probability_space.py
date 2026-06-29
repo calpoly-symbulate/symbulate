@@ -4,7 +4,7 @@ rng = np.random.default_rng()
 
 from .base import Logical
 from .result import Vector, InfiniteVector, join
-from .results import Results
+from .results import Results, _sim_with_progress
 
 
 class ProbabilitySpace:
@@ -71,7 +71,7 @@ class ProbabilitySpace:
         """
         if not isinstance(n, int) or n < 1:
             raise ValueError(f"n must be a positive integer, got {n!r}.")
-        return Results(self.draw() for _ in range(n))
+        return Results(_sim_with_progress(self.draw, n))
 
     def check_same(self, other):
         """Check that two probability spaces are the same object.
@@ -352,7 +352,7 @@ class Event(Logical):
         >>> even_event.sim(10000).mean()  # doctest: +SKIP
         0.498
         """
-        return Results(self.draw() for _ in range(n))
+        return Results(_sim_with_progress(self.draw, n))
 
 
 class BoxModel(ProbabilitySpace):

@@ -3,7 +3,7 @@ import warnings
 from .base import Arithmetic, Transformable, Comparable
 from .probability_space import Event, ProbabilitySpace
 from .result import Vector, join, is_scalar, is_numeric_vector, TimeFunction
-from .results import RVResults
+from .results import RVResults, _sim_with_progress
 
 
 class RV(Arithmetic, Transformable, Comparable):
@@ -100,7 +100,7 @@ class RV(Arithmetic, Transformable, Comparable):
         """
         if not isinstance(n, int) or n < 1:
             raise ValueError(f"n must be a positive integer, got {n!r}.")
-        return RVResults(self.draw() for _ in range(n))
+        return RVResults(_sim_with_progress(self.draw, n))
 
     def __call__(self, outcome):
         """Apply the RV's function directly to an outcome.
