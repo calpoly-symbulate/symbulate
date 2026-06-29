@@ -1254,8 +1254,23 @@ class RVResults(Results):
             # make sure self.array, a Numpy array, has been set
             self._set_array()
 
+            # Detect near-constant data caused by floating-point precision
+            # (e.g. Y = X * cos(pi/2) where cos(pi/2) ≈ 6e-17 instead of 0).
+            # If the entire data range is negligible relative to the values'
+            # magnitude, collapse everything to its effective mean for display.
+            _plot_array = self.array
+            if len(self.array) > 1:
+                _data_range = self.array.max() - self.array.min()
+                _data_abs_max = abs(self.array).max()
+                _NEAR_CONST_TOL = 1e-9
+                if _data_range < _NEAR_CONST_TOL * max(_data_abs_max, 1.0):
+                    _center = float(np.mean(self.array))
+                    if abs(_center) < _NEAR_CONST_TOL:
+                        _center = 0.0
+                    _plot_array = np.full_like(self.array, _center)
+
             # determine plotting parameters
-            counts = self._get_counts()
+            counts = count_var(_plot_array)
             discrete = is_discrete(counts.values())
             if type is None:
                 type = ("impulse",) if discrete else ("hist",)
@@ -1278,15 +1293,15 @@ class RVResults(Results):
                     if len(type) == 1:
                         plt.ylabel("Relative Frequency")
                 else:
-                    density = compute_density(self.array)
-                    xs = np.linspace(self.array.min(), self.array.max(), 1000)
+                    density = compute_density(_plot_array)
+                    xs = np.linspace(_plot_array.min(), _plot_array.max(), 1000)
                     ax.plot(xs, density(xs), linewidth=2, color=color)
                     if len(type) == 1 or (len(type) == 2 and "rug" in type):
                         plt.ylabel("Density")
 
             if "hist" in type or "bar" in type:
                 ax.hist(
-                    self.array,
+                    _plot_array,
                     bins=bins,
                     density=normalize,
                     color=color,
@@ -1308,9 +1323,9 @@ class RVResults(Results):
                     ax, xs, freqs, ylabel="Relative Frequency" if normalize else "Count"
                 )
             if "rug" in type:
-                xs = self.array
+                xs = _plot_array
                 if discrete:
-                    noise_level = 0.002 * (self.array.max() - self.array.min())
+                    noise_level = 0.002 * (_plot_array.max() - _plot_array.min())
                     xs = xs + rng.normal(scale=noise_level, size=n)
                 ax.plot(xs, [0.001] * n, "|", linewidth=5, color="k")
                 if len(type) == 1:

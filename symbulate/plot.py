@@ -34,10 +34,13 @@ def configure_axes(axes, xdata, ydata, xlabel=None, ylabel=None):
     # Create 5% buffer on either end of plot so that leftmost and rightmost
     # lines are visible. However, if current axes are already bigger,
     # keep current axes.
-    buff = 0.05 * (max(xdata) - min(xdata))
+    data_range = max(xdata) - min(xdata)
+    buff = 0.05 * data_range if data_range > 0 else 1.0
     xmin, xmax = axes.get_xlim()
     xmin = min(xmin, min(xdata) - buff)
     xmax = max(xmax, max(xdata) + buff)
+    if xmin == xmax:
+        xmin, xmax = xmin - 1.0, xmax + 1.0
     plt.xlim(xmin, xmax)
 
     _, ymax = axes.get_ylim()
