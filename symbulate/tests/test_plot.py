@@ -51,6 +51,8 @@ from symbulate import (
     MarkovChain,
     PoissonProcess,
     ProbabilitySpace,
+    cos,
+    pi,
 )
 
 # ---------------------------------------------------------------------------
@@ -189,6 +191,166 @@ class TestPlot1DContinuous(PlotTestCase):
         n_first = len(plt.gca().patches)
         RV(Normal(0, 1)).sim(600).plot()
         self.assertGreater(len(plt.gca().patches), n_first)
+
+
+# ===========================================================================
+# Numerical precision: near-constant data (e.g. X * cos(pi/2))
+# ===========================================================================
+
+
+class TestNumericalPrecision(PlotTestCase):
+    """Plots of RVs whose simulated values are numerically near-constant.
+
+    The motivating case (from a 2017 bug report):
+        X = RV(Normal(0, 1))
+        Y = X * cos(pi / 2)
+    Y should be 0 with probability 1, but cos(pi/2) ≈ 6.12e-17 in floating
+    point, so every simulated value is O(1e-17) rather than exactly 0.
+    Without the fix the histogram x-axis displays a 1e-16 scale, which is
+    visually indistinguishable from (and misleadingly different from) a point
+    mass at 0.
+
+    After the fix, near-constant data (range < 1e-9 × scale) is collapsed to
+    its effective mean before plotting and rendered as a single impulse.
+    """
+
+    # ------------------------------------------------------------------
+    # Core scenario: Y = X * cos(pi/2)
+    # ------------------------------------------------------------------
+
+    def test_near_zero_constant_produces_impulse_not_hist(self):
+        """Y = X * cos(pi/2) must plot as a single impulse, not a histogram.
+
+        cos(pi/2) ≈ 6e-17, so Y is numerically indistinguishable from 0.
+        Impulse plots produce a LineCollection (vlines); histograms produce
+        patches (bars).
+        """
+        X = RV(Normal(0, 1))
+        Y = X * cos(pi / 2)
+        Y.sim(1000).plot()
+        ax = plt.gca()
+        self.assertGreater(
+            len(ax.collections), 0,
+            "Expected an impulse (vlines / LineCollection) for near-zero data",
+        )
+        self.assertEqual(
+            len(ax.patches), 0,
+            "Histogram bars should not appear for near-zero near-constant data",
+        )
+
+    def test_near_zero_constant_impulse_placed_at_zero(self):
+        """The single impulse must be at x=0, not at x≈6e-17."""
+        X = RV(Normal(0, 1))
+        Y = X * cos(pi / 2)
+        Y.sim(1000).plot()
+        segs = plt.gca().collections[0].get_segments()
+        xs = [seg[0][0] for seg in segs]
+        self.assertEqual(len(xs), 1, "Expected exactly one impulse for a point mass at 0")
+        self.assertAlmostEqual(xs[0], 0.0, places=10)
+
+    def test_near_zero_constant_impulse_height_is_one(self):
+        """With normalize=True the single impulse must have height 1.0."""
+        X = RV(Normal(0, 1))
+        Y = X * cos(pi / 2)
+        Y.sim(500).plot(normalize=True)
+        segs = plt.gca().collections[0].get_segments()
+        total_height = sum(abs(seg[1][1] - seg[0][1]) for seg in segs)
+        self.assertAlmostEqual(total_height, 1.0, places=10)
+
+    def test_near_zero_xlim_is_not_degenerate(self):
+        """x-axis must span a human-readable range, not collapse to ~1e-16."""
+        X = RV(Normal(0, 1))
+        Y = X * cos(pi / 2)
+        Y.sim(500).plot()
+        xlim = plt.gca().get_xlim()
+        self.assertGreater(
+            xlim[1] - xlim[0], 0.1,
+            f"x-axis range {xlim[1] - xlim[0]:.2e} is too small (floating-point artifact?)",
+        )
+
+    def test_near_zero_xlim_contains_zero(self):
+        """Zero must lie within the plotted x-axis range."""
+        X = RV(Normal(0, 1))
+        Y = X * cos(pi / 2)
+        Y.sim(500).plot()
+        xmin, xmax = plt.gca().get_xlim()
+        self.assertLessEqual(xmin, 0.0)
+        self.assertGreaterEqual(xmax, 0.0)
+
+    # ------------------------------------------------------------------
+    # Exactly-zero data (X * 0 gives all values == 0.0 exactly)
+    # ------------------------------------------------------------------
+
+    def test_exactly_zero_data_produces_impulse(self):
+        """If all simulated values are exactly 0, show a point mass at 0."""
+        X = RV(Normal(0, 1))
+        Y = X * 0
+        Y.sim(500).plot()
+        ax = plt.gca()
+        self.assertGreater(len(ax.collections), 0)
+        self.assertEqual(len(ax.patches), 0)
+
+    def test_exactly_zero_impulse_placed_at_zero(self):
+        X = RV(Normal(0, 1))
+        (X * 0).sim(500).plot()
+        segs = plt.gca().collections[0].get_segments()
+        xs = [seg[0][0] for seg in segs]
+        self.assertEqual(len(xs), 1)
+        self.assertAlmostEqual(xs[0], 0.0, places=10)
+
+    # ------------------------------------------------------------------
+    # Near-constant data centered away from zero
+    # ------------------------------------------------------------------
+
+    def test_near_constant_nonzero_produces_impulse(self):
+        """X * 1e-12 + 5 is near-constant around 5; must plot as impulse, not hist."""
+        X = RV(Normal(0, 1))
+        Y = X * 1e-12 + 5
+        Y.sim(500).plot()
+        ax = plt.gca()
+        self.assertGreater(len(ax.collections), 0)
+        self.assertEqual(len(ax.patches), 0)
+
+    def test_near_constant_nonzero_impulse_at_center(self):
+        """The impulse for X * 1e-12 + 5 should be placed at x≈5."""
+        X = RV(Normal(0, 1))
+        Y = X * 1e-12 + 5
+        Y.sim(500).plot()
+        segs = plt.gca().collections[0].get_segments()
+        xs = [seg[0][0] for seg in segs]
+        self.assertEqual(len(xs), 1)
+        self.assertAlmostEqual(xs[0], 5.0, places=5)
+
+    # ------------------------------------------------------------------
+    # Regression guards: distributions with genuine spread are unaffected
+    # ------------------------------------------------------------------
+
+    def test_normal_distribution_still_plots_as_histogram(self):
+        """Normal(0, 1) has large spread; the precision fix must not trigger."""
+        RV(Normal(0, 1)).sim(600).plot()
+        ax = plt.gca()
+        self.assertGreater(
+            len(ax.patches), 0,
+            "Normal(0,1) should still produce a histogram after the precision fix",
+        )
+
+    def test_discrete_distribution_unaffected(self):
+        """Binomial results have genuine spread; precision fix must not touch them."""
+        RV(Binomial(n=10, p=0.5)).sim(500).plot()
+        ax = plt.gca()
+        # Discrete data auto-selects impulse, but via the is_discrete path, not ours
+        self.assertGreater(len(ax.collections), 0)
+        self.assertEqual(len(ax.patches), 0)
+
+    def test_exponential_distribution_still_plots_as_histogram(self):
+        """Exponential(1) has large spread; precision fix must not trigger."""
+        RV(Exponential(rate=1)).sim(600).plot()
+        self.assertGreater(len(plt.gca().patches), 0)
+
+    def test_small_but_real_uniform_still_plots_as_histogram(self):
+        """Uniform(0, 0.001) has spread ~0.001 >> 1e-9; must remain a histogram."""
+        RV(Uniform(a=0, b=0.001)).sim(600).plot()
+        self.assertGreater(len(plt.gca().patches), 0)
 
 
 class TestPlot1DOtherDistributions(PlotTestCase):
