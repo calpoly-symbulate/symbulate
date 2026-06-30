@@ -1,4 +1,5 @@
 import math
+import operator as _operator
 
 import numpy as np
 import scipy.stats as stats
@@ -887,6 +888,107 @@ class Logical:
         return op_func(self)
 
 
+_OP_STR_MAP = {
+    "==": _operator.eq,
+    "!=": _operator.ne,
+    "<":  _operator.lt,
+    "<=": _operator.le,
+    ">":  _operator.gt,
+    ">=": _operator.ge,
+}
+
+
+def _build_mv_filter(args):
+    """Build a combined callable for per-component (multivariate) filtering.
+
+    Each element of *args corresponds to one component of a tuple outcome and
+    is applied at that position.  Elements may be:
+
+    - A callable ``f`` — the component passes if ``f(component)`` is True.
+    - A ``(op_str, value)`` tuple — the component passes if
+      ``op_str(component, value)`` is True, where *op_str* is one of
+      ``'=='``, ``'!='``, ``'<'``, ``'<='``, ``'>'``, ``'>='``.
+    - ``None`` — no condition on that component (always passes).
+
+    All per-component conditions are ANDed together.
+
+    Parameters
+    ----------
+    args : sequence
+        Per-component conditions (callables, op-tuples, or None).
+
+    Returns
+    -------
+    callable
+        A function ``f(outcome)`` that returns True when every specified
+        component condition is satisfied.
+
+    Raises
+    ------
+    TypeError
+        If *args* mixes callables with op-tuples, or contains an unsupported
+        type.
+    ValueError
+        If an op-tuple uses an unrecognised operator string.
+    """
+    non_none = [a for a in args if a is not None]
+    if not non_none:
+        return lambda x: True
+
+    if all(callable(a) for a in non_none):
+        indexed = [(i, f) for i, f in enumerate(args) if f is not None]
+
+        def _callable_filter(x):
+            try:
+                return all(f(x[i]) for i, f in indexed)
+            except (IndexError, TypeError):
+                raise TypeError(
+                    "Per-component filter/count requires outcomes to be "
+                    "sequences (e.g., results from a joint distribution "
+                    "X & Y & Z)."
+                )
+
+        return _callable_filter
+
+    if all(
+        isinstance(a, tuple) and len(a) == 2 and isinstance(a[0], str)
+        for a in non_none
+    ):
+        conditions = []
+        for i, a in enumerate(args):
+            if a is None:
+                continue
+            op_str, val = a
+            if op_str not in _OP_STR_MAP:
+                raise ValueError(
+                    f"Unknown operator '{op_str}'. "
+                    f"Valid operators: {sorted(_OP_STR_MAP)}"
+                )
+            conditions.append((i, _OP_STR_MAP[op_str], val))
+
+        def _tuple_filter(x):
+            try:
+                return all(cmp(x[i], val) for i, cmp, val in conditions)
+            except (IndexError, TypeError):
+                raise TypeError(
+                    "Per-component filter/count requires outcomes to be "
+                    "sequences (e.g., results from a joint distribution "
+                    "X & Y & Z)."
+                )
+
+        return _tuple_filter
+
+    raise TypeError(
+        "For multivariate filter/count, pass either:\n"
+        "  Per-component callables: "
+        "count(lambda x: x > 3, lambda y: y == 1)\n"
+        "  Per-component (op, value) tuples: "
+        "count(('>', 3), ('==', 1))\n"
+        "  Use None to skip a component: "
+        "count(('>', 3), None, ('>', 0))"
+    )
+
+
 class Filterable:
     """Mixin providing filtering and counting methods for subclasses.
 
@@ -1027,38 +1129,72 @@ class Filterable:
         """
         return self.filter(lambda x: x >= value)
 
-    def count(self, func=lambda x: True):
+    def count(self, *args):
         """Count the number of elements satisfying a criterion.
+
+        Univariate
+        ----------
+        count()
+            Count all elements.
+        count(func)
+            Count elements for which the callable ``func`` returns True.
+
+        Multivariate (joint distributions such as ``X & Y & Z``)
+        ----------------------------------------------------------
+        Pass one argument per component.  All component conditions are
+        ANDed together.
+
+        Per-component callables — each receives its own component value:
+
+        >>> (X & Y & Z).sim(N).count(lambda x: x > 3, lambda y: y == 1, lambda z: z > 0)
+
+        Per-component ``(op, value)`` tuples (no lambda required):
+
+        >>> (X & Y & Z).sim(N).count(('>', 3), ('==', 1), ('>', 0))
+
+        Use ``None`` to skip a component position:
+
+        >>> (X & Y & Z).sim(N).count(('>', 3), None, ('>', 0))
+
+        Supported operators: ``'=='``, ``'!='``, ``'<'``, ``'<='``,
+        ``'>'``, ``'>='``.
 
         Parameters
         ----------
-        func : callable, optional
-            A function that takes an element and returns a bool.
-            Only elements for which func returns True are counted.
-            Default counts all elements.
+        *args : callable, (str, value) tuple, or None
+            Zero or more per-component conditions.  A single callable is
+            treated as a standard univariate filter.
 
         Returns
         -------
         int
-            Number of elements for which func returns True.
+            Number of elements satisfying all specified conditions.
 
         Raises
         ------
         TypeError
-            If func is not callable.
+            If the single argument is not callable, or if *args* mixes
+            callables with op-tuples.
+        ValueError
+            If an op-tuple uses an unrecognised operator string.
 
         Examples
         --------
         >>> X = RV(Normal(0, 1))
         >>> X.sim(10000).count(lambda x: x > 0)
         """
-        if not callable(func):
-            raise TypeError(
-                "func must be a callable (e.g., a lambda or function), "
-                f"but got {type(func).__name__}. "
-                "For example, use count(lambda x: x > 0)."
-            )
-        return len(self.filter(func))
+        if len(args) == 0:
+            return len(self.filter(lambda x: True))
+        if len(args) == 1:
+            func = args[0]
+            if not callable(func):
+                raise TypeError(
+                    "func must be a callable (e.g., a lambda or function), "
+                    f"but got {type(func).__name__}. "
+                    "For example, use count(lambda x: x > 0)."
+                )
+            return len(self.filter(func))
+        return len(self.filter(_build_mv_filter(args)))
 
     def count_eq(self, value):
         """Count the number of elements equal to a given value.

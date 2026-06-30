@@ -24,6 +24,7 @@ from .base import (
     Logical,
     Filterable,
     Transformable,
+    _build_mv_filter,
 )
 from .plot import (
     configure_axes,
@@ -444,34 +445,59 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
 
     # The Filterable superclass will use this to define all of the
     # .filter_*() and .count_*() methods.
-    def filter(self, filt):
+    def filter(self, *args):
         """Return outcomes satisfying the given criterion.
+
+        Univariate
+        ----------
+        filter(func)
+            Keep outcomes for which the callable ``func`` returns True.
+        filter(bool_results)
+            Keep outcomes where the corresponding element of a same-sim
+            boolean Results object is True.
+
+        Multivariate (joint distributions such as ``X & Y & Z``)
+        ----------------------------------------------------------
+        Pass one argument per component.  All component conditions are
+        ANDed together.
+
+        Per-component callables — each receives its own component value:
+
+        >>> sims.filter(lambda x: x > 3, lambda y: y == 1)
+
+        Per-component ``(op, value)`` tuples (no lambda required):
+
+        >>> sims.filter(('>', 3), ('==', 1))
+
+        Use ``None`` to skip a component position:
+
+        >>> sims.filter(('>', 3), None, ('>', 0))
+
+        Supported operators: ``'=='``, ``'!='``, ``'<'``, ``'<='``,
+        ``'>'``, ``'>='``.
 
         Parameters
         ----------
-        filt : callable or Results
-            Either a function that takes an outcome and returns
-            a boolean, or a Results object of booleans the same
-            length as this Results object.
+        *args : callable, Results, (str, value) tuple, or None
+            A single callable or boolean Results for univariate filtering,
+            or multiple per-component conditions for multivariate filtering.
 
         Returns
         -------
         Results
-            A Results object containing only the outcomes for
-            which ``filt`` returns True (or where ``filt`` is
-            True).
+            A Results object containing only the outcomes satisfying all
+            specified conditions.
 
         Raises
         ------
         Exception
-            If ``filt`` is a Results object from a different
-            simulation (different ``sim_id``).
+            If a Results filter comes from a different simulation.
         ValueError
-            If ``filt`` is a Results object of a different
-            length, or contains non-boolean values.
+            If a Results filter has a different length, non-boolean values,
+            or an op-tuple uses an unrecognised operator string.
         TypeError
-            If ``filt`` is neither callable nor a boolean
-            Results object.
+            If the arguments are neither callable, boolean Results, nor
+            valid per-component conditions.
 
         See Also
         --------
@@ -491,27 +517,35 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
 
         >>> sims.filter(sims > 4)  # doctest: +SKIP
         """
-        if isinstance(filt, Results):
-            if self.sim_id != filt.sim_id:
-                raise Exception(
-                    "In order to filter one Results object "
-                    "by another, they must come from the "
-                    "same simulation."
+        if len(args) == 0:
+            raise TypeError("filter() requires at least one argument.")
+        if len(args) == 1:
+            filt = args[0]
+            if isinstance(filt, Results):
+                if self.sim_id != filt.sim_id:
+                    raise Exception(
+                        "In order to filter one Results object "
+                        "by another, they must come from the "
+                        "same simulation."
+                    )
+                if len(filt) != len(self):
+                    raise ValueError(
+                        "Filter must be the same length as the Results object."
+                    )
+                if not _is_boolean_vector(filt):
+                    raise ValueError(
+                        "Every element in the filter must be a boolean."
+                    )
+                return type(self)(x for x, cond in zip(self, filt) if cond)
+            elif callable(filt):
+                return type(self)(x for x in self if filt(x))
+            else:
+                raise TypeError(
+                    "A filter must be either a function or a "
+                    "boolean Results object of the same length."
                 )
-            if len(filt) != len(self):
-                raise ValueError(
-                    "Filter must be the same length as the " "Results object."
-                )
-            if not _is_boolean_vector(filt):
-                raise ValueError("Every element in the filter must be a boolean.")
-            return type(self)(x for x, cond in zip(self, filt) if cond)
-        elif callable(filt):
-            return type(self)(x for x in self if filt(x))
-        else:
-            raise TypeError(
-                "A filter must be either a function or a "
-                "boolean Results object of the same length."
-            )
+        filt = _build_mv_filter(args)
+        return type(self)(x for x in self if filt(x))
 
     # The Arithmetic superclass will use this to define all of the
     # usual arithmetic operations (e.g., +, -, *, /, **, ^, etc.).

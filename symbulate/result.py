@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import symbulate
-from .base import Arithmetic, Transformable, Statistical, Filterable
+from .base import Arithmetic, Transformable, Statistical, Filterable, _build_mv_filter
 from .index_sets import DiscreteTimeSequence, Reals, Naturals
 
 
@@ -343,20 +343,42 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
 
     # The Filterable superclass will use this to define all of the
     # .filter_*() and .count_*() methods.
-    def filter(self, filt):
+    def filter(self, *args):
         """
         Get only the elements that satisfy the given criterion.
 
+        Univariate
+        ----------
+        filter(func)
+            Keep elements for which the callable ``func`` returns True.
+
+        Multivariate (nested tuples such as those from ``X & Y & Z``)
+        ---------------------------------------------------------------
+        Pass one argument per component.  All component conditions are
+        ANDed together.
+
+        Per-component callables — each receives its own component value:
+
+        >>> t.filter(lambda x: x > 3, lambda y: y == 1)
+
+        Per-component ``(op, value)`` tuples (no lambda required):
+
+        >>> t.filter(('>', 3), ('==', 1))
+
+        Use ``None`` to skip a component position:
+
+        >>> t.filter(('>', 3), None, ('>', 0))
+
         Parameters
         ----------
-        filt : callable
-            A function that takes an element and returns a boolean.
+        *args : callable, (str, value) tuple, or None
+            A single callable for univariate filtering, or multiple
+            per-component conditions for multivariate filtering.
 
         Returns
         -------
         Tuple
-            A new Tuple containing only elements ``e`` where ``filt(e)``
-            is True.
+            A new Tuple containing only elements satisfying all conditions.
 
         See Also
         --------
@@ -370,6 +392,12 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         >>> t.filter(lambda x: x % 2 == 0)
         (2, 4)
         """
+        if len(args) == 0:
+            raise TypeError("filter() requires at least one argument.")
+        if len(args) == 1 and callable(args[0]):
+            filt = args[0]
+            return type(self)(e for e in self if filt(e))
+        filt = _build_mv_filter(args)
         return type(self)(e for e in self if filt(e))
 
     # The Arithmetic superclass will use this to define all of the
