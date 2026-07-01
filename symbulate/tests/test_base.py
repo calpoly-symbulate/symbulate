@@ -541,6 +541,112 @@ class TestFilterable(unittest.TestCase):
 
 
 # ===========================================================================
+# Multivariate filter / count
+# ===========================================================================
+
+class TestMultivariateFilterCount(unittest.TestCase):
+    """Multivariate count() and filter() via joint RV distributions.
+
+    Uses a fixed-seed joint Normal(0,1) & Binomial(10,0.5) simulation so
+    that every assertion is exact and reproducible without relying on
+    specific probability values.
+    """
+
+    N = 1000
+
+    @classmethod
+    def setUpClass(cls):
+        distributions.rng = np.random.default_rng(0)
+        X, Y = RV(Normal(0, 1) ** 2)
+        cls.sims = (X & Y).sim(cls.N)
+
+    # --- callable mode ---
+
+    def test_count_callable_mode_matches_lambda_with_index(self):
+        """count(f0, f1) agrees with count(lambda x: f0(x[0]) and f1(x[1]))."""
+        tx, ty = 0.0, 0.0
+        per_component = self.sims.count(
+            lambda x: x > tx,
+            lambda y: y > ty,
+        )
+        combined = self.sims.count(
+            lambda v: v[0] > tx and v[1] > ty
+        )
+        self.assertEqual(per_component, combined)
+
+    def test_count_callable_mode_none_skips_component(self):
+        """count(None, f1) ignores component 0 and filters only on component 1."""
+        ty = 0.5
+        via_none = self.sims.count(None, lambda y: y > ty)
+        direct = self.sims.count(lambda v: v[1] > ty)
+        self.assertEqual(via_none, direct)
+
+    # --- op-tuple mode ---
+
+    def test_count_op_tuple_mode_matches_callable_mode(self):
+        """count(('>', t), ('>', u)) == count(lambda x: x>t, lambda y: y>u)."""
+        tx, ty = 0.0, 0.5
+        via_tuples = self.sims.count(('>', tx), ('>', ty))
+        via_callables = self.sims.count(
+            lambda x: x > tx,
+            lambda y: y > ty,
+        )
+        self.assertEqual(via_tuples, via_callables)
+
+    def test_count_op_tuple_all_operators(self):
+        """Each operator string produces a result consistent with a direct lambda."""
+        tx = 0.5
+        for op_str, func in [
+            ('<',  lambda x, t=tx: x < t),
+            ('<=', lambda x, t=tx: x <= t),
+            ('>',  lambda x, t=tx: x > t),
+            ('>=', lambda x, t=tx: x >= t),
+        ]:
+            with self.subTest(op=op_str):
+                via_tuple = self.sims.count((op_str, tx), None)
+                via_lambda = self.sims.count(lambda v, f=func: f(v[0]))
+                self.assertEqual(via_tuple, via_lambda)
+
+    def test_count_op_tuple_none_skips_component(self):
+        """count(None, ('>', v)) applies condition only to component 1."""
+        ty = 0.5
+        via_none = self.sims.count(None, ('>', ty))
+        direct = self.sims.count(lambda v: v[1] > ty)
+        self.assertEqual(via_none, direct)
+
+    def test_count_op_tuple_invalid_operator_raises_value_error(self):
+        """An unrecognised operator string raises ValueError."""
+        with self.assertRaises(ValueError):
+            self.sims.count(('??', 0), ('>', 0.3))
+
+    # --- filter consistency ---
+
+    def test_filter_mv_length_matches_count_mv(self):
+        """len(filter(conds)) == count(conds) for both callable and tuple modes."""
+        tx, ty = 0.0, 0.5
+        self.assertEqual(
+            len(self.sims.filter(lambda x: x > tx, lambda y: y > ty)),
+            self.sims.count(lambda x: x > tx, lambda y: y > ty),
+        )
+        self.assertEqual(
+            len(self.sims.filter(('>', tx), ('>', ty))),
+            self.sims.count(('>', tx), ('>', ty)),
+        )
+
+    def test_filter_mv_content_validity(self):
+        """Every outcome returned by filter(('>', 0), ('>', 0.5)) satisfies both conditions."""
+        filtered = self.sims.filter(('>', 0.0), ('>', 0.5))
+        self.assertTrue(all(v[0] > 0.0 and v[1] > 0.5 for v in filtered))
+
+    # --- type-error guard ---
+
+    def test_count_mixed_callable_and_tuple_raises_type_error(self):
+        """Mixing callables and op-tuples in a single count() call raises TypeError."""
+        with self.assertRaises(TypeError):
+            self.sims.count(lambda x: x > 0, ('>', 3))
+
+
+# ===========================================================================
 # Transformable mixin
 # ===========================================================================
 
