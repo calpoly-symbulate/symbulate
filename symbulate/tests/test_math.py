@@ -8,7 +8,7 @@ guards. All tests use concrete lists with known correct answers.
 import math
 import unittest
 
-from symbulate import RV, Normal
+from symbulate import RV, Normal, Binomial
 
 from symbulate.math import (
     sqrt,
@@ -347,20 +347,21 @@ class TestIsDiscrete(unittest.TestCase):
     def test_integer_list_is_discrete(self):
         self.assertTrue(is_discrete([0, 1, 1, 0, 1]))
 
-    def test_whole_number_floats_are_discrete(self):
-        self.assertTrue(is_discrete([0.0, 1.0, 2.0]))
+    def test_all_unique_values_not_discrete(self):
+        # no repeats -> 0% of distinct values have count > 1
+        self.assertFalse(is_discrete([0.0, 1.0, 2.0]))
 
-    def test_non_whole_floats_are_not_discrete(self):
-        self.assertFalse(is_discrete([0.5, 1.2, 3.7]))
+    def test_repeated_values_discrete(self):
+        # majority of distinct values appear more than once
+        self.assertTrue(is_discrete([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]))
 
-    def test_mixed_int_and_float_whole_is_discrete(self):
-        self.assertTrue(is_discrete([0, 1.0, 2, 3.0]))
+    def test_single_element_not_discrete(self):
+        # one value cannot repeat
+        self.assertFalse(is_discrete([1]))
 
-    def test_single_element_discrete(self):
-        self.assertTrue(is_discrete([1]))
-
-    def test_mixed_whole_and_non_whole_is_not_discrete(self):
-        self.assertFalse(is_discrete([1, 2, 3.5]))
+    def test_unhashable_values_raises(self):
+        with self.assertRaises(TypeError):
+            is_discrete([[1, 2], [3, 4]])
 
     def test_rv_input_raises(self):
         with self.assertRaises(TypeError):
@@ -378,9 +379,17 @@ class TestIsDiscrete(unittest.TestCase):
         with self.assertRaises(ValueError):
             is_discrete([])
 
-    def test_non_numeric_raises(self):
-        with self.assertRaises(TypeError):
-            is_discrete(["a", "b"])
+    def test_non_numeric_hashable_works(self):
+        # heuristic is type-agnostic; strings with repeats are treated as discrete
+        self.assertTrue(is_discrete(["a", "a", "b", "b", "c", "c", "d", "d", "e", "e"]))
+
+    def test_binomial_simulation_is_discrete(self):
+        results = RV(Binomial(n=10, p=0.5)).sim(500)
+        self.assertTrue(is_discrete(results))
+
+    def test_normal_simulation_not_discrete(self):
+        results = RV(Normal(0, 1)).sim(500)
+        self.assertFalse(is_discrete(results))
 
 
 class TestHigherOrderStats(unittest.TestCase):

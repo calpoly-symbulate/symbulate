@@ -353,28 +353,28 @@ def quantile(q):
 
 
 def is_discrete(x):
-    """Determine whether a collection of values appears to be discrete.
+    """Determine whether a collection of simulated values appears to be discrete.
 
-    Returns ``True`` if every value in ``x`` is an integer or a float
-    whose value is a whole number (e.g. ``2.0``). This correctly
-    identifies simulated results from discrete distributions such as
-    ``Bernoulli``, ``Binomial``, and ``Poisson``.
+    Uses a repeat-count heuristic: counts how often each unique value appears,
+    then returns ``True`` if more than 80% of those unique values have a count
+    greater than 1. Discrete distributions (e.g. Binomial, Poisson) produce
+    repeated values, while continuous distributions rarely repeat exactly.
 
     Parameters
     ----------
-    x : iterable of int or float
+    x : iterable
         The simulated values to inspect. Must be non-empty.
 
     Returns
     -------
     bool
-        ``True`` if all values are whole numbers, ``False`` otherwise.
+        ``True`` if more than 80% of distinct values appear more than once.
 
     Raises
     ------
     TypeError
         If ``x`` is an ``RV`` (use ``X.sim(n)`` first), a single real
-        number, not iterable, or contains non-numeric values.
+        number, or not iterable.
     ValueError
         If ``x`` is empty.
 
@@ -387,7 +387,7 @@ def is_discrete(x):
     """
     if isinstance(x, RV):
         raise TypeError(
-            "is_discrete requires simulated results, not an RV. " "Use X.sim(n) first."
+            "is_discrete requires simulated results, not an RV. Use X.sim(n) first."
         )
     if isinstance(x, numbers.Real):
         raise TypeError(
@@ -398,11 +398,10 @@ def is_discrete(x):
     x = list(x)
     if len(x) == 0:
         raise ValueError("is_discrete requires a non-empty collection.")
-    if not all(isinstance(v, numbers.Real) for v in x):
-        raise TypeError("is_discrete requires a collection of numeric values.")
-    return all(
-        isinstance(v, int) or (isinstance(v, float) and v.is_integer()) for v in x
-    )
+    counts = {}
+    for v in x:
+        counts[v] = counts.get(v, 0) + 1
+    return sum(c > 1 for c in counts.values()) > 0.8 * len(counts)
 
 
 def quartiles(x):
