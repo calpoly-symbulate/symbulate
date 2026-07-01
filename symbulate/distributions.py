@@ -136,6 +136,26 @@ class Distribution(ProbabilitySpace):
         """
         return Scalar(self.sim_func(**self.params, random_state=rng))
 
+    def spinner(self, mode='proportional'):
+        """Display a static probability spinner wheel for this distribution.
+
+        Parameters
+        ----------
+        mode : {'proportional', 'equal'}, optional
+            'proportional' sizes each slice by its probability (default).
+            'equal' gives every slice the same arc; for discrete distributions
+            likelier values appear on more sections.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Normal(0, 1).spinner()
+        >>> Binomial(10, 0.3).spinner(mode='equal')
+        >>> Poisson(4).spinner()
+        """
+        from .spinner import show_spinner
+        show_spinner(self, mode=mode)
+
     # Override the inherited __pow__ function to take advantage
     # of vectorized simulations.
     def __pow__(self, exponent):
