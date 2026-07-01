@@ -29,3 +29,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local reference-fork clones used for Phase 1 visual test cases (not part of the repo)
+reference_forks/
