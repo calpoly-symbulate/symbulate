@@ -124,6 +124,14 @@ symbulate.results module
    :show-inheritance:
    :undoc-members:
 
+symbulate.spinner module
+------------------------
+
+.. automodule:: symbulate.spinner
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 symbulate.table module
 ----------------------
 
