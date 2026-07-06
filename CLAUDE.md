@@ -76,8 +76,22 @@ plot type functions — it creates a new figure and breaks overlay. Always use
 every `.plot()` call (after getting the axes). This advances the color cycle
 so successive overlays use distinct colors automatically.
 
-**Style:** All visual defaults (colors, font sizes, transparency, line widths)
-are set in `symbulate.mplstyle`. Do not hardcode any aesthetic values.
+**Style:** `symbulate/symbulate.mplstyle` holds every visual default that
+applies the same way across all plot types — color palette, sequential
+colormap, figure size, font sizes, spines, grid, and a global line-width
+fallback. It does **not** hold per-plot-type values (histogram/scatter/density
+alpha, impulse/density line width, unfilled-scatter styling) — matplotlib
+rcParams are global and can't express "different alpha for different plot
+types." Those live as named constants at the top of `plot.py` instead (see
+`DECISIONS.md`, "Decision: `.mplstyle` Standards"). Do not hardcode aesthetic
+values inline in a plot function — every value belongs in one of those two
+places, not scattered inline.
+
+**Color palette:** categorical palette is **Okabe-Ito** (7 hues, excluding
+black) — colorblind-safe and print-friendly. Do not substitute other colors.
+Sequential/continuous plots (2D density, tile, hist2d) use **viridis**. Both
+are set in `symbulate.mplstyle`; see `DECISIONS.md`, "Decision: Visual Style
+Guide" for the full palette and justification.
 
 ## Overlay Policy
 
@@ -199,7 +213,8 @@ pytest tests/
 ## Do Not
 
 - Do not use `plt.subplots()` inside plot type functions
-- Do not hardcode colors, font sizes, or transparency values — use `symbulate.mplstyle`
+- Do not hardcode colors, font sizes, or figure/spine/grid values inline — use `symbulate.mplstyle`
+- Do not hardcode per-plot-type alpha or line-width values inline — use the named constants at the top of `plot.py` (rcParams can't express per-plot-type values)
 - Do not call `is_discrete()` — it no longer exists, use `classify_data()`
 - Do not push directly to `main` or `dev`
 - Do not change the public API without team discussion

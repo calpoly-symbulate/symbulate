@@ -1,0 +1,60 @@
+# symbulate.mplstyle
+#
+# Task 1B Visual Style Guide -- see DECISIONS.md, "Decision: Visual Style
+# Guide" for full rationale. That decision is Finalized; this file is not yet
+# wired into results.py -- that's Phase 2 implementation (see CLAUDE.md).
+#
+# Note: matplotlib rcParams are global, so per-plot-type values (histogram
+# vs. scatter vs. density alpha; impulse vs. density line width) can't live
+# here -- those are named constants at the top of plot.py instead. This file
+# only holds values that apply the same way across every plot type.
+#
+# Note: '#' starts a comment in this file format, so hex colors below are
+# written without a leading '#' (matplotlib adds it back automatically).
+
+# --- Color: categorical (Okabe-Ito, 7 hues, excluding black) ----------------
+# Colorblind-friendly, print-friendly.
+axes.prop_cycle: cycler('color', ['E69F00', '56B4E9', '009E73', 'F0E442', '0072B2', 'D55E00', 'CC79A7'])
+
+# --- Color: sequential (2D density / tile / hist2d) --------------------------
+# Colorblind-friendly, prints well in grayscale. Replaces the hardcoded
+# cmap="Blues" previously scattered across plot.py and results.py.
+image.cmap: viridis
+
+# --- Surface ------------------------------------------------------------
+figure.facecolor: white
+axes.facecolor:   white
+
+# --- Figure size (kept at matplotlib default) --------------------------------
+figure.figsize: 6.4, 4.8
+
+# --- Font sizes (kept at matplotlib defaults, pending accessibility decision) ---
+font.size:       10
+axes.titlesize:  large
+axes.labelsize:  medium
+xtick.labelsize: medium
+ytick.labelsize: medium
+legend.fontsize: medium
+
+# --- Spines: cleaner, more professional look ---------------------------------
+axes.spines.top:    False
+axes.spines.right:  False
+axes.spines.left:   True
+axes.spines.bottom: True
+
+# --- Grid: light and horizontal, helps students read values off a plot ------
+axes.grid:      True
+axes.axisbelow: True
+axes.grid.axis: y
+grid.color:     b0b0b0
+grid.alpha:     0.3
+grid.linewidth: 0.5
+grid.linestyle: -
+
+# --- Line width: global fallback (sample paths use this as-is) --------------
+lines.linewidth: 1.5
+
+# --- Scatter marker -----------------------------------------------------
+# Unfilled-circle styling is applied at the call site (facecolors='none')
+# -- see plot.py constants.
+scatter.marker: o

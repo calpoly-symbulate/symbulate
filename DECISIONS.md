@@ -132,31 +132,66 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: Visual Style Guide
 
-**Status:** Proposed
+**Status:** Finalized. The global values here (palette, colormap, figure size, fonts, spines, grid) are implemented in `symbulate/symbulate.mplstyle` (see "Decision: `.mplstyle` Standards"); the per-plot-type values (alpha, line width) still need to be added as constants in `plot.py` as part of Phase 2 implementation.
 
 **Decision**
-> _To be finalized during Task 1B. Covers: color palette (name, hex values, accessibility justification), figure size, font sizes (axes, ticks, titles, legend), alpha values (histogram, scatter, density), line widths, spine style, grid on/off, and point style._
+
+> **Color palette — categorical:** replace `tab10` with **Okabe-Ito** (7 hues, excluding black): `#E69F00, #56B4E9, #009E73, #F0E442, #0072B2, #D55E00, #CC79A7`.
+>
+> **Color palette — sequential/continuous:** replace hardcoded `cmap="Blues"` with **viridis** everywhere, as the single default for all magnitude/density encodings (2D density, tile, hist2d).
+>
+> **Figure size:** keep `6.4in × 4.8in` (matplotlib factory default). No change.
+>
+> **Font sizes:** keep matplotlib factory defaults — `font.size=10`, `axes.titlesize='large'` (~12pt), `axes.labelsize='medium'` (10pt), tick label size `'medium'` (10pt), `legend.fontsize='medium'` (10pt). No change.
+>
+> **Default transparency (alpha):** histogram `0.5 → 0.65`; scatter `0.5 → 0.25`; density curve `0.5 → 0.15` (overlay-on-histogram case specifically — see Rationale).
+>
+> **Line widths:** impulse lines `1.5 → 2.2`; density curves `2.0 → 1.8`; sample paths stay at `1.5`. No change.
+>
+> **Spine style:** remove top and right spines; keep left and bottom.
+>
+> **Grid:** off → on, light horizontal reference grid (`axes.axisbelow=True`, low alpha, thin, light gray).
+>
+> **Point style:** filled → unfilled (open) circles for scatter, with edge color = series color.
 
 **Rationale**
-> _All plots must share consistent aesthetics. Currently values are hardcoded across plot functions — they must be consolidated into a single `.mplstyle` file before per-plot implementation begins._
+
+> **Categorical palette.** Better colorblind accessibility and print-friendliness than the current `tab10` default.
+>
+> **Sequential palette.** Colorblind-friendly, prints well in grayscale, and gives better visual distinction between magnitude steps than the current `Blues` default. Matches a preference already noted in this project's own prototype notes.
+>
+> **Figure size / font sizes.** Both are just inherited matplotlib defaults, never a deliberate Symbulate choice, and nothing in the audit suggests they need to change yet — final font sizing is pending the accessibility decision below.
+>
+> **Alpha.** Tuned per plot type for visual clarity: histograms get a slightly bolder fill since they don't suffer from overplotting, while scatter and density become more transparent so overlapping points and curves stay readable instead of turning into a solid blob.
+>
+> **Line widths.** Impulse lines get bolder for visibility since there's no overplotting risk; density curves get slightly thinner to pair with their lower alpha; sample paths are unchanged.
+>
+> **Spines.** Removing the top and right spines gives a cleaner, more professional look and matches standard statistical-graphics convention.
+>
+> **Grid.** A light reference grid makes it easier for students to read approximate values off a plot, while staying subtle enough not to distract from the data.
+>
+> **Point style.** Unfilled circles read more clearly when points overlap and match a look already planned for this project.
 
 **Alternatives Considered**
-> _Placeholder_
+
+> Categorical: matplotlib `tab10` (current — less colorblind-friendly), ColorBrewer `Dark2` (weaker colorblind separation than Okabe-Ito).
+> Sequential: keep `Blues` (less visually distinct, no accessibility advantage), other perceptually-uniform options like `plasma`/`inferno`/`magma`/`cividis` (all reasonable, but viridis is the most widely recognized and well-rounded choice).
+> Alpha: a variable, sample-size-aware transparency instead of a flat value per plot type — more precise, but more complex to implement; left as a possible future refinement.
 
 ---
 
 ## Decision: `.mplstyle` Standards
 
-**Status:** Proposed
+**Status:** Finalized. File created at `symbulate/symbulate.mplstyle` (color palette, colormap, figure size, fonts, spines, grid, and a global line-width fallback); not yet wired into `results.py` — that wiring, plus the `plot.py` per-plot-type constants, is Phase 2 implementation work.
 
 **Decision**
-> All visual defaults (colors, font sizes, transparency, line widths) will be encoded in a custom `symbulate.mplstyle` file. No aesthetic values are hardcoded in plot functions. The fragile `seaborn-colorblind` stylesheet fuzzy-match lookup in `results.py` will be replaced as part of Phase 2 infrastructure.
+> Values that apply the same way across every plot type — color palette, sequential colormap, figure size, font sizes, spines, grid, and a global line-width fallback — are encoded in `symbulate.mplstyle`. Values that vary by plot type — histogram/scatter/density alpha, impulse/density line width, unfilled-scatter marker styling — cannot be expressed as matplotlib rcParams, since rcParams are global, and instead live as named constants at the top of `plot.py`. No aesthetic values are hardcoded inline in plot functions. The fragile `seaborn-colorblind` stylesheet fuzzy-match lookup and the `tab10`-overriding `init_color()` call in `results.py` will be replaced as part of Phase 2 infrastructure.
 
 **Rationale**
-> A `.mplstyle` file is the standard matplotlib mechanism for centralizing style. Hardcoded values scattered across plot functions make global changes expensive and inconsistent. The current seaborn stylesheet lookup is fragile (raises `IndexError` if similarity < 0.7) and must be replaced regardless.
+> A `.mplstyle` file is the standard matplotlib mechanism for centralizing style, and hardcoded values scattered across plot functions make global changes expensive and inconsistent. The split with `plot.py` constants isn't a compromise — it's a real technical limit of rcParams (no per-plot-type granularity), discovered while drafting the file. The current seaborn stylesheet lookup is fragile (raises `IndexError` if similarity < 0.7) and must be replaced regardless.
 
 **Alternatives Considered**
-> Hardcoded constants at the top of `plot.py` — rejected because values are still scattered once per-plot functions multiply. Seaborn stylesheet lookup — rejected because it is fragile and version-sensitive.
+> Hardcoded constants at the top of `plot.py` for everything — rejected because global values (palette, figure size, fonts) are still scattered once per-plot functions multiply. Seaborn stylesheet lookup — rejected because it is fragile and version-sensitive. Trying to force per-plot-type alpha/line-width into rcParams — not possible; rcParams has no per-plot-type mechanism.
 
 ---
 
@@ -192,16 +227,16 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: Accessibility Requirements
 
-**Status:** Proposed
+**Status:** Partially finalized — colorblind-palette question is settled (Okabe-Ito, finalized as part of the Visual Style Guide); black-and-white legibility and font-size minimums remain open.
 
 **Decision**
-> _To be finalized during Task 1B. Questions: does the package need to work in black and white (requiring line style variation in addition to color)? Which specific colorblind-safe palette? What are minimum font sizes for projected slides vs. printed pages?_
+> Which specific colorblind-safe palette? **Okabe-Ito**, for the categorical palette — see the Visual Style Guide decision above for the validated CVD-separation numbers and hex values. Still open: does the package need to work in black and white (requiring line style variation in addition to color)? What are minimum font sizes for projected slides vs. printed pages?
 
 **Rationale**
-> _Placeholder_
+> Okabe-Ito is a well-established colorblind-friendly palette, chosen for better accessibility and print-friendliness than the current default — see the Visual Style Guide decision for the full comparison. The remaining two questions (black-and-white-only legibility, font-size minimums) still need team input; the Visual Style Guide decision left font sizes at matplotlib factory defaults specifically pending this answer.
 
 **Alternatives Considered**
-> _Placeholder_
+> _See Visual Style Guide § Alternatives Considered for the categorical-palette comparison. Black-and-white and font-size alternatives still to be documented._
 
 ---
 
@@ -246,8 +281,8 @@ The following questions must be resolved before or during Phase 2.
 - [ ] Suggestion message: Always / first-time / opt-out? If opt-out, what parameter name?
 - [ ] Overlay warning text: Exact student-friendly wording for warning-category plots
 - [ ] Overlay hard-error text: Exact student-friendly wording for `'marginal'` layout conflict
-- [ ] Visual style guide: Color palette, figure size, font sizes, alpha, line widths, spine style, grid
-- [ ] Accessibility: Black-and-white legibility? Which colorblind palette? Font size minimums?
+- [x] Visual style guide: finalized with values + justification (see Decision above); `symbulate.mplstyle` drafted; still need Phase 2 wiring + `plot.py` constants
+- [ ] Accessibility: colorblind palette finalized (Okabe-Ito); black-and-white legibility and font size minimums still open
 - [ ] `type=` parameter: Rename to avoid shadowing Python built-in, or keep?
 - [ ] Backwards compatibility: Deprecation aliases or clean break for `type=` and `jitter=`?
 - [ ] Composition API vocabulary: Finalize geom names even though implementation is deferred
