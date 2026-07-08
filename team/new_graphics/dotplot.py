@@ -8,31 +8,32 @@ larger samples default to impulse / histogram instead, and data whose
 values are all distinct will go to a rug plot -- not drafted yet).
 
 Visual target: the classic stacked dot plot. Every observation is one
-dot; dots in the same bin stack on top of one another, the first dot
-in each stack sits directly on the number line, and stacked dots touch
-with no gap. Integer data gets one stack per integer; continuous data
-is cut into equal-width bins first. The y-axis stays honest: it reads
+dot, drawn at its exact value on the x-axis; identical values stack on
+top of one another, the first dot in each stack sits directly on the
+number line, and stacked dots touch with no gap. Values are never
+binned -- the dot plot is for discrete data, and the lookup table
+routes continuous data elsewhere. The y-axis stays honest: it reads
 "Count" by default, or "Relative frequency" with ``normalize=True``.
 
 Geometry: dots are drawn with ``ax.scatter`` at
-(bin center, (level - 1/2) * unit), where unit is 1 count (or 1/n when
+(value, (level - 1/2) * unit), where unit is 1 count (or 1/n when
 normalized). The y-limits are chosen so one stack unit on screen
 equals one dot diameter, measured through ``ax.transData`` -- that
-equality is what makes the dots touch. The dot diameter equals the bin
-width when the stacks fit, capped at DOTPLOT_MAX_DOT_SIZE points;
-taller stacks shrink the dots instead of overflowing the axes. Dot
-sizes are recomputed whenever the rendered size of the axes changes
-(figure resize, tight_layout).
+equality is what makes the dots touch. The dot diameter fills the gap
+between neighboring stacks when they fit, capped at
+DOTPLOT_MAX_DOT_SIZE points; taller stacks shrink the dots instead of
+overflowing the axes. Dot sizes are recomputed whenever the rendered
+size of the axes changes (figure resize, tight_layout).
 
 Colors are chosen automatically -- sky blue for the first batch on an
 axes, then the remaining Okabe-Ito hues (no black) for overlays -- so
 students never have to pass or memorize colors.
 
-Overlays: a second ``make_dotplot`` call on the same axes re-bins
-everything jointly and dodges each batch of values side by side inside
-the shared bins. For integer data, light tile-style boundary lines
-appear at the half-integers (1.5, 2.5, ...) so every dot between 1.5
-and 2.5 clearly belongs to 2.
+Overlays: a second ``make_dotplot`` call on the same axes re-stacks
+everything jointly and dodges each batch of values side by side around
+the shared values. Light tile-style boundary lines appear halfway
+between neighboring stacks (at 1.5, 2.5, ... for integer data) so
+every dot between 1.5 and 2.5 clearly belongs to 2.
 
 Spines, fonts, and figure size come from
 ``symbulate/symbulate.mplstyle``, except where the dot plot
@@ -60,8 +61,7 @@ from matplotlib.ticker import MaxNLocator
 DOTPLOT_ALPHA = 1.0
 DOTPLOT_XLABEL = "Value"
 # One generic title that stays accurate for every dot plot this module
-# can produce: single or overlaid, counts or relative frequencies,
-# integer or binned continuous data.
+# can produce: single or overlaid, counts or relative frequencies.
 DOTPLOT_TITLE = "Dot Plot"
 DOTPLOT_AXIS_LABEL_SIZE = 12
 DOTPLOT_TICK_LABEL_SIZE = 10
@@ -88,16 +88,6 @@ DOTPLOT_COLOR_CYCLE = [
 # needed to keep the dots touching at this size.)
 DOTPLOT_MAX_DOT_SIZE = 12
 
-# Continuous data is cut into at most this many equal-width bins;
-# small samples get proportionally chunkier bins (see _n_bins), since
-# 30 bins with only 40 dots would leave nearly every stack 1 dot tall.
-DOTPLOT_MAX_BINS = 30
-
-# Integer data spanning more than this many integers is binned like
-# continuous data. Stand-in for classify_data's N_UNIQUE_THRESHOLD
-# until Phase 2 lands.
-DOTPLOT_MAX_INTEGER_BINS = 100
-
 # Default-plot lookup rule (Task 1A): the dot plot is the default for
 # 1D data only when n <= DOTPLOT_MAX_N.
 DOTPLOT_MAX_N = 40
@@ -105,28 +95,29 @@ DOTPLOT_MAX_N = 40
 # Vertical headroom above the tallest stack (multiplier on its height).
 DOTPLOT_STACK_HEADROOM = 1.05
 
-# Tile-style bin boundary lines, shown only when two or more dot plots
-# of integer data share the axes.
-DOTPLOT_BIN_LINE_COLOR = "#b0b0b0"
-DOTPLOT_BIN_LINE_WIDTH = 0.8
-DOTPLOT_BIN_LINE_ALPHA = 0.6
+# Tile-style boundary lines halfway between neighboring stacks, shown
+# only when two or more dot plots share the axes.
+DOTPLOT_BOUNDARY_LINE_COLOR = "#b0b0b0"
+DOTPLOT_BOUNDARY_LINE_WIDTH = 0.8
+DOTPLOT_BOUNDARY_LINE_ALPHA = 0.6
 
 
 def make_dotplot(values, ax, color=None, normalize=False, label=None):
     """Draw a stacked dot plot of simulated values on the given axes.
 
-    Every observation is one dot. Dots with the same (binned) value
-    stack on top of one another, the first dot in each stack sits
-    directly on the number line, and stacked dots touch. Integer data
-    gets one stack per integer; continuous data is first cut into
-    equal-width bins.
+    Every observation is one dot, drawn at its exact value on the
+    x-axis. Identical values stack on top of one another, the first
+    dot in each stack sits directly on the number line, and stacked
+    dots touch. Values are never binned -- the dot plot is meant for
+    discrete data.
 
-    Dot plots overlay naturally: a second call on the same axes re-bins
-    both batches of values together and draws them side by side inside
-    each bin, in different colors. With integer data, light vertical
-    boundary lines appear at 1.5, 2.5, ... so it stays clear which
-    integer each dot belongs to. A legend appears automatically in the
-    top right once two or more batches share the axes.
+    Dot plots overlay naturally: a second call on the same axes draws
+    each batch side by side around the shared values, in different
+    colors, with light vertical boundary lines halfway between
+    neighboring stacks (at 1.5, 2.5, ... for integer data) so it stays
+    clear which value each dot belongs to. A legend appears
+    automatically in the top right once two or more batches share the
+    axes.
 
     Colors are chosen automatically: sky blue for the first batch, then
     the other Okabe-Ito hues in turn for overlays -- nobody has to
@@ -198,7 +189,7 @@ def make_dotplot(values, ax, color=None, normalize=False, label=None):
             "color": color,
         }
     )
-    _rebin(state)
+    _restack(state)
     _relayout(ax)
     _decorate(ax, state)
     return dots
@@ -235,35 +226,24 @@ def _clean_values(values):
     return arr
 
 
-def _looks_discrete(values):
-    """Return True if every integer should get its own stack.
+def _restack(state):
+    """Recompute the shared stack positions and per-batch counts.
 
-    Stand-in for the future classify_data() (see CLAUDE.md) until
-    Phase 2 lands -- the dot plot only needs the discrete-ish half of
-    that decision here.
+    Every distinct value across all batches gets its own stack, placed
+    at that exact value -- no binning. The slot around each stack
+    (used for dodging, padding, boundary lines, and the dot-size cap)
+    is the smallest gap between neighboring values.
     """
-    if not np.all(values == np.round(values)):
-        return False
-    return np.ptp(values) <= DOTPLOT_MAX_INTEGER_BINS
-
-
-def _n_bins(n, n_series):
-    """Number of equal-width bins for n continuous values.
-
-    With overlaid batches, each bin is split into one lane per batch,
-    so the bin count shrinks proportionally to keep the lanes -- and
-    therefore the dots -- about as wide as in the single-batch case.
-    """
-    return int(min(DOTPLOT_MAX_BINS, max(5, np.ceil(2 * np.sqrt(n)) / n_series)))
-
-
-def _bin_counts(values, centers, bin_width, discrete):
-    """Count how many values land in each bin."""
-    if discrete:
-        return np.array([np.sum(np.round(values) == c) for c in centers], dtype=int)
-    edges = np.append(centers - bin_width / 2.0, centers[-1] + bin_width / 2.0)
-    counts, _ = np.histogram(values, bins=edges)
-    return counts
+    all_values = np.concatenate([s["values"] for s in state["series"]])
+    positions = np.unique(all_values)
+    if len(positions) > 1:
+        spacing = np.diff(positions).min()
+    else:
+        spacing = 1.0
+    state["positions"] = positions
+    state["spacing"] = spacing
+    for s in state["series"]:
+        s["counts"] = np.array([np.sum(s["values"] == p) for p in positions], dtype=int)
 
 
 def _init_state(ax, normalize):
@@ -271,7 +251,7 @@ def _init_state(ax, normalize):
     state = {
         "series": [],
         "normalize": normalize,
-        "bin_lines": [],
+        "boundary_lines": [],
         "last_size_px": None,
         "relayout_running": False,
     }
@@ -289,51 +269,29 @@ def _init_state(ax, normalize):
     return state
 
 
-def _rebin(state):
-    """Recompute the shared bins and each batch's per-bin counts."""
-    batches = [s["values"] for s in state["series"]]
-    discrete = all(_looks_discrete(v) for v in batches)
-    lo = min(v.min() for v in batches)
-    hi = max(v.max() for v in batches)
-    if discrete:
-        centers = np.arange(round(lo), round(hi) + 1, dtype=float)
-        bin_width = 1.0
-    elif hi == lo:
-        centers = np.array([lo])
-        bin_width = 1.0
-    else:
-        n_total = sum(s["n"] for s in state["series"])
-        edges = np.linspace(lo, hi, _n_bins(n_total, len(state["series"])) + 1)
-        bin_width = edges[1] - edges[0]
-        centers = (edges[:-1] + edges[1:]) / 2.0
-    state["discrete"] = discrete
-    state["centers"] = centers
-    state["bin_width"] = bin_width
-    for s in state["series"]:
-        s["counts"] = _bin_counts(s["values"], centers, bin_width, discrete)
-
-
 def _relayout(ax):
-    """Position and size every dot from the current bins and axes size."""
+    """Position and size every dot from the current stacks and axes size."""
     state = getattr(ax, "_dotplot_state", None)
     if state is None or not state["series"]:
         return
-    centers = state["centers"]
-    bin_width = state["bin_width"]
+    positions = state["positions"]
+    spacing = state["spacing"]
     n_series = len(state["series"])
-    # Each batch gets its own lane inside the shared bin (dodge).
-    lane_width = bin_width / n_series
+    # Each batch gets its own lane inside the slot around each value.
+    lane_width = spacing / n_series
 
-    # x padding: half a bin width of air beyond the outermost bin edges.
-    ax.set_xlim(centers[0] - bin_width, centers[-1] + bin_width)
+    # x padding: one slot of air beyond the outermost stacks.
+    ax.set_xlim(positions[0] - spacing, positions[-1] + spacing)
 
     if state["normalize"]:
         units = [1.0 / s["n"] for s in state["series"]]
     else:
         units = [1.0] * n_series
 
-    # Pixel measurements via the axes transforms (valid before any draw).
-    lane_width_px = _x_span_px(ax, lane_width)
+    # Pixel measurements via the axes transforms (valid before any
+    # draw). The 1-px floor guards against two nearly-identical values
+    # driving the lane width -- and with it the dot size -- to zero.
+    lane_width_px = max(_x_span_px(ax, lane_width), 1.0)
     height_px = _axes_size_px(ax)[1]
 
     # Choose the y range so one stack unit on screen is never taller
@@ -356,8 +314,8 @@ def _relayout(ax):
         offset = (i - (n_series - 1) / 2.0) * lane_width
         xs = []
         ys = []
-        for center, count in zip(centers, series["counts"]):
-            xs.extend(np.full(count, center + offset))
+        for position, count in zip(positions, series["counts"]):
+            xs.extend(np.full(count, position + offset))
             ys.extend((np.arange(1, count + 1) - 0.5) * unit)
         series["dots"].set_offsets(np.column_stack([xs, ys]))
         diameter_px = _y_span_px(ax, unit)
@@ -365,36 +323,39 @@ def _relayout(ax):
         size = (diameter_px * points_per_px) ** 2
         series["dots"].set_sizes(np.full(len(xs), size))
 
-    if state["discrete"]:
+    if np.all(positions == np.round(positions)):
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     if not state["normalize"]:
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-    _redraw_bin_lines(ax, state)
+    _redraw_boundary_lines(ax, state)
     state["last_size_px"] = _axes_size_px(ax)
 
 
-def _redraw_bin_lines(ax, state):
-    """Draw tile-style bin boundary lines for overlaid integer data.
+def _redraw_boundary_lines(ax, state):
+    """Draw tile-style boundary lines between stacks for overlays.
 
     With dodged (side-by-side) batches, dots no longer sit exactly on
-    their integer, so boundaries at the half-integers (1.5, 2.5, ...)
-    make it clear that every dot between 1.5 and 2.5 belongs to 2.
-    A single batch stays boundary-free.
+    their value, so boundaries halfway between neighboring stacks (at
+    1.5, 2.5, ... for integer data) make it clear that every dot
+    between 1.5 and 2.5 belongs to 2. A single batch stays
+    boundary-free.
     """
-    for line in state["bin_lines"]:
+    for line in state["boundary_lines"]:
         line.remove()
-    state["bin_lines"] = []
-    if not (state["discrete"] and len(state["series"]) >= 2):
+    state["boundary_lines"] = []
+    if len(state["series"]) < 2:
         return
-    half = state["bin_width"] / 2.0
-    edges = np.append(state["centers"] - half, state["centers"][-1] + half)
+    positions = state["positions"]
+    half = state["spacing"] / 2.0
+    midpoints = (positions[:-1] + positions[1:]) / 2.0
+    edges = np.concatenate([[positions[0] - half], midpoints, [positions[-1] + half]])
     for edge in edges:
-        state["bin_lines"].append(
+        state["boundary_lines"].append(
             ax.axvline(
                 edge,
-                color=DOTPLOT_BIN_LINE_COLOR,
-                linewidth=DOTPLOT_BIN_LINE_WIDTH,
-                alpha=DOTPLOT_BIN_LINE_ALPHA,
+                color=DOTPLOT_BOUNDARY_LINE_COLOR,
+                linewidth=DOTPLOT_BOUNDARY_LINE_WIDTH,
+                alpha=DOTPLOT_BOUNDARY_LINE_ALPHA,
                 zorder=1,
             )
         )
@@ -483,26 +444,15 @@ if __name__ == "__main__":
     ax = plt.gca()
     make_dotplot(rng.integers(1, 7, 30), ax)
 
-    # Figure 2: 40 draws from Normal(0, 1) -- continuous, binned.
-    plt.figure()
-    ax = plt.gca()
-    make_dotplot(rng.normal(0, 1, 40), ax)
-
-    # Figure 3: overlay of integer data -- dodged lanes plus the
-    # tile-style boundary lines at 1.5, 2.5, ... The legend defaults
-    # to "Variable 1", "Variable 2".
+    # Figure 2: overlay -- dodged lanes plus the tile-style boundary
+    # lines at 1.5, 2.5, ... The legend defaults to "Variable 1",
+    # "Variable 2".
     plt.figure()
     ax = plt.gca()
     make_dotplot(rng.integers(1, 7, 30), ax)
     make_dotplot(rng.integers(1, 7, 30), ax)
 
-    # Figure 4: overlay of continuous data, with custom labels.
-    plt.figure()
-    ax = plt.gca()
-    make_dotplot(rng.normal(-0.5, 1, 30), ax, label="Group A")
-    make_dotplot(rng.normal(0.8, 1, 30), ax, label="Group B")
-
-    # Figure 5: normalize=True -- same picture, relative-frequency axis.
+    # Figure 3: normalize=True -- same picture, relative-frequency axis.
     plt.figure()
     ax = plt.gca()
     make_dotplot(rng.integers(1, 7, 30), ax, normalize=True)
