@@ -21,7 +21,7 @@ rng = np.random.default_rng()
 # overplotting risk, unlike histograms/scatter/density).
 IMPULSE_LINEWIDTH = 2.2
 IMPULSE_MARKER = "o"
-IMPULSE_MARKER_SIZE = 90
+IMPULSE_MARKER_SIZE = 60
 # DECISIONS.md tunes alpha for hist/scatter/density but does not call
 # out impulse; the approved prototype image shows fully opaque stems
 # and markers, so impulse defaults to alpha=1.0 unless overridden.
@@ -199,10 +199,6 @@ def make_impulse(
         ylabel="Relative Frequency" if normalize else "Count",
     )
 
-    fig = ax.get_figure()
-    if not getattr(fig, "_impulse_suptitle_set", False):
-        fig.suptitle("Impulse Graph", fontsize=16, fontweight="bold")
-        fig._impulse_suptitle_set = True
     ax.set_title(
         "Relative Frequency Impulse Plot" if normalize else "Count Impulse Plot"
     )
