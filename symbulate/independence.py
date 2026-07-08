@@ -33,7 +33,7 @@ def AssumeIndependent(*args):
     >>> X = RV(Normal(0, 1))
     >>> Y = RV(Exponential(1))
     >>> X, Y = AssumeIndependent(X, Y)
-    >>> (X & Y).sim(10000).plot()
+    >>> (X & Y).sim(10000).plot()  # doctest: +SKIP
     """
 
     if len(args) < 2:

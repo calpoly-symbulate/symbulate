@@ -14,7 +14,7 @@ migrate to the top of ``symbulate/plot.py`` at integration time.
 
 Run this file directly to render the prototype:
 
-    python new_graphics/hist.py
+    python team/new_graphics/hist.py
 """
 
 import matplotlib.pyplot as plt
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     style_path = (
-        Path(__file__).resolve().parents[1] / "symbulate" / "symbulate.mplstyle"
+        Path(__file__).resolve().parents[2] / "symbulate" / "symbulate.mplstyle"
     )
     plt.style.use(str(style_path))
 

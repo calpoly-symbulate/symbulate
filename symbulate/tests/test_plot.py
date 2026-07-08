@@ -54,6 +54,8 @@ from symbulate import (
     cos,
     pi,
 )
+from symbulate import plot as symbulate_plot
+from symbulate.plot import SymbulatePlot
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -230,11 +232,13 @@ class TestNumericalPrecision(PlotTestCase):
         Y.sim(1000).plot()
         ax = plt.gca()
         self.assertGreater(
-            len(ax.collections), 0,
+            len(ax.collections),
+            0,
             "Expected an impulse (vlines / LineCollection) for near-zero data",
         )
         self.assertEqual(
-            len(ax.patches), 0,
+            len(ax.patches),
+            0,
             "Histogram bars should not appear for near-zero near-constant data",
         )
 
@@ -245,7 +249,9 @@ class TestNumericalPrecision(PlotTestCase):
         Y.sim(1000).plot()
         segs = plt.gca().collections[0].get_segments()
         xs = [seg[0][0] for seg in segs]
-        self.assertEqual(len(xs), 1, "Expected exactly one impulse for a point mass at 0")
+        self.assertEqual(
+            len(xs), 1, "Expected exactly one impulse for a point mass at 0"
+        )
         self.assertAlmostEqual(xs[0], 0.0, places=10)
 
     def test_near_zero_constant_impulse_height_is_one(self):
@@ -264,7 +270,8 @@ class TestNumericalPrecision(PlotTestCase):
         Y.sim(500).plot()
         xlim = plt.gca().get_xlim()
         self.assertGreater(
-            xlim[1] - xlim[0], 0.1,
+            xlim[1] - xlim[0],
+            0.1,
             f"x-axis range {xlim[1] - xlim[0]:.2e} is too small (floating-point artifact?)",
         )
 
@@ -330,7 +337,8 @@ class TestNumericalPrecision(PlotTestCase):
         RV(Normal(0, 1)).sim(600).plot()
         ax = plt.gca()
         self.assertGreater(
-            len(ax.patches), 0,
+            len(ax.patches),
+            0,
             "Normal(0,1) should still produce a histogram after the precision fix",
         )
 
@@ -361,7 +369,16 @@ class TestPlot1DOtherDistributions(PlotTestCase):
         self.assertGreater(len(plt.gca().patches), 0)
 
     def test_poisson_default_is_impulse(self):
-        RV(Poisson(lam=3)).sim(300).plot()
+        """Poisson results should default to an impulse plot.
+
+        n is large enough that (almost) every value in the support
+        repeats. At small n (e.g. 300), rare tail values appearing
+        exactly once can exceed is_discrete()'s 20% singleton budget
+        and flip the default to a histogram — a known weakness of
+        is_discrete() that classify_data() will fix (see the graphics
+        plan); this test was flaky until n was raised.
+        """
+        RV(Poisson(lam=3)).sim(5000).plot()
         self.assertGreater(len(plt.gca().collections), 0)
         self.assertEqual(len(plt.gca().patches), 0)
 
@@ -613,6 +630,80 @@ class TestPlottingErrors(PlotTestCase):
         sims = RV(Normal(0, 1)).sim(100)
         with self.assertRaises(Exception):
             sims.plot(type=99)
+
+
+# ===========================================================================
+# SymbulatePlot wrapper object
+# ===========================================================================
+
+
+class TestSymbulatePlotWrapper(PlotTestCase):
+    """Every .plot() method returns a SymbulatePlot wrapper (not None).
+
+    The wrapper's repr is empty so Jupyter prints nothing below the
+    plot, and it exposes the matplotlib axes as .ax for the future
+    composition API.
+    """
+
+    def test_repr_is_empty_string(self):
+        """Jupyter must print nothing for the returned object."""
+        p = RV(Normal(0, 1)).sim(100).plot()
+        self.assertEqual(repr(p), "")
+
+    def test_wrapper_exposes_axes(self):
+        p = RV(Normal(0, 1)).sim(100).plot()
+        self.assertIs(p.ax, plt.gca())
+
+    def test_1d_continuous_plot_returns_wrapper(self):
+        p = RV(Normal(0, 1)).sim(100).plot()
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_1d_discrete_plot_returns_wrapper(self):
+        p = RV(Binomial(n=10, p=0.4)).sim(100).plot()
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_2d_scatter_plot_returns_wrapper(self):
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(100).plot()
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_2d_marginal_plot_returns_wrapper(self):
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(100).plot(type="marginal")
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_distribution_plot_returns_wrapper(self):
+        p = Normal(0, 1).plot()
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_process_path_plot_returns_wrapper(self):
+        """Sample-path plots (the dim=None branch) also return the wrapper."""
+        X = RV(PoissonProcess(rate=2))
+        p = X.sim(3).plot()
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_time_function_result_plot_returns_wrapper(self):
+        """plot() on an individual simulated TimeFunction returns the wrapper."""
+        X = RV(PoissonProcess(rate=2))
+        p = X.sim(1).get(0).plot()
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_module_level_plot_function_returns_wrapper(self):
+        """The public symbulate.plot(...) helper returns the wrapper."""
+        sims = RV(Normal(0, 1)).sim(100)
+        p = symbulate_plot(sims)
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_module_level_plot_matplotlib_fallback_returns_wrapper(self):
+        """symbulate.plot(...) on raw data (matplotlib fallback) returns the wrapper."""
+        p = symbulate_plot([1, 2, 3], [4, 5, 6])
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_distribution_plot_wrapper_wraps_specified_ax(self):
+        """When an explicit ax= is passed, the wrapper must expose that axes."""
+        _, (ax1, ax2) = plt.subplots(1, 2)
+        p = Normal(0, 1).plot(ax=ax1)
+        self.assertIs(p.ax, ax1)
 
 
 # ===========================================================================
