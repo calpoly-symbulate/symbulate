@@ -59,6 +59,10 @@ from matplotlib.ticker import MaxNLocator
 # Standards"). They migrate to the top of symbulate/plot.py.
 DOTPLOT_ALPHA = 1.0
 DOTPLOT_XLABEL = "Value"
+# One generic title that stays accurate for every dot plot this module
+# can produce: single or overlaid, counts or relative frequencies,
+# integer or binned continuous data.
+DOTPLOT_TITLE = "Dot Plot"
 DOTPLOT_AXIS_LABEL_SIZE = 12
 DOTPLOT_TICK_LABEL_SIZE = 10
 DOTPLOT_LEGEND_LOC = "upper right"
@@ -397,7 +401,8 @@ def _redraw_bin_lines(ax, state):
 
 
 def _decorate(ax, state):
-    """Apply labels, fonts, and (for overlays) the legend."""
+    """Apply the title, labels, fonts, and (for overlays) the legend."""
+    ax.set_title(DOTPLOT_TITLE)
     ax.set_ylabel("Relative frequency" if state["normalize"] else "Count")
     ax.xaxis.label.set_size(DOTPLOT_AXIS_LABEL_SIZE)
     ax.yaxis.label.set_size(DOTPLOT_AXIS_LABEL_SIZE)
