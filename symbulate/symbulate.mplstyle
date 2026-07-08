@@ -13,8 +13,9 @@
 # written without a leading '#' (matplotlib adds it back automatically).
 
 # --- Color: categorical (Okabe-Ito, 7 hues, excluding black) ----------------
-# Colorblind-friendly, print-friendly.
-axes.prop_cycle: cycler('color', ['E69F00', '56B4E9', '009E73', 'F0E442', '0072B2', 'D55E00', 'CC79A7'])
+# Colorblind-friendly, print-friendly. Sky blue leads the cycle (the default
+# single-plot color, matching the approved prototypes), then orange.
+axes.prop_cycle: cycler('color', ['56B4E9', 'E69F00', '009E73', 'F0E442', '0072B2', 'D55E00', 'CC79A7'])
 
 # --- Color: sequential (2D density / tile / hist2d) --------------------------
 # Colorblind-friendly, prints well in grayscale. Replaces the hardcoded
