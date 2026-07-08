@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import symbulate
 from .base import Arithmetic, Transformable, Statistical, Filterable, _build_mv_filter
 from .index_sets import DiscreteTimeSequence, Reals, Naturals
+from .plot import SymbulatePlot
 
 
 class Scalar(numbers.Number):
@@ -469,6 +470,13 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         **kwargs
             Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
 
+        Returns
+        -------
+        SymbulatePlot
+            A wrapper around the matplotlib axes the plot was drawn
+            on. Its printed representation is empty, so Jupyter shows
+            only the plot.
+
         See Also
         --------
         InfiniteVector.plot : Plot values from an infinite vector.
@@ -479,10 +487,11 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         --------
         >>> import matplotlib.pyplot as plt
         >>> t = Tuple([1, 4, 2, 8, 5])
-        >>> t.plot()
+        >>> t.plot()  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
         """
         plt.plot(range(len(self)), self.values, ".--", **kwargs)
+        return SymbulatePlot(plt.gca())
 
     def __str__(self):
         """
@@ -887,6 +896,13 @@ class InfiniteVector(InfiniteTuple):
         **kwargs
             Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
 
+        Returns
+        -------
+        SymbulatePlot
+            A wrapper around the matplotlib axes the plot was drawn
+            on. Its printed representation is empty, so Jupyter shows
+            only the plot.
+
         See Also
         --------
         DiscreteTimeFunction.plot : Plot a discrete-time function.
@@ -897,12 +913,13 @@ class InfiniteVector(InfiniteTuple):
         --------
         >>> import matplotlib.pyplot as plt
         >>> iv = InfiniteVector(lambda n: n ** 2)
-        >>> iv.plot(tmin=0, tmax=5)
+        >>> iv.plot(tmin=0, tmax=5)  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
         """
         xs = range(tmin, tmax)
         ys = [self[t] for t in range(tmin, tmax)]
         plt.plot(xs, ys, ".--", **kwargs)
+        return SymbulatePlot(plt.gca())
 
 
 class DiscreteTimeFunction(TimeFunction):
@@ -1080,13 +1097,13 @@ class DiscreteTimeFunction(TimeFunction):
             return Vector(self._get_value_at_index(e) for e in n)
         elif isinstance(n, slice):
             return Vector(
-                self._get_value_at_index(e) for e in range(n.start or 0, n.stop, n.step or 1)
+                self._get_value_at_index(e)
+                for e in range(n.start or 0, n.stop, n.step or 1)
             )
         else:
             raise TypeError(
                 "Cannot evaluate DiscreteTimeFunction at index %s (type %s). "
-                "Expected an int, numeric vector, or slice."
-                % (n, type(n).__name__)
+                "Expected an int, numeric vector, or slice." % (n, type(n).__name__)
             )
 
     def __call__(self, t):
@@ -1248,6 +1265,13 @@ class DiscreteTimeFunction(TimeFunction):
         **kwargs
             Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
 
+        Returns
+        -------
+        SymbulatePlot
+            A wrapper around the matplotlib axes the plot was drawn
+            on. Its printed representation is empty, so Jupyter shows
+            only the plot.
+
         See Also
         --------
         ContinuousTimeFunction.plot : Plot a continuous-time function.
@@ -1258,7 +1282,7 @@ class DiscreteTimeFunction(TimeFunction):
         --------
         >>> import matplotlib.pyplot as plt
         >>> f = DiscreteTimeFunction(lambda n: n, fs=1)
-        >>> f.plot(tmin=0, tmax=5)
+        >>> f.plot(tmin=0, tmax=5)  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
         """
         nmin = int(np.floor(tmin * self.index_set.fs))
@@ -1266,6 +1290,7 @@ class DiscreteTimeFunction(TimeFunction):
         ts = [self.index_set[n] for n in range(nmin, nmax)]
         ys = [self[n] for n in range(nmin, nmax)]
         plt.plot(ts, ys, ".--", **kwargs)
+        return SymbulatePlot(plt.gca())
 
 
 class ContinuousTimeFunction(TimeFunction):
@@ -1485,6 +1510,13 @@ class ContinuousTimeFunction(TimeFunction):
         **kwargs
             Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
 
+        Returns
+        -------
+        SymbulatePlot
+            A wrapper around the matplotlib axes the plot was drawn
+            on. Its printed representation is empty, so Jupyter shows
+            only the plot.
+
         See Also
         --------
         DiscreteTimeFunction.plot : Plot a discrete-time function.
@@ -1496,12 +1528,13 @@ class ContinuousTimeFunction(TimeFunction):
         >>> import matplotlib.pyplot as plt
         >>> import numpy as np
         >>> f = ContinuousTimeFunction(lambda t: np.sin(t))
-        >>> f.plot(tmin=0, tmax=2 * np.pi)
+        >>> f.plot(tmin=0, tmax=2 * np.pi)  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
         """
         ts = np.linspace(tmin, tmax, 200)
         ys = [self(t) for t in ts]
         plt.plot(ts, ys, "-", **kwargs)
+        return SymbulatePlot(plt.gca())
 
 
 class DiscreteValued:
@@ -1722,8 +1755,7 @@ def concat(*args):
         else:
             raise TypeError(
                 "Argument %d to concat() (%r, type %s) is not a scalar, "
-                "a vector, or an InfiniteTuple."
-                % (i, arg, type(arg).__name__)
+                "a vector, or an InfiniteTuple." % (i, arg, type(arg).__name__)
             )
 
     return Vector(values)

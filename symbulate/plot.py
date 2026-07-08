@@ -30,6 +30,41 @@ def get_next_color(axes):
     return next(axes._color_cycle)
 
 
+class SymbulatePlot:
+    """Wrapper object returned by every ``.plot()`` method.
+
+    Wraps the matplotlib axes a plot was drawn on. Its string
+    representation is empty so that Jupyter does not print an object
+    address below the plot. Returning this object (instead of None)
+    lays the foundation for a future plot composition API (e.g.,
+    ``.plot() + vline(x=0)``) and a thin interactivity conversion
+    layer, without requiring changes to the plot architecture later.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes the plot was drawn on.
+
+    Attributes
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes the plot was drawn on.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> p = RV(Normal(0, 1)).sim(100).plot()  # doctest: +SKIP
+    >>> p.ax  # the underlying matplotlib axes  # doctest: +SKIP
+    """
+
+    def __init__(self, ax):
+        self.ax = ax
+
+    def __repr__(self):
+        """Return an empty string so Jupyter prints nothing."""
+        return ""
+
+
 def configure_axes(axes, xdata, ydata, xlabel=None, ylabel=None):
     # Create 5% buffer on either end of plot so that leftmost and rightmost
     # lines are visible. However, if current axes are already bigger,
@@ -54,10 +89,33 @@ def configure_axes(axes, xdata, ydata, xlabel=None, ylabel=None):
 
 
 def plot(*args, **kwargs):
+    """Plot a simulation result, or fall back to matplotlib's plot.
+
+    If the first argument has its own ``.plot()`` method (simulation
+    results, distributions, time functions), that method is used.
+    Otherwise the arguments are passed straight to
+    ``matplotlib.pyplot.plot``.
+
+    Parameters
+    ----------
+    *args
+        The object to plot, or raw x/y data for matplotlib.
+    **kwargs
+        Additional keyword arguments passed to the underlying
+        plotting function.
+
+    Returns
+    -------
+    SymbulatePlot
+        A wrapper around the matplotlib axes the plot was drawn on.
+        Its printed representation is empty, so Jupyter shows only
+        the plot.
+    """
     try:
-        args[0].plot(**kwargs)
+        return args[0].plot(**kwargs)
     except:
         plt.plot(*args, **kwargs)
+        return SymbulatePlot(plt.gca())
 
 
 def is_discrete(heights):

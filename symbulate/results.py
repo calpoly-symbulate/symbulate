@@ -40,6 +40,7 @@ from .plot import (
     make_violin,
     make_marginal_impulse,
     make_density2D,
+    SymbulatePlot,
 )
 from .result import Scalar, Vector, TimeFunction, is_number, is_numeric_vector
 from .table import Table
@@ -562,9 +563,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
                         "Filter must be the same length as the Results object."
                     )
                 if not _is_boolean_vector(filt):
-                    raise ValueError(
-                        "Every element in the filter must be a boolean."
-                    )
+                    raise ValueError("Every element in the filter must be a boolean.")
                 return type(self)(x for x, cond in zip(self, filt) if cond)
             elif callable(filt):
                 return type(self)(x for x in self if filt(x))
@@ -1276,6 +1275,13 @@ class RVResults(Results):
             Additional keyword arguments passed to the
             underlying matplotlib plotting function.
 
+        Returns
+        -------
+        SymbulatePlot
+            A wrapper around the matplotlib axes the plot was
+            drawn on. Its printed representation is empty, so
+            Jupyter shows only the plot.
+
         Raises
         ------
         Exception
@@ -1507,3 +1513,4 @@ class RVResults(Results):
             for result in self.results:
                 result.plot(alpha=alpha, color=color, **kwargs)
             plt.xlabel("Index")
+        return SymbulatePlot(ax)

@@ -15,12 +15,19 @@ Covers:
 - join: scalars and Tuples
 - concat: scalars, vectors, InfiniteTuple tail, error cases
 - is_scalar, is_vector, is_number, is_numeric_vector
+- plot() on Tuple, Vector, InfiniteVector, DiscreteTimeFunction, and
+  ContinuousTimeFunction returns a SymbulatePlot wrapper
 """
 
 import unittest
 
 import numpy as np
+import matplotlib
 
+matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
+import matplotlib.pyplot as plt
+
+from symbulate.plot import SymbulatePlot
 from symbulate.result import (
     ContinuousTimeFunction,
     DiscreteTimeFunction,
@@ -40,10 +47,10 @@ from symbulate.result import (
     join,
 )
 
-
 # ---------------------------------------------------------------------------
 # Scalar / Int / Float
 # ---------------------------------------------------------------------------
+
 
 class TestScalar(unittest.TestCase):
 
@@ -82,6 +89,7 @@ class TestScalar(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Tuple
 # ---------------------------------------------------------------------------
+
 
 class TestTuple(unittest.TestCase):
 
@@ -141,7 +149,7 @@ class TestTuple(unittest.TestCase):
 
     def test_apply(self):
         t = Tuple([1, 4, 9])
-        result = t.apply(lambda x: x ** 0.5)
+        result = t.apply(lambda x: x**0.5)
         self.assertAlmostEqual(result[2], 3.0)
 
     def test_filter(self):
@@ -193,6 +201,7 @@ class TestTuple(unittest.TestCase):
 # Vector
 # ---------------------------------------------------------------------------
 
+
 class TestVector(unittest.TestCase):
 
     def test_is_tuple_subclass(self):
@@ -214,6 +223,7 @@ class TestVector(unittest.TestCase):
 # InfiniteTuple
 # ---------------------------------------------------------------------------
 
+
 class TestInfiniteTuple(unittest.TestCase):
 
     def test_default_identity(self):
@@ -221,14 +231,16 @@ class TestInfiniteTuple(unittest.TestCase):
         self.assertEqual(iv[5], 5)
 
     def test_custom_func(self):
-        iv = InfiniteTuple(lambda n: n ** 2)
+        iv = InfiniteTuple(lambda n: n**2)
         self.assertEqual(iv[3], 9)
 
     def test_caching(self):
         calls = []
+
         def f(n):
             calls.append(n)
             return n
+
         iv = InfiniteTuple(f)
         iv[3]
         iv[3]
@@ -278,6 +290,7 @@ class TestInfiniteTuple(unittest.TestCase):
 # InfiniteVector
 # ---------------------------------------------------------------------------
 
+
 class TestInfiniteVector(unittest.TestCase):
 
     def test_cumsum_ones(self):
@@ -296,6 +309,7 @@ class TestInfiniteVector(unittest.TestCase):
 # DiscreteTimeFunction
 # ---------------------------------------------------------------------------
 
+
 class TestDiscreteTimeFunction(unittest.TestCase):
 
     def test_init_default(self):
@@ -303,7 +317,7 @@ class TestDiscreteTimeFunction(unittest.TestCase):
         self.assertEqual(f[0], 0.0)
 
     def test_init_custom_func(self):
-        f = DiscreteTimeFunction(lambda n: n ** 2)
+        f = DiscreteTimeFunction(lambda n: n**2)
         self.assertEqual(f[3], 9)
 
     def test_positive_index(self):
@@ -320,7 +334,7 @@ class TestDiscreteTimeFunction(unittest.TestCase):
             f[1.5]
 
     def test_call_at_valid_time(self):
-        f = DiscreteTimeFunction(lambda n: n ** 2, fs=2)
+        f = DiscreteTimeFunction(lambda n: n**2, fs=2)
         self.assertEqual(f(0.0), 0)
         self.assertEqual(f(0.5), 1)
 
@@ -354,7 +368,7 @@ class TestDiscreteTimeFunction(unittest.TestCase):
 
     def test_apply(self):
         f = DiscreteTimeFunction(lambda n: n + 1, fs=1)
-        g = f.apply(lambda x: x ** 2)
+        g = f.apply(lambda x: x**2)
         self.assertEqual(g[0], 1)
         self.assertEqual(g[3], 16)
 
@@ -380,9 +394,11 @@ class TestDiscreteTimeFunction(unittest.TestCase):
 
     def test_caching_positive(self):
         calls = []
+
         def f(n):
             calls.append(n)
             return n
+
         dtf = DiscreteTimeFunction(f, fs=1)
         dtf[5]
         dtf[5]
@@ -390,9 +406,11 @@ class TestDiscreteTimeFunction(unittest.TestCase):
 
     def test_caching_negative(self):
         calls = []
+
         def f(n):
             calls.append(n)
             return n
+
         dtf = DiscreteTimeFunction(f, fs=1)
         dtf[-3]
         dtf[-3]
@@ -403,6 +421,7 @@ class TestDiscreteTimeFunction(unittest.TestCase):
 # ContinuousTimeFunction
 # ---------------------------------------------------------------------------
 
+
 class TestContinuousTimeFunction(unittest.TestCase):
 
     def test_init_default_identity(self):
@@ -410,7 +429,7 @@ class TestContinuousTimeFunction(unittest.TestCase):
         self.assertEqual(f(3.0), 3.0)
 
     def test_call_scalar(self):
-        f = ContinuousTimeFunction(lambda t: t ** 2)
+        f = ContinuousTimeFunction(lambda t: t**2)
         self.assertAlmostEqual(f(3.0), 9.0)
 
     def test_getitem_alias(self):
@@ -418,13 +437,13 @@ class TestContinuousTimeFunction(unittest.TestCase):
         self.assertAlmostEqual(f[5.0], f(5.0))
 
     def test_call_vector(self):
-        f = ContinuousTimeFunction(lambda t: t ** 2)
+        f = ContinuousTimeFunction(lambda t: t**2)
         result = f([1.0, 2.0, 3.0])
         self.assertIsInstance(result, Vector)
         self.assertEqual(list(result), [1.0, 4.0, 9.0])
 
     def test_call_ctf_composition(self):
-        f = ContinuousTimeFunction(lambda t: t ** 2)
+        f = ContinuousTimeFunction(lambda t: t**2)
         g = ContinuousTimeFunction(lambda t: t + 1)
         h = f(g)
         self.assertIsInstance(h, ContinuousTimeFunction)
@@ -437,7 +456,7 @@ class TestContinuousTimeFunction(unittest.TestCase):
 
     def test_apply(self):
         f = ContinuousTimeFunction(lambda t: t)
-        g = f.apply(lambda x: x ** 2)
+        g = f.apply(lambda x: x**2)
         self.assertAlmostEqual(g(4.0), 16.0)
 
     def test_add_scalar(self):
@@ -463,6 +482,7 @@ class TestContinuousTimeFunction(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # DiscreteValued
 # ---------------------------------------------------------------------------
+
 
 class TestDiscreteValued(unittest.TestCase):
 
@@ -512,6 +532,7 @@ class TestDiscreteValued(unittest.TestCase):
 # join
 # ---------------------------------------------------------------------------
 
+
 class TestJoin(unittest.TestCase):
 
     def test_join_two_scalars(self):
@@ -537,6 +558,7 @@ class TestJoin(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # concat
 # ---------------------------------------------------------------------------
+
 
 class TestConcat(unittest.TestCase):
 
@@ -576,6 +598,7 @@ class TestConcat(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Utility functions
 # ---------------------------------------------------------------------------
+
 
 class TestIsScalar(unittest.TestCase):
 
@@ -650,6 +673,7 @@ class TestIsNumericVector(unittest.TestCase):
 # Error message content
 # ---------------------------------------------------------------------------
 
+
 class TestScalarErrorMessages(unittest.TestCase):
 
     def test_bad_type_message_includes_type_name(self):
@@ -695,7 +719,9 @@ class TestDiscreteTimeFunctionErrorMessages(unittest.TestCase):
 
     def test_call_bad_type_message_lists_valid_types(self):
         f = DiscreteTimeFunction(lambda n: n)
-        with self.assertRaisesRegex(TypeError, "number, numeric vector, or DiscreteTimeFunction"):
+        with self.assertRaisesRegex(
+            TypeError, "number, numeric vector, or DiscreteTimeFunction"
+        ):
             f("bad")
 
     def test_call_bad_type_message_includes_actual_type(self):
@@ -708,7 +734,9 @@ class TestContinuousTimeFunctionErrorMessages(unittest.TestCase):
 
     def test_call_bad_type_message_lists_valid_types(self):
         f = ContinuousTimeFunction(lambda t: t)
-        with self.assertRaisesRegex(TypeError, "number, numeric vector, or ContinuousTimeFunction"):
+        with self.assertRaisesRegex(
+            TypeError, "number, numeric vector, or ContinuousTimeFunction"
+        ):
             f("bad")
 
     def test_call_bad_type_message_includes_actual_type(self):
@@ -757,6 +785,53 @@ class TestConcatErrorMessages(unittest.TestCase):
     def test_bad_type_message_includes_type_name(self):
         with self.assertRaisesRegex(TypeError, "object"):
             concat(object())
+
+
+# ---------------------------------------------------------------------------
+# plot() methods return SymbulatePlot
+# ---------------------------------------------------------------------------
+
+
+class TestResultPlotsReturnWrapper(unittest.TestCase):
+    """Every result-type plot() method returns a SymbulatePlot wrapper.
+
+    The wrapper's repr is empty so Jupyter prints nothing below the
+    plot, and it exposes the matplotlib axes as .ax.
+    """
+
+    def tearDown(self):
+        plt.close("all")
+
+    def test_tuple_plot_returns_wrapper(self):
+        p = Tuple([1, 4, 2, 8, 5]).plot()
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_vector_plot_returns_wrapper(self):
+        p = Vector([1.0, 2.0, 3.0]).plot()
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_infinite_vector_plot_returns_wrapper(self):
+        iv = InfiniteVector(lambda n: n**2)
+        p = iv.plot(tmin=0, tmax=5)
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_discrete_time_function_plot_returns_wrapper(self):
+        f = DiscreteTimeFunction(lambda n: n, fs=1)
+        p = f.plot(tmin=0, tmax=5)
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_continuous_time_function_plot_returns_wrapper(self):
+        f = ContinuousTimeFunction(lambda t: np.sin(t))
+        p = f.plot(tmin=0, tmax=6)
+        self.assertIsInstance(p, SymbulatePlot)
+
+    def test_wrapper_repr_is_empty(self):
+        p = Tuple([1, 2, 3]).plot()
+        self.assertEqual(repr(p), "")
+
+    def test_wrapper_exposes_axes(self):
+        p = Tuple([1, 2, 3]).plot()
+        self.assertIs(p.ax, plt.gca())
 
 
 if __name__ == "__main__":
