@@ -25,9 +25,11 @@ DOTPLOT_MAX_DOT_SIZE points; taller stacks shrink the dots instead of
 overflowing the axes. Dot sizes are recomputed whenever the rendered
 size of the axes changes (figure resize, tight_layout).
 
-Colors are chosen automatically -- sky blue for the first batch on an
-axes, then the remaining Okabe-Ito hues (no black) for overlays -- so
-students never have to pass or memorize colors.
+Colors are chosen automatically from the style sheet's color cycle
+(``symbulate.mplstyle``: sky blue first, then the other Okabe-Ito
+hues, no black) -- the same cycle every plot type draws from, so a
+dot plot's first batch matches every other plot type's first series
+and students never have to pass or memorize colors.
 
 Overlays: a second ``make_dotplot`` call on the same axes re-stacks
 everything jointly and dodges each batch side by side around the
@@ -70,21 +72,6 @@ DOTPLOT_AXIS_LABEL_SIZE = 12
 DOTPLOT_TICK_LABEL_SIZE = 10
 DOTPLOT_LEGEND_LOC = "upper right"
 DOTPLOT_LEGEND_MARKER_SIZE = 8
-
-# Automatic dot colors: the Okabe-Ito palette (no black), reordered so
-# sky blue is the single-batch default and overlays cycle through the
-# rest (yellow last -- it is the weakest hue on a white background).
-# Note this differs from the symbulate.mplstyle cycle, which starts at
-# orange; at integration time the team should pick one order for both.
-DOTPLOT_COLOR_CYCLE = [
-    "#56B4E9",  # sky blue
-    "#E69F00",  # orange
-    "#009E73",  # bluish green
-    "#0072B2",  # blue
-    "#D55E00",  # vermillion
-    "#CC79A7",  # reddish purple
-    "#F0E442",  # yellow
-]
 
 # Stacked dots never grow past this diameter, in points, no matter how
 # short the stacks are. (The y-axis extends past the tallest stack as
@@ -187,12 +174,18 @@ def make_dotplot(values, ax, color=None, label=None):
 def _next_dot_color(ax):
     """Return the next automatic dot color for these axes.
 
-    Same per-axes pattern as get_next_color() in symbulate/plot.py,
-    but walks DOTPLOT_COLOR_CYCLE (sky blue first) instead of the
-    rcParams cycle.
+    Mirrors get_next_color() in symbulate/plot.py: walks the active
+    style sheet's color cycle (symbulate.mplstyle leads with sky blue,
+    then orange, ...), stored per axes so overlays advance it. Reading
+    the cycle from the style sheet -- the single source of truth --
+    guarantees every plot type starts from the same first color.
+    (Re-implemented here rather than imported so this staging module
+    does not import the symbulate package, which currently swaps the
+    matplotlib style on import -- a Phase 2 cleanup item.)
     """
     if not hasattr(ax, "_dotplot_color_cycle"):
-        ax._dotplot_color_cycle = itertools.cycle(DOTPLOT_COLOR_CYCLE)
+        prop_cycle = plt.rcParams["axes.prop_cycle"]
+        ax._dotplot_color_cycle = itertools.cycle(prop_cycle.by_key()["color"])
     return next(ax._dotplot_color_cycle)
 
 

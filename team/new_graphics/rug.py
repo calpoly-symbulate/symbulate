@@ -158,10 +158,9 @@ if __name__ == "__main__":
     # .plot() integration keeps the global default figure size.
     plt.figure(figsize=(9, 2))
     ax = plt.gca()
-    # The prototype uses Okabe-Ito sky blue. Note: this is the *second*
-    # hue in the symbulate.mplstyle color cycle (the first is orange
-    # E69F00) -- once integrated, the color will come from
-    # get_next_color(ax) instead.
+    # Okabe-Ito sky blue -- the *first* hue in the symbulate.mplstyle
+    # color cycle, so every plot type starts from this same color;
+    # once integrated, it will come from get_next_color(ax) instead.
     make_rug(values, ax, "#56B4E9")
 
     # Figure 2: two overlaid rugs with the automatic "Variable k"

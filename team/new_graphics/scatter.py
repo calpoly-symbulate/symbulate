@@ -20,13 +20,25 @@ decision log.)
 Also new is an orderly-jitter mode for the Discrete x Discrete cell of
 the 2D lookup table (``jitter="orderly"``): instead of scattering
 coincident points with random noise, the points that share an integer
-(x, y) coordinate are laid out in a neat centered sub-grid inside a
-unit "bin" cell, and the grid lines are redrawn at the half-integer bin
-boundaries so each integer sits centered in its own cell. This lets a
-student read the density in each cell by counting, which random jitter
-makes impossible. Random jitter (``jitter=True``) and no jitter
-(``jitter=False``) are still available; plain scatter still targets the
-Continuous x Continuous cell.
+(x, y) coordinate form a tight compass-pattern cluster centered on
+that value's grid crossing -- the first point dead center on the
+crossing, the next four on the grid lines at the cardinal positions
+(N, E, S, W), the next four at the diagonals (NE, SE, NW, SW), all
+within SCATTER_COMPASS_STEP of the center. Because the cluster hugs
+its grid crossing, it reads as one shared value (never as separate
+values), and a student can read each value's density by counting,
+which random jitter makes impossible. Random jitter (``jitter=True``)
+and no jitter (``jitter=False``) are still available; plain scatter
+still targets the Continuous x Continuous cell.
+
+Every variant draws both horizontal and vertical grid lines, extending
+the style sheet's horizontal reference grid; in orderly mode the ticks
+are forced to the integers so the grid lines pass through the cluster
+centers.
+
+The scatter plot targets small simulations -- the default plot lookup
+table selects it only when n <= SCATTER_MAX_N (40) -- so the demos
+below stick to n = 40.
 
 Run this file directly to render the prototype:
 
@@ -35,6 +47,7 @@ Run this file directly to render the prototype:
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MaxNLocator
 
 # This helper lives in symbulate/plot.py, which stays through the
 # graphics overhaul -- only the plotting code inside results.py is
@@ -57,9 +70,16 @@ rng = np.random.default_rng()
 SCATTER_ALPHA = 0.25
 SCATTER_MARKER_SIZE = 40
 SCATTER_LEGEND_LOC = "upper right"
-# Orderly-jitter mode: the ordered points fill this fraction of the unit
-# bin cell, leaving a margin so no point touches a bin boundary line.
-SCATTER_BIN_SPREAD = 0.7
+# Orderly-jitter mode: coincident points cluster tightly around their
+# integer grid intersection. This is the distance, in data units (a
+# fraction of the gap between neighboring integers), from the center
+# point to each neighbor in the compass pattern -- small enough that a
+# cluster reads as one shared value, never as separate values.
+SCATTER_COMPASS_STEP = 0.1
+
+# Default-plot lookup rule (Task 1A): the scatter plot targets small
+# simulations; the lookup table selects it only when n <= SCATTER_MAX_N.
+SCATTER_MAX_N = 40
 
 
 def _refresh_legend(ax):
@@ -73,15 +93,39 @@ def _refresh_legend(ax):
         ax.legend(loc=SCATTER_LEGEND_LOC)
 
 
-def _grid_offsets(k, spread):
-    """Return ``k`` (dx, dy) offsets on a centered square-ish lattice.
+# Orderly-jitter fill order: a 3x3 compass template. The first point
+# in a cell sits dead center, points 2-5 take the cardinal positions
+# (N, E, S, W), and points 6-9 take the remaining diagonal positions
+# (NE, SE, NW, SW).
+_COMPASS_ORDER = [
+    (0, 0),  # center
+    (0, 1),  # N
+    (1, 0),  # E
+    (0, -1),  # S
+    (-1, 0),  # W
+    (1, 1),  # NE
+    (1, -1),  # SE
+    (-1, 1),  # NW
+    (-1, -1),  # SW
+]
 
-    The offsets fill a region ``spread`` wide and tall, centered on
-    (0, 0), so ``k`` coincident points can be spread into an orderly
-    block inside a bin cell. A single point sits dead center; larger
-    counts fill a ``ceil(sqrt(k))``-column grid row by row (the last
-    row may be partly filled, which still reads as a tidy lattice).
+
+def _grid_offsets(k, step):
+    """Return ``k`` (dx, dy) offsets clustered on (0, 0), compass-first.
+
+    Coincident points fill the compass template in ``_COMPASS_ORDER``:
+    dead center first, then the cardinal positions (N, E, S, W) at
+    distance ``step``, then the diagonals (NE, SE, NW, SW). The center
+    point sits exactly on the grid intersection and the cardinal
+    points lie on the grid lines themselves, so the whole cluster
+    visibly belongs to that one (x, y) value. More than 9 coincident
+    points no longer fit the template, so they fall back to a centered
+    ``ceil(sqrt(k))``-column lattice spanning the same 2 * ``step``
+    region, keeping the cluster just as tight.
     """
+    if k <= len(_COMPASS_ORDER):
+        return [(dx * step, dy * step) for dx, dy in _COMPASS_ORDER[:k]]
+    spread = 2.0 * step
     ncols = int(np.ceil(np.sqrt(k)))
     nrows = int(np.ceil(k / ncols))
     offsets = []
@@ -93,55 +137,29 @@ def _grid_offsets(k, spread):
     return offsets
 
 
-def _orderly_bin_layout(x, y, spread):
-    """Lay coincident discrete points out in orderly sub-grids.
+def _orderly_bin_layout(x, y, step):
+    """Cluster coincident discrete points around their grid crossing.
 
-    Each point is assigned to the integer bin nearest its (x, y), then
-    the points sharing a bin are spread onto a centered lattice inside
-    that unit cell (see ``_grid_offsets``). Returns the new float
-    coordinates plus the integer bins, so the caller can draw bin grid
-    lines over the right range.
+    Each point is assigned to the integer (x, y) nearest its
+    coordinates, then the points sharing that value are laid out on
+    the tight compass cluster centered on it (see ``_grid_offsets``).
+    Returns the new float coordinates.
     """
     xr = np.round(x).astype(int)
     yr = np.round(y).astype(int)
     new_x = xr.astype(float).copy()
     new_y = yr.astype(float).copy()
 
-    bins = {}
+    values = {}
     for i in range(len(xr)):
-        bins.setdefault((xr[i], yr[i]), []).append(i)
+        values.setdefault((xr[i], yr[i]), []).append(i)
 
-    for (cx, cy), idxs in bins.items():
-        for pos, (dx, dy) in enumerate(_grid_offsets(len(idxs), spread)):
+    for (cx, cy), idxs in values.items():
+        for pos, (dx, dy) in enumerate(_grid_offsets(len(idxs), step)):
             new_x[idxs[pos]] = cx + dx
             new_y[idxs[pos]] = cy + dy
 
-    return new_x, new_y, xr, yr
-
-
-def _draw_bin_grid(ax, xr, yr):
-    """Draw grid lines at the half-integer bin boundaries.
-
-    Integer values get labeled major ticks centered in each cell, and
-    the grid is drawn on unlabeled minor ticks halfway between them, so
-    every integer (x, y) sits in the middle of its own bin cell. The
-    integer extent is unioned across calls, so an overlaid second series
-    extends the same bin grid rather than replacing it.
-    """
-    xmin, xmax = int(xr.min()), int(xr.max())
-    ymin, ymax = int(yr.min()), int(yr.max())
-    prev = getattr(ax, "_bin_extent", None)
-    if prev is not None:
-        xmin, xmax = min(xmin, prev[0]), max(xmax, prev[1])
-        ymin, ymax = min(ymin, prev[2]), max(ymax, prev[3])
-    ax._bin_extent = (xmin, xmax, ymin, ymax)
-
-    ax.set_xticks(range(xmin, xmax + 1))
-    ax.set_yticks(range(ymin, ymax + 1))
-    ax.set_xticks(np.arange(xmin - 0.5, xmax + 1.0, 1.0), minor=True)
-    ax.set_yticks(np.arange(ymin - 0.5, ymax + 1.0, 1.0), minor=True)
-    ax.grid(False, which="major")
-    ax.grid(True, which="minor", axis="both")
+    return new_x, new_y
 
 
 def make_scatter(
@@ -200,11 +218,12 @@ def make_scatter(
           matching the ``jitter`` option already on
           ``RVResults.plot()``. Reduces overplotting but scrambles
           density.
-        - ``"orderly"`` -- lay the points that share an integer
-          (x, y) coordinate out in a neat centered sub-grid inside a
-          unit bin cell, and draw the grid lines at the half-integer
-          bin boundaries. Right for two discrete variables: a student
-          can read each cell's density by counting. Assumes the data
+        - ``"orderly"`` -- points that share an integer (x, y)
+          coordinate form a tight compass-pattern cluster on that
+          value's grid crossing (center first, then N/E/S/W on the
+          grid lines, then the diagonals), so the cluster reads as one
+          shared value. Right for two discrete variables: a student
+          can read each value's density by counting. Assumes the data
           are integer-valued.
     label : str, optional
         Name for this series in the legend. Defaults to "Variable k",
@@ -226,8 +245,8 @@ def make_scatter(
     --------
     >>> import matplotlib.pyplot as plt
     >>> rng = np.random.default_rng()
-    >>> x = rng.uniform(0, 7, 200)
-    >>> y = 0.8 * x + rng.normal(0, 0.7, 200)
+    >>> x = rng.uniform(0, 7, 40)
+    >>> y = 0.8 * x + rng.normal(0, 0.7, 40)
     >>> ax = plt.gca()
     >>> make_scatter(x, y, ax, get_next_color(ax))  # doctest: +SKIP
     """
@@ -244,9 +263,8 @@ def make_scatter(
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
 
-    bins_xr = bins_yr = None
     if jitter == "orderly":
-        x, y, bins_xr, bins_yr = _orderly_bin_layout(x, y, SCATTER_BIN_SPREAD)
+        x, y = _orderly_bin_layout(x, y, SCATTER_COMPASS_STEP)
     elif jitter:
         # Unchanged from the "scatter" in type branch of RVResults.plot().
         x = x + rng.normal(loc=0, scale=0.01 * (x.max() - x.min()), size=len(x))
@@ -271,7 +289,14 @@ def make_scatter(
     )
 
     if jitter == "orderly":
-        _draw_bin_grid(ax, bins_xr, bins_yr)
+        # Integer major ticks put the grid lines through the cluster
+        # centers, so every cluster visibly sits on its own grid
+        # crossing.
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
+    # Vertical grid lines on top of the style sheet's horizontal ones,
+    # so values read off both axes.
+    ax.grid(True, axis="both")
 
     ax.set_xlabel("Variable 1" if xlabel is None else xlabel)
     ax.set_ylabel("Variable 2" if ylabel is None else ylabel)
@@ -289,10 +314,13 @@ if __name__ == "__main__":
     )
     plt.style.use(str(style_path))
 
+    # Scatter targets small simulations (n <= SCATTER_MAX_N), so every
+    # figure below uses n = 40.
+
     # Figure 1: the single-scatter prototype -- two positively
     # correlated continuous variables, sky blue (first cycle color).
-    x = rng.uniform(0, 7, 300)
-    y = 0.8 * x + rng.normal(0, 0.8, 300)
+    x = rng.uniform(0, 7, 40)
+    y = 0.8 * x + rng.normal(0, 0.8, 40)
 
     ax = plt.gca()
     make_scatter(x, y, ax, get_next_color(ax))
@@ -300,8 +328,8 @@ if __name__ == "__main__":
     # Figure 2: the overlay prototype -- a second pair of variables on
     # the same axes picks up orange and turns on the "Variable k"
     # legend automatically.
-    x2 = rng.uniform(0, 7, 300)
-    y2 = 0.5 * x2 + rng.normal(2.5, 0.8, 300)
+    x2 = rng.uniform(0, 7, 40)
+    y2 = 0.5 * x2 + rng.normal(2.5, 0.8, 40)
 
     plt.figure()
     ax = plt.gca()
@@ -309,10 +337,11 @@ if __name__ == "__main__":
     make_scatter(x2, y2, ax, get_next_color(ax))
 
     # Figure 3: the Discrete x Discrete prototype -- positively
-    # correlated integer data with orderly jitter, so coincident points
-    # fill neat sub-grids inside bin cells you can count.
-    xd = rng.integers(0, 7, 400)
-    yd = np.clip(xd + rng.integers(-1, 2, 400), 0, 6)
+    # correlated integer data with orderly jitter, so coincident
+    # points form tight compass clusters (center, then N/E/S/W, then
+    # the diagonals) on the grid crossings, countable per value.
+    xd = rng.integers(1, 6, 40)
+    yd = np.clip(xd + rng.integers(-1, 2, 40), 1, 5)
 
     plt.figure()
     ax = plt.gca()
