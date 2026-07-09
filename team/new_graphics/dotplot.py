@@ -12,14 +12,14 @@ dot, drawn at its exact value on the x-axis; identical values stack on
 top of one another, the first dot in each stack sits directly on the
 number line, and stacked dots touch with no gap. Values are never
 binned -- the dot plot is for discrete data, and the lookup table
-routes continuous data elsewhere. The y-axis stays honest: it reads
-"Count" by default, or "Relative frequency" with ``normalize=True``.
+routes continuous data elsewhere. The y-axis always reads "Count":
+every dot is one observation.
 
 Geometry: dots are drawn with ``ax.scatter`` at
-(value, (level - 1/2) * unit), where unit is 1 count (or 1/n when
-normalized). The y-limits are chosen so one stack unit on screen
-equals one dot diameter, measured through ``ax.transData`` -- that
-equality is what makes the dots touch. The dot diameter fills the gap
+(value, level - 1/2), where each stack level is one count. The
+y-limits are chosen so one stack unit on screen equals one dot
+diameter, measured through ``ax.transData`` -- that equality is what
+makes the dots touch. The dot diameter fills the gap
 between neighboring stacks when they fit, capped at
 DOTPLOT_MAX_DOT_SIZE points; taller stacks shrink the dots instead of
 overflowing the axes. Dot sizes are recomputed whenever the rendered
@@ -30,17 +30,20 @@ axes, then the remaining Okabe-Ito hues (no black) for overlays -- so
 students never have to pass or memorize colors.
 
 Overlays: a second ``make_dotplot`` call on the same axes re-stacks
-everything jointly and dodges each batch of values side by side around
-the shared values. Light tile-style boundary lines appear halfway
-between neighboring stacks (at 1.5, 2.5, ... for integer data) so
-every dot between 1.5 and 2.5 clearly belongs to 2.
+everything jointly and dodges each batch side by side around the
+shared values, offsetting the columns by exactly one dot diameter so
+neighboring stacks touch instead of leaving a gap. Light tile-style
+boundary lines appear halfway between neighboring stacks (at 1.5,
+2.5, ... for integer data) so every dot between 1.5 and 2.5 clearly
+belongs to 2.
 
 Spines, fonts, and figure size come from
 ``symbulate/symbulate.mplstyle``, except where the dot plot
-deliberately differs: the reference grid is turned off (gridlines add
-clutter under stacked dots) and axis labels are bumped to 12 pt. The
-per-plot-type values are the named constants below, which migrate to
-the top of ``symbulate/plot.py`` at integration time.
+deliberately differs: only horizontal reference gridlines are drawn
+(the vertical ones would clutter the stacks) and axis labels are
+bumped to 12 pt. The per-plot-type values are the named constants
+below, which migrate to the top of ``symbulate/plot.py`` at
+integration time.
 
 Run this file directly to render the prototypes:
 
@@ -61,7 +64,7 @@ from matplotlib.ticker import MaxNLocator
 DOTPLOT_ALPHA = 1.0
 DOTPLOT_XLABEL = "Value"
 # One generic title that stays accurate for every dot plot this module
-# can produce: single or overlaid, counts or relative frequencies.
+# can produce, whether single or overlaid.
 DOTPLOT_TITLE = "Dot Plot"
 DOTPLOT_AXIS_LABEL_SIZE = 12
 DOTPLOT_TICK_LABEL_SIZE = 10
@@ -102,7 +105,7 @@ DOTPLOT_BOUNDARY_LINE_WIDTH = 0.8
 DOTPLOT_BOUNDARY_LINE_ALPHA = 0.6
 
 
-def make_dotplot(values, ax, color=None, normalize=False, label=None):
+def make_dotplot(values, ax, color=None, label=None):
     """Draw a stacked dot plot of simulated values on the given axes.
 
     Every observation is one dot, drawn at its exact value on the
@@ -113,7 +116,8 @@ def make_dotplot(values, ax, color=None, normalize=False, label=None):
 
     Dot plots overlay naturally: a second call on the same axes draws
     each batch side by side around the shared values, in different
-    colors, with light vertical boundary lines halfway between
+    colors, dodged by exactly one dot diameter so neighboring stacks
+    touch. Light vertical boundary lines appear halfway between
     neighboring stacks (at 1.5, 2.5, ... for integer data) so it stays
     clear which value each dot belongs to. A legend appears
     automatically in the top right once two or more batches share the
@@ -138,10 +142,6 @@ def make_dotplot(values, ax, color=None, normalize=False, label=None):
         Dot color. If omitted (recommended), the first batch on the
         axes is sky blue and each overlay automatically gets the next
         Okabe-Ito hue.
-    normalize : bool, default False
-        If False, the y-axis shows counts. If True, it shows relative
-        frequencies (each count divided by that batch's number of
-        values), so batches of different sizes can be compared.
     label : str, optional
         Name for this batch of values in the legend. Defaults to
         "Variable k", where k counts the dot plots drawn on these axes
@@ -164,17 +164,7 @@ def make_dotplot(values, ax, color=None, normalize=False, label=None):
         color = _next_dot_color(ax)
     state = getattr(ax, "_dotplot_state", None)
     if state is None:
-        state = _init_state(ax, normalize)
-    if normalize != state["normalize"]:
-        first = "relative frequencies" if state["normalize"] else "counts"
-        print(
-            "The dot plot already on these axes shows "
-            + first
-            + ", so the new dots are shown as "
-            + first
-            + " too. To switch, redraw all the dot plots in a fresh cell "
-            + "with the same normalize= setting."
-        )
+        state = _init_state(ax)
     if label is None:
         label = "Variable {}".format(len(state["series"]) + 1)
     # Dots start empty; _relayout fills in positions and sizes once the
@@ -183,7 +173,6 @@ def make_dotplot(values, ax, color=None, normalize=False, label=None):
     state["series"].append(
         {
             "values": values,
-            "n": len(values),
             "dots": dots,
             "label": label,
             "color": color,
@@ -246,19 +235,21 @@ def _restack(state):
         s["counts"] = np.array([np.sum(s["values"] == p) for p in positions], dtype=int)
 
 
-def _init_state(ax, normalize):
+def _init_state(ax):
     """Set up per-axes dot plot state, styling, and resize handling."""
     state = {
         "series": [],
-        "normalize": normalize,
         "boundary_lines": [],
         "last_size_px": None,
         "relayout_running": False,
     }
     ax._dotplot_state = state
-    # Gridlines add clutter under stacked dots -- the dot plot is the
-    # one plot type that turns the style sheet's reference grid off.
-    ax.grid(False)
+    # Horizontal reference gridlines help students read a count off
+    # the y-axis. Keep them below the dots and drop the vertical
+    # lines, which would clutter the stacks.
+    ax.set_axisbelow(True)
+    ax.grid(True, axis="y")
+    ax.grid(False, axis="x")
     ax.set_xlabel(DOTPLOT_XLABEL)
     ax.tick_params(labelsize=DOTPLOT_TICK_LABEL_SIZE)
     # Dot sizes depend on the rendered size of the axes, so redo the
@@ -283,10 +274,7 @@ def _relayout(ax):
     # x padding: one slot of air beyond the outermost stacks.
     ax.set_xlim(positions[0] - spacing, positions[-1] + spacing)
 
-    if state["normalize"]:
-        units = [1.0 / s["n"] for s in state["series"]]
-    else:
-        units = [1.0] * n_series
+    # Every dot is one count, so a stack unit is always 1.
 
     # Pixel measurements via the axes transforms (valid before any
     # draw). The 1-px floor guards against two nearly-identical values
@@ -294,39 +282,48 @@ def _relayout(ax):
     lane_width_px = max(_x_span_px(ax, lane_width), 1.0)
     height_px = _axes_size_px(ax)[1]
 
-    # Choose the y range so one stack unit on screen is never taller
-    # than one lane is wide, nor than the DOTPLOT_MAX_DOT_SIZE cap.
-    # That pixel height becomes the dot diameter, so dots stack
-    # touching and never spill into the next lane, short stacks cannot
-    # inflate the dots past the cap, and taller stacks shrink the dots
-    # instead of overflowing the axes.
+    # Choose the y range so one count on screen is never taller than
+    # one lane is wide, nor than the DOTPLOT_MAX_DOT_SIZE cap. That
+    # pixel height becomes the dot diameter, so dots stack touching and
+    # never spill into the next lane, short stacks cannot inflate the
+    # dots past the cap, and taller stacks shrink the dots instead of
+    # overflowing the axes.
     max_dot_px = DOTPLOT_MAX_DOT_SIZE * ax.figure.dpi / 72.0
-    tallest = max(s["counts"].max() * u for s, u in zip(state["series"], units))
+    tallest = max(s["counts"].max() for s in state["series"])
     y_max = max(
         tallest * DOTPLOT_STACK_HEADROOM,
-        max(units) * height_px / lane_width_px,
-        max(units) * height_px / max_dot_px,
+        height_px / lane_width_px,
+        height_px / max_dot_px,
     )
     ax.set_ylim(0, y_max)
 
     points_per_px = 72.0 / ax.figure.dpi
-    for i, (series, unit) in enumerate(zip(state["series"], units)):
-        offset = (i - (n_series - 1) / 2.0) * lane_width
+    # Dodge overlaid batches by exactly one dot diameter so their
+    # stacks sit side by side and touch, rather than by the full lane
+    # width -- which would leave a gap between the columns once the
+    # dot-size cap shrinks the dots below the lane width. The dot
+    # diameter is what the y range above was calibrated to; it never
+    # exceeds one lane width, so a dodged group still fits inside its
+    # slot without colliding with the neighboring value's stacks.
+    diameter_px = height_px / y_max
+    x_px_per_data = max(_x_span_px(ax, 1.0), 1e-9)
+    dodge_step = diameter_px / x_px_per_data
+    # scatter sizes are marker areas in points^2 (diameter squared).
+    size = (diameter_px * points_per_px) ** 2
+    for i, series in enumerate(state["series"]):
+        offset = (i - (n_series - 1) / 2.0) * dodge_step
         xs = []
         ys = []
         for position, count in zip(positions, series["counts"]):
             xs.extend(np.full(count, position + offset))
-            ys.extend((np.arange(1, count + 1) - 0.5) * unit)
+            ys.extend(np.arange(1, count + 1) - 0.5)
         series["dots"].set_offsets(np.column_stack([xs, ys]))
-        diameter_px = _y_span_px(ax, unit)
-        # scatter sizes are marker areas in points^2 (diameter squared).
-        size = (diameter_px * points_per_px) ** 2
         series["dots"].set_sizes(np.full(len(xs), size))
 
     if np.all(positions == np.round(positions)):
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-    if not state["normalize"]:
-        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    # The y-axis is always integer counts.
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     _redraw_boundary_lines(ax, state)
     state["last_size_px"] = _axes_size_px(ax)
 
@@ -364,7 +361,7 @@ def _redraw_boundary_lines(ax, state):
 def _decorate(ax, state):
     """Apply the title, labels, fonts, and (for overlays) the legend."""
     ax.set_title(DOTPLOT_TITLE)
-    ax.set_ylabel("Relative frequency" if state["normalize"] else "Count")
+    ax.set_ylabel("Count")
     ax.xaxis.label.set_size(DOTPLOT_AXIS_LABEL_SIZE)
     ax.yaxis.label.set_size(DOTPLOT_AXIS_LABEL_SIZE)
     # A legend only helps once there is more than one batch to tell
@@ -396,12 +393,6 @@ def _x_span_px(ax, dx):
     """Return how many pixels wide dx data units are."""
     (x0, _), (x1, _) = ax.transData.transform([(0.0, 0.0), (dx, 0.0)])
     return x1 - x0
-
-
-def _y_span_px(ax, dy):
-    """Return how many pixels tall dy data units are."""
-    (_, y0), (_, y1) = ax.transData.transform([(0.0, 0.0), (0.0, dy)])
-    return y1 - y0
 
 
 def _on_canvas_change(ax):
@@ -444,17 +435,12 @@ if __name__ == "__main__":
     ax = plt.gca()
     make_dotplot(rng.integers(1, 7, 30), ax)
 
-    # Figure 2: overlay -- dodged lanes plus the tile-style boundary
-    # lines at 1.5, 2.5, ... The legend defaults to "Variable 1",
-    # "Variable 2".
+    # Figure 2: overlay -- dodged, touching stacks plus the tile-style
+    # boundary lines at 1.5, 2.5, ... The legend defaults to
+    # "Variable 1", "Variable 2".
     plt.figure()
     ax = plt.gca()
     make_dotplot(rng.integers(1, 7, 30), ax)
     make_dotplot(rng.integers(1, 7, 30), ax)
-
-    # Figure 3: normalize=True -- same picture, relative-frequency axis.
-    plt.figure()
-    ax = plt.gca()
-    make_dotplot(rng.integers(1, 7, 30), ax, normalize=True)
 
     plt.show()
