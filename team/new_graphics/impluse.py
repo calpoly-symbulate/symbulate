@@ -145,8 +145,19 @@ def make_impulse(
     if label is None:
         label = f"Variable {len(prior_series) + 1}"
 
+    # Labeled on the stems (a LineCollection), not the dots: matplotlib's
+    # legend proxy for a LineCollection is a plain line matching color and
+    # width, with no marker glyph -- so the legend swatch stays a clean
+    # line, consistent with every other plot type, instead of showing the
+    # scatter marker as a "point" in the legend.
     stems = ax.vlines(
-        xs, 0, freqs, color=color, linewidth=IMPULSE_LINEWIDTH, alpha=alpha
+        xs,
+        0,
+        freqs,
+        color=color,
+        linewidth=IMPULSE_LINEWIDTH,
+        alpha=alpha,
+        label=label,
     )
     dots = ax.scatter(
         xs,
@@ -155,7 +166,6 @@ def make_impulse(
         marker=IMPULSE_MARKER,
         color=color,
         alpha=alpha,
-        label=label,
         zorder=3,
         **kwargs,
     )
