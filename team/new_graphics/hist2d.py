@@ -26,6 +26,7 @@ Run this file directly to render the prototype:
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import FuncFormatter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Per-plot-type constants. matplotlib rcParams are global and cannot
@@ -37,6 +38,10 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 HIST2D_DEFAULT_BINS = 30
 HIST2D_CBAR_SIZE = "5%"  # colorbar width, as a fraction of the axes
 HIST2D_CBAR_PAD = 0.1  # gap between the axes and the colorbar, inches
+HIST2D_CBAR_TICKS = 8  # number of evenly spaced colorbar ticks, including
+# both endpoints (0 and the peak value); matches density2d's colorbar
+HIST2D_CBAR_DECIMALS = 3  # decimal places for the density colorbar labels
+# (raw counts are labeled as whole numbers instead)
 
 HIST2D_OVERLAY_WARNING = (
     "Warning: you drew a second 2-D histogram on the same plot. The two "
@@ -54,7 +59,11 @@ def make_hist2d(x, y, ax, bins=None, normalize=True, hex=False, **kwargs):
     "Density" (or "Count" when ``normalize=False``). The x-axis is
     labeled "X", the y-axis "Y", and the title reads "2-D Histogram".
     The color scale always starts from 0 so empty bins read as
-    "no data" rather than an arbitrary color.
+    "no data" rather than an arbitrary color. The colorbar ticks both
+    endpoints (0 and the peak value) with ``HIST2D_CBAR_TICKS`` (8)
+    evenly spaced ticks; density labels are rounded to
+    ``HIST2D_CBAR_DECIMALS`` (3) decimals and raw counts to whole
+    numbers. This matches the density2d colorbar.
 
     With ``hex=True`` the bins are hexagons instead of squares and the
     title reads "Hexbin Plot"; everything else (colormap, colorbar,
@@ -163,6 +172,18 @@ def make_hist2d(x, y, ax, bins=None, normalize=True, hex=False, **kwargs):
     )
     cbar = ax.get_figure().colorbar(mesh, cax=cax)
     cbar.set_label("Density" if normalize else "Count")
+    # Match the density2d colorbar: the color scale starts at 0 (vmin=0
+    # above), and we tick both ends of the bar with a fixed number of
+    # evenly spaced ticks -- matplotlib's default locator otherwise trims
+    # short of the endpoints. get_clim() is authoritative once the colorbar
+    # exists. Labels are rounded to HIST2D_CBAR_DECIMALS for the density
+    # scale, or to whole numbers for raw counts.
+    vmin, vmax = mesh.get_clim()
+    cbar.set_ticks(np.linspace(vmin, vmax, HIST2D_CBAR_TICKS))
+    decimals = HIST2D_CBAR_DECIMALS if normalize else 0
+    cbar.ax.yaxis.set_major_formatter(
+        FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
+    )
     if ax._hist2d_count > 1:
         print(HIST2D_OVERLAY_WARNING)
     return histogram
