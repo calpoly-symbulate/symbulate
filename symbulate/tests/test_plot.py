@@ -25,6 +25,7 @@ regression guard. Current expected failures:
     Fix: hardcode 'seaborn-v0_8-colorblind' with an explicit fallback.
 """
 
+import importlib
 import unittest
 import warnings
 import numpy as np
@@ -55,7 +56,15 @@ from symbulate import (
     pi,
 )
 from symbulate import plot as symbulate_plot
-from symbulate.plot import SymbulatePlot
+from symbulate.plot import (
+    SymbulatePlot,
+    classify_data,
+    default_plot_type,
+    suggestion_message,
+    should_show_suggestion,
+    DEFAULT_PLOT_TYPE,
+    PLOT_DISPLAY_NAME,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -733,6 +742,155 @@ class TestAxesManagement(PlotTestCase):
         RV(Normal(0, 1)).sim(100).plot()
         plt.close("all")
         self.assertEqual(len(plt.get_fignums()), 0)
+
+
+# ===========================================================================
+# classify_data: discrete-ish / small-n classification
+# ===========================================================================
+
+
+class TestClassifyData(unittest.TestCase):
+    """The two-boolean classifier that replaces is_discrete."""
+
+    def test_narrow_int_large_n_is_discrete(self):
+        discrete_ish, small_n = classify_data(np.array([0, 1, 2, 1, 3] * 400))
+        self.assertTrue(discrete_ish)
+        self.assertFalse(small_n)
+
+    def test_all_unique_float_is_continuous(self):
+        discrete_ish, small_n = classify_data(np.array([0.1, 0.2, 0.3, 0.4, 0.5]))
+        self.assertFalse(discrete_ish)
+        self.assertTrue(small_n)
+
+    def test_wide_support_int_is_continuous(self):
+        """Wide-support integers (e.g. Binomial(10000, 0.5)) read as continuous."""
+        discrete_ish, _ = classify_data(np.arange(200))
+        self.assertFalse(discrete_ish)
+
+    def test_repeated_float_narrow_support_is_discrete(self):
+        """Float data with few repeated values is a user-defined finite support."""
+        discrete_ish, small_n = classify_data(np.array([1.0, 1.5, 2.71, 4.0] * 250))
+        self.assertTrue(discrete_ish)
+        self.assertFalse(small_n)
+
+    def test_string_categorical_is_discrete(self):
+        discrete_ish, _ = classify_data(np.array(["H", "T"] * 60))
+        self.assertTrue(discrete_ish)
+
+    def test_many_category_strings_still_discrete(self):
+        """A wide-support categorical (52 labels) must not read as continuous."""
+        discrete_ish, _ = classify_data(np.array([f"c{i % 52}" for i in range(1000)]))
+        self.assertTrue(discrete_ish)
+
+    def test_boolean_is_discrete(self):
+        discrete_ish, _ = classify_data(np.array([True, False, True, True]))
+        self.assertTrue(discrete_ish)
+
+    def test_degenerate_constant_is_discrete(self):
+        discrete_ish, _ = classify_data(np.full(500, 5))
+        self.assertTrue(discrete_ish)
+
+    def test_small_n_boundary(self):
+        """small_n is True below N_SMALL_THRESHOLD and False at/above it."""
+        _, small_below = classify_data(np.arange(99))
+        _, small_at = classify_data(np.arange(100))
+        self.assertTrue(small_below)
+        self.assertFalse(small_at)
+
+
+# ===========================================================================
+# default_plot_type: the lookup table
+# ===========================================================================
+
+
+class TestDefaultPlotType(unittest.TestCase):
+    """Lookup and structural invariants of DEFAULT_PLOT_TYPE."""
+
+    def test_lookup_returns_string_default_and_list_alternatives(self):
+        default, alts = default_plot_type("1D_discrete", False)
+        self.assertIsInstance(default, str)
+        self.assertIsInstance(alts, list)
+
+    def test_default_never_repeated_in_its_alternatives(self):
+        for configuration, small_n in DEFAULT_PLOT_TYPE:
+            default, alts = default_plot_type(configuration, small_n)
+            self.assertNotIn(default, alts)
+
+    def test_every_token_has_a_display_name(self):
+        for entry in DEFAULT_PLOT_TYPE.values():
+            for token in [entry["default"]] + entry["alternatives"]:
+                self.assertIn(token, PLOT_DISPLAY_NAME)
+
+    def test_unknown_configuration_raises_keyerror(self):
+        with self.assertRaises(KeyError):
+            default_plot_type("nonsense", True)
+
+
+# ===========================================================================
+# suggestion_message: the "Currently Showing / Alternative Plots" text
+# ===========================================================================
+
+
+class TestSuggestionMessage(unittest.TestCase):
+    """Formatting of the suggestion message."""
+
+    def test_default_marked_when_showing_the_default(self):
+        msg = suggestion_message("impulse", "impulse", ["hist", "density"])
+        self.assertIn("Currently Showing: Impulse Plot (Default)", msg)
+
+    def test_no_default_marker_when_showing_a_non_default(self):
+        msg = suggestion_message("hist", "impulse", ["hist", "density"])
+        self.assertIn("Currently Showing: Histogram", msg)
+        self.assertNotIn("Histogram (Default)", msg)
+
+    def test_default_appears_in_alternatives_when_type_specified(self):
+        msg = suggestion_message("hist", "impulse", ["hist", "density"])
+        self.assertIn("Impulse Plot (Default)", msg)
+
+    def test_shown_type_removed_from_alternatives(self):
+        msg = suggestion_message("hist", "impulse", ["hist", "density"])
+        alt_line = msg.splitlines()[1]
+        self.assertNotIn('(type = "hist")', alt_line)
+
+    def test_non_default_alternatives_use_type_syntax(self):
+        msg = suggestion_message("impulse", "impulse", ["hist", "density"])
+        self.assertIn('Histogram (type = "hist")', msg)
+        self.assertIn('Density Plot (type = "density")', msg)
+
+
+# ===========================================================================
+# should_show_suggestion: the tri-state suggest policy
+# ===========================================================================
+
+
+class TestSuggestionPolicy(unittest.TestCase):
+    """The suggest=None/True/False triggering policy and session flag."""
+
+    def setUp(self):
+        # Reset the module-level once-per-session flag before each test.
+        self.plotmod = importlib.import_module("symbulate.plot")
+        self.plotmod._suggestion_shown = False
+
+    def test_none_shows_only_once_per_session(self):
+        self.assertTrue(should_show_suggestion(None))
+        self.assertFalse(should_show_suggestion(None))
+        self.assertFalse(should_show_suggestion(None))
+
+    def test_default_argument_matches_none_behavior(self):
+        self.assertTrue(should_show_suggestion())
+        self.assertFalse(should_show_suggestion())
+
+    def test_true_shows_every_call(self):
+        self.assertTrue(should_show_suggestion(True))
+        self.assertTrue(should_show_suggestion(True))
+
+    def test_false_never_shows(self):
+        self.assertFalse(should_show_suggestion(False))
+        self.assertFalse(should_show_suggestion(False))
+
+    def test_true_marks_session_so_later_none_stays_quiet(self):
+        self.assertTrue(should_show_suggestion(True))
+        self.assertFalse(should_show_suggestion(None))
 
 
 if __name__ == "__main__":
