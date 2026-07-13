@@ -13,8 +13,6 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 
-rng = np.random.default_rng()
-
 from matplotlib.gridspec import GridSpec
 from matplotlib.transforms import Affine2D
 
@@ -28,18 +26,24 @@ from .base import (
     _build_mv_filter,
 )
 from .plot import (
-    configure_axes,
+    HIST_DEFAULT_BINS,
     get_next_color,
     is_discrete,
     count_var,
     compute_density,
     add_colorbar,
-    setup_ticks,
+    make_dotplot,
+    make_density,
+    make_density2D,
+    make_hist,
+    make_hist2d,
+    make_impulse,
+    make_marginal_impulse,
+    make_rug,
+    make_scatter,
+    make_segmented_rug,
     make_tile,
     make_violin,
-    make_marginal_impulse,
-    make_density2D,
-    make_impulse,
     SymbulatePlot,
 )
 from .result import Scalar, Vector, TimeFunction, is_number, is_numeric_vector
@@ -1251,26 +1255,44 @@ class RVResults(Results):
         type : str, tuple, or list, optional
             Plot type or types to display. Valid values are
             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
-            ``"rug"``, ``"scatter"``, ``"tile"``, ``"violin"``,
-            and ``"marginal"``. If None, selects automatically
-            based on whether the data appear discrete.
+            ``"dotplot"``, ``"rug"``, ``"scatter"``, ``"tile"``,
+            ``"violin"``, and ``"marginal"``. If None, selects
+            automatically based on whether the data appear discrete.
+            On 2D data, ``"hist"`` draws a binned color mesh,
+            ``"density"`` a smooth density surface (pass
+            ``contour=True`` for a banded contour plot), and
+            ``"rug"`` a segmented rug for one discrete and one
+            continuous variable.
         alpha : float, optional
-            Transparency of plotted elements, between 0 and 1.
-            Defaults to 0.5 for most plot types.
+            Transparency of plotted elements, between 0 and 1. Each
+            plot type has its own default: histograms 0.65, scatter
+            0.25, rug 0.5, impulse / density curves / dot plots fully
+            opaque, and 0.5 for violin and marginal panels.
         normalize : bool, default True
             If True, plot relative frequencies or densities. If
-            False, plot raw counts.
-        jitter : bool, default False
-            If True, add small random noise to discrete values in a
-            2D scatter plot to reduce overplotting. Has no effect on
-            1D impulse plots -- overlaid impulse plots already spread
-            their stems apart automatically.
+            False, plot raw counts. Dot plots always show counts.
+        jitter : bool or str, default False
+            How to spread out coincident points in a 2D scatter plot.
+            ``True`` adds small random noise. Two discrete variables
+            can instead use ``"spiral"`` (coincident points form a
+            tight countable cluster on their grid crossing),
+            ``"bins"`` (points fill a histogram-style box around
+            their value), or ``"auto"`` (picks between them based on
+            how many points share a value). Has no effect on 1D
+            impulse and dot plots -- overlays of those already spread
+            apart automatically.
         bins : int, optional
-            Number of bins for histograms or tile plots.
-            Defaults to 30 for 1-D histograms and 10 for tiles.
+            Number of bins for histograms, or for a continuous axis
+            of a tile plot. Defaults to 30. Dot plots are never
+            binned.
         **kwargs
-            Additional keyword arguments passed to the
-            underlying matplotlib plotting function.
+            Additional keyword arguments passed to the underlying
+            matplotlib plotting function. Notable options:
+            ``bandwidth`` (smoothing for ``type="density"``, passed
+            to scipy's ``gaussian_kde``), ``contour`` and ``levels``
+            (2D density), ``hex=True`` (hexagonal bins for a 2D
+            histogram), and ``label`` (legend name for hist, impulse,
+            dot, and scatter plots).
 
         Returns
         -------
@@ -1301,6 +1323,10 @@ class RVResults(Results):
 
         >>> X.sim(1000).plot(type="impulse")  # doctest: +SKIP
 
+        Plot a dot plot of a small simulation:
+
+        >>> X.sim(30).plot(type="dotplot")  # doctest: +SKIP
+
         Plot a scatter plot for a bivariate random variable:
 
         >>> X2 = RV(BoxModel([1, 2, 3, 4, 5, 6], size=2))
@@ -1313,7 +1339,8 @@ class RVResults(Results):
                 raise Exception(
                     f"Unrecognized plot type {type!r}. "
                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
-                    "'rug', 'scatter', 'tile', 'violin', 'marginal'."
+                    "'dotplot', 'rug', 'scatter', 'tile', 'violin', "
+                    "'marginal'."
                 )
 
         if self.dim == 1:
@@ -1340,21 +1367,27 @@ class RVResults(Results):
             discrete = is_discrete(counts.values())
             if type is None:
                 type = ("impulse",) if discrete else ("hist",)
-            # Impulse plots default to IMPULSE_ALPHA (fully opaque) inside
-            # make_impulse(), since stems don't have the overplotting risk
-            # that motivates 0.5 for histograms/scatter/density.
-            if alpha is None and "impulse" not in type:
-                alpha = 0.5
-            if jitter and "impulse" in type:
+            # Each 1D plot type defaults its own alpha inside its make_*
+            # helper (HIST_ALPHA, DENSITY_ALPHA, RUG_ALPHA, IMPULSE_ALPHA,
+            # DOTPLOT_ALPHA), so alpha stays None here unless the user
+            # set it explicitly.
+            if jitter and ("impulse" in type or "dotplot" in type):
                 warnings.warn(
-                    "jitter has no effect on impulse plots. Overlaid impulse "
-                    "plots already spread their stems apart automatically. "
-                    "jitter still applies to 2D scatter plots.",
+                    "jitter has no effect on impulse and dot plots. "
+                    "Overlays of those plot types already spread apart "
+                    "automatically. jitter still applies to 2D scatter "
+                    "plots.",
                     UserWarning,
                     stacklevel=2,
                 )
-            if bins is None:
-                bins = 30
+            if bins is not None and "dotplot" in type:
+                warnings.warn(
+                    "bins has no effect on dot plots. Every observation is "
+                    "drawn at its exact value, so dot plots are never "
+                    "binned. Try type='hist' if you want binned data.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             n = len(self)
 
             # initialize figure
@@ -1362,6 +1395,14 @@ class RVResults(Results):
             ax = plt.gca()
             color = get_next_color(ax)
 
+            if "dotplot" in type:
+                make_dotplot(
+                    _plot_array,
+                    ax,
+                    color,
+                    alpha=alpha,
+                    **kwargs,
+                )
             if "density" in type:
                 if discrete:
                     xs = sorted(list(counts.keys()))
@@ -1370,22 +1411,25 @@ class RVResults(Results):
                     if len(type) == 1:
                         plt.ylabel("Relative Frequency")
                 else:
-                    density = compute_density(_plot_array)
-                    xs = np.linspace(_plot_array.min(), _plot_array.max(), 1000)
-                    ax.plot(xs, density(xs), linewidth=2, color=color)
-                    if len(type) == 1 or (len(type) == 2 and "rug" in type):
-                        plt.ylabel("Density")
-
+                    # bandwidth is popped here so it never leaks into the
+                    # hist/impulse branches of a combined type.
+                    make_density(
+                        _plot_array,
+                        ax,
+                        color,
+                        bandwidth=kwargs.pop("bandwidth", None),
+                        alpha=alpha,
+                    )
             if "hist" in type or "bar" in type:
-                ax.hist(
+                make_hist(
                     _plot_array,
+                    ax,
+                    color,
                     bins=bins,
-                    density=normalize,
-                    color=color,
+                    normalize=normalize,
                     alpha=alpha,
                     **kwargs,
                 )
-                plt.ylabel("Density" if normalize else "Count")
             elif "impulse" in type:
                 make_impulse(
                     _plot_array,
@@ -1396,13 +1440,7 @@ class RVResults(Results):
                     **kwargs,
                 )
             if "rug" in type:
-                xs = _plot_array
-                if discrete:
-                    noise_level = 0.002 * (_plot_array.max() - _plot_array.min())
-                    xs = xs + rng.normal(scale=noise_level, size=n)
-                ax.plot(xs, [0.001] * n, "|", linewidth=5, color="k")
-                if len(type) == 1:
-                    setup_ticks([], [], ax.yaxis)
+                make_rug(_plot_array, ax, color, alpha=alpha)
         elif self.dim == 2:
             # make sure self.array, a Numpy array, has been set
             self._set_array()
@@ -1417,10 +1455,12 @@ class RVResults(Results):
 
             if type is None:
                 type = ("scatter",)
-            if alpha is None:
-                alpha = 0.5
-            if bins is None:
-                bins = 10 if "tile" in type else 30
+            # Scatter defaults its own alpha (SCATTER_ALPHA) inside
+            # make_scatter, and the mesh types (hist/density/tile) encode
+            # magnitude with a colormap instead of transparency. The
+            # legacy 0.5 default still applies to the violin and marginal
+            # panels, which have no per-type constant yet.
+            legacy_alpha = 0.5 if alpha is None else alpha
 
             if "marginal" in type:
                 fig = plt.gcf()
@@ -1448,29 +1488,30 @@ class RVResults(Results):
                         transform=Affine2D().rotate_deg(270) + ax_marg_y.transData,
                     )
                 else:
+                    marg_bins = bins if bins is not None else HIST_DEFAULT_BINS
                     if discrete_x:
                         make_marginal_impulse(
-                            x_count, get_next_color(ax), ax_marg_x, alpha, "x"
+                            x_count, get_next_color(ax), ax_marg_x, legacy_alpha, "x"
                         )
                     else:
                         ax_marg_x.hist(
                             x,
                             color=get_next_color(ax),
                             density=normalize,
-                            alpha=alpha,
-                            bins=bins,
+                            alpha=legacy_alpha,
+                            bins=marg_bins,
                         )
                     if discrete_y:
                         make_marginal_impulse(
-                            y_count, get_next_color(ax), ax_marg_y, alpha, "y"
+                            y_count, get_next_color(ax), ax_marg_y, legacy_alpha, "y"
                         )
                     else:
                         ax_marg_y.hist(
                             y,
                             color=get_next_color(ax),
                             density=normalize,
-                            alpha=alpha,
-                            bins=bins,
+                            alpha=legacy_alpha,
+                            bins=marg_bins,
                             orientation="horizontal",
                         )
                 plt.setp(ax_marg_x.get_xticklabels(), visible=False)
@@ -1480,35 +1521,81 @@ class RVResults(Results):
                 ax = plt.gca()
                 color = get_next_color(ax)
 
+            # The 'marginal' layout keeps the legacy left-side colorbar
+            # (add_colorbar): the mesh helpers' own right-side colorbar
+            # would squeeze the y-marginal panel, so they are called with
+            # colorbar=False and add_colorbar places it instead.
             if "scatter" in type:
-                if jitter:
-                    x = x + rng.normal(
-                        loc=0, scale=0.01 * (x.max() - x.min()), size=len(x)
-                    )
-                    y = y + rng.normal(
-                        loc=0, scale=0.01 * (y.max() - y.min()), size=len(y)
-                    )
-                ax.scatter(x, y, alpha=alpha, color=color, **kwargs)
+                make_scatter(
+                    x,
+                    y,
+                    ax,
+                    color,
+                    alpha=alpha,
+                    jitter=jitter,
+                    **kwargs,
+                )
             elif "hist" in type:
-                if normalize:
-                    histo = ax.hist2d(x, y, bins=bins, cmap="Blues", density=True)
-                    add_colorbar(fig, type, histo[3], "Density")
+                if "marginal" in type:
+                    histo = make_hist2d(
+                        x,
+                        y,
+                        ax,
+                        bins=bins,
+                        normalize=normalize,
+                        colorbar=False,
+                        **kwargs,
+                    )
+                    mappable = histo[3] if isinstance(histo, tuple) else histo
+                    add_colorbar(
+                        fig, type, mappable, "Density" if normalize else "Count"
+                    )
                 else:
-                    histo = ax.hist2d(x, y, bins=bins, cmap="Blues")
-                    add_colorbar(fig, type, histo[3], "Count")
+                    make_hist2d(x, y, ax, bins=bins, normalize=normalize, **kwargs)
             elif "density" in type:
-                den = make_density2D(x, y, ax)
-                add_colorbar(fig, type, den, "Density")
+                if "marginal" in type:
+                    den = make_density2D(x, y, ax, colorbar=False, **kwargs)
+                    add_colorbar(fig, type, den, "Density")
+                else:
+                    make_density2D(x, y, ax, **kwargs)
+            elif "rug" in type:
+                make_segmented_rug(
+                    x,
+                    y,
+                    ax,
+                    color,
+                    alpha=alpha,
+                    discrete_x=discrete_x,
+                    discrete_y=discrete_y,
+                )
             elif "tile" in type:
-                hm = make_tile(x, y, bins, discrete_x, discrete_y, ax)
-                add_colorbar(fig, type, hm, "Relative Frequency")
+                hm = make_tile(
+                    x,
+                    y,
+                    ax,
+                    normalize=normalize,
+                    bins=bins,
+                    discrete_x=discrete_x,
+                    discrete_y=discrete_y,
+                    colorbar="marginal" not in type,
+                    **kwargs,
+                )
+                if "marginal" in type:
+                    add_colorbar(
+                        fig, type, hm, "Relative Frequency" if normalize else "Count"
+                    )
             elif "violin" in type:
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))
-                    make_violin(self.array, positions, ax, "x", alpha)
+                    make_violin(self.array, positions, ax, "x", legacy_alpha)
                 elif not discrete_x and discrete_y:
                     positions = sorted(list(y_count.keys()))
-                    make_violin(self.array, positions, ax, "y", alpha)
+                    make_violin(self.array, positions, ax, "y", legacy_alpha)
+
+            if "marginal" in type:
+                # The marginal layout has no room for the center panel's
+                # title -- it would collide with the top marginal panel.
+                ax.set_title("")
         else:
             if alpha is None:
                 alpha = np.log(2) / np.log(len(self) + 1)

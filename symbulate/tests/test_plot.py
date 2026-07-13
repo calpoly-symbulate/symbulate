@@ -9,20 +9,11 @@ Covers:
   - Axis labels, xlim bounds, and figure structure
   - Error handling (plotting from a bare ProbabilitySpace)
 
-Known remaining bugs are documented as @unittest.expectedFailure tests.
-When a bug is fixed, remove that decorator and the test becomes a passing
-regression guard. Current expected failures:
-
-  Bug 1 (plot.py:139): violinplot() called with deprecated vert= keyword.
-    Fix: replace vert=True/False with orientation='vertical'/'horizontal'.
-
-  Bug 2 (results.py:1272): hist2d normalize=True uses int(label.get_text())
-    which raises ValueError when Matplotlib formats ticks as floats.
-    Fix: use float() or recompute density directly from histo[0].
-
-  Bug 3 (results.py:45-49): seaborn stylesheet looked up via fragile fuzzy
-    match that will raise IndexError if similarity drops below 0.7.
-    Fix: hardcode 'seaborn-v0_8-colorblind' with an explicit fallback.
+Tests seed numpy's global generator (np.random.seed) before simulating,
+matching the convention in test_distributions.py: is_discrete()'s 80%
+repeated-values rule is sensitive to rare tail values appearing exactly
+once, so unseeded sims occasionally flip the default plot type and make
+tests flaky.
 """
 
 import unittest
@@ -83,6 +74,7 @@ class TestPlot1DDiscrete(PlotTestCase):
     """Plots of 1D discrete RVResults (default type: impulse)."""
 
     def setUp(self):
+        np.random.seed(42)
         self.sims = RV(Binomial(n=10, p=0.4)).sim(500)
 
     def test_default_type_is_impulse_not_histogram(self):
@@ -137,6 +129,7 @@ class TestPlot1DContinuous(PlotTestCase):
     """Plots of 1D continuous RVResults (default type: hist)."""
 
     def setUp(self):
+        np.random.seed(42)
         self.sims = RV(Normal(0, 1)).sim(600)
 
     def test_default_type_is_histogram(self):
@@ -182,19 +175,34 @@ class TestPlot1DContinuous(PlotTestCase):
         y = plt.gca().lines[0].get_ydata()
         self.assertTrue(np.all(np.isfinite(y)))
 
-    def test_rug_produces_a_line(self):
+    def test_rug_produces_tick_collection(self):
+        """Rug ticks are drawn as vlines, which form a LineCollection."""
         self.sims.plot(type="rug")
-        self.assertGreater(len(plt.gca().lines), 0)
+        self.assertGreater(len(plt.gca().collections), 0)
 
-    def test_density_plus_rug_produces_two_lines(self):
+    def test_standalone_rug_hides_y_axis(self):
+        """A lone rug is a number line: no y-axis, no left spine."""
+        self.sims.plot(type="rug")
+        ax = plt.gca()
+        self.assertFalse(ax.yaxis.get_visible())
+        self.assertFalse(ax.spines["left"].get_visible())
+
+    def test_density_plus_rug_produces_line_and_ticks(self):
         self.sims.plot(type=("density", "rug"))
-        self.assertEqual(len(plt.gca().lines), 2)
+        ax = plt.gca()
+        self.assertEqual(len(ax.lines), 1)  # the density curve
+        self.assertGreater(len(ax.collections), 0)  # the rug ticks
 
-    def test_hist_plus_rug_produces_bars_and_line(self):
+    def test_rug_overlaid_on_density_keeps_y_axis(self):
+        """When the rug accompanies another plot, the axes are untouched."""
+        self.sims.plot(type=("density", "rug"))
+        self.assertTrue(plt.gca().yaxis.get_visible())
+
+    def test_hist_plus_rug_produces_bars_and_ticks(self):
         self.sims.plot(type=("hist", "rug"))
         ax = plt.gca()
         self.assertGreater(len(ax.patches), 0)
-        self.assertGreater(len(ax.lines), 0)
+        self.assertGreater(len(ax.collections), 0)
 
     def test_two_overlaid_plots_accumulate_patches(self):
         """Plotting twice on the same axes should add more bars."""
@@ -373,6 +381,9 @@ class TestNumericalPrecision(PlotTestCase):
 class TestPlot1DOtherDistributions(PlotTestCase):
     """Smoke tests ensuring other continuous/discrete distributions plot cleanly."""
 
+    def setUp(self):
+        np.random.seed(42)
+
     def test_exponential_default(self):
         RV(Exponential(rate=1)).sim(300).plot()
         self.assertGreater(len(plt.gca().patches), 0)
@@ -405,6 +416,7 @@ class TestPlot2DContinuous(PlotTestCase):
     """2D plots of continuous joint distributions."""
 
     def setUp(self):
+        np.random.seed(42)
         X, Y = RV(Normal(0, 1) ** 2)
         self.sims = (X & Y).sim(500)
 
@@ -449,6 +461,7 @@ class TestPlot2DDiscrete(PlotTestCase):
     """2D plots involving discrete dimensions."""
 
     def setUp(self):
+        np.random.seed(42)
         X, Y = RV(Binomial(5, 0.4) ** 2)
         self.sims = (X & Y).sim(500)
 
@@ -467,6 +480,9 @@ class TestPlot2DDiscrete(PlotTestCase):
 class TestPlot2DViolin(PlotTestCase):
     """Violin plots require one discrete and one continuous dimension."""
 
+    def setUp(self):
+        np.random.seed(42)
+
     def test_violin_discrete_x_continuous_y(self):
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         sims = (X & Y).sim(500)
@@ -482,6 +498,305 @@ class TestPlot2DViolin(PlotTestCase):
             warnings.simplefilter("ignore", PendingDeprecationWarning)
             sims.plot(type="violin")
         self.assertGreater(len(plt.gca().collections), 0)
+
+
+# ===========================================================================
+# New integrated plot types and options (graphics overhaul, Phase 2)
+# ===========================================================================
+
+
+class TestPlot1DHistStyling(PlotTestCase):
+    """Styling and overlay behavior of the integrated make_hist."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(Normal(0, 1)).sim(600)
+
+    def test_hist_default_alpha(self):
+        """Histogram bars default to HIST_ALPHA (0.65)."""
+        self.sims.plot()
+        self.assertAlmostEqual(plt.gca().patches[0].get_alpha(), 0.65)
+
+    def test_hist_explicit_alpha_wins(self):
+        self.sims.plot(alpha=0.3)
+        self.assertAlmostEqual(plt.gca().patches[0].get_alpha(), 0.3)
+
+    def test_hist_xlabel_and_title(self):
+        self.sims.plot()
+        ax = plt.gca()
+        self.assertEqual(ax.get_xlabel(), "Value")
+        self.assertEqual(ax.get_title(), "Density Histogram")
+
+    def test_hist_count_title_when_not_normalized(self):
+        self.sims.plot(normalize=False)
+        self.assertEqual(plt.gca().get_title(), "Count Histogram")
+
+    def test_hist_user_edgecolor_does_not_raise(self):
+        """edgecolor= used to flow straight into ax.hist; it still must."""
+        self.sims.plot(edgecolor="black")
+        self.assertGreater(len(plt.gca().patches), 0)
+
+    def test_step_histogram_outline_is_not_white(self):
+        """histtype='step' draws only its outline, so the white-edge
+        default must not apply -- it would be invisible on the white
+        background."""
+        self.sims.plot(histtype="step")
+        edge = plt.gca().patches[0].get_edgecolor()
+        self.assertNotEqual(tuple(edge[:3]), (1.0, 1.0, 1.0))
+
+    def test_single_hist_has_no_legend(self):
+        self.sims.plot()
+        self.assertIsNone(plt.gca().get_legend())
+
+    def test_overlaid_hists_get_variable_k_legend(self):
+        self.sims.plot()
+        RV(Normal(3, 1)).sim(600).plot()
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Variable 2"])
+
+    def test_hist_label_override(self):
+        self.sims.plot()
+        RV(Normal(3, 1)).sim(600).plot(label="Second")
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertIn("Second", labels)
+
+
+class TestPlot1DDensityFeatures(PlotTestCase):
+    """The integrated make_density: styling, bandwidth, discrete pmf."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(Normal(0, 1)).sim(600)
+
+    def test_density_title_and_xlabel(self):
+        self.sims.plot(type="density")
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Density Curve")
+        self.assertEqual(ax.get_xlabel(), "Value")
+
+    def test_density_default_alpha_opaque(self):
+        self.sims.plot(type="density")
+        alpha = plt.gca().lines[0].get_alpha()
+        self.assertTrue(alpha is None or alpha == 1.0)
+
+    def test_density_bandwidth_changes_curve(self):
+        self.sims.plot(type="density")
+        default_y = plt.gca().lines[0].get_ydata().copy()
+        plt.close("all")
+        self.sims.plot(type="density", bandwidth=0.1)
+        rough_y = plt.gca().lines[0].get_ydata()
+        self.assertFalse(np.allclose(default_y, rough_y))
+
+    def test_density_overlay_gets_legend(self):
+        self.sims.plot(type="density")
+        RV(Normal(3, 1)).sim(600).plot(type="density")
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Variable 2"])
+
+    def test_discrete_density_still_dot_line_pmf(self):
+        """type='density' on discrete data keeps the dot-line pmf plot."""
+        RV(Binomial(n=10, p=0.4)).sim(500).plot(type="density")
+        ax = plt.gca()
+        self.assertEqual(len(ax.lines), 1)
+        self.assertEqual(ax.get_ylabel(), "Relative Frequency")
+
+
+class TestPlot1DDotplot(PlotTestCase):
+    """The new type='dotplot' (stacked dot plot)."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(BoxModel([1, 2, 3, 4, 5, 6])).sim(30)
+
+    def test_dotplot_draws_one_dot_per_observation(self):
+        self.sims.plot(type="dotplot")
+        offsets = plt.gca().collections[0].get_offsets()
+        self.assertEqual(len(offsets), 30)
+
+    def test_dotplot_labels_and_title(self):
+        self.sims.plot(type="dotplot")
+        ax = plt.gca()
+        self.assertEqual(ax.get_xlabel(), "Value")
+        self.assertEqual(ax.get_ylabel(), "Count")
+        self.assertEqual(ax.get_title(), "Dot Plot")
+
+    def test_dotplot_default_type_unchanged(self):
+        """Discrete data still defaults to impulse, not dotplot."""
+        self.sims.plot()
+        segs = plt.gca().collections[0].get_segments()
+        self.assertGreater(len(segs), 0)
+
+    def test_dotplot_overlay_dodges_and_gets_legend(self):
+        self.sims.plot(type="dotplot")
+        RV(BoxModel([1, 2, 3, 4, 5, 6])).sim(30).plot(type="dotplot")
+        ax = plt.gca()
+        self.assertEqual(len([c for c in ax.collections if len(c.get_offsets())]), 2)
+        legend = ax.get_legend()
+        self.assertIsNotNone(legend)
+        # Boundary lines between stacks appear only for overlays.
+        self.assertGreater(len(ax.lines), 0)
+
+    def test_dotplot_jitter_warns(self):
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="dotplot", jitter=True)
+
+    def test_dotplot_bins_warns(self):
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="dotplot", bins=5)
+
+    def test_dotplot_non_numeric_raises_friendly_error(self):
+        from symbulate.plot import make_dotplot
+
+        with self.assertRaises(TypeError) as cm:
+            make_dotplot(["H", "T", "H"], plt.gca(), "#56B4E9")
+        self.assertIn("tabulate", str(cm.exception))
+
+    def test_dotplot_returns_wrapper(self):
+        p = self.sims.plot(type="dotplot")
+        self.assertIsInstance(p, SymbulatePlot)
+
+
+class TestPlot2DScatterFeatures(PlotTestCase):
+    """The integrated make_scatter: alpha, jitter modes, legend."""
+
+    def setUp(self):
+        np.random.seed(42)
+        X, Y = RV(Normal(0, 1) ** 2)
+        self.sims = (X & Y).sim(100)
+        Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+        self.discrete_sims = (Xd & Yd).sim(40)
+
+    def test_scatter_default_alpha(self):
+        self.sims.plot(type="scatter")
+        self.assertAlmostEqual(plt.gca().collections[0].get_alpha(), 0.25)
+
+    def test_scatter_axis_labels_and_title(self):
+        self.sims.plot(type="scatter")
+        ax = plt.gca()
+        self.assertEqual(ax.get_xlabel(), "Variable 1")
+        self.assertEqual(ax.get_ylabel(), "Variable 2")
+        self.assertEqual(ax.get_title(), "2D Scatter Plot")
+
+    def test_scatter_jitter_true_still_works(self):
+        self.discrete_sims.plot(type="scatter", jitter=True)
+        self.assertGreater(len(plt.gca().collections), 0)
+
+    def test_scatter_jitter_spiral(self):
+        self.discrete_sims.plot(type="scatter", jitter="spiral")
+        self.assertGreater(len(plt.gca().collections), 0)
+
+    def test_scatter_jitter_bins(self):
+        self.discrete_sims.plot(type="scatter", jitter="bins")
+        self.assertGreater(len(plt.gca().collections), 0)
+
+    def test_scatter_invalid_jitter_raises_friendly_error(self):
+        with self.assertRaises(ValueError) as cm:
+            self.discrete_sims.plot(type="scatter", jitter="wiggle")
+        self.assertIn("spiral", str(cm.exception))
+
+    def test_scatter_overlay_gets_legend(self):
+        self.sims.plot(type="scatter")
+        X, Y = RV(Normal(2, 1) ** 2)
+        (X & Y).sim(100).plot(type="scatter")
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Variable 2"])
+
+    def test_scatter_user_marker_size_does_not_raise(self):
+        """s= used to flow straight into ax.scatter; it still must."""
+        self.sims.plot(type="scatter", s=100)
+        self.assertGreater(len(plt.gca().collections), 0)
+
+
+class TestPlot2DMeshFeatures(PlotTestCase):
+    """The integrated 2D hist / density / tile helpers."""
+
+    def setUp(self):
+        np.random.seed(42)
+        X, Y = RV(Normal(0, 1) ** 2)
+        self.sims = (X & Y).sim(500)
+        Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+        self.discrete_sims = (Xd & Yd).sim(500)
+        Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
+        self.mixed_sims = (Xm & Ym).sim(500)
+
+    def test_hist2d_normalize_true_now_works(self):
+        """normalize=True previously crashed in the colorbar code."""
+        self.sims.plot(type="hist", normalize=True)
+        self.assertGreater(len(plt.gca().collections), 0)
+
+    def test_hist2d_colorbar_label(self):
+        self.sims.plot(type="hist")
+        cax = plt.gcf().axes[-1]
+        self.assertEqual(cax.get_ylabel(), "Density")
+
+    def test_hist2d_gca_restored_after_colorbar(self):
+        """After a 2D hist, gca() must be the data axes, not the colorbar."""
+        p = self.sims.plot(type="hist")
+        self.assertIs(plt.gca(), p.ax)
+
+    def test_hist2d_hex_option(self):
+        self.sims.plot(type="hist", hex=True)
+        self.assertEqual(plt.gca().get_title(), "Hexbin Plot")
+
+    def test_hist2d_title(self):
+        self.sims.plot(type="hist")
+        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+
+    def test_density2d_draws_contour_surface(self):
+        self.sims.plot(type="density")
+        ax = plt.gca()
+        self.assertGreater(len(ax.collections + ax.images), 0)
+        self.assertEqual(ax.get_title(), "2D Density Plot")
+
+    def test_density2d_contour_mode(self):
+        self.sims.plot(type="density", contour=True)
+        self.assertEqual(plt.gca().get_title(), "Contour Plot")
+
+    def test_density2d_levels_without_contour_warns(self):
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="density", levels=5)
+
+    def test_density2d_bad_levels_raises_friendly_error(self):
+        with self.assertRaises(ValueError) as cm:
+            self.sims.plot(type="density", contour=True, levels=1)
+        self.assertIn("levels", str(cm.exception))
+
+    def test_tile_normalize_false_colorbar_label(self):
+        self.discrete_sims.plot(type="tile", normalize=False)
+        cax = plt.gcf().axes[-1]
+        self.assertEqual(cax.get_ylabel(), "Count")
+
+    def test_tile_bins_with_two_discrete_warns(self):
+        with self.assertWarns(UserWarning):
+            self.discrete_sims.plot(type="tile", bins=5)
+
+    def test_tile_mixed_discrete_continuous(self):
+        """Tile plots now bin a continuous axis instead of failing."""
+        self.mixed_sims.plot(type="tile")
+        ax = plt.gca()
+        self.assertGreater(len(ax.images), 0)
+
+    def test_segmented_rug_mixed_data(self):
+        """type='rug' on 2D mixed data draws one band per discrete level."""
+        self.mixed_sims.plot(type="rug")
+        ax = plt.gca()
+        self.assertGreater(len(ax.collections), 0)
+        self.assertEqual(ax.get_title(), "Segmented Rug Plot")
+
+    def test_segmented_rug_two_discrete_raises_friendly_error(self):
+        with self.assertRaises(ValueError) as cm:
+            self.discrete_sims.plot(type="rug")
+        self.assertIn("tile", str(cm.exception))
+
+    def test_marginal_hist_combo_still_draws(self):
+        self.sims.plot(type=("marginal", "hist"))
+        self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
 
 # ===========================================================================
