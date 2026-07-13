@@ -18,6 +18,13 @@ per-plot-type values (alpha, tick height, line width) are the named
 constants below, which migrate to the top of ``symbulate/plot.py`` at
 integration time.
 
+This file also provides ``make_segmented_rug()`` for mixed
+discrete/continuous data -- the small-n counterpart of the mixed tile
+plot. Instead of binning the continuous variable, it draws one rug of
+the continuous values per discrete level, with the bands stacked along
+whichever axis is discrete (mirroring the tile plot's orientation). See
+its docstring for details.
+
 Run this file directly to render the prototype:
 
     python team/new_graphics/rug.py
@@ -107,7 +114,9 @@ def make_rug(values, ax, color, alpha=None, label=None, **kwargs):
 
     # Check if this is a standalone rug plot (nothing else on the axes yet)
     # or an overlay on another plot type.
-    is_standalone = len(ax.patches) == 0 and len(ax.lines) == 0 and len(ax.collections) == 0
+    is_standalone = (
+        len(ax.patches) == 0 and len(ax.lines) == 0 and len(ax.collections) == 0
+    )
 
     rug = ax.vlines(
         np.asarray(values),
@@ -141,6 +150,174 @@ def make_rug(values, ax, color, alpha=None, label=None, **kwargs):
     return rug
 
 
+def make_segmented_rug(
+    x, y, ax, color, alpha=None, discrete_x=None, discrete_y=None, **kwargs
+):
+    """Draw a segmented rug plot for mixed discrete/continuous data.
+
+    The small-n counterpart of the mixed tile plot: instead of binning the
+    continuous variable, every simulated value is drawn as a rug tick, and
+    the ticks are grouped into one band per level of the discrete variable.
+    A student can see each individual data point while still reading how the
+    continuous variable is distributed within each discrete level.
+
+    The orientation follows which variable is discrete, mirroring the mixed
+    tile plot so the small-n and large-n views of the same data line up:
+
+    - discrete ``y``, continuous ``x``: one band per y-level stacked
+      vertically, with vertical ticks along x.
+    - discrete ``x``, continuous ``y``: one band per x-level stacked
+      horizontally, with horizontal ticks along y.
+
+    Either way the ticks run perpendicular to the continuous value axis,
+    marking each observation's position along it inside its band. The
+    discrete axis is labeled with the level values; the continuous axis
+    keeps ordinary numeric ticks. The tick marks rise from each level's
+    baseline and are the same small size as the 1D ``make_rug`` ticks
+    (``RUG_TICK_HEIGHT``).
+
+    This plot is only for mixed data -- exactly one discrete variable and
+    one continuous variable. Two discrete variables should use a tile plot,
+    and two continuous variables a scatter plot.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` -- pass the result in as ``color``. This mirrors
+    how ``make_rug`` and the other plot helpers are called.
+
+    Parameters
+    ----------
+    x : array-like
+        Simulated values for the horizontal axis, e.g. the first column of
+        ``RVResults.array``. Discrete or continuous.
+    y : array-like
+        Simulated values for the vertical axis, same length as ``x``.
+        Discrete or continuous.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Color for the tick marks, from ``get_next_color(ax)``.
+    alpha : float, optional
+        Tick transparency between 0 and 1. Defaults to the package standard
+        for rug plots (``RUG_ALPHA``, 0.5), so stacked values read as darker.
+    discrete_x : bool, optional
+        Whether the x-axis is the discrete (grouping) variable. If None
+        (default), detected from the data: float values are treated as
+        continuous, everything else (int, bool, string) as discrete.
+    discrete_y : bool, optional
+        Same as ``discrete_x`` for the y-axis.
+    **kwargs
+        Additional keyword arguments passed to ``matplotlib``.
+
+    Returns
+    -------
+    list of matplotlib.collections.LineCollection
+        The tick collections, one per discrete level, so the caller can
+        inspect or further style them.
+
+    Raises
+    ------
+    ValueError
+        If the two variables are not one discrete and one continuous.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> rng = np.random.default_rng()
+    >>> x = rng.normal(0, 1, 60)     # continuous
+    >>> y = rng.integers(0, 4, 60)   # discrete groups
+    >>> make_segmented_rug(x, y, plt.gca(), "#56B4E9")  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = RUG_ALPHA
+    xs, ys = np.asarray(x), np.asarray(y)
+    if discrete_x is None:
+        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+    if discrete_y is None:
+        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+
+    # A segmented rug needs one discrete variable (the groups) and one
+    # continuous variable (the values). Anything else is a different plot.
+    if discrete_x == discrete_y:
+        if discrete_x:
+            raise ValueError(
+                "A segmented rug plot needs one discrete variable and one "
+                "continuous variable, but both of yours look discrete. Try a "
+                "tile plot for two discrete variables."
+            )
+        raise ValueError(
+            "A segmented rug plot needs one discrete variable and one "
+            "continuous variable, but both of yours look continuous. Try a "
+            "scatter plot for two continuous variables."
+        )
+
+    # The discrete variable defines the bands; the continuous variable is the
+    # value axis. Vertical ticks when the continuous axis is x, horizontal
+    # ticks when it is y -- the ticks always run perpendicular to the value
+    # axis, mirroring the mixed tile plot's orientation.
+    if discrete_y:
+        levels = np.unique(ys)
+        continuous, groups = xs, ys
+    else:
+        levels = np.unique(xs)
+        continuous, groups = ys, xs
+
+    # Make the ticks the same visual size as the 1D make_rug ticks
+    # (RUG_TICK_HEIGHT, a fraction of the axes). The discrete axis is fixed
+    # below to span len(levels) data units, so RUG_TICK_HEIGHT * len(levels)
+    # data units is that same fraction of the axes. Ticks rise from each
+    # level's baseline, so every band reads as its own small 1D rug.
+    tick_len = RUG_TICK_HEIGHT * len(levels)
+    ticks = []
+    for i, level in enumerate(levels):
+        values = continuous[groups == level]
+        if discrete_y:
+            ticks.append(
+                ax.vlines(
+                    values,
+                    i,
+                    i + tick_len,
+                    color=color,
+                    alpha=alpha,
+                    linewidth=RUG_LINEWIDTH,
+                    **kwargs,
+                )
+            )
+        else:
+            ticks.append(
+                ax.hlines(
+                    values,
+                    i,
+                    i + tick_len,
+                    color=color,
+                    alpha=alpha,
+                    linewidth=RUG_LINEWIDTH,
+                    **kwargs,
+                )
+            )
+
+    # Label the discrete axis with the level values (one tick per band) and
+    # give it a little padding so the outer bands aren't clipped; the
+    # continuous axis keeps matplotlib's numeric ticks. Axis labels match the
+    # mixed tile plot's "X"/"Y".
+    positions = np.arange(len(levels))
+    if discrete_y:
+        ax.set_yticks(positions)
+        ax.set_yticklabels(levels)
+        ax.set_ylim(-0.5, len(levels) - 0.5)
+    else:
+        ax.set_xticks(positions)
+        ax.set_xticklabels(levels)
+        ax.set_xlim(-0.5, len(levels) - 0.5)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title("Segmented Rug Plot")
+    # A rug reads cleanest without a reference grid behind the sparse ticks
+    # (the same choice as the standalone 1D rug).
+    ax.grid(False)
+    return ticks
+
+
 if __name__ == "__main__":
     # Reproduce the approved prototype image with fake data.
     from pathlib import Path
@@ -169,5 +346,18 @@ if __name__ == "__main__":
     ax = plt.gca()
     make_rug(rng.normal(0, 1, 60), ax, "#56B4E9")
     make_rug(rng.normal(1.5, 0.5, 60), ax, "#E69F00")
+
+    # Figure 3: segmented rug for mixed data -- discrete y (Poisson levels),
+    # continuous x (Normal). Bands stack vertically; ticks are vertical.
+    plt.figure()
+    ax = plt.gca()
+    groups = rng.integers(0, 4, 200)
+    make_segmented_rug(rng.normal(0, 1, 200) + groups, groups, ax, "#56B4E9")
+
+    # Figure 4: the same data with the axes swapped -- discrete x, continuous
+    # y -- so the bands stack horizontally and the ticks are horizontal.
+    plt.figure()
+    ax = plt.gca()
+    make_segmented_rug(groups, rng.normal(0, 1, 200) + groups, ax, "#56B4E9")
 
     plt.show()
