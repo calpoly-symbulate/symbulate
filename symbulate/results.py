@@ -29,7 +29,6 @@ from .base import (
 )
 from .plot import (
     configure_axes,
-    init_color,
     get_next_color,
     is_discrete,
     count_var,
@@ -46,13 +45,9 @@ from .plot import (
 from .result import Scalar, Vector, TimeFunction, is_number, is_numeric_vector
 from .table import Table
 
-stylesheet = (
-    "seaborn-v0_8-colorblind"
-    if "seaborn-v0_8-colorblind" in plt.style.available
-    else "ggplot"
-)
-
-plt.style.use(stylesheet)
+# The package style (symbulate.mplstyle) is applied when .plot is
+# imported above -- see plot.py and DECISIONS.md, "Decision: .mplstyle
+# Standards".
 
 
 def _is_hashable(obj):
@@ -940,7 +935,6 @@ class RVResults(Results):
         Initialize simulation results for a random variable.
         """
         super().__init__(results, sim_id)
-        init_color()
         # get type and dimension of the first result, if it exists
         self.dim = None
         self.index_set = None

@@ -1,11 +1,24 @@
-import numpy as np
-import matplotlib.colors as colors
-import matplotlib.pyplot as plt
-from matplotlib import colormaps as cm
 import itertools
+import os
+import warnings
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.stats import gaussian_kde
 from scipy.interpolate import make_interp_spline
-from cycler import cycler
+
+# Apply the package style: Okabe-Ito categorical palette (sky blue
+# first), viridis sequential colormap, and the shared figure/spine/grid
+# defaults. Every value that applies the same way across all plot types
+# lives in this file; per-plot-type values are the named constants
+# below. See DECISIONS.md, "Decision: Visual Style Guide" and
+# "Decision: .mplstyle Standards".
+plt.style.use(os.path.join(os.path.dirname(__file__), "symbulate.mplstyle"))
+
+rng = np.random.default_rng()
 
 figure = plt.figure
 
@@ -14,14 +27,6 @@ ylabel = plt.ylabel
 
 xlim = plt.xlim
 ylim = plt.ylim
-
-color_index = 0
-color_cycle = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
-
-
-def init_color():
-    hex_list = [colors.rgb2hex(rgb) for rgb in cm["tab10"].colors]
-    plt.rcParams["axes.prop_cycle"] = cycler("color", hex_list)
 
 
 def get_next_color(axes):
