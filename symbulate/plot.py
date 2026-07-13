@@ -1,11 +1,8 @@
 import numpy as np
-import matplotlib.colors as colors
 import matplotlib.pyplot as plt
-from matplotlib import colormaps as cm
 import itertools
 from scipy.stats import gaussian_kde
 from scipy.interpolate import make_interp_spline
-from cycler import cycler
 
 figure = plt.figure
 
@@ -17,11 +14,6 @@ ylim = plt.ylim
 
 color_index = 0
 color_cycle = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
-
-
-def init_color():
-    hex_list = [colors.rgb2hex(rgb) for rgb in cm["tab10"].colors]
-    plt.rcParams["axes.prop_cycle"] = cycler("color", hex_list)
 
 
 def get_next_color(axes):
@@ -209,7 +201,7 @@ def make_tile(x, y, bins, discrete_x, discrete_y, ax):
         x_lab = np.around(x_lab, decimals=1)
     if not discrete_y:
         y_lab = np.around(y_lab, decimals=1)
-    hm = ax.matshow(intensity, cmap="Blues", origin="lower", aspect="auto", vmin=0)
+    hm = ax.matshow(intensity, origin="lower", aspect="auto", vmin=0)
     ax.xaxis.set_ticks_position("bottom")
     setup_ticks(x_pos, x_lab, ax.xaxis)
     setup_ticks(y_pos, y_lab, ax.yaxis)
@@ -486,7 +478,6 @@ def make_density2D(x, y, ax):
     den = ax.imshow(
         Z.reshape(Xgrid.shape),
         origin="lower",
-        cmap="Blues",
         aspect="auto",
         extent=[xmin, xmax, ymin, ymax],
     )
