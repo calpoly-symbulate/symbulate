@@ -113,10 +113,19 @@ class TestPlot1DDiscrete(PlotTestCase):
         self.assertGreater(len(ax.collections), 0)
         self.assertEqual(len(ax.patches), 0)
 
-    def test_impulse_with_jitter(self):
-        """Jitter flag should still produce a LineCollection."""
-        self.sims.plot(jitter=True)
-        self.assertGreater(len(plt.gca().collections), 0)
+    def test_impulse_with_jitter_warns(self):
+        """jitter has no effect on impulse plots; passing it should warn."""
+        with self.assertWarns(UserWarning):
+            self.sims.plot(jitter=True)
+
+    def test_impulse_with_jitter_stems_unperturbed(self):
+        """Despite the warning, stems still land at the exact integer values."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            self.sims.plot(jitter=True)
+        segs = plt.gca().collections[0].get_segments()
+        xs = [seg[0][0] for seg in segs]
+        self.assertTrue(all(float(x).is_integer() for x in xs))
 
 
 # ===========================================================================

@@ -40,6 +40,7 @@ from .plot import (
     make_violin,
     make_marginal_impulse,
     make_density2D,
+    make_impulse,
     SymbulatePlot,
 )
 from .result import Scalar, Vector, TimeFunction, is_number, is_numeric_vector
@@ -1266,8 +1267,10 @@ class RVResults(Results):
             If True, plot relative frequencies or densities. If
             False, plot raw counts.
         jitter : bool, default False
-            If True, add small random noise to discrete values
-            to reduce overplotting.
+            If True, add small random noise to discrete values in a
+            2D scatter plot to reduce overplotting. Has no effect on
+            1D impulse plots -- overlaid impulse plots already spread
+            their stems apart automatically.
         bins : int, optional
             Number of bins for histograms or tile plots.
             Defaults to 30 for 1-D histograms and 10 for tiles.
@@ -1343,8 +1346,19 @@ class RVResults(Results):
             discrete = is_discrete(counts.values())
             if type is None:
                 type = ("impulse",) if discrete else ("hist",)
-            if alpha is None:
+            # Impulse plots default to IMPULSE_ALPHA (fully opaque) inside
+            # make_impulse(), since stems don't have the overplotting risk
+            # that motivates 0.5 for histograms/scatter/density.
+            if alpha is None and "impulse" not in type:
                 alpha = 0.5
+            if jitter and "impulse" in type:
+                warnings.warn(
+                    "jitter has no effect on impulse plots. Overlaid impulse "
+                    "plots already spread their stems apart automatically. "
+                    "jitter still applies to 2D scatter plots.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             if bins is None:
                 bins = 30
             n = len(self)
@@ -1379,17 +1393,13 @@ class RVResults(Results):
                 )
                 plt.ylabel("Density" if normalize else "Count")
             elif "impulse" in type:
-                xs = list(counts.keys())
-                freqs = list(counts.values())
-                if normalize:
-                    freqs = [freq / n for freq in freqs]
-                if jitter:
-                    a = 0.02 * (max(xs) - min(xs))
-                    xs = [x + rng.uniform(low=-a, high=a) for x in xs]
-                # plot the impulses
-                ax.vlines(xs, 0, freqs, color=color, alpha=alpha, **kwargs)
-                configure_axes(
-                    ax, xs, freqs, ylabel="Relative Frequency" if normalize else "Count"
+                make_impulse(
+                    _plot_array,
+                    ax,
+                    color,
+                    normalize=normalize,
+                    alpha=alpha,
+                    **kwargs,
                 )
             if "rug" in type:
                 xs = _plot_array
