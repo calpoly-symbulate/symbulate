@@ -6,6 +6,7 @@ probability space or realizations of a random variable /
 random process.
 """
 
+import os
 import sys
 import time
 import warnings
@@ -29,7 +30,6 @@ from .base import (
 )
 from .plot import (
     configure_axes,
-    init_color,
     get_next_color,
     is_discrete,
     count_var,
@@ -46,13 +46,7 @@ from .plot import (
 from .result import Scalar, Vector, TimeFunction, is_number, is_numeric_vector
 from .table import Table
 
-stylesheet = (
-    "seaborn-v0_8-colorblind"
-    if "seaborn-v0_8-colorblind" in plt.style.available
-    else "ggplot"
-)
-
-plt.style.use(stylesheet)
+plt.style.use(os.path.join(os.path.dirname(__file__), "symbulate.mplstyle"))
 
 
 def _is_hashable(obj):
@@ -940,7 +934,6 @@ class RVResults(Results):
         Initialize simulation results for a random variable.
         """
         super().__init__(results, sim_id)
-        init_color()
         # get type and dimension of the first result, if it exists
         self.dim = None
         self.index_set = None
@@ -1497,10 +1490,10 @@ class RVResults(Results):
                 ax.scatter(x, y, alpha=alpha, color=color, **kwargs)
             elif "hist" in type:
                 if normalize:
-                    histo = ax.hist2d(x, y, bins=bins, cmap="Blues", density=True)
+                    histo = ax.hist2d(x, y, bins=bins, density=True)
                     add_colorbar(fig, type, histo[3], "Density")
                 else:
-                    histo = ax.hist2d(x, y, bins=bins, cmap="Blues")
+                    histo = ax.hist2d(x, y, bins=bins)
                     add_colorbar(fig, type, histo[3], "Count")
             elif "density" in type:
                 den = make_density2D(x, y, ax)
