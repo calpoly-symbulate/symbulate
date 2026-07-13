@@ -6,9 +6,9 @@ Staging code -- not yet wired into the package. The goal is that
 the current ``make_density2D`` in ``symbulate/plot.py`` (``imshow``-based,
 raw min/max grid, hardcoded ``cmap="Blues"``, no colorbar helper).
 
-Both the smooth density look and the banded contour look come from the
-*same* underlying KDE surface -- only the rendering (fill level count,
-white outline overlay) and title differ. ``contour=True`` does not switch
+Both modes render the *same* underlying KDE surface as ``levels``
+discrete color bands (default ``DENSITY2D_LEVELS = 8``) -- only the white
+outline overlay and the title differ. ``contour=True`` does not switch
 to a different statistic (e.g. raw bin counts): the colorbar always reads
 "Density" since that's what's actually computed, matching the existing
 ``add_colorbar(fig, type, den, "Density")`` call for this plot type in
@@ -16,10 +16,13 @@ to a different statistic (e.g. raw bin counts): the colorbar always reads
 contour mode instead, that's a separate design decision -- flag it before
 integration.
 
-Visual target: the two approved reference images -- a smooth "2D Density
-Plot" (``contour=False``, ~100 fill levels so band edges disappear) and a
-banded "Contour Plot" (``contour=True``, ~12 fill levels with thin white
-outlines between bands, topographic look). Per DECISIONS.md's 2D density
+Visual target: a banded "2D Density Plot" (``contour=False``) and a
+banded "Contour Plot" (``contour=True``, same bands plus thin white
+outlines between them, topographic look). This replaces the earlier
+draft's smooth ~100-level density mode: the team decided the density
+plot should use a small number of discrete color values so bands can be
+matched to the colorbar by eye, starting with a default of 8 (to be
+revisited if it doesn't look good). Per DECISIONS.md's 2D density
 prototype findings: ``contourf`` (not ``imshow``) is the correct rendering
 approach, axis limits are quantile-based rather than raw min/max, the KDE
 grid is 300x300 minimum, and low-density values are clipped so they don't
@@ -34,6 +37,7 @@ Run this file directly to render the prototype:
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import FuncFormatter
 from scipy.stats import gaussian_kde
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -50,14 +54,16 @@ DENSITY2D_PADDING_FRAC = 0.1  # same rationale as the 1D density case in
 # doesn't stretch the axes
 DENSITY2D_VMIN_FRAC = 0.02  # DECISIONS.md: clip below Z.max() * 0.02 so
 # low-density regions don't wash out the color scale
-DENSITY2D_SMOOTH_LEVELS = 100  # many fill levels -> band edges vanish,
-# reproduces the smooth "2D Density Plot" reference image
-DENSITY2D_CONTOUR_LEVELS = 12  # few fill levels -> visible topographic
-# bands, reproduces the "Contour Plot" reference image
+DENSITY2D_LEVELS = 8  # default number of discrete color bands, shared by
+# both modes (levels= overrides per call). 8 is the team's first guess --
+# revisit after seeing the demos if it doesn't look good.
 DENSITY2D_CONTOUR_LINE_COLOR = "white"
 DENSITY2D_CONTOUR_LINEWIDTH = 0.3  # DECISIONS.md: thin white lines
 # between bands improve readability
 DENSITY2D_CONTOUR_LINE_ALPHA = 0.4
+DENSITY2D_CBAR_FALLBACK_DECIMALS = 3  # colorbar tick labels are rounded
+# dynamically (just enough decimals to tell adjacent band edges apart);
+# this is the fallback when that can't be computed
 
 
 def _density2d_grid(x, y):
@@ -93,23 +99,28 @@ def _density2d_grid(x, y):
     return Xgrid, Ygrid, Z, (xmin, xmax, ymin, ymax)
 
 
-def make_density2D(x, y, ax, contour=False, **kwargs):
-    """Draw a 2D density surface, as smooth shading or banded contours.
+def make_density2D(x, y, ax, contour=False, levels=None, **kwargs):
+    """Draw a 2D density surface as discrete color bands.
 
     Both modes plot the *same* KDE-estimated density surface with
-    ``ax.contourf`` -- only the rendering changes:
+    ``ax.contourf``, quantized into ``levels`` discrete color values so
+    each band can be matched to the colorbar by eye. The only difference
+    between the modes is the rendering:
 
-    - ``contour=False`` (default): many fill levels so band edges are
-      imperceptible, producing the smooth "2D Density Plot" look.
-    - ``contour=True``: few fill levels with thin white outlines between
-      them, producing the banded, topographic "Contour Plot" look.
+    - ``contour=False`` (default): the color bands alone, producing the
+      "2D Density Plot" look.
+    - ``contour=True``: the same bands plus thin white outlines between
+      them, producing the topographic "Contour Plot" look.
 
     The axis limits are quantile-based (0.1st to 99.9th percentile of
     each variable, plus padding), not raw min/max, so outlier-heavy data
     doesn't stretch the plot -- same rationale as the 1D density curve.
     The KDE is evaluated on a 300x300 grid, and values below 2% of the
     peak density are clipped to the bottom of the color scale so
-    low-density regions don't wash it out.
+    low-density regions don't wash it out. Colorbar tick labels are
+    rounded automatically to just enough decimal places to tell adjacent
+    band edges apart (falling back to
+    ``DENSITY2D_CBAR_FALLBACK_DECIMALS`` if that can't be computed).
 
     A second ``make_density2D`` call on the same axes cannot overlay
     naturally -- a filled 2D surface completely obscures whatever was
@@ -126,8 +137,12 @@ def make_density2D(x, y, ax, contour=False, **kwargs):
     ax : matplotlib.axes.Axes
         The axes to draw on.
     contour : bool, default False
-        If True, draw the banded contour-line style instead of the
-        smooth density style.
+        If True, add thin white outlines between the color bands
+        (the "Contour Plot" look).
+    levels : int, optional
+        Number of discrete color values to split the density surface
+        into. Defaults to ``DENSITY2D_LEVELS`` (8). Must be a whole
+        number of at least 2.
     **kwargs
         Additional keyword arguments passed to ``ax.contourf``.
 
@@ -146,6 +161,21 @@ def make_density2D(x, y, ax, contour=False, **kwargs):
     >>> ax = plt.gca()
     >>> make_density2D(x, y, ax)  # doctest: +SKIP
     """
+    if levels is None:
+        levels = DENSITY2D_LEVELS
+    # bool is an int subclass, so check it explicitly -- levels=True would
+    # otherwise slip through as levels=1.
+    if (
+        isinstance(levels, bool)
+        or not isinstance(levels, (int, np.integer))
+        or levels < 2
+    ):
+        raise ValueError(
+            "levels must be a whole number of at least 2 -- it sets how "
+            f"many discrete colors the density surface is split into. You "
+            f"passed levels={levels!r}. Try levels=8 (the default)."
+        )
+
     n_prior = getattr(ax, "_density2d_count", 0)
     if n_prior > 0:
         print(
@@ -159,8 +189,10 @@ def make_density2D(x, y, ax, contour=False, **kwargs):
 
     zmax = Z.max()
     vmin = DENSITY2D_VMIN_FRAC * zmax
-    n_levels = DENSITY2D_CONTOUR_LEVELS if contour else DENSITY2D_SMOOTH_LEVELS
-    levels = np.linspace(vmin, zmax, n_levels)
+    # contourf treats the level values as band *boundaries* (N boundaries
+    # -> N - 1 colors), so build levels + 1 edges to get exactly `levels`
+    # discrete colors.
+    level_edges = np.linspace(vmin, zmax, levels + 1)
     # Clip the surface itself to vmin instead of passing contourf's
     # extend="min": extend draws a triangular arrow cap on the colorbar to
     # flag the clipped range, which reads as an odd, non-rectangular
@@ -169,13 +201,15 @@ def make_density2D(x, y, ax, contour=False, **kwargs):
     # plain rectangle.
     Z_clipped = np.clip(Z, vmin, zmax)
 
-    filled = ax.contourf(Xgrid, Ygrid, Z_clipped, levels=levels, cmap="viridis", **kwargs)
+    filled = ax.contourf(
+        Xgrid, Ygrid, Z_clipped, levels=level_edges, cmap="viridis", **kwargs
+    )
     if contour:
         ax.contour(
             Xgrid,
             Ygrid,
             Z_clipped,
-            levels=levels,
+            levels=level_edges,
             colors=DENSITY2D_CONTOUR_LINE_COLOR,
             linewidths=DENSITY2D_CONTOUR_LINEWIDTH,
             alpha=DENSITY2D_CONTOUR_LINE_ALPHA,
@@ -207,6 +241,19 @@ def make_density2D(x, y, ax, contour=False, **kwargs):
         cax = divider.append_axes("right", size="5%", pad=0.1)
         cbar = plt.colorbar(filled, cax=cax)
         cbar.set_label("Density")
+        # Round the tick labels dynamically: just enough decimal places to
+        # tell adjacent band edges apart (resolution = half the band
+        # spacing), instead of matplotlib's raw unrounded level values.
+        # A formatter (rather than set_ticklabels) keeps matplotlib's
+        # automatic tick thinning working at higher `levels` counts.
+        spacing = level_edges[1] - level_edges[0]
+        if np.isfinite(spacing) and spacing > 0:
+            decimals = int(max(0, np.ceil(-np.log10(spacing / 2))))
+        else:
+            decimals = DENSITY2D_CBAR_FALLBACK_DECIMALS
+        cbar.ax.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
+        )
 
     return filled
 
@@ -224,13 +271,18 @@ if __name__ == "__main__":
     x = rng.normal(0, 1.5, 3000)
     y = 0.7 * x + rng.normal(0, 1.2, 3000)
 
-    # Figure 1: the smooth density prototype (contour=False, default).
+    # Figure 1: the density prototype (contour=False, default 8 bands).
     ax = plt.gca()
     make_density2D(x, y, ax)
 
-    # Figure 2: the banded contour prototype (contour=True).
+    # Figure 2: the contour prototype (contour=True, default 8 bands).
     plt.figure()
     ax = plt.gca()
     make_density2D(x, y, ax, contour=True)
+
+    # Figure 3: a custom band count, for comparing candidate defaults.
+    plt.figure()
+    ax = plt.gca()
+    make_density2D(x, y, ax, levels=16)
 
     plt.show()
