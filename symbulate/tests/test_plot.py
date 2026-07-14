@@ -52,6 +52,7 @@ from symbulate.plot import (
     default_plot_type,
     suggestion_message,
     should_show_suggestion,
+    make_ecdf,
     DEFAULT_PLOT_TYPE,
     PLOT_DISPLAY_NAME,
 )
@@ -621,6 +622,52 @@ class TestPlot1DDensityFeatures(PlotTestCase):
         ax = plt.gca()
         self.assertEqual(len(ax.lines), 1)
         self.assertEqual(ax.get_ylabel(), "Relative Frequency")
+
+
+class TestPlot1DEcdf(PlotTestCase):
+    """The new type='ecdf' (empirical CDF step plot)."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(Normal(0, 1)).sim(200)
+
+    def test_ecdf_draws_one_step_line_with_title(self):
+        self.sims.plot(type="ecdf")
+        ax = plt.gca()
+        self.assertEqual(len(ax.lines), 1)
+        self.assertEqual(ax.get_title(), "ECDF Plot")
+
+    def test_ecdf_axis_labels_normalized(self):
+        self.sims.plot(type="ecdf")
+        ax = plt.gca()
+        self.assertEqual(ax.get_xlabel(), "Value")
+        self.assertEqual(ax.get_ylabel(), "Cumulative Relative Frequency")
+
+    def test_ecdf_ylabel_count_when_not_normalized(self):
+        self.sims.plot(type="ecdf", normalize=False)
+        self.assertEqual(plt.gca().get_ylabel(), "Cumulative Count")
+
+    def test_ecdf_is_monotone_nondecreasing_to_one(self):
+        """A normalized ECDF never decreases and reaches exactly 1.0."""
+        self.sims.plot(type="ecdf")
+        y = plt.gca().lines[0].get_ydata()
+        self.assertTrue(np.all(np.diff(y) >= 0))
+        self.assertAlmostEqual(y[-1], 1.0, places=10)
+
+    def test_ecdf_count_tops_out_at_n(self):
+        self.sims.plot(type="ecdf", normalize=False)
+        y = plt.gca().lines[0].get_ydata()
+        self.assertEqual(y[-1], len(self.sims))
+
+    def test_ecdf_overlay_gets_legend(self):
+        self.sims.plot(type="ecdf")
+        RV(Normal(2, 1)).sim(200).plot(type="ecdf")
+        self.assertIsNotNone(plt.gca().get_legend())
+
+    def test_ecdf_non_numeric_raises_friendly_error(self):
+        with self.assertRaises(TypeError) as cm:
+            make_ecdf(np.array(["H", "T", "H"]), plt.gca(), "#000000")
+        self.assertIn("numeric", str(cm.exception))
 
 
 class TestPlot1DDotplot(PlotTestCase):
