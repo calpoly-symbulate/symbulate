@@ -52,8 +52,11 @@ from symbulate.plot import (
     default_plot_type,
     suggestion_message,
     should_show_suggestion,
+    make_tile,
+    make_segmented_rug,
     DEFAULT_PLOT_TYPE,
     PLOT_DISPLAY_NAME,
+    TILE_DEFAULT_BINS,
 )
 
 # ---------------------------------------------------------------------------
@@ -807,12 +810,89 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         ax = plt.gca()
         self.assertGreater(len(ax.images), 0)
 
+    def test_tile_mixed_draws_separators_on_discrete_axis(self):
+        """A mixed-data tile separates its discrete levels with boundary
+        lines on the discrete axis only: vertical when x is discrete,
+        horizontal when y is discrete."""
+        # mixed_sims is Binomial(5, 0.4) * Normal(0, 1): x is discrete.
+        p = self.mixed_sims.plot(type="tile")
+        vlines = [ln for ln in p.ax.lines if len(set(ln.get_xdata())) == 1]
+        hlines = [ln for ln in p.ax.lines if len(set(ln.get_ydata())) == 1]
+        self.assertGreater(len(vlines), 0)
+        self.assertEqual(len(hlines), 0)
+        # every separator sits on a half-integer cell boundary
+        for ln in vlines:
+            self.assertAlmostEqual(ln.get_xdata()[0] % 1, 0.5)
+        plt.close("all")
+
+        # Swap the order so y is the discrete axis: separators go horizontal.
+        Xc, Yd = RV(Normal(0, 1) * Binomial(5, 0.4))
+        swapped = (Xc & Yd).sim(500)
+        p2 = swapped.plot(type="tile")
+        vlines2 = [ln for ln in p2.ax.lines if len(set(ln.get_xdata())) == 1]
+        hlines2 = [ln for ln in p2.ax.lines if len(set(ln.get_ydata())) == 1]
+        self.assertEqual(len(vlines2), 0)
+        self.assertGreater(len(hlines2), 0)
+
+    def test_tile_two_discrete_has_no_separators(self):
+        """Separator lines are a mixed-data feature; a both-discrete tile
+        stays clean."""
+        p = self.discrete_sims.plot(type="tile")
+        separators = [
+            ln
+            for ln in p.ax.lines
+            if len(set(ln.get_xdata())) == 1 or len(set(ln.get_ydata())) == 1
+        ]
+        self.assertEqual(len(separators), 0)
+
+    def test_tile_fallback_uses_classify_data_not_dtype(self):
+        """A direct make_tile call with unspecified discreteness classifies
+        with classify_data, not the raw dtype: a wide-support integer axis
+        (many distinct values) is treated as continuous and binned into
+        TILE_DEFAULT_BINS cells, not given one skinny cell per value."""
+        rng = np.random.default_rng(0)
+        x = rng.integers(0, 200, 2000)  # int dtype, >40 unique values
+        y = rng.normal(0, 1, 2000)  # continuous
+        mesh = make_tile(x, y, plt.gca())  # discrete_x/discrete_y default None
+        # shape is (ny, nx); a binned (continuous) x axis has TILE_DEFAULT_BINS
+        # columns, whereas the old dtype rule would have made ~200.
+        self.assertEqual(mesh.get_array().shape[1], TILE_DEFAULT_BINS)
+
+    def test_segmented_rug_fallback_uses_classify_data_not_dtype(self):
+        """A direct make_segmented_rug call classifies with classify_data:
+        a wide-support integer variable counts as continuous, so pairing it
+        with another continuous variable raises the friendly two-continuous
+        error instead of drawing hundreds of bands (the old dtype rule
+        would have called the integer axis discrete and drawn them)."""
+        rng = np.random.default_rng(0)
+        x = rng.integers(0, 200, 2000)  # continuous under classify_data
+        y = rng.normal(0, 1, 2000)  # continuous
+        with self.assertRaises(ValueError) as cm:
+            make_segmented_rug(x, y, plt.gca(), "#56B4E9")
+        self.assertIn("continuous", str(cm.exception))
+
     def test_segmented_rug_mixed_data(self):
         """type='rug' on 2D mixed data draws one band per discrete level."""
         self.mixed_sims.plot(type="rug")
         ax = plt.gca()
         self.assertGreater(len(ax.collections), 0)
         self.assertEqual(ax.get_title(), "Segmented Rug Plot")
+
+    def test_segmented_rug_gridlines_on_discrete_axis_only(self):
+        """Gridlines run along the discrete axis only: vertical (x) when x
+        is discrete, horizontal (y) when y is discrete."""
+        # mixed_sims is Binomial(5, 0.4) * Normal(0, 1): x is discrete.
+        p = self.mixed_sims.plot(type="rug")
+        self.assertTrue(all(g.get_visible() for g in p.ax.get_xgridlines()))
+        self.assertFalse(any(g.get_visible() for g in p.ax.get_ygridlines()))
+        plt.close("all")
+
+        # Swap the order so the continuous variable is first: y is discrete.
+        Xc, Yd = RV(Normal(0, 1) * Binomial(5, 0.4))
+        swapped = (Xc & Yd).sim(500)
+        p2 = swapped.plot(type="rug")
+        self.assertFalse(any(g.get_visible() for g in p2.ax.get_xgridlines()))
+        self.assertTrue(all(g.get_visible() for g in p2.ax.get_ygridlines()))
 
     def test_segmented_rug_two_discrete_raises_friendly_error(self):
         with self.assertRaises(ValueError) as cm:
