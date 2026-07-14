@@ -196,6 +196,13 @@ TILE_CBAR_SIZE = "5%"
 TILE_CBAR_PAD = 0.1
 TILE_CBAR_TICKS = 8
 TILE_CBAR_DECIMALS = 3
+# Separator lines drawn on the cell boundaries of the discrete axis of a
+# mixed-data tile plot (one discrete axis, one continuous), so each
+# discrete level reads as its own column/row. White reads clearly on the
+# viridis mesh, matching the density2d contour lines.
+TILE_GRID_LINE_COLOR = "white"
+TILE_GRID_LINE_WIDTH = 1.0
+TILE_GRID_LINE_ALPHA = 0.6
 TILE_OVERLAY_WARNING = (
     "Warning: you drew a second tile plot on the same plot. The two "
     "color scales compete, so the result may be hard to read. Consider "
@@ -522,6 +529,80 @@ def should_show_suggestion(suggest=None):
     return True
 
 
+# Scatter jitter options, in the order they appear in the jitter note.
+JITTER_OPTION_DESCRIPTIONS = {
+    "spiral": 'jitter="spiral" (points sharing a value form a tight, '
+    "countable cluster)",
+    "bins": 'jitter="bins" (points sharing a value fill that value\'s '
+    "box, like a tiny dot histogram)",
+    "random": 'jitter="random" (small random noise)',
+    False: "jitter=False (exact positions -- repeated points draw on "
+    "top of each other)",
+}
+
+
+def jitter_suggestion_message(shown):
+    """Build the jitter note printed under a discrete 2D scatter plot.
+
+    Names the jitter layout the scatter plot is using and lists the
+    other layouts a student can pass, with the exact ``jitter=...``
+    syntax -- the same discovery role the plot-type suggestion message
+    plays for ``type=``.
+
+    Parameters
+    ----------
+    shown : str or bool
+        The jitter mode actually in use: ``"spiral"``, ``"bins"``,
+        ``"random"``, or ``False``.
+
+    Returns
+    -------
+    str
+        A two-line message: the first line names the layout in use,
+        the second lists the other jitter options.
+    """
+    current = JITTER_OPTION_DESCRIPTIONS[shown]
+    others = [
+        text for mode, text in JITTER_OPTION_DESCRIPTIONS.items() if mode != shown
+    ]
+    return f"Currently Using: {current}\nOther Jitter Options: {', '.join(others)}"
+
+
+_jitter_suggestion_shown = False
+
+
+def should_show_jitter_suggestion(suggest=None):
+    """Decide whether to print the jitter note on this ``.plot()`` call.
+
+    Same policy as ``should_show_suggestion``, tracked with its own
+    session flag so the first *scatter* of the session still shows the
+    jitter note even if the plot-type message already appeared under an
+    earlier plot.
+
+    Parameters
+    ----------
+    suggest : bool or None, optional
+        ``None`` (default): show only on the first jittered scatter of
+        the session. ``True``: show on every call. ``False``: never
+        show.
+
+    Returns
+    -------
+    bool
+        Whether to print the jitter note.
+    """
+    global _jitter_suggestion_shown
+    if suggest is False:
+        return False
+    if suggest is True:
+        _jitter_suggestion_shown = True
+        return True
+    if _jitter_suggestion_shown:
+        return False
+    _jitter_suggestion_shown = True
+    return True
+
+
 def count_var(x):
     counts = {}
     for val in x:
@@ -645,7 +726,10 @@ def make_tile(
     uses -- and labeled like a numeric histogram axis. This covers
     both two-discrete-variable data and the mixed case (one discrete
     axis, one continuous axis); continuous-x-continuous data is routed
-    to ``hist2d`` / ``density2d`` instead.
+    to ``hist2d`` / ``density2d`` instead. On the mixed case, separator
+    lines are drawn on the discrete axis' cell boundaries (vertical when
+    x is discrete, horizontal when y is discrete) so each discrete level
+    reads as its own column or row.
 
     Unlike the 1D plot types, a tile plot encodes magnitude with a
     colormap instead of the categorical color cycle, so no ``color``
@@ -677,9 +761,8 @@ def make_tile(
         two discrete variables has no effect and raises a warning.
     discrete_x : bool, optional
         Whether the x-axis is discrete (one cell per value) or
-        continuous (binned). If None (default), detected from the
-        data: float values are treated as continuous, everything else
-        (int, bool, string) as discrete.
+        continuous (binned). If None (default), determined by
+        ``classify_data``, the package-wide discreteness check.
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
     colorbar : bool, default True
@@ -715,15 +798,16 @@ def make_tile(
     >>> make_tile(x, y, plt.gca())  # doctest: +SKIP
     """
     xs, ys = np.asarray(x), np.asarray(y)
-    # Auto-detect which axes are continuous (and so need binning) from
-    # their dtype: float is treated as continuous, everything else
-    # (int, bool, string/object) as discrete. The caller can override
-    # either decision with discrete_x / discrete_y -- RVResults.plot()
-    # passes its own discreteness determination explicitly.
+    # Auto-detect which axes are discrete with classify_data, the
+    # package-wide discreteness check, when the caller doesn't say.
+    # RVResults.plot() passes its own classify_data determination in
+    # explicitly; this fallback keeps a direct make_tile() call
+    # consistent with it (e.g. a wide-support integer axis is binned as
+    # continuous rather than given one skinny cell per value).
     if discrete_x is None:
-        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+        discrete_x = classify_data(xs)[0]
     if discrete_y is None:
-        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+        discrete_y = classify_data(ys)[0]
 
     # bins only bins a continuous axis. With two discrete variables
     # there is nothing to bin -- every distinct value already gets its
@@ -789,6 +873,22 @@ def make_tile(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Tile Plot")
+    # On mixed data (exactly one discrete axis), draw separator lines on
+    # the discrete axis' cell boundaries -- halfway between neighboring
+    # level indices -- so each level reads as its own column or row. The
+    # lines span the continuous axis and sit on top of the mesh. Vertical
+    # lines when x is the discrete axis, horizontal when y is.
+    # Both-discrete and both-continuous tiles are left clean.
+    if discrete_x != discrete_y:
+        n_levels = nx if discrete_x else ny
+        draw_line = ax.axvline if discrete_x else ax.axhline
+        for boundary in np.arange(n_levels - 1) + 0.5:
+            draw_line(
+                boundary,
+                color=TILE_GRID_LINE_COLOR,
+                linewidth=TILE_GRID_LINE_WIDTH,
+                alpha=TILE_GRID_LINE_ALPHA,
+            )
     if colorbar:
         # Colorbar on the right, sized relative to the axes so it
         # tracks figure resizing (the approved replacement for the old
@@ -1554,10 +1654,12 @@ def make_segmented_rug(
 
     Either way the ticks run perpendicular to the continuous value
     axis, marking each observation's position along it inside its
-    band. The discrete axis is labeled with the level values; the
-    continuous axis keeps ordinary numeric ticks. The tick marks rise
-    from each level's baseline and are the same small size as the 1D
-    ``make_rug`` ticks (``RUG_TICK_HEIGHT``).
+    band. The discrete axis is labeled with the level values and gets a
+    reference gridline at each level (vertical lines when x is discrete,
+    horizontal when y is discrete); the continuous axis keeps ordinary
+    numeric ticks and no gridlines. The tick marks rise from each
+    level's baseline and are the same small size as the 1D ``make_rug``
+    ticks (``RUG_TICK_HEIGHT``).
 
     This plot is only for mixed data -- exactly one discrete variable
     and one continuous variable. Two discrete variables should use a
@@ -1586,9 +1688,8 @@ def make_segmented_rug(
         read as darker.
     discrete_x : bool, optional
         Whether the x-axis is the discrete (grouping) variable. If
-        None (default), detected from the data: float values are
-        treated as continuous, everything else (int, bool, string) as
-        discrete.
+        None (default), determined by ``classify_data``, the
+        package-wide discreteness check.
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
     **kwargs
@@ -1618,10 +1719,14 @@ def make_segmented_rug(
         alpha = RUG_ALPHA
     kwargs.setdefault("linewidth", RUG_LINEWIDTH)
     xs, ys = np.asarray(x), np.asarray(y)
+    # Fall back to classify_data, the package-wide discreteness check,
+    # when the caller doesn't specify. RVResults.plot() passes its own
+    # classify_data determination in explicitly; this keeps a direct
+    # make_segmented_rug() call consistent with it.
     if discrete_x is None:
-        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+        discrete_x = classify_data(xs)[0]
     if discrete_y is None:
-        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+        discrete_y = classify_data(ys)[0]
 
     # A segmented rug needs one discrete variable (the groups) and one
     # continuous variable (the values). Anything else is a different
@@ -1700,9 +1805,15 @@ def make_segmented_rug(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Segmented Rug Plot")
-    # A rug reads cleanest without a reference grid behind the sparse
-    # ticks (the same choice as the standalone 1D rug).
+    # Reference gridlines run along the discrete axis only -- one line
+    # per level, so the bands read as distinct groups -- while the
+    # continuous value axis stays clean like the standalone 1D rug.
+    # Vertical lines when x is the discrete axis, horizontal when y is
+    # (exactly one is discrete here). axisbelow keeps them behind the
+    # rug ticks; the grid's color and width come from symbulate.mplstyle.
+    ax.set_axisbelow(True)
     ax.grid(False)
+    ax.grid(True, axis="x" if discrete_x else "y")
     return ticks
 
 
@@ -2181,6 +2292,31 @@ def _max_coincident(x, y):
     return int(counts.max())
 
 
+def auto_jitter_mode(x, y):
+    """Pick the clustered-jitter layout for two discrete variables.
+
+    This is the automatic choice ``RVResults.plot()`` makes when the
+    user does not set ``jitter`` and both variables are discrete
+    (per ``classify_data``): ``"bins"`` once any single (x, y) value
+    holds ``SCATTER_AUTO_BINS_THRESHOLD`` (12) or more points -- past
+    the 9-dot compass template, where a spiral pile-up stops being
+    cleanly countable -- and ``"spiral"`` otherwise.
+
+    Parameters
+    ----------
+    x, y : array-like
+        The two simulated variables. Assumed integer-valued.
+
+    Returns
+    -------
+    str
+        ``"spiral"`` or ``"bins"``.
+    """
+    if _max_coincident(x, y) >= SCATTER_AUTO_BINS_THRESHOLD:
+        return "bins"
+    return "spiral"
+
+
 def make_scatter(
     x,
     y,
@@ -2228,8 +2364,12 @@ def make_scatter(
 
         - ``False`` -- draw points at their exact coordinates. Right
           for two continuous variables (no coincident points).
-        - ``True`` -- add small random noise to both coordinates.
-          Reduces overplotting but scrambles density.
+          (``RVResults.plot()`` resolves its own default from the
+          data: two discrete variables get the clustered layout
+          ``auto_jitter_mode`` picks; anything else gets ``False``.)
+        - ``"random"`` -- add small random noise to both coordinates.
+          Reduces overplotting but scrambles density. ``True`` is
+          accepted as a legacy alias and behaves identically.
         - ``"spiral"`` -- points that share an integer (x, y)
           coordinate form a tight compass-pattern cluster on that
           value's grid crossing (center first, then N/E/S/W on the
@@ -2246,10 +2386,6 @@ def make_scatter(
           up a row -- dots touching, like a tiny dot histogram, so a
           fuller box means a bigger count even when dozens of points
           share one value.
-        - ``"auto"`` -- pick for the data: ``"bins"`` once any single
-          value holds ``SCATTER_AUTO_BINS_THRESHOLD`` (12) or more
-          points, ``"spiral"`` otherwise. Prints a note when it
-          chooses bins.
     label : str, optional
         Name for this series in the legend. Defaults to "Variable k",
         where k counts the scatters drawn on these axes so far.
@@ -2287,32 +2423,19 @@ def make_scatter(
     # The marker size is a default, not an override, so a user's own
     # s= keyword still wins.
     kwargs.setdefault("s", SCATTER_MARKER_SIZE)
-    if jitter not in (False, True, "spiral", "bins", "auto"):
+    if jitter not in (False, True, "random", "spiral", "bins"):
         raise ValueError(
-            f"jitter must be False, True, 'spiral', 'bins', or 'auto', not "
-            f"{jitter!r}. For two discrete variables use jitter='auto' (picks "
-            "the best layout for your data), jitter='spiral' (tight countable "
-            "clusters), or jitter='bins' (spreads big pile-ups across each "
-            "value's bin). Use jitter=True for random noise, or jitter=False "
-            "(the default) for continuous variables."
+            f"jitter must be False, 'random', 'spiral', or 'bins', not "
+            f"{jitter!r}. When you don't set jitter, the best layout is "
+            "chosen automatically for two discrete variables. Use "
+            "jitter='spiral' for tight countable clusters, jitter='bins' "
+            "to spread big pile-ups across each value's bin, "
+            "jitter='random' for random noise, or jitter=False for exact "
+            "positions."
         )
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
-
-    if jitter == "auto":
-        peak = _max_coincident(x, y)
-        if peak >= SCATTER_AUTO_BINS_THRESHOLD:
-            jitter = "bins"
-            print(
-                f"The most repeated value appears {peak} times -- too many "
-                "for the tight cluster style to stay countable -- so the "
-                "points are spread across each value's bin "
-                "(jitter='bins'). Pass jitter='spiral' to force tight "
-                "clusters instead."
-            )
-        else:
-            jitter = "spiral"
 
     xi = yi = None
     if jitter in ("spiral", "bins"):
