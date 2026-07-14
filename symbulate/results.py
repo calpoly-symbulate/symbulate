@@ -41,6 +41,7 @@ from .plot import (
     make_dotplot,
     make_density,
     make_density2D,
+    make_ecdf,
     make_hist,
     make_hist2d,
     make_impulse,
@@ -1268,9 +1269,10 @@ class RVResults(Results):
         type : str, tuple, or list, optional
             Plot type or types to display. Valid values are
             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
-            ``"dotplot"``, ``"rug"``, ``"scatter"``, ``"tile"``,
-            ``"violin"``, and ``"marginal"`` (2D data also accepts
-            ``"hist2d"``, ``"density2d"``, and ``"segmented_rug"``).
+            ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
+            ``"tile"``, ``"violin"``, and ``"marginal"`` (2D data also
+            accepts ``"hist2d"``, ``"density2d"``, and
+            ``"segmented_rug"``).
             If None, a default is chosen from the data: whether each
             variable looks discrete (``classify_data``) and whether
             the sample is small select an entry from the
@@ -1365,7 +1367,7 @@ class RVResults(Results):
                 raise Exception(
                     f"Unrecognized plot type {type!r}. "
                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
-                    "'dotplot', 'rug', 'scatter', 'tile', 'violin', "
+                    "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'violin', "
                     "'marginal' (and, for 2D data, 'hist2d', 'density2d', "
                     "'segmented_rug')."
                 )
@@ -1479,6 +1481,15 @@ class RVResults(Results):
                 )
             if "rug" in type:
                 make_rug(_plot_array, ax, color, alpha=alpha)
+            if "ecdf" in type:
+                make_ecdf(
+                    _plot_array,
+                    ax,
+                    color,
+                    normalize=normalize,
+                    alpha=alpha,
+                    **kwargs,
+                )
         elif self.dim == 2:
             # make sure self.array, a Numpy array, has been set
             self._set_array()
