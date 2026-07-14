@@ -1,9 +1,27 @@
+import itertools
+import os
+import warnings
+
 import numpy as np
 import matplotlib.pyplot as plt
-import itertools
+from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.stats import gaussian_kde
 from scipy.interpolate import make_interp_spline
 
+# Apply the package style: Okabe-Ito categorical palette (sky blue
+# first), viridis sequential colormap, and the shared figure/spine/grid
+# defaults. Every value that applies the same way across all plot types
+# lives in this file; per-plot-type values are the named constants
+# below. See DECISIONS.md, "Decision: Visual Style Guide" and
+# "Decision: .mplstyle Standards".
+plt.style.use(os.path.join(os.path.dirname(__file__), "symbulate.mplstyle"))
+
+rng = np.random.default_rng()
+
+# Data-classification thresholds for the default plot lookup -- see
+# classify_data() and DECISIONS.md, "Decision: Data Classification".
 N_UNIQUE_THRESHOLD = 40
 N_SMALL_THRESHOLD = 100
 
@@ -15,9 +33,6 @@ ylabel = plt.ylabel
 xlim = plt.xlim
 ylim = plt.ylim
 
-color_index = 0
-color_cycle = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
-
 
 def get_next_color(axes):
     if not hasattr(axes, "_color_cycle"):
@@ -26,10 +41,12 @@ def get_next_color(axes):
     return next(axes._color_cycle)
 
 
-# Per-plot-type constants for the impulse plot. matplotlib rcParams are
-# global and can't express "different line width for different plot
-# types" (see DECISIONS.md, "Decision: .mplstyle Standards"), so these
-# live here instead of symbulate.mplstyle.
+# Per-plot-type constants. matplotlib rcParams are global and can't
+# express "different line width (or alpha) for different plot types"
+# (see DECISIONS.md, "Decision: .mplstyle Standards"), so these live
+# here instead of symbulate.mplstyle.
+
+# Impulse plot.
 IMPULSE_LINEWIDTH = 2.2
 IMPULSE_MARKER = "o"
 IMPULSE_MARKER_SIZE = 60
@@ -47,6 +64,133 @@ TRUE_DIST_LINEWIDTH = 1.8
 TRUE_DIST_LINESTYLE = "-"
 TRUE_DIST_CURVE_POINTS = 600
 TRUE_DIST_LABEL_DEFAULT = "True Distribution"
+
+# Histogram (1D): solid bars with thin white edges so adjacent bars
+# stay visually distinct. Alpha per DECISIONS.md Visual Style Guide
+# (0.5 -> 0.65 -- bolder fill, histograms don't overplot).
+HIST_ALPHA = 0.65
+HIST_EDGECOLOR = "white"
+HIST_EDGEWIDTH = 0.8
+HIST_DEFAULT_BINS = 30
+HIST_LEGEND_LOC = "upper right"
+
+# Density curve (1D). Line width per DECISIONS.md Visual Style Guide
+# (2.0 -> 1.8). Full opacity for a standalone curve: the Guide's
+# alpha=0.15 is specifically for the density-overlaid-on-a-histogram
+# composition, which doesn't exist yet.
+DENSITY_LINEWIDTH = 1.8
+DENSITY_ALPHA = 1.0
+DENSITY_GRID_POINTS = 1000
+DENSITY_LEGEND_LOC = "upper right"
+# Evaluate the KDE over a quantile-based range plus padding, not raw
+# min/max, so outlier-heavy distributions (e.g. Exponential) don't
+# stretch the axis and squash the curve into a sliver.
+DENSITY_QUANTILE_LOW = 0.001
+DENSITY_QUANTILE_HIGH = 0.999
+DENSITY_PADDING_FRAC = 0.1  # extra padding, as a fraction of the
+# quantile-bounded span, added to each side so the curve visibly
+# tapers to (near) zero instead of being cut off mid-slope
+
+# Rug plot: one light tick per simulated value along the bottom of the
+# axes; stacked values read as darker ticks through the alpha.
+RUG_ALPHA = 0.5
+RUG_TICK_HEIGHT = 0.04  # fraction of the axes height
+RUG_LINEWIDTH = 1.0
+RUG_LEGEND_LOC = "upper right"
+
+# Dot plot: every observation is one dot at its exact value; identical
+# values stack, touching, with the bottom dot on the number line.
+DOTPLOT_ALPHA = 1.0
+DOTPLOT_XLABEL = "Value"
+# One generic title that stays accurate for every dot plot, whether
+# single or overlaid.
+DOTPLOT_TITLE = "Dot Plot"
+DOTPLOT_AXIS_LABEL_SIZE = 12
+DOTPLOT_TICK_LABEL_SIZE = 10
+DOTPLOT_LEGEND_LOC = "upper right"
+DOTPLOT_LEGEND_MARKER_SIZE = 8
+# Stacked dots never grow past this diameter, in points, no matter how
+# short the stacks are. (The y-axis extends past the tallest stack as
+# needed to keep the dots touching at this size.)
+DOTPLOT_MAX_DOT_SIZE = 12
+# Vertical headroom above the tallest stack (multiplier on its height).
+DOTPLOT_STACK_HEADROOM = 1.05
+# Tile-style boundary lines halfway between neighboring stacks, shown
+# only when two or more dot plots share the axes.
+DOTPLOT_BOUNDARY_LINE_COLOR = "#b0b0b0"
+DOTPLOT_BOUNDARY_LINE_WIDTH = 0.8
+DOTPLOT_BOUNDARY_LINE_ALPHA = 0.6
+
+# Scatter (2D). Alpha per DECISIONS.md Visual Style Guide (0.5 -> 0.25),
+# low so overlapping points stay individually readable. Point style is
+# filled circles -- note this overrides the Guide's *unfilled* scatter
+# decision (pending decision-log update).
+SCATTER_ALPHA = 0.25
+SCATTER_MARKER_SIZE = 40
+SCATTER_LEGEND_LOC = "upper right"
+# Spiral and bins jitter modes lay coincident points out with their
+# dots touching. This is how much of the value's bin (the cell between
+# half-integer boundaries) a cluster may occupy before its spacing
+# compresses instead of growing -- 0.8 leaves a 0.1 margin inside each
+# bin edge, so a cluster never reaches the neighboring value.
+SCATTER_BIN_SPREAD = 0.8
+# Auto mode: jitter="auto" uses "bins" once any single (x, y) value
+# holds this many points -- past the 9-dot compass template, where a
+# spiral pile-up stops being cleanly countable -- and "spiral"
+# otherwise.
+SCATTER_AUTO_BINS_THRESHOLD = 12
+
+# 2D histogram. The colormap itself is NOT set here -- it comes from
+# image.cmap (viridis) in symbulate.mplstyle.
+HIST2D_DEFAULT_BINS = 30
+HIST2D_CBAR_SIZE = "5%"  # colorbar width, as a fraction of the axes
+HIST2D_CBAR_PAD = 0.1  # gap between the axes and the colorbar, inches
+HIST2D_CBAR_TICKS = 8  # evenly spaced colorbar ticks, including both
+# endpoints (0 and the peak value); matches the density2d colorbar
+HIST2D_CBAR_DECIMALS = 3  # decimal places for the density colorbar
+# labels (raw counts are labeled as whole numbers instead)
+HIST2D_OVERLAY_WARNING = (
+    "Warning: you drew a second 2-D histogram on the same plot. The two "
+    "color scales compete, so the result may be hard to read. Consider "
+    "plotting them in separate cells, or using type='scatter' instead."
+)
+
+# 2D density / contour plot.
+DENSITY2D_GRID_POINTS = 300  # 300x300 minimum -- a 100x100 grid
+# produces visible granularity
+DENSITY2D_QUANTILE_LOW = 0.001
+DENSITY2D_QUANTILE_HIGH = 0.999
+DENSITY2D_PADDING_FRAC = 0.1  # quantile bounds, not raw min/max, so
+# outlier-heavy data doesn't stretch the axes (same rationale as the
+# 1D density case)
+DENSITY2D_CONTINUOUS_LEVELS = 256  # number of contourf bands used for
+# the default continuous density plot (contour=False). High enough
+# that the bands blend into a smooth gradient.
+DENSITY2D_LEVELS = 8  # default number of discrete color bands for the
+# contour plot (contour=True); levels= overrides per call
+DENSITY2D_CONTOUR_LINE_COLOR = "white"
+DENSITY2D_CONTOUR_LINEWIDTH = 0.3  # thin white lines between bands
+# improve readability
+DENSITY2D_CONTOUR_LINE_ALPHA = 0.4
+DENSITY2D_CBAR_DECIMALS = 3
+DENSITY2D_CBAR_TICKS = 8  # evenly spaced colorbar ticks (including
+# both endpoints, 0 and the peak density) for the continuous density
+# plot; the contour plot instead ticks its discrete band edges
+
+# Tile plot. The colormap comes from image.cmap (viridis) in
+# symbulate.mplstyle.
+TILE_DEFAULT_BINS = 30  # equal-width bins for a continuous axis;
+# matches make_hist2d's default so mixed discrete/continuous tiles bin
+# the same way
+TILE_CBAR_SIZE = "5%"
+TILE_CBAR_PAD = 0.1
+TILE_CBAR_TICKS = 8
+TILE_CBAR_DECIMALS = 3
+TILE_OVERLAY_WARNING = (
+    "Warning: you drew a second tile plot on the same plot. The two "
+    "color scales compete, so the result may be hard to read. Consider "
+    "plotting them in separate cells, or using type='scatter' instead."
+)
 
 
 class SymbulatePlot:
@@ -135,10 +279,6 @@ def plot(*args, **kwargs):
     except:
         plt.plot(*args, **kwargs)
         return SymbulatePlot(plt.gca())
-
-
-def is_discrete(heights):
-    return sum([(i > 1) for i in heights]) > 0.8 * len(heights)
 
 
 def classify_data(
@@ -294,6 +434,7 @@ PLOT_DISPLAY_NAME = {
     "density2d": "2D Density Plot",
     "violin": "Violin Plot",
     "segmented_rug": "Segmented Rug Plot",
+    "marginal": "Marginal Plot",
 }
 
 
@@ -405,39 +546,266 @@ def add_colorbar(fig, type, mappable, label):
     return caxes
 
 
-def setup_tile(v, bins, discrete):
-    if not discrete:
-        v_lab = np.linspace(min(v), max(v), bins + 1)
-        v_pos = np.arange(0, len(v_lab)) - 0.5
-        v_vect = np.digitize(v, v_lab, right=True) - 1
+def _setup_tile_axis(values, discrete, bins):
+    """Cell indices, count, extent, and ticks for one tile-plot axis.
+
+    A discrete axis gets one cell per distinct value; a continuous axis
+    is split into ``bins`` equal-width bins the same way ``make_hist2d``
+    does (``np.histogram``-style edges, with the largest value falling
+    in the last bin).
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        The simulated values for this axis.
+    discrete : bool
+        If True, use one labeled cell per distinct value. If False,
+        bin the values into ``bins`` equal-width bins.
+    bins : int
+        Number of bins to use when ``discrete`` is False.
+
+    Returns
+    -------
+    tuple
+        ``(idx, n_cells, extent, ticks)`` -- the cell index of every
+        value, the number of cells along the axis, the ``(low, high)``
+        imshow extent for the axis, and either ``(positions, labels)``
+        for a discrete axis or ``None`` for a continuous one (whose
+        ticks are left to matplotlib's numeric locator).
+    """
+    if discrete:
+        labels = np.unique(values)
+        idx = np.searchsorted(labels, values)
+        n_cells = len(labels)
+        # imshow centers each cell on its integer index, so a cell
+        # spans index +/- 0.5.
+        extent = (-0.5, n_cells - 0.5)
+        ticks = (np.arange(n_cells), labels)
     else:
-        v_lab = np.unique(v)  # returns sorted array
-        v_pos = range(len(v_lab))
-        v_map = dict(zip(v_lab, v_pos))
-        v_vect = np.vectorize(v_map.get)(v)
-    return v_vect, v_lab, v_pos
+        low, high = values.min(), values.max()
+        if low == high:
+            # Degenerate axis (all one value): widen so the bins have
+            # nonzero width instead of collapsing.
+            low, high = low - 0.5, high + 0.5
+        edges = np.linspace(low, high, bins + 1)
+        # digitize returns 1..len(edges); shift to 0-based bins and
+        # clip the maximum value (which lands one past the last bin)
+        # back in.
+        idx = np.clip(np.digitize(values, edges) - 1, 0, bins - 1)
+        n_cells = bins
+        # Data-unit extent so matplotlib labels the axis like a numeric
+        # histogram axis; the equal-width imshow columns line up
+        # exactly with the equal-width bins.
+        extent = (edges[0], edges[-1])
+        ticks = None
+    return idx, n_cells, extent, ticks
 
 
-def make_tile(x, y, bins, discrete_x, discrete_y, ax):
-    x_vect, x_lab, x_pos = setup_tile(x, bins, discrete_x)
-    y_vect, y_lab, y_pos = setup_tile(y, bins, discrete_y)
-    nums = len(x_vect)
-    counts = count_var(list(zip(y_vect, x_vect)))
-    y_shape = len(y_lab) if discrete_y else len(y_lab) - 1
-    x_shape = len(x_lab) if discrete_x else len(x_lab) - 1
-    intensity = np.zeros(shape=(y_shape, x_shape))
+def make_tile(
+    x,
+    y,
+    ax,
+    normalize=True,
+    bins=None,
+    discrete_x=None,
+    discrete_y=None,
+    colorbar=True,
+    **kwargs,
+):
+    """Draw a 2D tile plot of simulated (x, y) pairs on the given axes.
 
-    for key, val in counts.items():
-        intensity[key] = val / nums
-    if not discrete_x:
-        x_lab = np.around(x_lab, decimals=1)
-    if not discrete_y:
-        y_lab = np.around(y_lab, decimals=1)
-    hm = ax.matshow(intensity, origin="lower", aspect="auto", vmin=0)
-    ax.xaxis.set_ticks_position("bottom")
-    setup_ticks(x_pos, x_lab, ax.xaxis)
-    setup_ticks(y_pos, y_lab, ax.yaxis)
-    return hm
+    Draws a grid of filled cells colored by how often each cell
+    occurred, using the package's sequential colormap (viridis, from
+    ``symbulate.mplstyle``), with a colorbar on the right labeled
+    "Relative Frequency" (or "Count" when ``normalize=False``). The
+    x-axis is labeled "X", the y-axis "Y", and the title reads "Tile
+    Plot". The color scale always starts from 0 so a cell that never
+    occurred reads as "no data" rather than an arbitrary color. The
+    colorbar ticks both endpoints (0 and the peak value) with
+    ``TILE_CBAR_TICKS`` (8) evenly spaced ticks; relative-frequency
+    labels are rounded to ``TILE_CBAR_DECIMALS`` (3) decimals and raw
+    counts to whole numbers. This matches the density2d colorbar.
+
+    Each axis is handled according to whether its variable is discrete
+    or continuous (see ``discrete_x`` / ``discrete_y``). A discrete
+    axis gets one labeled cell per distinct value, equal-sized
+    regardless of the gaps between values. A continuous axis is split
+    into ``bins`` equal-width bins -- the same binning ``make_hist2d``
+    uses -- and labeled like a numeric histogram axis. This covers
+    both two-discrete-variable data and the mixed case (one discrete
+    axis, one continuous axis); continuous-x-continuous data is routed
+    to ``hist2d`` / ``density2d`` instead.
+
+    Unlike the 1D plot types, a tile plot encodes magnitude with a
+    colormap instead of the categorical color cycle, so no ``color``
+    parameter is taken. Overlays are the "readability warning"
+    category of the overlay policy: a second call on the same axes
+    still draws, but prints a warning that the color scales compete.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working). This mirrors how the other plot helpers in
+    this module (``make_hist2d``, ``make_density2D``) are called.
+
+    Parameters
+    ----------
+    x : array-like
+        Simulated values for the horizontal axis, e.g. the first
+        column of ``RVResults.array``. Discrete or continuous.
+    y : array-like
+        Simulated values for the vertical axis, same length as ``x``.
+        Discrete or continuous.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    normalize : bool, default True
+        If True, cell colors show the relative frequency of each cell
+        (all cells sum to 1). If False, colors show raw counts.
+    bins : int, optional
+        Number of equal-width bins for a continuous axis, matching
+        ``make_hist2d``. Defaults to ``TILE_DEFAULT_BINS`` (30). Only
+        applies when at least one axis is continuous; passing it for
+        two discrete variables has no effect and raises a warning.
+    discrete_x : bool, optional
+        Whether the x-axis is discrete (one cell per value) or
+        continuous (binned). If None (default), detected from the
+        data: float values are treated as continuous, everything else
+        (int, bool, string) as discrete.
+    discrete_y : bool, optional
+        Same as ``discrete_x`` for the y-axis.
+    colorbar : bool, default True
+        If True, add a colorbar to the right of the axes. The
+        'marginal' layout in ``RVResults.plot()`` passes False and
+        places its own colorbar so the marginal panels aren't
+        squeezed.
+    **kwargs
+        Additional keyword arguments passed to ``ax.imshow``.
+
+    Returns
+    -------
+    matplotlib.image.AxesImage
+        The image from ``ax.imshow``, so the caller can inspect the
+        cells or attach further styling.
+
+    Examples
+    --------
+    Two discrete variables:
+
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> x = rng.poisson(3, 1000)
+    >>> y = rng.poisson(2, 1000)
+    >>> ax = plt.gca()
+    >>> make_tile(x, y, ax)  # doctest: +SKIP
+
+    Mixed data -- discrete y, continuous x (x is binned automatically):
+
+    >>> x = rng.normal(0, 1, 1000)
+    >>> y = rng.poisson(3, 1000)
+    >>> make_tile(x, y, plt.gca())  # doctest: +SKIP
+    """
+    xs, ys = np.asarray(x), np.asarray(y)
+    # Auto-detect which axes are continuous (and so need binning) from
+    # their dtype: float is treated as continuous, everything else
+    # (int, bool, string/object) as discrete. The caller can override
+    # either decision with discrete_x / discrete_y -- RVResults.plot()
+    # passes its own discreteness determination explicitly.
+    if discrete_x is None:
+        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+    if discrete_y is None:
+        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+
+    # bins only bins a continuous axis. With two discrete variables
+    # there is nothing to bin -- every distinct value already gets its
+    # own cell -- so a bins= argument has no effect. Warn rather than
+    # silently ignore it (same pattern as make_density2D's levels=
+    # warning). This check is on the explicit argument, so it fires
+    # before the default is filled in.
+    if bins is not None and discrete_x and discrete_y:
+        warnings.warn(
+            "bins only applies when one axis is continuous (it sets how many "
+            "equal-width bins that axis is split into). Both of these "
+            "variables are discrete, so every distinct value already gets its "
+            "own cell and bins was ignored.",
+            UserWarning,
+            stacklevel=2,
+        )
+    if bins is None:
+        bins = TILE_DEFAULT_BINS
+
+    # Count the tile plots drawn on these axes, stored on the axes
+    # object itself (the same pattern get_next_color uses for the
+    # color cycle), to trigger the overlay readability warning.
+    n_prior = getattr(ax, "_tile_count", 0)
+    ax._tile_count = n_prior + 1
+
+    # Build each axis independently: a discrete axis gets one labeled
+    # cell per distinct value; a continuous axis is binned into
+    # equal-width bins exactly like make_hist2d.
+    x_idx, nx, x_extent, x_ticks = _setup_tile_axis(xs, discrete_x, bins)
+    y_idx, ny, y_extent, y_ticks = _setup_tile_axis(ys, discrete_y, bins)
+    intensity = np.zeros((ny, nx))
+    np.add.at(intensity, (y_idx, x_idx), 1)
+    if normalize:
+        intensity /= len(xs)
+
+    # No cmap argument: the sequential colormap comes from image.cmap
+    # (viridis) in symbulate.mplstyle. vmin=0 anchors the color scale
+    # at zero. origin="lower" puts the smallest values at bottom-left;
+    # aspect="auto" lets the cells fill the axes box. The extent puts a
+    # binned axis in data units (so matplotlib labels it like a numeric
+    # histogram axis) and a discrete axis in cell-index units.
+    mesh = ax.imshow(
+        intensity,
+        origin="lower",
+        aspect="auto",
+        vmin=0,
+        extent=[x_extent[0], x_extent[1], y_extent[0], y_extent[1]],
+        **kwargs,
+    )
+    # A filled mesh covers the whole axes, so the reference grid has
+    # nothing to sit on -- turn it off rather than let fragments show
+    # at the edges.
+    ax.grid(False)
+    # A discrete axis gets one tick per cell, labeled with the value; a
+    # continuous (binned) axis keeps matplotlib's automatic numeric
+    # ticks over its data range, matching the make_hist2d look.
+    if x_ticks is not None:
+        ax.set_xticks(x_ticks[0])
+        ax.set_xticklabels(x_ticks[1])
+    if y_ticks is not None:
+        ax.set_yticks(y_ticks[0])
+        ax.set_yticklabels(y_ticks[1])
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title("Tile Plot")
+    if colorbar:
+        # Colorbar on the right, sized relative to the axes so it
+        # tracks figure resizing (the approved replacement for the old
+        # hardcoded fig.add_axes colorbar).
+        cax = make_axes_locatable(ax).append_axes(
+            "right", size=TILE_CBAR_SIZE, pad=TILE_CBAR_PAD
+        )
+        cbar = ax.get_figure().colorbar(mesh, cax=cax)
+        cbar.set_label("Relative Frequency" if normalize else "Count")
+        # The color scale starts at 0 (vmin=0 above); tick both ends of
+        # the bar with a fixed number of evenly spaced ticks --
+        # matplotlib's default locator otherwise trims short of the
+        # endpoints. get_clim() is authoritative once the colorbar
+        # exists. Labels are rounded to TILE_CBAR_DECIMALS for the
+        # relative-frequency scale, or to whole numbers for raw counts.
+        vmin, vmax = mesh.get_clim()
+        cbar.set_ticks(np.linspace(vmin, vmax, TILE_CBAR_TICKS))
+        decimals = TILE_CBAR_DECIMALS if normalize else 0
+        cbar.ax.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
+        )
+        # Adding the colorbar axes makes it current; restore the data
+        # axes so a follow-up .plot() call overlays the data, not the
+        # colorbar.
+        plt.sca(ax)
+    if ax._tile_count > 1:
+        print(TILE_OVERLAY_WARNING)
+    return mesh
 
 
 def make_violin(data, positions, ax, axis, alpha):
@@ -468,12 +836,12 @@ def make_marginal_impulse(count, color, ax_marg, alpha, axis):
         ax_marg.hlines(key, 0, val, color=color, alpha=alpha)
 
 
-def _refresh_legend(ax):
-    # A lone series stays legend-free; a second one (another impulse
-    # plot, or a true-distribution overlay) turns the legend on.
+def _refresh_legend(ax, loc=IMPULSE_LEGEND_LOC):
+    # A lone series stays legend-free; a second one (another series of
+    # the same type, or a true-distribution overlay) turns the legend on.
     handles, _ = ax.get_legend_handles_labels()
     if len(handles) > 1:
-        ax.legend(loc=IMPULSE_LEGEND_LOC)
+        ax.legend(loc=loc)
 
 
 def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kwargs):
@@ -698,19 +1066,1573 @@ def overlay_true_distribution(pmf, ax, xlim=None, color=None, label=None, **kwar
     return xs, ys
 
 
-def make_density2D(x, y, ax):
-    res = np.vstack([x, y])
-    density = gaussian_kde(res)
-    xmax, xmin = max(x), min(x)
-    ymax, ymin = max(y), min(y)
+def make_hist(
+    values, ax, color, bins=None, normalize=True, alpha=None, label=None, **kwargs
+):
+    """Draw a 1D histogram of simulated values on the given axes.
+
+    Draws in the style of the approved histogram prototype: solid
+    bars with thin white edges so adjacent bars stay visually
+    distinct. The x-axis is always labeled "Value"; the y-axis label
+    and title read "Density" / "Density Histogram" when normalized,
+    "Count" / "Count Histogram" otherwise.
+
+    Histograms overlay naturally: a second call on the same axes draws
+    on top of the first, and a legend appears automatically in the top
+    right once two or more histograms share the axes. Each histogram
+    is named by ``label``, or "Variable 1", "Variable 2", ... in call
+    order when no label is given.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``. This mirrors how ``RVResults.plot()`` calls the other
+    plot helpers (``make_impulse``, ``make_density``).
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values to bin, e.g. ``RVResults.array``.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Fill color for the bars, from ``get_next_color(ax)``.
+    bins : int, optional
+        Number of equal-width bins. Defaults to 30.
+    normalize : bool, default True
+        If True, bar areas sum to 1 so the histogram approximates a
+        density and can be compared to a pdf curve. If False, bar
+        heights are raw counts.
+    alpha : float, optional
+        Bar transparency between 0 and 1. Defaults to the package
+        standard for histograms (``HIST_ALPHA``, 0.65).
+    label : str, optional
+        Name for this histogram in the legend. Defaults to
+        "Variable k", where k counts the histograms drawn on these
+        axes so far.
+    **kwargs
+        Additional keyword arguments passed to
+        ``matplotlib.axes.Axes.hist``.
+
+    Returns
+    -------
+    tuple
+        The ``(counts, bin_edges, patches)`` tuple from ``ax.hist``,
+        so the caller can inspect or further style the bars.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> values = np.random.default_rng().normal(10, 2, 1000)
+    >>> ax = plt.gca()
+    >>> make_hist(values, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if bins is None:
+        bins = HIST_DEFAULT_BINS
+    if alpha is None:
+        alpha = HIST_ALPHA
+    # The white bar edges are defaults, not overrides, so a user's own
+    # edgecolor= / linewidth= keyword still wins. histtype='step' draws
+    # nothing but its outline -- in edgecolor -- so it is left alone: a
+    # white outline would be invisible on the white background.
+    if kwargs.get("histtype", "bar") != "step":
+        kwargs.setdefault("edgecolor", HIST_EDGECOLOR)
+        kwargs.setdefault("linewidth", HIST_EDGEWIDTH)
+    # Count the histograms drawn on these axes, stored on the axes
+    # object itself (the same pattern get_next_color uses for the
+    # color cycle) so overlays from separate .plot() calls see it.
+    n_prior_hists = getattr(ax, "_hist_count", 0)
+    if label is None:
+        label = f"Variable {n_prior_hists + 1}"
+    ax._hist_count = n_prior_hists + 1
+    histogram = ax.hist(
+        values,
+        bins=bins,
+        density=normalize,
+        color=color,
+        alpha=alpha,
+        label=label,
+        **kwargs,
+    )
+    ax.set_xlabel("Value")
+    ax.set_ylabel("Density" if normalize else "Count")
+    ax.set_title("Density Histogram" if normalize else "Count Histogram")
+    # A legend only helps once there is more than one histogram to
+    # tell apart; a lone histogram stays legend-free.
+    if ax._hist_count > 1:
+        ax.legend(loc=HIST_LEGEND_LOC)
+    return histogram
+
+
+def _density_xrange(values):
+    """Quantile-based x-axis bounds, with padding, for one density curve.
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values the density curve will be drawn from.
+
+    Returns
+    -------
+    tuple
+        ``(xmin, xmax)`` for evaluating and displaying the KDE.
+    """
+    values = np.asarray(values)
+    qlow, qhigh = np.quantile(values, [DENSITY_QUANTILE_LOW, DENSITY_QUANTILE_HIGH])
+    span = qhigh - qlow
+    padding = DENSITY_PADDING_FRAC * span if span > 0 else 1.0
+    return qlow - padding, qhigh + padding
+
+
+def make_density(values, ax, color, bandwidth=None, alpha=None, label=None, **kwargs):
+    """Draw a 1D kernel density curve of simulated values on the given axes.
+
+    Draws in the style of the approved density prototype: a single
+    smooth line with no fill. The x-axis is always labeled "Value";
+    the y-axis label and title are "Density" / "Density Curve". The
+    curve is evaluated and displayed over a quantile-based x-range
+    (the 0.1th to 99.9th percentile of ``values``, plus padding)
+    rather than the raw min/max, so outlier-heavy data doesn't
+    stretch the axis and flatten the visible curve.
+
+    Density curves overlay naturally: a second call on the same axes
+    draws on top of the first, and a legend appears automatically in
+    the top right once two or more curves share the axes. Each curve
+    is named by ``label``, or "Variable 1", "Variable 2", ... in call
+    order when no label is given.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``. This mirrors how ``RVResults.plot()`` calls the other
+    plot helpers (``make_hist``, ``make_impulse``).
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values to estimate a density from, e.g.
+        ``RVResults.array``.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Line color, from ``get_next_color(ax)``.
+    bandwidth : float or str, optional
+        Passed through to ``scipy.stats.gaussian_kde`` as
+        ``bw_method``. Defaults to scipy's own default (Scott's rule).
+    alpha : float, optional
+        Line transparency between 0 and 1. Defaults to the package
+        standard for a standalone density curve (``DENSITY_ALPHA``,
+        fully opaque).
+    label : str, optional
+        Name for this curve in the legend. Defaults to "Variable k",
+        where k counts the density curves drawn on these axes so far.
+    **kwargs
+        Additional keyword arguments passed to ``ax.plot``.
+
+    Returns
+    -------
+    list
+        The list of ``Line2D`` objects from ``ax.plot``, so the caller
+        can inspect or further style the curve.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> values = np.random.default_rng().normal(0, 1, 2000)
+    >>> ax = plt.gca()
+    >>> make_density(values, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = DENSITY_ALPHA
+    # The curve width is a default, not an override, so a user's own
+    # linewidth= keyword still wins.
+    kwargs.setdefault("linewidth", DENSITY_LINEWIDTH)
+
+    kde = gaussian_kde(values, bw_method=bandwidth)
+    xmin, xmax = _density_xrange(values)
+    grid = np.linspace(xmin, xmax, DENSITY_GRID_POINTS)
+    density = kde(grid)
+
+    # Count the curves drawn on these axes, stored on the axes object
+    # itself (the same pattern get_next_color and make_hist use) so
+    # overlays from separate .plot() calls see it.
+    n_prior_curves = getattr(ax, "_density_count", 0)
+    if label is None:
+        label = f"Variable {n_prior_curves + 1}"
+    ax._density_count = n_prior_curves + 1
+
+    line = ax.plot(
+        grid,
+        density,
+        color=color,
+        alpha=alpha,
+        label=label,
+        **kwargs,
+    )
+    ax.set_xlabel("Value")
+    ax.set_ylabel("Density")
+    ax.set_title("Density Curve")
+    ax.set_ylim(bottom=0)
+    # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
+    # y), but the approved density prototype shows both horizontal and
+    # vertical reference lines, so this overrides it for this plot type
+    # specifically -- the same per-type override pattern the scatter and
+    # 2D density plots use.
+    ax.grid(True, axis="both")
+    # A legend only helps once there is more than one curve to tell
+    # apart; a lone curve stays legend-free.
+    if ax._density_count > 1:
+        ax.legend(loc=DENSITY_LEGEND_LOC)
+    return line
+
+
+def make_rug(values, ax, color, alpha=None, label=None, **kwargs):
+    """Draw a rug plot of simulated values on the given axes.
+
+    Draws one thin vertical tick per simulated value along the bottom
+    of the axes. Tick heights are drawn in axes fractions
+    (``RUG_TICK_HEIGHT`` of the axes height), not data units, so the
+    ticks keep their size if something with a meaningful y-scale (e.g.
+    a histogram) is drawn on the same axes later.
+
+    The function automatically detects whether this is a standalone
+    rug plot or overlaying another plot type. For a standalone rug, it
+    hides the y-axis, the left spine, and the gridlines for a clean
+    number-line look. For an overlay, it leaves the axes untouched --
+    it only adds the ticks and lets the companion plot own the y-axis,
+    spines, grid, labels, and title.
+
+    Rug plots overlay naturally: a second call on the same axes draws
+    on top of the first, and a legend appears automatically in the top
+    right once two or more rugs share the axes. Each rug is named by
+    ``label``, or "Variable 1", "Variable 2", ... in call order when
+    no label is given.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``. This mirrors how ``RVResults.plot()`` calls the other
+    plot helpers (``make_hist``, ``make_density``).
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values to mark, e.g. ``RVResults.array``.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Color for the tick marks, from ``get_next_color(ax)``.
+    alpha : float, optional
+        Tick transparency between 0 and 1. Defaults to the package
+        standard for rug plots (``RUG_ALPHA``, 0.5), which keeps
+        stacked values visible as darker ticks.
+    label : str, optional
+        Name for this rug in the legend. Defaults to "Variable k",
+        where k counts the rugs drawn on these axes so far.
+    **kwargs
+        Additional keyword arguments passed to
+        ``matplotlib.axes.Axes.vlines``.
+
+    Returns
+    -------
+    matplotlib.collections.LineCollection
+        The collection of tick marks, so the caller can inspect or
+        further style them.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> values = np.random.default_rng().normal(0, 1, 60)
+    >>> ax = plt.gca()
+    >>> make_rug(values, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = RUG_ALPHA
+    kwargs.setdefault("linewidth", RUG_LINEWIDTH)
+    # Count the rugs drawn on these axes, stored on the axes object
+    # itself (the same pattern get_next_color uses for the color
+    # cycle) so overlays from separate .plot() calls see it.
+    n_prior_rugs = getattr(ax, "_rug_count", 0)
+    if label is None:
+        label = f"Variable {n_prior_rugs + 1}"
+    ax._rug_count = n_prior_rugs + 1
+
+    # Check if this is a standalone rug plot (nothing else on the axes
+    # yet) or an overlay on another plot type.
+    is_standalone = (
+        len(ax.patches) == 0 and len(ax.lines) == 0 and len(ax.collections) == 0
+    )
+
+    rug = ax.vlines(
+        np.asarray(values),
+        0,
+        RUG_TICK_HEIGHT,
+        # Axes-fraction y coordinates: ticks rise from the bottom of
+        # the axes regardless of the y data limits.
+        transform=ax.get_xaxis_transform(),
+        color=color,
+        alpha=alpha,
+        label=label,
+        **kwargs,
+    )
+
+    if is_standalone:
+        # Standalone rug plot: the vertical direction carries no
+        # information, so hide the y-axis, the left spine, and the
+        # gridlines for a clean number-line look. When the rug is
+        # overlaid on another plot, none of this runs -- the companion
+        # plot owns the axes styling and the rug inherits it untouched.
+        ax.yaxis.set_visible(False)
+        ax.spines["left"].set_visible(False)
+        ax.grid(False)
+
+    ax.set_xlabel("Value")
+    # A legend only helps once there is more than one rug to tell
+    # apart; a lone rug stays legend-free.
+    if ax._rug_count > 1:
+        ax.legend(loc=RUG_LEGEND_LOC)
+    return rug
+
+
+def make_segmented_rug(
+    x, y, ax, color, alpha=None, discrete_x=None, discrete_y=None, **kwargs
+):
+    """Draw a segmented rug plot for mixed discrete/continuous data.
+
+    The small-n counterpart of the mixed tile plot: instead of binning
+    the continuous variable, every simulated value is drawn as a rug
+    tick, and the ticks are grouped into one band per level of the
+    discrete variable. A student can see each individual data point
+    while still reading how the continuous variable is distributed
+    within each discrete level.
+
+    The orientation follows which variable is discrete, mirroring the
+    mixed tile plot so the small-n and large-n views of the same data
+    line up:
+
+    - discrete ``y``, continuous ``x``: one band per y-level stacked
+      vertically, with vertical ticks along x.
+    - discrete ``x``, continuous ``y``: one band per x-level stacked
+      horizontally, with horizontal ticks along y.
+
+    Either way the ticks run perpendicular to the continuous value
+    axis, marking each observation's position along it inside its
+    band. The discrete axis is labeled with the level values; the
+    continuous axis keeps ordinary numeric ticks. The tick marks rise
+    from each level's baseline and are the same small size as the 1D
+    ``make_rug`` ticks (``RUG_TICK_HEIGHT``).
+
+    This plot is only for mixed data -- exactly one discrete variable
+    and one continuous variable. Two discrete variables should use a
+    tile plot, and two continuous variables a scatter plot.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` -- pass the result in as ``color``. This
+    mirrors how ``make_rug`` and the other plot helpers are called.
+
+    Parameters
+    ----------
+    x : array-like
+        Simulated values for the horizontal axis, e.g. the first
+        column of ``RVResults.array``. Discrete or continuous.
+    y : array-like
+        Simulated values for the vertical axis, same length as ``x``.
+        Discrete or continuous.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Color for the tick marks, from ``get_next_color(ax)``.
+    alpha : float, optional
+        Tick transparency between 0 and 1. Defaults to the package
+        standard for rug plots (``RUG_ALPHA``, 0.5), so stacked values
+        read as darker.
+    discrete_x : bool, optional
+        Whether the x-axis is the discrete (grouping) variable. If
+        None (default), detected from the data: float values are
+        treated as continuous, everything else (int, bool, string) as
+        discrete.
+    discrete_y : bool, optional
+        Same as ``discrete_x`` for the y-axis.
+    **kwargs
+        Additional keyword arguments passed to ``matplotlib``.
+
+    Returns
+    -------
+    list of matplotlib.collections.LineCollection
+        The tick collections, one per discrete level, so the caller
+        can inspect or further style them.
+
+    Raises
+    ------
+    ValueError
+        If the two variables are not one discrete and one continuous.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> x = rng.normal(0, 1, 60)     # continuous
+    >>> y = rng.integers(0, 4, 60)   # discrete groups
+    >>> make_segmented_rug(x, y, plt.gca(), "#56B4E9")  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = RUG_ALPHA
+    kwargs.setdefault("linewidth", RUG_LINEWIDTH)
+    xs, ys = np.asarray(x), np.asarray(y)
+    if discrete_x is None:
+        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+    if discrete_y is None:
+        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+
+    # A segmented rug needs one discrete variable (the groups) and one
+    # continuous variable (the values). Anything else is a different
+    # plot.
+    if discrete_x == discrete_y:
+        if discrete_x:
+            raise ValueError(
+                "A segmented rug plot needs one discrete variable and one "
+                "continuous variable, but both of yours look discrete. Try a "
+                "tile plot for two discrete variables."
+            )
+        raise ValueError(
+            "A segmented rug plot needs one discrete variable and one "
+            "continuous variable, but both of yours look continuous. Try a "
+            "scatter plot for two continuous variables."
+        )
+
+    # The discrete variable defines the bands; the continuous variable
+    # is the value axis. Vertical ticks when the continuous axis is x,
+    # horizontal ticks when it is y -- the ticks always run
+    # perpendicular to the value axis, mirroring the mixed tile plot's
+    # orientation.
+    if discrete_y:
+        levels = np.unique(ys)
+        continuous, groups = xs, ys
+    else:
+        levels = np.unique(xs)
+        continuous, groups = ys, xs
+
+    # Make the ticks the same visual size as the 1D make_rug ticks
+    # (RUG_TICK_HEIGHT, a fraction of the axes). The discrete axis is
+    # fixed below to span len(levels) data units, so
+    # RUG_TICK_HEIGHT * len(levels) data units is that same fraction of
+    # the axes. Ticks rise from each level's baseline, so every band
+    # reads as its own small 1D rug.
+    tick_len = RUG_TICK_HEIGHT * len(levels)
+    ticks = []
+    for i, level in enumerate(levels):
+        values = continuous[groups == level]
+        if discrete_y:
+            ticks.append(
+                ax.vlines(
+                    values,
+                    i,
+                    i + tick_len,
+                    color=color,
+                    alpha=alpha,
+                    **kwargs,
+                )
+            )
+        else:
+            ticks.append(
+                ax.hlines(
+                    values,
+                    i,
+                    i + tick_len,
+                    color=color,
+                    alpha=alpha,
+                    **kwargs,
+                )
+            )
+
+    # Label the discrete axis with the level values (one tick per band)
+    # and give it a little padding so the outer bands aren't clipped;
+    # the continuous axis keeps matplotlib's numeric ticks. Axis labels
+    # match the mixed tile plot's "X"/"Y".
+    positions = np.arange(len(levels))
+    if discrete_y:
+        ax.set_yticks(positions)
+        ax.set_yticklabels(levels)
+        ax.set_ylim(-0.5, len(levels) - 0.5)
+    else:
+        ax.set_xticks(positions)
+        ax.set_xticklabels(levels)
+        ax.set_xlim(-0.5, len(levels) - 0.5)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title("Segmented Rug Plot")
+    # A rug reads cleanest without a reference grid behind the sparse
+    # ticks (the same choice as the standalone 1D rug).
+    ax.grid(False)
+    return ticks
+
+
+def _axes_size_px(ax):
+    """Return the rendered (width, height) of the axes in pixels."""
+    (x0, y0), (x1, y1) = ax.transAxes.transform([(0.0, 0.0), (1.0, 1.0)])
+    return x1 - x0, y1 - y0
+
+
+def _x_span_px(ax, dx):
+    """Return how many pixels wide dx data units are."""
+    (x0, _), (x1, _) = ax.transData.transform([(0.0, 0.0), (dx, 0.0)])
+    return x1 - x0
+
+
+def _dotplot_clean_values(values):
+    """Validate the values and return them as a 1D float array."""
+    arr = np.asarray(list(values))
+    if arr.dtype.kind not in "iufb":
+        raise TypeError(
+            "A dot plot needs numbers, but these values are not numeric "
+            "(for example, text like 'H' or 'T'). Try .tabulate() to "
+            "count how often each value occurs instead."
+        )
+    arr = arr.astype(float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        raise ValueError(
+            "There are no values to plot. Simulate some values first, "
+            "for example X.sim(30).plot()."
+        )
+    return arr
+
+
+def _dotplot_restack(state):
+    """Recompute the shared stack positions and per-batch counts.
+
+    Every distinct value across all batches gets its own stack, placed
+    at that exact value -- no binning. The slot around each stack
+    (used for dodging, padding, boundary lines, and the dot-size cap)
+    is the smallest gap between neighboring values.
+    """
+    all_values = np.concatenate([s["values"] for s in state["series"]])
+    positions = np.unique(all_values)
+    if len(positions) > 1:
+        spacing = np.diff(positions).min()
+    else:
+        spacing = 1.0
+    state["positions"] = positions
+    state["spacing"] = spacing
+    for s in state["series"]:
+        s["counts"] = np.array([np.sum(s["values"] == p) for p in positions], dtype=int)
+
+
+def _dotplot_init_state(ax):
+    """Set up per-axes dot plot state, styling, and resize handling."""
+    state = {
+        "series": [],
+        "boundary_lines": [],
+        "last_size_px": None,
+        "relayout_running": False,
+    }
+    ax._dotplot_state = state
+    # Horizontal reference gridlines help students read a count off
+    # the y-axis. Keep them below the dots and drop the vertical
+    # lines, which would clutter the stacks.
+    ax.set_axisbelow(True)
+    ax.grid(True, axis="y")
+    ax.grid(False, axis="x")
+    ax.set_xlabel(DOTPLOT_XLABEL)
+    ax.tick_params(labelsize=DOTPLOT_TICK_LABEL_SIZE)
+    # Dot sizes depend on the rendered size of the axes, so redo the
+    # geometry whenever something changes it (figure resize,
+    # tight_layout).
+    ax.figure.canvas.mpl_connect(
+        "resize_event", lambda event: _dotplot_on_canvas_change(ax)
+    )
+    ax.figure.canvas.mpl_connect(
+        "draw_event", lambda event: _dotplot_on_canvas_change(ax)
+    )
+    return state
+
+
+def _dotplot_relayout(ax):
+    """Position and size every dot from the current stacks and axes size."""
+    state = getattr(ax, "_dotplot_state", None)
+    if state is None or not state["series"]:
+        return
+    positions = state["positions"]
+    spacing = state["spacing"]
+    n_series = len(state["series"])
+    # Each batch gets its own lane inside the slot around each value.
+    lane_width = spacing / n_series
+
+    # x padding: one slot of air beyond the outermost stacks.
+    ax.set_xlim(positions[0] - spacing, positions[-1] + spacing)
+
+    # Every dot is one count, so a stack unit is always 1.
+
+    # Pixel measurements via the axes transforms (valid before any
+    # draw). The 1-px floor guards against two nearly-identical values
+    # driving the lane width -- and with it the dot size -- to zero.
+    lane_width_px = max(_x_span_px(ax, lane_width), 1.0)
+    height_px = _axes_size_px(ax)[1]
+
+    # Choose the y range so one count on screen is never taller than
+    # one lane is wide, nor than the DOTPLOT_MAX_DOT_SIZE cap. That
+    # pixel height becomes the dot diameter, so dots stack touching and
+    # never spill into the next lane, short stacks cannot inflate the
+    # dots past the cap, and taller stacks shrink the dots instead of
+    # overflowing the axes.
+    max_dot_px = DOTPLOT_MAX_DOT_SIZE * ax.figure.dpi / 72.0
+    tallest = max(s["counts"].max() for s in state["series"])
+    y_max = max(
+        tallest * DOTPLOT_STACK_HEADROOM,
+        height_px / lane_width_px,
+        height_px / max_dot_px,
+    )
+    ax.set_ylim(0, y_max)
+
+    points_per_px = 72.0 / ax.figure.dpi
+    # Dodge overlaid batches by exactly one dot diameter so their
+    # stacks sit side by side and touch, rather than by the full lane
+    # width -- which would leave a gap between the columns once the
+    # dot-size cap shrinks the dots below the lane width. The dot
+    # diameter is what the y range above was calibrated to; it never
+    # exceeds one lane width, so a dodged group still fits inside its
+    # slot without colliding with the neighboring value's stacks.
+    diameter_px = height_px / y_max
+    x_px_per_data = max(_x_span_px(ax, 1.0), 1e-9)
+    dodge_step = diameter_px / x_px_per_data
+    # scatter sizes are marker areas in points^2 (diameter squared).
+    size = (diameter_px * points_per_px) ** 2
+    for i, series in enumerate(state["series"]):
+        offset = (i - (n_series - 1) / 2.0) * dodge_step
+        xs = []
+        ys = []
+        for position, count in zip(positions, series["counts"]):
+            xs.extend(np.full(count, position + offset))
+            ys.extend(np.arange(1, count + 1) - 0.5)
+        series["dots"].set_offsets(np.column_stack([xs, ys]))
+        series["dots"].set_sizes(np.full(len(xs), size))
+
+    if np.all(positions == np.round(positions)):
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    # The y-axis is always integer counts.
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    _dotplot_boundary_lines(ax, state)
+    state["last_size_px"] = _axes_size_px(ax)
+
+
+def _dotplot_boundary_lines(ax, state):
+    """Draw tile-style boundary lines between stacks for overlays.
+
+    With dodged (side-by-side) batches, dots no longer sit exactly on
+    their value, so boundaries halfway between neighboring stacks (at
+    1.5, 2.5, ... for integer data) make it clear that every dot
+    between 1.5 and 2.5 belongs to 2. A single batch stays
+    boundary-free.
+    """
+    for line in state["boundary_lines"]:
+        line.remove()
+    state["boundary_lines"] = []
+    if len(state["series"]) < 2:
+        return
+    positions = state["positions"]
+    half = state["spacing"] / 2.0
+    midpoints = (positions[:-1] + positions[1:]) / 2.0
+    edges = np.concatenate([[positions[0] - half], midpoints, [positions[-1] + half]])
+    for edge in edges:
+        state["boundary_lines"].append(
+            ax.axvline(
+                edge,
+                color=DOTPLOT_BOUNDARY_LINE_COLOR,
+                linewidth=DOTPLOT_BOUNDARY_LINE_WIDTH,
+                alpha=DOTPLOT_BOUNDARY_LINE_ALPHA,
+                zorder=1,
+            )
+        )
+
+
+def _dotplot_decorate(ax, state):
+    """Apply the title, labels, fonts, and (for overlays) the legend."""
+    ax.set_title(DOTPLOT_TITLE)
+    ax.set_ylabel("Count")
+    ax.xaxis.label.set_size(DOTPLOT_AXIS_LABEL_SIZE)
+    ax.yaxis.label.set_size(DOTPLOT_AXIS_LABEL_SIZE)
+    # A legend only helps once there is more than one batch to tell
+    # apart. Handles are built by hand so the legend dots keep a
+    # readable fixed size instead of the data-driven dot diameter.
+    if len(state["series"]) > 1:
+        handles = [
+            Line2D(
+                [],
+                [],
+                linestyle="",
+                marker="o",
+                color=s["color"],
+                markersize=DOTPLOT_LEGEND_MARKER_SIZE,
+                label=s["label"],
+            )
+            for s in state["series"]
+        ]
+        ax.legend(handles=handles, loc=DOTPLOT_LEGEND_LOC)
+
+
+def _dotplot_on_canvas_change(ax):
+    """Redo the dot geometry if the axes' rendered size has changed."""
+    state = getattr(ax, "_dotplot_state", None)
+    if state is None or state["relayout_running"] or not state["series"]:
+        return
+    size = _axes_size_px(ax)
+    last = state["last_size_px"]
+    if (
+        last is not None
+        and abs(size[0] - last[0]) < 1.0
+        and abs(size[1] - last[1]) < 1.0
+    ):
+        return
+    state["relayout_running"] = True
+    try:
+        _dotplot_relayout(ax)
+        ax.figure.canvas.draw_idle()
+    finally:
+        state["relayout_running"] = False
+
+
+def make_dotplot(values, ax, color, alpha=None, label=None, **kwargs):
+    """Draw a stacked dot plot of simulated values on the given axes.
+
+    Every observation is one dot, drawn at its exact value on the
+    x-axis. Identical values stack on top of one another, the first
+    dot in each stack sits directly on the number line, and stacked
+    dots touch. Values are never binned -- the dot plot is meant for
+    discrete data. The y-axis always reads "Count": every dot is one
+    observation.
+
+    Dot plots overlay naturally: a second call on the same axes draws
+    each batch side by side around the shared values, in different
+    colors, dodged by exactly one dot diameter so neighboring stacks
+    touch. Light vertical boundary lines appear halfway between
+    neighboring stacks (at 1.5, 2.5, ... for integer data) so it stays
+    clear which value each dot belongs to. A legend appears
+    automatically in the top right once two or more batches share the
+    axes.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``. This mirrors how ``RVResults.plot()`` calls the other
+    plot helpers (``make_impulse``, ``make_hist``).
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values to plot, e.g. ``RVResults.array``. Must
+        be numeric.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Dot color, from ``get_next_color(ax)``.
+    alpha : float, optional
+        Dot transparency between 0 and 1. Defaults to the package
+        standard for dot plots (``DOTPLOT_ALPHA``, fully opaque).
+    label : str, optional
+        Name for this batch of values in the legend. Defaults to
+        "Variable k", where k counts the dot plots drawn on these axes
+        so far.
+    **kwargs
+        Additional keyword arguments passed to
+        ``matplotlib.axes.Axes.scatter``. Dot positions and sizes are
+        managed by the touching-stack layout, so ``s=`` / ``sizes=``
+        are overridden.
+
+    Returns
+    -------
+    matplotlib.collections.PathCollection
+        The dots, as returned by ``ax.scatter``, so the caller can
+        inspect or further style them.
+
+    Raises
+    ------
+    TypeError
+        If the values are not numeric.
+    ValueError
+        If there are no (finite) values to plot.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> values = np.random.default_rng().integers(1, 7, 30)
+    >>> ax = plt.gca()
+    >>> make_dotplot(values, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    values = _dotplot_clean_values(values)
+    if alpha is None:
+        alpha = DOTPLOT_ALPHA
+    state = getattr(ax, "_dotplot_state", None)
+    if state is None:
+        state = _dotplot_init_state(ax)
+    if label is None:
+        label = "Variable {}".format(len(state["series"]) + 1)
+    # Dots start empty; _dotplot_relayout fills in positions and sizes
+    # once the shared bins and axes limits are known.
+    dots = ax.scatter([], [], color=color, alpha=alpha, zorder=2, **kwargs)
+    state["series"].append(
+        {
+            "values": values,
+            "dots": dots,
+            "label": label,
+            "color": color,
+        }
+    )
+    _dotplot_restack(state)
+    _dotplot_relayout(ax)
+    _dotplot_decorate(ax, state)
+    return dots
+
+
+# Structured-jitter fill order: a 3x3 compass template. The first point
+# in a cell sits dead center, points 2-5 take the cardinal positions
+# (N, E, S, W), and points 6-9 take the remaining diagonal positions
+# (NE, SE, NW, SW).
+_COMPASS_ORDER = [
+    (0, 0),  # center
+    (0, 1),  # N
+    (1, 0),  # E
+    (0, -1),  # S
+    (-1, 0),  # W
+    (1, 1),  # NE
+    (1, -1),  # SE
+    (-1, 1),  # NW
+    (-1, -1),  # SW
+]
+
+
+def _dot_steps(ax):
+    """Return the dot diameter in (x, y) data units.
+
+    This is the spacing at which two neighboring dots exactly touch on
+    screen -- the touching-dot geometry the dot plot uses, measured
+    through ``ax.transData`` so it tracks the current axis limits and
+    figure size.
+    """
+    diameter_px = np.sqrt(SCATTER_MARKER_SIZE) * ax.figure.dpi / 72.0
+    (x0, y0), (x1, y1) = ax.transData.transform([(0.0, 0.0), (1.0, 1.0)])
+    px_per_xunit = max(abs(x1 - x0), 1e-9)
+    px_per_yunit = max(abs(y1 - y0), 1e-9)
+    return diameter_px / px_per_xunit, diameter_px / px_per_yunit
+
+
+def _spiral_offsets(k, step_x, step_y):
+    """Return ``k`` (dx, dy) offsets clustered on (0, 0), compass-first.
+
+    Coincident points fill the compass template in ``_COMPASS_ORDER``:
+    dead center first, then the cardinal positions (N, E, S, W) one
+    dot diameter away, then the diagonals (NE, SE, NW, SW). The center
+    point sits exactly on the grid intersection and the cardinal
+    points lie on the grid lines themselves, so the whole cluster
+    visibly belongs to that one (x, y) value. More than 9 coincident
+    points no longer fit the template, so they fall back to a centered
+    ``ceil(sqrt(k))``-column touching lattice. Either way the spacing
+    compresses once the cluster would outgrow SCATTER_BIN_SPREAD, so
+    it never reaches the neighboring value.
+    """
+    if k <= len(_COMPASS_ORDER):
+        sx = min(step_x, SCATTER_BIN_SPREAD / 2.0)
+        sy = min(step_y, SCATTER_BIN_SPREAD / 2.0)
+        return [(dx * sx, dy * sy) for dx, dy in _COMPASS_ORDER[:k]]
+    ncols = int(np.ceil(np.sqrt(k)))
+    nrows = int(np.ceil(k / ncols))
+    sx = min(step_x, SCATTER_BIN_SPREAD / max(ncols - 1, 1))
+    sy = min(step_y, SCATTER_BIN_SPREAD / max(nrows - 1, 1))
+    offsets = []
+    for m in range(k):
+        row, col = divmod(m, ncols)
+        offsets.append(((col - (ncols - 1) / 2.0) * sx, (row - (nrows - 1) / 2.0) * sy))
+    return offsets
+
+
+def _bins_offsets(k, step_x, step_y):
+    """Return ``k`` (dx, dy) offsets filling the value's box like a
+    tiny dot histogram.
+
+    Dots start in the box's bottom-left corner and fill left to right,
+    then move up a row, touching -- so a fuller box reads as a bigger
+    fill, the way a taller histogram bar reads as a bigger count. Rows
+    are kept square-ish (about sqrt(k) dots wide, capped by how many
+    touching dots fit across the box) so a pile-up reads as a compact
+    countable block rather than a long string of dots; if the rows
+    would still outgrow the box vertically, the row spacing compresses
+    to keep every dot inside its own value's box.
+    """
+    half = SCATTER_BIN_SPREAD / 2.0
+    sx = min(step_x, SCATTER_BIN_SPREAD)
+    max_cols = max(1, int(SCATTER_BIN_SPREAD / sx))
+    ncols = min(max_cols, int(np.ceil(np.sqrt(k))))
+    nrows = int(np.ceil(k / ncols))
+    sy = min(step_y, SCATTER_BIN_SPREAD / nrows)
+    offsets = []
+    for m in range(k):
+        row, col = divmod(m, ncols)
+        offsets.append((-half + (col + 0.5) * sx, -half + (row + 0.5) * sy))
+    return offsets
+
+
+def _relayout_clusters(ax):
+    """Recompute every cluster's dot positions from the current axes.
+
+    The touching-dot spacing depends on the axis limits and rendered
+    figure size, so this runs when the series is first drawn and again
+    from the resize/draw hooks whenever the geometry changes (same
+    pattern as the dot plot).
+    """
+    state = getattr(ax, "_scatter_jitter_state", None)
+    if state is None or not state["series"]:
+        return
+    step_x, step_y = _dot_steps(ax)
+    for series in state["series"]:
+        xi, yi = series["xi"], series["yi"]
+        new_x = xi.astype(float).copy()
+        new_y = yi.astype(float).copy()
+        values = {}
+        for i in range(len(xi)):
+            values.setdefault((xi[i], yi[i]), []).append(i)
+        for (cx, cy), idxs in values.items():
+            if series["mode"] == "bins":
+                offsets = _bins_offsets(len(idxs), step_x, step_y)
+            else:
+                offsets = _spiral_offsets(len(idxs), step_x, step_y)
+            for pos, (dx, dy) in enumerate(offsets):
+                new_x[idxs[pos]] = cx + dx
+                new_y[idxs[pos]] = cy + dy
+        series["dots"].set_offsets(np.column_stack([new_x, new_y]))
+    state["last_geometry"] = _geometry_signature(ax)
+
+
+def _geometry_signature(ax):
+    """The rendered size and view limits the last layout was based on."""
+    return (_axes_size_px(ax), ax.get_xlim(), ax.get_ylim())
+
+
+def _scatter_on_canvas_change(ax):
+    """Redo the cluster geometry if the axes' rendering has changed."""
+    state = getattr(ax, "_scatter_jitter_state", None)
+    if state is None or state["relayout_running"] or not state["series"]:
+        return
+    if state["last_geometry"] == _geometry_signature(ax):
+        return
+    state["relayout_running"] = True
+    try:
+        _relayout_clusters(ax)
+        ax.figure.canvas.draw_idle()
+    finally:
+        state["relayout_running"] = False
+
+
+def _init_jitter_state(ax):
+    """Set up per-axes cluster state and the geometry-change hooks."""
+    state = {"series": [], "last_geometry": None, "relayout_running": False}
+    ax._scatter_jitter_state = state
+    ax.figure.canvas.mpl_connect(
+        "resize_event", lambda event: _scatter_on_canvas_change(ax)
+    )
+    ax.figure.canvas.mpl_connect(
+        "draw_event", lambda event: _scatter_on_canvas_change(ax)
+    )
+    return state
+
+
+def _max_coincident(x, y):
+    """Count the points sharing the most-repeated integer (x, y) value."""
+    pairs = np.column_stack([np.round(x).astype(int), np.round(y).astype(int)])
+    _, counts = np.unique(pairs, axis=0, return_counts=True)
+    return int(counts.max())
+
+
+def make_scatter(
+    x,
+    y,
+    ax,
+    color,
+    alpha=None,
+    jitter=False,
+    label=None,
+    xlabel=None,
+    ylabel=None,
+    **kwargs,
+):
+    """Draw a 2D scatter plot of paired simulated values.
+
+    Scatter plots overlay naturally: a second call on the same axes
+    draws on top of the first, and a legend appears automatically in
+    the top right once two or more series share the axes. Each series
+    is named by ``label``, or "Variable 1", "Variable 2", ... in call
+    order when no label is given. The low alpha keeps the overlap
+    region readable even with filled points.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``. This mirrors how ``RVResults.plot()`` calls the other
+    plot helpers in this module.
+
+    Parameters
+    ----------
+    x : array-like
+        The first coordinate of each simulated pair, e.g. column 0 of
+        ``RVResults.array``.
+    y : array-like
+        The second coordinate of each simulated pair, e.g. column 1 of
+        ``RVResults.array``.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Fill color for the circles, from ``get_next_color(ax)``.
+    alpha : float, optional
+        Point transparency between 0 and 1. Defaults to the package
+        standard for scatter plots (``SCATTER_ALPHA``, 0.25).
+    jitter : bool or str, default False
+        How to spread out coincident points (discrete data):
+
+        - ``False`` -- draw points at their exact coordinates. Right
+          for two continuous variables (no coincident points).
+        - ``True`` -- add small random noise to both coordinates.
+          Reduces overplotting but scrambles density.
+        - ``"spiral"`` -- points that share an integer (x, y)
+          coordinate form a tight compass-pattern cluster on that
+          value's grid crossing (center first, then N/E/S/W on the
+          grid lines, then the diagonals), neighboring dots touching,
+          so the cluster reads as one shared value at natural dot
+          size. Right for two discrete variables with modest pile-ups:
+          a student can read each value's density by counting. Assumes
+          the data are integer-valued.
+        - ``"bins"`` -- histogram-style boxes: the grid lines move to
+          the half-integer bin edges, so each value gets a visible box
+          with its axis label centered inside, the way a histogram
+          centers a bar over its bin. Points sharing a value fill
+          their box from the bottom-left corner -- left to right, then
+          up a row -- dots touching, like a tiny dot histogram, so a
+          fuller box means a bigger count even when dozens of points
+          share one value.
+        - ``"auto"`` -- pick for the data: ``"bins"`` once any single
+          value holds ``SCATTER_AUTO_BINS_THRESHOLD`` (12) or more
+          points, ``"spiral"`` otherwise. Prints a note when it
+          chooses bins.
+    label : str, optional
+        Name for this series in the legend. Defaults to "Variable k",
+        where k counts the scatters drawn on these axes so far.
+    xlabel : str, optional
+        Label for the x-axis. Defaults to "Variable 1".
+    ylabel : str, optional
+        Label for the y-axis. Defaults to "Variable 2".
+    **kwargs
+        Additional keyword arguments passed to
+        ``matplotlib.axes.Axes.scatter``.
+
+    Returns
+    -------
+    matplotlib.collections.PathCollection
+        The collection from ``ax.scatter``, so the caller can inspect
+        or further style the points.
+
+    Raises
+    ------
+    ValueError
+        If ``jitter`` is not one of the recognized values.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> x = rng.uniform(0, 7, 40)
+    >>> y = 0.8 * x + rng.normal(0, 0.7, 40)
+    >>> ax = plt.gca()
+    >>> make_scatter(x, y, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = SCATTER_ALPHA
+    # The marker size is a default, not an override, so a user's own
+    # s= keyword still wins.
+    kwargs.setdefault("s", SCATTER_MARKER_SIZE)
+    if jitter not in (False, True, "spiral", "bins", "auto"):
+        raise ValueError(
+            f"jitter must be False, True, 'spiral', 'bins', or 'auto', not "
+            f"{jitter!r}. For two discrete variables use jitter='auto' (picks "
+            "the best layout for your data), jitter='spiral' (tight countable "
+            "clusters), or jitter='bins' (spreads big pile-ups across each "
+            "value's bin). Use jitter=True for random noise, or jitter=False "
+            "(the default) for continuous variables."
+        )
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    if jitter == "auto":
+        peak = _max_coincident(x, y)
+        if peak >= SCATTER_AUTO_BINS_THRESHOLD:
+            jitter = "bins"
+            print(
+                f"The most repeated value appears {peak} times -- too many "
+                "for the tight cluster style to stay countable -- so the "
+                "points are spread across each value's bin "
+                "(jitter='bins'). Pass jitter='spiral' to force tight "
+                "clusters instead."
+            )
+        else:
+            jitter = "spiral"
+
+    xi = yi = None
+    if jitter in ("spiral", "bins"):
+        # Pin the view at least half a unit past the occupied crossings
+        # (via the data limits, so later overlays still autoscale):
+        # otherwise a lone heavily-repeated value makes autoscale zoom
+        # into the cluster itself, which then reads as many separate
+        # values instead of one.
+        xi = np.round(x).astype(int)
+        yi = np.round(y).astype(int)
+        ax.update_datalim(
+            [(xi.min() - 0.5, yi.min() - 0.5), (xi.max() + 0.5, yi.max() + 0.5)]
+        )
+        # Draw at the value centers for now; the touching-dot cluster
+        # layout needs settled axis limits, so it happens at the end of
+        # this call (and again from the resize/draw hooks).
+        x, y = xi.astype(float), yi.astype(float)
+    elif jitter:
+        x = x + rng.normal(loc=0, scale=0.01 * (x.max() - x.min()), size=len(x))
+        y = y + rng.normal(loc=0, scale=0.01 * (y.max() - y.min()), size=len(y))
+
+    # Count the scatters drawn on these axes, stored on the axes object
+    # itself (the same pattern get_next_color uses for the color cycle)
+    # so overlays from separate .plot() calls see it.
+    n_prior_scatters = getattr(ax, "_scatter_count", 0)
+    if label is None:
+        label = f"Variable {n_prior_scatters + 1}"
+    ax._scatter_count = n_prior_scatters + 1
+
+    points = ax.scatter(
+        x,
+        y,
+        color=color,
+        alpha=alpha,
+        label=label,
+        **kwargs,
+    )
+
+    if jitter in ("spiral", "bins"):
+        # Integer major ticks so every value label sits at its integer
+        # position (spiral: grid lines through the cluster centers;
+        # bins: labels centered in their boxes).
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
+    if jitter == "bins":
+        # Histogram-style boxes: move the grid lines to the half-integer
+        # bin edges (minor ticks, marks hidden) so each value gets a
+        # visible box with its label centered inside, like a histogram
+        # bar over its bin.
+        ax.xaxis.set_minor_locator(MultipleLocator(1, offset=0.5))
+        ax.yaxis.set_minor_locator(MultipleLocator(1, offset=0.5))
+        ax.tick_params(which="minor", length=0)
+        ax.grid(False, axis="both", which="major")
+        ax.grid(True, axis="both", which="minor")
+    else:
+        # Vertical grid lines on top of the style sheet's horizontal
+        # ones, so values read off both axes.
+        ax.grid(True, axis="both")
+
+    ax.set_xlabel("Variable 1" if xlabel is None else xlabel)
+    ax.set_ylabel("Variable 2" if ylabel is None else ylabel)
+    ax.set_title("2D Scatter Plot")
+    _refresh_legend(ax, loc=SCATTER_LEGEND_LOC)
+
+    if jitter in ("spiral", "bins"):
+        state = getattr(ax, "_scatter_jitter_state", None)
+        if state is None:
+            state = _init_jitter_state(ax)
+        state["series"].append({"dots": points, "xi": xi, "yi": yi, "mode": jitter})
+        # Settle the view limits now so the touching-dot spacing is
+        # measured against the geometry that will actually render.
+        ax.autoscale_view()
+        _relayout_clusters(ax)
+
+    return points
+
+
+def make_hist2d(
+    x, y, ax, bins=None, normalize=True, hex=False, colorbar=True, **kwargs
+):
+    """Draw a 2D histogram of simulated (x, y) pairs on the given axes.
+
+    Draws in the style of the approved 2D histogram prototype: a
+    filled bin mesh using the package's sequential colormap (viridis,
+    from ``symbulate.mplstyle``), with a colorbar on the right labeled
+    "Density" (or "Count" when ``normalize=False``). The x-axis is
+    labeled "X", the y-axis "Y", and the title reads "2-D Histogram".
+    The color scale always starts from 0 so empty bins read as
+    "no data" rather than an arbitrary color. The colorbar ticks both
+    endpoints (0 and the peak value) with ``HIST2D_CBAR_TICKS`` (8)
+    evenly spaced ticks; density labels are rounded to
+    ``HIST2D_CBAR_DECIMALS`` (3) decimals and raw counts to whole
+    numbers. This matches the density2d colorbar.
+
+    With ``hex=True`` the bins are hexagons instead of squares and the
+    title reads "Hexbin Plot"; everything else (colormap, colorbar,
+    normalization, overlay warning) behaves the same.
+
+    Unlike the 1D plot types, a 2D histogram encodes magnitude with a
+    colormap instead of the categorical color cycle, so no ``color``
+    parameter is taken. Overlays are the "readability warning"
+    category of the overlay policy: a second call on the same axes
+    still draws, but prints a warning that the color scales compete.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working). This mirrors how the other plot helpers in
+    this module (``make_tile``, ``make_density2D``) are called.
+
+    Parameters
+    ----------
+    x : array-like
+        Simulated values for the horizontal axis, e.g. the first
+        column of ``RVResults.array``.
+    y : array-like
+        Simulated values for the vertical axis, same length as ``x``.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    bins : int, optional
+        Number of equal-width bins along each axis (the number of
+        hexagons across the x-axis when ``hex=True``). Defaults to 30.
+    normalize : bool, default True
+        If True, bin colors show density (cell areas integrate to 1)
+        so the plot approximates the joint density. If False, colors
+        show raw counts.
+    hex : bool, default False
+        If True, bin the data into hexagons instead of squares and
+        title the plot "Hexbin Plot". (The name shadows the built-in
+        ``hex()``, matching how the package's ``type=`` parameter
+        shadows ``type()``.)
+    colorbar : bool, default True
+        If True, add a colorbar to the right of the axes. The
+        'marginal' layout in ``RVResults.plot()`` passes False and
+        places its own colorbar so the marginal panels aren't
+        squeezed.
+    **kwargs
+        Additional keyword arguments passed to ``ax.hist2d`` (or
+        ``ax.hexbin`` when ``hex=True``).
+
+    Returns
+    -------
+    tuple or matplotlib.collections.PolyCollection
+        With square bins, the ``(counts, xedges, yedges, mesh)`` tuple
+        from ``ax.hist2d``; with ``hex=True``, the hexagon collection
+        from ``ax.hexbin``. Either way the caller can inspect the bins
+        or attach further styling.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> x, y = rng.normal(0, 1, (2, 1000))
+    >>> ax = plt.gca()
+    >>> make_hist2d(x, y, ax)  # doctest: +SKIP
+    """
+    if bins is None:
+        bins = HIST2D_DEFAULT_BINS
+    xs, ys = np.asarray(x), np.asarray(y)
+    # Count the 2D histograms drawn on these axes, stored on the axes
+    # object itself (the same pattern get_next_color uses for the
+    # color cycle), to trigger the overlay readability warning.
+    n_prior = getattr(ax, "_hist2d_count", 0)
+    ax._hist2d_count = n_prior + 1
+    # No cmap argument in either branch: the sequential colormap comes
+    # from image.cmap in symbulate.mplstyle. vmin=0 anchors the color
+    # scale at zero.
+    if hex:
+        histogram = ax.hexbin(xs, ys, gridsize=bins, vmin=0, **kwargs)
+        # The hexagon tiling has a jagged outline that doesn't fill
+        # the square axes box. Painting the axes background with the
+        # colormap's zero color makes everything beyond the tiling
+        # read as zero density, so the plot edge is the clean square
+        # of the axes, matching the 2-D histogram.
+        ax.set_facecolor(histogram.get_cmap()(0))
+        if normalize:
+            # hexbin has no density option, so rescale the counts by
+            # hand: density = count / (n * cell area), which makes the
+            # hexagon volumes sum to 1 exactly like a density
+            # histogram. All hexagons are congruent, so the shoelace
+            # formula on one hexagon's vertices (in data units) gives
+            # the cell area.
+            v = histogram.get_paths()[0].vertices[:6]
+            area = 0.5 * abs(
+                np.sum(v[:, 0] * np.roll(v[:, 1], -1) - np.roll(v[:, 0], -1) * v[:, 1])
+            )
+            density = histogram.get_array() / (len(xs) * area)
+            histogram.set_array(density)
+            histogram.set_clim(0, float(density.max()))
+        mesh = histogram
+    else:
+        histogram = ax.hist2d(xs, ys, bins=bins, density=normalize, vmin=0, **kwargs)
+        mesh = histogram[3]
+    # A filled mesh covers the whole axes, so the reference grid has
+    # nothing to sit on -- turn it off rather than let fragments show
+    # at the edges.
+    ax.grid(False)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title("Hexbin Plot" if hex else "2-D Histogram")
+    if colorbar:
+        # Colorbar on the right, sized relative to the axes so it
+        # tracks figure resizing (the approved replacement for the old
+        # hardcoded fig.add_axes colorbar).
+        cax = make_axes_locatable(ax).append_axes(
+            "right", size=HIST2D_CBAR_SIZE, pad=HIST2D_CBAR_PAD
+        )
+        cbar = ax.get_figure().colorbar(mesh, cax=cax)
+        cbar.set_label("Density" if normalize else "Count")
+        # The color scale starts at 0 (vmin=0 above); tick both ends of
+        # the bar with a fixed number of evenly spaced ticks --
+        # matplotlib's default locator otherwise trims short of the
+        # endpoints. get_clim() is authoritative once the colorbar
+        # exists. Labels are rounded to HIST2D_CBAR_DECIMALS for the
+        # density scale, or to whole numbers for raw counts.
+        vmin, vmax = mesh.get_clim()
+        cbar.set_ticks(np.linspace(vmin, vmax, HIST2D_CBAR_TICKS))
+        decimals = HIST2D_CBAR_DECIMALS if normalize else 0
+        cbar.ax.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
+        )
+        # Adding the colorbar axes makes it current; restore the data
+        # axes so a follow-up .plot() call overlays the data, not the
+        # colorbar.
+        plt.sca(ax)
+    if ax._hist2d_count > 1:
+        print(HIST2D_OVERLAY_WARNING)
+    return histogram
+
+
+def _density2d_grid(x, y):
+    """Quantile-bounded evaluation grid and KDE surface for 2D density.
+
+    Parameters
+    ----------
+    x, y : array-like
+        The two simulated variables.
+
+    Returns
+    -------
+    tuple
+        ``(Xgrid, Ygrid, Z, extent)`` -- the meshgrid, the evaluated
+        density surface reshaped to match it, and ``(xmin, xmax, ymin,
+        ymax)`` for the axis limits.
+    """
+    x, y = np.asarray(x), np.asarray(y)
+    xlow, xhigh = np.quantile(x, [DENSITY2D_QUANTILE_LOW, DENSITY2D_QUANTILE_HIGH])
+    ylow, yhigh = np.quantile(y, [DENSITY2D_QUANTILE_LOW, DENSITY2D_QUANTILE_HIGH])
+    xspan, yspan = xhigh - xlow, yhigh - ylow
+    xpad = DENSITY2D_PADDING_FRAC * xspan if xspan > 0 else 1.0
+    ypad = DENSITY2D_PADDING_FRAC * yspan if yspan > 0 else 1.0
+    xmin, xmax = xlow - xpad, xhigh + xpad
+    ymin, ymax = ylow - ypad, yhigh + ypad
+
+    kde = gaussian_kde(np.vstack([x, y]))
     Xgrid, Ygrid = np.meshgrid(
-        np.linspace(xmin, xmax, 100), np.linspace(ymin, ymax, 100)
+        np.linspace(xmin, xmax, DENSITY2D_GRID_POINTS),
+        np.linspace(ymin, ymax, DENSITY2D_GRID_POINTS),
     )
-    Z = density.evaluate(np.vstack([Xgrid.ravel(), Ygrid.ravel()]))
-    den = ax.imshow(
-        Z.reshape(Xgrid.shape),
-        origin="lower",
-        aspect="auto",
-        extent=[xmin, xmax, ymin, ymax],
-    )
-    return den
+    Z = kde(np.vstack([Xgrid.ravel(), Ygrid.ravel()])).reshape(Xgrid.shape)
+    return Xgrid, Ygrid, Z, (xmin, xmax, ymin, ymax)
+
+
+def make_density2D(x, y, ax, contour=False, levels=None, colorbar=True, **kwargs):
+    """Draw a 2D density surface from a KDE estimate.
+
+    Both modes plot the *same* KDE-estimated density surface with
+    ``ax.contourf``; they differ in how finely it is quantized:
+
+    - ``contour=False`` (default): a *continuous* density plot. The
+      surface is drawn with a large fixed number of color bands
+      (``DENSITY2D_CONTINUOUS_LEVELS``) so they blend into a smooth
+      gradient with no visible banding -- the "2D Density Plot" look.
+      The ``levels`` argument does not apply here; passing it warns
+      and has no effect.
+    - ``contour=True``: a topographic "Contour Plot". The same surface
+      is split into ``levels`` discrete color bands with thin white
+      outlines between them, so each band can be matched to the
+      colorbar by eye.
+
+    The axis limits are quantile-based (0.1st to 99.9th percentile of
+    each variable, plus padding), not raw min/max, so outlier-heavy
+    data doesn't stretch the plot -- same rationale as the 1D density
+    curve. The KDE is evaluated on a 300x300 grid. The color scale
+    runs from 0 to the peak density, so the colorbar starts at 0 and
+    ticks both endpoints (0 and the peak); its labels are rounded to
+    ``DENSITY2D_CBAR_DECIMALS`` (3) decimal places.
+
+    A second ``make_density2D`` call on the same axes cannot overlay
+    naturally -- a filled 2D surface completely obscures whatever was
+    drawn before it, and the two color scales compete for the same
+    colorbar space. Rather than silently producing a misleading plot,
+    this prints a readability warning (matching the existing warning
+    category for two 2D tile or two 2D histogram plots) and still
+    draws, hiding the first plot underneath.
+
+    Parameters
+    ----------
+    x, y : array-like
+        The two simulated variables.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    contour : bool, default False
+        If False (default), draw a continuous, smoothly shaded density
+        surface. If True, draw a topographic contour plot: discrete
+        color bands with thin white outlines between them.
+    levels : int, optional
+        Number of discrete color bands, used only when
+        ``contour=True``. Defaults to ``DENSITY2D_LEVELS`` (8) in that
+        mode. Must be a whole number of at least 2. Ignored (with a
+        warning) when ``contour=False``, since the continuous density
+        plot has no bands.
+    colorbar : bool, default True
+        If True, add a colorbar to the right of the axes (first call
+        on these axes only). The 'marginal' layout in
+        ``RVResults.plot()`` passes False and places its own colorbar
+        so the marginal panels aren't squeezed.
+    **kwargs
+        Additional keyword arguments passed to ``ax.contourf``.
+
+    Returns
+    -------
+    matplotlib.contour.QuadContourSet
+        The object returned by ``ax.contourf``, so the caller can
+        inspect or further style the surface.
+
+    Raises
+    ------
+    ValueError
+        If ``levels`` is not a whole number of at least 2 when
+        ``contour=True``.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> x = rng.normal(0, 1, 2000)
+    >>> y = 0.7 * x + rng.normal(0, 1, 2000)
+    >>> ax = plt.gca()
+    >>> make_density2D(x, y, ax)  # doctest: +SKIP
+    """
+    if contour:
+        if levels is None:
+            levels = DENSITY2D_LEVELS
+        # bool is an int subclass, so check it explicitly -- levels=True
+        # would otherwise slip through as levels=1.
+        if (
+            isinstance(levels, bool)
+            or not isinstance(levels, (int, np.integer))
+            or levels < 2
+        ):
+            raise ValueError(
+                "levels must be a whole number of at least 2 -- it sets how "
+                f"many discrete color bands the contour plot is split into. "
+                f"You passed levels={levels!r}. Try levels=8 (the default)."
+            )
+    else:
+        # Continuous density plot: there are no discrete bands to
+        # control, so levels has no meaning here. Warn if the user
+        # passed one rather than silently ignoring it, then fall back
+        # to the large fixed count that makes the surface look
+        # continuous.
+        if levels is not None:
+            warnings.warn(
+                "levels only applies to the contour plot (contour=True), "
+                "which splits the density into discrete color bands. The "
+                "default 2D density plot is a continuous color surface with "
+                "no bands, so levels was ignored. Pass contour=True to use "
+                "it.",
+                UserWarning,
+                stacklevel=2,
+            )
+        levels = DENSITY2D_CONTINUOUS_LEVELS
+
+    n_prior = getattr(ax, "_density2d_count", 0)
+    if n_prior > 0:
+        print(
+            "Showing a second 2D density plot on the same axes. The two "
+            "color scales compete and this plot now covers up the first "
+            "one. Try two separate plots (e.g. subplots) instead."
+        )
+    ax._density2d_count = n_prior + 1
+
+    Xgrid, Ygrid, Z, (xmin, xmax, ymin, ymax) = _density2d_grid(x, y)
+
+    zmax = Z.max()
+    # The color scale runs from 0 to the peak density so the colorbar
+    # starts at 0. KDE density is non-negative, so no low-end clipping
+    # is needed. contourf treats the level values as band *boundaries*
+    # (N boundaries -> N - 1 colors), so build levels + 1 edges to get
+    # exactly `levels` discrete colors. No cmap argument: the
+    # sequential colormap comes from image.cmap in symbulate.mplstyle.
+    level_edges = np.linspace(0, zmax, levels + 1)
+
+    filled = ax.contourf(Xgrid, Ygrid, Z, levels=level_edges, **kwargs)
+    if contour:
+        ax.contour(
+            Xgrid,
+            Ygrid,
+            Z,
+            levels=level_edges,
+            colors=DENSITY2D_CONTOUR_LINE_COLOR,
+            linewidths=DENSITY2D_CONTOUR_LINEWIDTH,
+            alpha=DENSITY2D_CONTOUR_LINE_ALPHA,
+        )
+
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title("Contour Plot" if contour else "2D Density Plot")
+    # symbulate.mplstyle's global grid is horizontal-only
+    # (axes.grid.axis: y); the approved prototypes call for both
+    # horizontal and vertical reference lines, so this overrides it for
+    # this plot type -- same per-type override pattern as the 1D
+    # density curve. Since the filled surface covers the full axes
+    # (axisbelow=True keeps the grid behind the data), the grid won't
+    # actually show through the fill -- only at the tick marks along
+    # the spines.
+    ax.grid(True, axis="both")
+
+    # Colorbar via make_axes_locatable, per the approved layout helpers
+    # -- replaces the hardcoded fig.add_axes([0, 0.1, 0.05, 0.8]) used
+    # by add_colorbar(). Only the first call on a given axes adds one:
+    # a second call already prints the readability warning above and
+    # covers the first surface, so a second colorbar would just overlap
+    # the first at nearly the same position, garbling both sets of tick
+    # labels.
+    if colorbar and n_prior == 0:
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        cbar = plt.colorbar(filled, cax=cax)
+        cbar.set_label("Density")
+        # Tick both ends of the bar (0 and the peak density), which
+        # matplotlib's default locator otherwise trims. In contour mode
+        # the discrete band edges are the natural ticks -- and since
+        # they span 0 to zmax, the endpoints come for free. In
+        # continuous mode there are hundreds of bands, so use a small
+        # set of evenly spaced ticks between the same endpoints
+        # instead.
+        if contour:
+            ticks = level_edges
+        else:
+            ticks = np.linspace(0, zmax, DENSITY2D_CBAR_TICKS)
+        cbar.set_ticks(ticks)
+        # Round every label to a fixed number of decimals. A formatter
+        # (rather than set_ticklabels) keeps matplotlib's automatic
+        # tick thinning working when there are many band edges.
+        cbar.ax.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _pos: f"{value:.{DENSITY2D_CBAR_DECIMALS}f}")
+        )
+        # Adding the colorbar axes makes it current; restore the data
+        # axes so a follow-up .plot() call overlays the data, not the
+        # colorbar.
+        plt.sca(ax)
+
+    return filled
