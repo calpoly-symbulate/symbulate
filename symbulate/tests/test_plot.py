@@ -1341,6 +1341,40 @@ class TestDefaultLookupDispatch(PlotTestCase):
         (X & Y).sim(200).plot(type="box")
         self.assertEqual(plt.gca().get_title(), "Box Plot")
 
+    def test_every_listed_alternative_is_choosable(self):
+        """Every default and alternative in DEFAULT_PLOT_TYPE renders via
+        type= on representative data -- no listed option is a silent
+        no-op. (1D_categorical is skipped: it is not reachable as a
+        numeric RVResults.)"""
+
+        def joint(dist):
+            X, Y = RV(dist)
+            return X & Y
+
+        reps = {
+            "1D_discrete": lambda: RV(Binomial(5, 0.4)).sim(200),
+            "1D_continuous": lambda: RV(Normal(0, 1)).sim(200),
+            "2D_dd": lambda: joint(Binomial(5, 0.4) ** 2).sim(200),
+            "2D_cc": lambda: joint(Normal(0, 1) ** 2).sim(200),
+            "2D_mixed": lambda: joint(Binomial(5, 0.4) * Normal(0, 1)).sim(200),
+        }
+        for (configuration, _small), entry in DEFAULT_PLOT_TYPE.items():
+            if configuration not in reps:
+                continue
+            for t in [entry["default"]] + entry["alternatives"]:
+                np.random.seed(0)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    p = reps[configuration]().plot(type=t)
+                drawn = (
+                    len(p.ax.collections)
+                    + len(p.ax.lines)
+                    + len(p.ax.patches)
+                    + len(p.ax.images)
+                )
+                self.assertGreater(drawn, 0, f"{configuration} type={t!r} drew nothing")
+                plt.close("all")
+
 
 class TestSuggestionNote(PlotTestCase):
     """The 'Currently Showing / Alternative Plots' note under plots."""
@@ -1787,6 +1821,23 @@ class TestDefaultPlotType(unittest.TestCase):
     def test_unknown_configuration_raises_keyerror(self):
         with self.assertRaises(KeyError):
             default_plot_type("nonsense", True)
+
+    def test_ecdf_is_alternative_for_all_1d_numeric_cells(self):
+        """ECDF is offered as an alternative for 1D discrete and continuous
+        data (both sample-size splits), but not for categorical data,
+        which cannot be ordered."""
+        for configuration in ("1D_discrete", "1D_continuous"):
+            for small_n in (True, False):
+                _, alts = default_plot_type(configuration, small_n)
+                self.assertIn("ecdf", alts)
+        for small_n in (True, False):
+            _, alts = default_plot_type("1D_categorical", small_n)
+            self.assertNotIn("ecdf", alts)
+
+    def test_violin_is_alternative_for_both_2d_mixed_cells(self):
+        for small_n in (True, False):
+            _, alts = default_plot_type("2D_mixed", small_n)
+            self.assertIn("violin", alts)
 
 
 # ===========================================================================
