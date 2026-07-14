@@ -46,6 +46,7 @@ from .plot import (
     make_hist2d,
     make_impulse,
     make_marginal_impulse,
+    make_mosaic,
     make_rug,
     make_scatter,
     make_segmented_rug,
@@ -1272,9 +1273,11 @@ class RVResults(Results):
             Plot type or types to display. Valid values are
             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
             ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
-            ``"tile"``, ``"violin"``, ``"box"`` (alias ``"boxplot"``),
-            and ``"marginal"`` (2D data also accepts ``"hist2d"``,
-            ``"density2d"``, and ``"segmented_rug"``).
+            ``"tile"``, ``"mosaic"``, ``"violin"``, ``"box"`` (alias
+            ``"boxplot"``), and ``"marginal"`` (2D data also accepts
+            ``"hist2d"``, ``"density2d"``, and ``"segmented_rug"``).
+            ``"mosaic"`` is only meaningful for two discrete-ish
+            variables -- the same configuration ``"tile"`` targets.
             If None, a default is chosen from the data: whether each
             variable looks discrete (``classify_data``) and whether
             the sample is small select an entry from the
@@ -1370,9 +1373,9 @@ class RVResults(Results):
                 raise Exception(
                     f"Unrecognized plot type {type!r}. "
                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
-                    "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'violin', "
-                    "'box' (alias 'boxplot'), 'marginal' (and, for 2D data, "
-                    "'hist2d', 'density2d', 'segmented_rug')."
+                    "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'mosaic', "
+                    "'violin', 'box' (alias 'boxplot'), 'marginal' (and, "
+                    "for 2D data, 'hist2d', 'density2d', 'segmented_rug')."
                 )
 
         # Filled in by the dim == 1 and dim == 2 branches with
@@ -1671,6 +1674,8 @@ class RVResults(Results):
                     add_colorbar(
                         fig, type, hm, "Relative Frequency" if normalize else "Count"
                     )
+            elif "mosaic" in type:
+                make_mosaic(x, y, ax, normalize=normalize, **kwargs)
             elif "violin" in type:
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))

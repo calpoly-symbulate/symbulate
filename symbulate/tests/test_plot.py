@@ -15,7 +15,9 @@ matching the convention in test_distributions.py, so the simulated data
 run to run.
 """
 
+import contextlib
 import importlib
+import io
 import unittest
 import warnings
 import numpy as np
@@ -53,6 +55,7 @@ from symbulate.plot import (
     suggestion_message,
     should_show_suggestion,
     make_ecdf,
+    make_mosaic,
     make_tile,
     make_segmented_rug,
     DEFAULT_PLOT_TYPE,
@@ -1137,6 +1140,103 @@ class TestPlot2DMeshFeatures(PlotTestCase):
     def test_marginal_hist_combo_still_draws(self):
         self.sims.plot(type=("marginal", "hist"))
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
+
+
+class TestPlot2DMosaic(PlotTestCase):
+    """The integrated mosaic plot (discrete x discrete, alternative to tile)."""
+
+    def setUp(self):
+        np.random.seed(42)
+        Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+        self.discrete_sims = (Xd & Yd).sim(500)
+
+    def test_mosaic_produces_bars(self):
+        self.discrete_sims.plot(type="mosaic")
+        self.assertGreater(len(plt.gca().patches), 0)
+
+    def test_mosaic_title(self):
+        self.discrete_sims.plot(type="mosaic")
+        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
+
+    def test_mosaic_xlabel_is_x(self):
+        self.discrete_sims.plot(type="mosaic")
+        self.assertEqual(plt.gca().get_xlabel(), "X")
+
+    def test_mosaic_yaxis_is_hidden(self):
+        """The y-axis has no meaning shared across columns, so it's hidden."""
+        self.discrete_sims.plot(type="mosaic")
+        self.assertFalse(plt.gca().yaxis.get_visible())
+
+    def test_mosaic_legend_present_with_y_title(self):
+        self.discrete_sims.plot(type="mosaic")
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        self.assertEqual(legend.get_title().get_text(), "Y")
+
+    def test_mosaic_columns_sum_to_full_width(self):
+        """Column widths (plus gaps) must span the full [0, 1] x-axis."""
+        p = self.discrete_sims.plot(type="mosaic")
+        self.assertAlmostEqual(p.ax.get_xlim()[0], 0.0)
+        self.assertAlmostEqual(p.ax.get_xlim()[1], 1.0)
+
+    def test_mosaic_normalize_false_labels_are_whole_numbers(self):
+        """normalize=False switches in-cell labels from percentages to counts."""
+        p = self.discrete_sims.plot(type="mosaic", normalize=False)
+        texts = [t.get_text() for t in p.ax.texts]
+        self.assertGreater(len(texts), 0)
+        for text in texts:
+            self.assertNotIn("%", text)
+
+    def test_mosaic_normalize_true_labels_are_percentages(self):
+        p = self.discrete_sims.plot(type="mosaic")
+        texts = [t.get_text() for t in p.ax.texts]
+        self.assertGreater(len(texts), 0)
+        self.assertTrue(any("%" in text for text in texts))
+
+    def test_mosaic_annotate_false_has_no_labels(self):
+        p = self.discrete_sims.plot(type="mosaic", annotate=False)
+        self.assertEqual(len(p.ax.texts), 0)
+
+    def test_mosaic_overlay_prints_warning(self):
+        """A second mosaic call on the same axes prints (not warns) a
+        readability warning -- the same overlay category as tile/hist2d."""
+        ax = plt.gca()
+        arr = np.asarray(self.discrete_sims.results)
+        x, y = arr[:, 0], arr[:, 1]
+        make_mosaic(x, y, ax)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            make_mosaic(x, y, ax)
+        self.assertIn("second mosaic plot", buf.getvalue())
+
+    def test_mosaic_length_mismatch_raises_friendly_error(self):
+        with self.assertRaises(ValueError) as cm:
+            make_mosaic(np.array([1, 2, 3]), np.array([1, 2]), plt.gca())
+        self.assertIn("same length", str(cm.exception))
+
+    def test_mosaic_many_categories_warns_and_hatches(self):
+        """More than 7 y-categories repeats a palette color; the repeat is
+        distinguished with a hatch pattern and a warning explains why."""
+        rng = np.random.default_rng(0)
+        x = rng.integers(0, 3, 2000)
+        y = rng.integers(0, 10, 2000)  # 10 distinct values > 7 palette colors
+        with self.assertWarns(UserWarning) as cm:
+            bars = make_mosaic(x, y, plt.gca())
+        self.assertIn("more than the", str(cm.warning))
+        # category 0 and category 7 share a color; only 7's bars are hatched.
+        color_0 = bars[0].patches[0].get_facecolor()
+        color_7 = bars[7].patches[0].get_facecolor()
+        self.assertEqual(color_0, color_7)
+        self.assertEqual(bars[0].patches[0].get_hatch(), "")
+        self.assertIsNotNone(bars[7].patches[0].get_hatch())
+
+    def test_mosaic_is_listed_as_2d_discrete_alternative(self):
+        for small_n in (True, False):
+            _, alternatives = default_plot_type("2D_dd", small_n)
+            self.assertIn("mosaic", alternatives)
+
+    def test_mosaic_display_name(self):
+        self.assertEqual(PLOT_DISPLAY_NAME["mosaic"], "Mosaic Plot")
 
 
 class TestPlot2DBox(PlotTestCase):
