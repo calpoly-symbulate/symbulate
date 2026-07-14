@@ -24,8 +24,10 @@ must be understandable by a general audience without assuming prior knowledge.
 
 ## Key Files
 
-- `symbulate/plot.py` — all plotting helpers, SymbulatePlot wrapper,
-  classify_data, DEFAULT_PLOT_TYPE lookup, style constants
+- `symbulate/plot.py` — all plotting helpers, `SymbulatePlot` wrapper
+  (already implemented). `classify_data()` and the `DEFAULT_PLOT_TYPE`
+  lookup are planned but **not yet implemented** — `is_discrete()` is
+  still the live discreteness check today (see "classify_data" below).
 - `symbulate/results.py` — RVResults.plot() dispatch method (main entry point)
 - `symbulate/result.py` — plot() on individual TimeFunction and Tuple objects
 - `symbulate/distributions.py` — plot() on distribution objects (true pdf/pmf)
@@ -89,9 +91,29 @@ places, not scattered inline.
 
 **Color palette:** categorical palette is **Okabe-Ito** (7 hues, excluding
 black) — colorblind-safe and print-friendly. Do not substitute other colors.
-Sequential/continuous plots (2D density, tile, hist2d) use **viridis**. Both
-are set in `symbulate.mplstyle`; see `DECISIONS.md`, "Decision: Visual Style
-Guide" for the full palette and justification.
+Sequential/continuous plots (2D density, tile, hist2d) use **viridis** —
+plain `viridis`, not `viridis_r`; 0 (density/count) renders as viridis's
+dark end, not light. Both are set in `symbulate.mplstyle`; see
+`DECISIONS.md`, "Decision: Visual Style Guide" and "Decision: 2D Density /
+Tile / Hist2D Colormap Direction" for the full palette and justification.
+
+**Scatter point style:** filled circles (not unfilled/open) — this was
+reconsidered and reversed back to filled; see `DECISIONS.md`, "Decision:
+Visual Style Guide — Point Style."
+
+## Naming Conventions
+
+- `type=` stays `type=` — considered renaming to `kind=`, decided against
+  it. Do not rename.
+- `xlabel` / `ylabel` (no underscore) — everywhere, including future
+  composition-API geoms. Do not use `x_label`/`y_label` or
+  `set_xlabel`/`set_ylabel`.
+- `color` (American spelling) — never `colour=`.
+- `normalize` — keep as-is, do not rename.
+- New plot-type functions should **not** add ad-hoc cosmetic override
+  kwargs (`color=`, `label=`, etc.) to their user-facing surface — those
+  are reserved for a future `.customize()` method (not yet designed). See
+  `DECISIONS.md`, "Decision: Customization Parameters Deferred."
 
 ## Overlay Policy
 
@@ -106,34 +128,81 @@ See design document Section 5 for exact warning and error text.
 
 ## classify_data
 
-Replaces `is_discrete()`. Returns `(discrete_ish: bool, small_n: bool)`.
-Do not call `is_discrete()` anywhere — it no longer exists.
+Will replace `is_discrete()`. **`is_discrete()` still exists and is still
+the live discreteness check in `results.py` today** — imported at the top
+of that file and called at the `is_discrete(counts.values())` /
+`is_discrete(x_height)` / `is_discrete(y_height)` sites. `classify_data()`
+has not been written yet. Do not remove or bypass `is_discrete()` until
+`classify_data()` actually lands and every call site is migrated in the
+same PR.
 
-Logic:
+Planned return signature: `(discrete_ish: bool, small_n: bool)`.
+
+Planned logic:
 - dtype object or bool → discrete_ish = True
 - dtype float, all values unique → discrete_ish = False
-- dtype float, some values repeat → discrete_ish = (n_unique <= N_UNIQUE_THRESHOLD)
-- dtype int → discrete_ish = (n_unique <= N_UNIQUE_THRESHOLD)
-- small_n = (len(values) < N_SMALL_THRESHOLD)
+- dtype float, some values repeat → discrete_ish = (n_unique <= k)
+- dtype int → discrete_ish = (n_unique <= k)
+- small_n = (len(values) < n)
 
-Constants at top of plot.py:
-- N_UNIQUE_THRESHOLD = [FILL IN AFTER TEAM DECISION]
-- N_SMALL_THRESHOLD = [FILL IN AFTER TEAM DECISION]
+Provisional thresholds — **team expects to revise these; treat as a
+working first pass, not settled** (see `DECISIONS.md`, "classify_data
+Thresholds (Provisional)"):
+- `n` (small/large-n crossover) = **40**, uniformly across every data
+  configuration. Replaces the originally-proposed `N_SMALL_THRESHOLD = 100`.
+- `k` (unique-value/discreteness cutoff) is **not a single global
+  constant** — it varies by data configuration:
+  - 1D discrete-ish / 1D categorical-string / process time point
+    (discrete-valued): `k = 20`
+  - 1D continuous-ish / 2D continuous×continuous / process time point
+    (continuous-valued): `k = NA` (already continuous by dtype/uniqueness)
+  - 2D discrete×discrete: `k = 5` per axis (25 combinations)
+  - 2D discrete×continuous and continuous×discrete: `k = 10`
+  - **Open implementation question:** how a per-configuration `k` composes
+    with `classify_data()`'s per-variable, configuration-agnostic call
+    signature is not yet decided. Resolve before wiring the lookup table
+    into `results.py`.
 
-See design document Section 2 for full logic, edge cases, and worked examples.
+See design document Section 2 and `DECISIONS.md` for full logic, edge
+cases, and worked examples.
 
 ## Default Plot Lookup Table
 
-Maps (discrete_ish, small_n, data_configuration) to default plot type.
-Implemented as DEFAULT_PLOT_TYPE in plot.py.
-[FILL IN AFTER TASK 1A IS COMPLETE — paste the finalized table here]
+Maps (data configuration, small-n vs. large-n) to a default plot type
+plus alternatives. **Provisional — team expects to revise; filled in from
+the Task 1A visual sweep, not a final spec.** Full table with alternatives
+lives in `DECISIONS.md`, "Decision: Default Plot Lookup Table" (includes a
+more tentative overlay-specific addendum too). Summary of defaults only:
+
+| Data configuration | Small n default | Large n default |
+|---|---|---|
+| 1D discrete-ish | Dot plot | Impulse |
+| 1D continuous-ish | Rug plot | Histogram |
+| 2D discrete × discrete | Scatter with jitter | Tile / Heatmap |
+| 2D continuous × continuous | Scatter | 2D Histogram |
+| 2D discrete × continuous | Segmented rug plot | 2D Histogram / Tile |
+| 2D continuous × discrete | Segmented rug plot | 2D Histogram / Tile |
+| Process time point, discrete-valued | Dot plot | Impulse |
+| Process time point, continuous-valued | Dot plot | Histogram |
+| 1D categorical / string | Dot plot | Impulse |
 
 ## Suggestion Messages
 
-When the user does not specify `type`, print a suggestion message after
-the plot renders. Do not print it when the user specifies `type` explicitly.
-Message format: [FILL IN AFTER TEAM DECISION]
-Opt-out parameter: [FILL IN AFTER TEAM DECISION]
+Print a message after **every** plot renders — this fires whether or not
+`type=` was specified (a deliberate broadening from the original plan).
+See `DECISIONS.md`, "Decision: Suggestion Message Behavior" for the full
+template and both wording variants. Summary:
+
+- `type=` not specified: `"Currently Showing: {Default Type} Plot
+  (Default) / Alternative Plots: {Alt1} (type='{alt1}'), ..."`
+- `type=` specified explicitly: message still prints, but now labels
+  whichever type *would have been* the automatic default, e.g.
+  `"Currently Showing: Histogram / Alternative Plots: Impulse (Default),
+  Density (type='density'), ..."`
+
+Opt-out parameter: `hints` (default `True`), e.g. `.plot(hints=False)`.
+**Note:** this name is carried over from an earlier, unchosen draft
+template — not independently confirmed for the chosen wording above.
 
 ## Code Conventions
 
@@ -215,7 +284,10 @@ pytest tests/
 - Do not use `plt.subplots()` inside plot type functions
 - Do not hardcode colors, font sizes, or figure/spine/grid values inline — use `symbulate.mplstyle`
 - Do not hardcode per-plot-type alpha or line-width values inline — use the named constants at the top of `plot.py` (rcParams can't express per-plot-type values)
-- Do not call `is_discrete()` — it no longer exists, use `classify_data()`
+- Do not remove or bypass `is_discrete()` yet — it is still the live discreteness check in `results.py` today. `classify_data()` is planned but not yet written; only retire `is_discrete()` once `classify_data()` lands and every call site is migrated in the same PR.
+- Do not rename `type=` to `kind=` or anything else — considered and decided against.
+- Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
+- Do not use `viridis_r` (reversed) for 2D density/tile/hist2d — plain `viridis`, 0 = dark.
 - Do not push directly to `main` or `dev`
 - Do not change the public API without team discussion
 - Do not add new dependencies without team agreement (current deps: `numpy`, `scipy`, `matplotlib`)

@@ -42,7 +42,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: `N_UNIQUE_THRESHOLD` Value
 
-**Status:** Proposed
+**Status:** Superseded — see "classify_data Thresholds (Provisional)" below.
 
 **Decision**
 > _To be finalized after Task 1A visual test cases. Planning document suggests 40 as a starting point, placing the discrete/continuous-ish boundary around `Poisson(30)` at n=10,000 simulations._
@@ -57,7 +57,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: `N_SMALL_THRESHOLD` Value
 
-**Status:** Proposed
+**Status:** Superseded — see "classify_data Thresholds (Provisional)" below.
 
 **Decision**
 > _To be finalized after Task 1A visual test cases. Planning document suggests 100 as a starting point._
@@ -70,39 +70,96 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
-## Decision: Default Plot Lookup Table
+## Decision: classify_data Thresholds (Provisional)
 
-**Status:** Proposed
+**Status:** Provisional — team's own framing is "just to see functionality and use with symbulate for now"; expect revision.
 
 **Decision**
-> _To be filled in after Task 1A visual test cases are complete. The table maps `(discrete_ish, small_n, data_configuration)` to a default plot type and a list of reasonable alternatives._
+> This replaces the single-global-constant idea behind `N_UNIQUE_THRESHOLD` / `N_SMALL_THRESHOLD` above. Task 1A's visual sweep ended up giving us two different kinds of threshold, not one pair of global constants:
+>
+> - **`n` (small-vs-large sample size crossover): 40, everywhere.** Same number across every data configuration (1D discrete-ish, 1D continuous-ish, all four 2D combinations, both process-time-point cases, and 1D categorical/string). Replaces the earlier placeholder of 100 for `N_SMALL_THRESHOLD`.
+> - **`k` (unique-value / discreteness threshold): different per data configuration**, not one global number:
+>   - 1D discrete-ish, 1D categorical/string, process time point (discrete-valued): `k = 20` (dot plot/impulse → histogram)
+>   - 1D continuous-ish, 2D continuous × continuous, process time point (continuous-valued): `k = NA` (already continuous by dtype/uniqueness, so there's no count to cut off)
+>   - 2D discrete × discrete: `k = 5` per axis (25 combinations) (scatter+jitter → tile/heatmap)
+>   - 2D discrete × continuous / continuous × discrete: `k = 10` (violin plots → binned violins)
+>
+> **One thing we haven't figured out yet:** `classify_data()`'s spec (see `symbulate_graphics_plan.md`) calls it independently per variable, using one global `n_unique_threshold`, regardless of what configuration that variable ends up in. We haven't decided how a per-configuration `k` fits into that per-variable signature — whether `classify_data()` itself should take a configuration-aware threshold, or whether the per-configuration `k` gets applied as a second check inside the lookup-table dispatch, after `classify_data()`'s own single-value discreteness call. Sort this out before wiring the lookup table into `results.py`.
 
 **Rationale**
-> _The table must be designed by running real examples and choosing what looks best visually — not by reasoning abstractly. Covers: 1D discrete-ish, 1D continuous-ish, all four 2D combinations, process time points (discrete and continuous), and 1D categorical/string._
+> Values come from the Task 1A visual sweep (see `team/design_default_threshold_exploration.ipynb`, `team/design_plot_lookup_exploration.ipynb`). **One caveat straight from our own "Questions as we go" notes: the sweep varied `n` across simulations at a roughly fixed number of distinct values — it didn't separately vary the number of distinct values to visually check the `k` thresholds.** So treat the `k` values above as provisional guesses until that follow-up happens, not as visually confirmed the way `n = 40` is.
 
 **Alternatives Considered**
-> _Placeholder_
+> One global `N_UNIQUE_THRESHOLD` for `k` (the original plan) — didn't hold up once we ran real examples across configurations (discrete×discrete pairs need a much smaller per-axis count before a tile plot reads better than jittered scatter).
+
+---
+
+## Decision: Default Plot Lookup Table
+
+**Status:** Provisional — filled in from the Task 1A visual sweep; team's own framing is "we will revise but just to see functionality and use with symbulate for now."
+
+**Decision**
+> The table maps each data configuration and its small-n/large-n split to a default plot type, plus a list of reasonable alternatives (these show up in the suggestion message — see "Decision: Suggestion Message Behavior" below).
+
+| Data configuration | Small n default | Small n alternatives | Large n default | Large n alternatives |
+|---|---|---|---|---|
+| 1D discrete-ish | Dot plot | Impulse, Bar, Density, ECDF, Rug | Impulse | Histogram (many distinct values), Density + Rug, ECDF |
+| 1D continuous-ish | Rug plot (use rug even at low n) | Rug, Boxplot (overlay?), Density + Rug | Histogram | Density (overlay?), Boxplot (overlay?), Rug |
+| 2D discrete × discrete | Scatter with jitter | Tile, Scatter with size | Tile / Heatmap | Mosaic, Marginal distributions (overlay, impulse) |
+| 2D continuous × continuous | Scatter | Density | 2D Histogram | Contour, Hexbin, Density, Marginal distributions (overlay) |
+| 2D discrete × continuous | Segmented rug plot | Box plot / Violin plot, Ridgeline | 2D Histogram / Tile | Box plot, Violin, Scatter, Marginal distributions (overlay), Ridgeline |
+| 2D continuous × discrete | Segmented rug plot | Box / violin, Ridgeline | 2D Histogram / Tile | Box plot, Violin, Scatter, Marginal distributions (overlay), Ridgeline |
+| Process time point, discrete-valued | Dot plot | Impulse | Impulse | Histogram |
+| Process time point, continuous-valued | Dot plot | Impulse, Rug, Boxplot (overlay?), Density + Rug | Histogram | Density (overlay?), Boxplot (overlay?), Rug |
+| 1D categorical / string | Dot plot | Impulse, Bar | Impulse | Histogram (many distinct values), Density + Rug |
+
+> **Overlay-specific defaults (more exploratory than the table above — a few cells still have a `?` in the source notes and aren't settled yet):**
+>
+> | Configuration | Small n | Large n |
+> |---|---|---|
+> | 1D discrete-ish | Stacked dot plots + color | Stacked impulse plots + color |
+> | 1D continuous-ish | Stacked strip plots + color (gap between groups) | Stacked histograms + color |
+> | 2D discrete × discrete | Scatter with jitter + color | Scatter with jitter + color (heatmaps can't overlay — side-by-side? unresolved) |
+> | 2D continuous × continuous | Scatter + color | Scatter + color (density surfaces can't overlay — side-by-side? unresolved) |
+> | 2D discrete × continuous | Stacked segmented strip plot + color | Stacked violin plots + color (+ gap between groups) |
+> | 2D continuous × discrete | Same as above, horizontal orientation | Same as above, horizontal orientation; overlay spacing unresolved |
+> | Process time point (discrete/continuous) | Same as the matching 1D row | Same as the matching 1D row |
+
+**Rationale**
+> The table was designed by running real examples and choosing what looked best visually (see `team/design_default_threshold_exploration.ipynb`, `team/design_plot_lookup_exploration.ipynb`, `team/phase1_symbulate_plot_comparison.ipynb`), covering 1D discrete-ish, 1D continuous-ish, all four 2D combinations, process time points (discrete and continuous), and 1D categorical/string. The reference-fork comparison notebook found that the fork's actual overlay behavior doesn't match what the "Overlay Behavior" decision says should happen (see that decision's note) — so the overlay-specific defaults above are a separate, even more tentative pass at what overlaid defaults should look like. They haven't been visually checked the way the main table has.
+
+**Alternatives Considered**
+> Reasoning abstractly about plot type without running visual test cases — rejected per Task 1A's explicit instruction ("the goal is to see what actually looks good, not to reason abstractly about it").
 
 ---
 
 ## Decision: Suggestion Message Behavior
 
-**Status:** Proposed
+**Status:** Finalized (wording and trigger condition); opt-out parameter name is carried over from a draft, not independently confirmed — see note below.
 
 **Decision**
-> When a user does not specify `type=`, print a message after the plot renders indicating what default was chosen and what alternatives exist. The message must not appear when the user specifies `type=` explicitly. Wording, frequency (always / first-time / opt-out), and opt-out parameter name are pending team decision.
+> Print a message after every plot renders, in **both** of these cases — not only when `type=` is unspecified:
+>
+> - **`type=` not specified (default kicked in):** `"Currently Showing: {Default Type} Plot (Default) / Alternative Plots: {Alt1} (type='{alt1}'), {Alt2} (type='{alt2}'), ..."`
+>   Example: `"Currently Showing: Impulse Plot (Default) / Alternative Plots: Histogram (type='hist'), Density (type='density'), ..."`
+> - **`type=` specified explicitly:** the message still prints, but now labels whichever type *would have been* the automatic default: `"Currently Showing: {Chosen Type} / Alternative Plots: {Default Type} (Default), {OtherAlt} (type='{other}'), ..."`
+>   Example: `"Currently Showing: Histogram / Alternative Plots: Impulse (Default), Density (type='density'), ..."`
+>
+> Both cases are really one template — the "Currently Showing" line only tags `(Default)` when the default isn't what's actually showing, and the alternatives list always tells you the `type=` value you'd need to get that option.
+>
+> **Opt-out parameter:** `hints` (default `True`) — `.plot(hints=False)` turns the message off. **Note:** we borrowed this name from a different draft template that wasn't chosen (it used `hints=True/False`); nobody proposed an opt-out name alongside the template we did pick, so this is our best guess, not a real decision. Double-check it at the next team meeting before treating it as locked in.
 
 **Rationale**
-> Students benefit from knowing what was chosen automatically and that alternatives exist. Suppressing the message on explicit `type=` avoids noise for users who already know what they want.
+> Students benefit from knowing what got chosen automatically and that alternatives exist — and from learning what the default would've been even when they picked something else on purpose. This is a deliberate broadening from the original plan, which only showed the message when `type=` was unspecified.
 
 **Alternatives Considered**
-> Always print / print once per session / opt-out via a `verbose=False` parameter — decision pending after Task 1A draft wording.
+> Only showing the message when `type=` is unspecified (the original plan) — rejected in favor of always showing it. A different draft template ("Showing a {kind} plot — the default for this type of data. You can also try kind='{alt1}' or kind='{alt2}'.", shown only when unspecified) — considered, not chosen.
 
 ---
 
 ## Decision: `SymbulatePlot` Wrapper Object
 
-**Status:** Proposed
+**Status:** Finalized — this is already built (in `symbulate/plot.py`) and tested (`tests/test_plot.py`, `TestSymbulatePlotWrapper`), not just proposed anymore.
 
 **Decision**
 > Every `.plot()` method returns a `SymbulatePlot` object instead of `None`. `__repr__` returns `""` so Jupyter does not print it. The object stores the underlying axes as `self.ax`.
@@ -180,6 +237,21 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: Visual Style Guide — Point Style (supersedes point-style line above)
+
+**Status:** Finalized
+
+**Decision**
+> This replaces the "Point style: filled → unfilled (open) circles for scatter" line in the Visual Style Guide decision above. After looking at it again, scatter points are staying **filled**, matching what's already there (default size 6). This is a reversal, not a tweak — don't implement unfilled/open circles for scatter.
+
+**Rationale**
+> We reconsidered the unfilled-circle call from the original pass and decided the current filled-circle default already reads clearly at the approved alpha (0.25) — it doesn't need the extra complexity of edge-colored open markers. (`team/new_graphics/scatter.py`'s draft already uses filled circles and had flagged this exact mismatch as unresolved — this entry settles it in favor of what the draft already does.)
+
+**Alternatives Considered**
+> Unfilled (open) circles with edge color = series color — the original Task 1B proposal; rejected, not worth the added complexity for the readability gain we saw.
+
+---
+
 ## Decision: `.mplstyle` Standards
 
 **Status:** Finalized. File created at `symbulate/symbulate.mplstyle` (color palette, colormap, figure size, fonts, spines, grid, and a global line-width fallback); not yet wired into `results.py` — that wiring, plus the `plot.py` per-plot-type constants, is Phase 2 implementation work.
@@ -197,31 +269,35 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: Plot Naming and API Vocabulary
 
-**Status:** Proposed
+**Status:** Finalized
 
 **Decision**
-> _To be finalized during Task 1C. Open question: should the `type=` parameter be renamed (it shadows the Python built-in)? All naming must be intuitive to a general audience with minimal programming experience._
+> - **`type=` parameter: KEEP.** No rename to `kind=`, despite it shadowing the Python built-in `type()`. No deprecation cycle needed since nothing is changing.
+> - **`xlabel` / `ylabel` (no underscore), everywhere** — including the future composition-API geoms (see "Decision: Plot Composition API" below). The package already exports top-level `xlabel = plt.xlabel` / `ylabel = plt.ylabel` (`plot.py`); standardizing on this spelling avoids two inconsistent spellings of the same word inside one package.
+> - **`color` (American spelling), never `colour=`.** `color` already flows straight through `**kwargs` into matplotlib calls (`ax.hist(..., color=color)`, `ax.scatter(..., color=color)`, etc.); supporting `colour=` would mean either a pointless translation layer or two names for one thing. Matches the spelling students will see in matplotlib, seaborn, and pandas.
+> - **`normalize`: keep, don't rename.**
 
 **Rationale**
-> _Naming decisions affect backwards compatibility (see that entry). All user-facing terms need a consistent glossary before implementation begins._
+> `type=`: we considered renaming to `kind=` (plain English, no clash with the builtin, and it matches pandas' `DataFrame.plot(kind=...)`, which students may already know) but decided to keep the existing, documented name instead — it avoids a deprecation cycle for a parameter that's already used in course materials. `xlabel`, `color`, and `normalize` all follow the same logic: match what's already shipping in this package and in the wider Python data world, instead of giving beginners a second, inconsistent spelling to trip over.
 
 **Alternatives Considered**
-> _Placeholder_
+> `type=` → `kind=` (rejected, see Rationale) · `x_label` (rejected — would create two spellings of the same word inside one package) · `set_xlabel` (rejected — matplotlib OO-method naming, not plain English) · `colour=` (rejected — inconsistent with the rest of the Python data ecosystem) · renaming `normalize` (rejected, no better alternative proposed).
 
 ---
 
 ## Decision: Backwards Compatibility Policy
 
-**Status:** Proposed
+**Status:** Partially finalized — `type=` case is now moot; `jitter=` is still open.
 
 **Decision**
-> _To be finalized during Task 1D. Known cases requiring a decision: the `type=` parameter, the `jitter=` parameter._
+> - **`type=` parameter: moot.** We're keeping `type=`, not renaming it (see "Plot Naming and API Vocabulary" above), so there's no backwards-compatibility question left to answer.
+> - **`jitter=` parameter: still open.** We're keeping the existing `jitter=True/False` boolean, but new discrete-scatter jitter *modes* are being actively discussed (7/9 and 7/13 meeting notes): `jitter="bins"` (dots placed in reading order within each bin) and `jitter="spiral"` (circular jitter). These might replace or sit alongside the `jitter="orderly"` compass-cluster mode already built in `team/new_graphics/scatter.py`. Final names, behavior, and whether `"orderly"` survives are all still undecided — see Open Decisions.
 
 **Rationale**
-> _The package is used in courses. Breaking existing notebook code has a real cost and must be weighed explicitly._
+> The package is used in courses, so breaking existing notebook code has a real cost — that's why `type=` was kept instead of renamed, and why any change to `jitter=` needs to add new modes rather than break the existing boolean.
 
 **Alternatives Considered**
-> Clean break / deprecation warnings with aliases / silent aliases — decision pending Task 1D.
+> Clean break / deprecation warnings with aliases / silent aliases for `type=` — moot now that `type=` isn't changing. For `jitter=`'s new modes: still open, nothing ruled out yet.
 
 ---
 
@@ -242,16 +318,30 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: Plot Composition API
 
-**Status:** Finalized (deferred implementation)
+**Status:** Finalized (deferred implementation) — the vocabulary is complete now, replacing the earlier "priority geoms" list below.
 
 **Decision**
-> A composition API (e.g., `.plot() + vline(x=0)`) is out of scope for this summer but will be designed now so `SymbulatePlot` can support it later. Vocabulary must use plain English, not matplotlib or ggplot2 conventions. Priority geoms: `vline`, `hline`, `title`, `x_label`, `shade`. Avoid: `axvline`, `geom_vline`, `set_xlabel`.
+> A composition API (e.g., `.plot() + vline(x=0)`) is out of scope for this summer but will be designed now so `SymbulatePlot` can support it later. Vocabulary must use plain English, not matplotlib or ggplot2 conventions. Full geom vocabulary (Task 1C):
+>
+> | Name | Signature | Plain-English description |
+> |---|---|---|
+> | `vline` | `vline(x, label=None)` | Draws a vertical reference line at a given value on the x-axis. |
+> | `hline` | `hline(y, label=None)` | Draws a horizontal reference line at a given value on the y-axis. |
+> | `shade` | `shade(from_x, to_x, label=None)` | Shades the region of the plot between two x-values (for showing a probability as an area). |
+> | `curve` | `curve(distribution)` | Overlays a distribution's theoretical pdf/pmf curve on top of a simulation plot, for comparing simulated to theoretical. |
+> | `text` | `text(x, y, message)` | Adds a short text label at a specific point on the plot. |
+> | `title` | `title(message)` | Sets the plot's title. |
+> | `xlabel` / `ylabel` | `xlabel(message)` / `ylabel(message)` | Sets the x-axis or y-axis label. Same function as the existing top-level `xlabel`/`ylabel`; also composable with `+`. |
+>
+> Original priority list (replaced by the table above, kept here for history): `vline`, `hline`, `title`, `x_label`, `shade`. One spelling fix: `x_label` became `xlabel`, per "Decision: Plot Naming and API Vocabulary" above. Avoid: `axvline`, `geom_vline`, `set_xlabel`, `annotate` (matplotlib already overloads "annotate" to mean "text + arrow"; `text` says exactly what it does with no baggage), `fill_between`/`shade_region` (ruled out on the same matplotlib-naming grounds as `axvline`).
+>
+> **Still open, and naming alone doesn't settle it:** `curve(distribution)` implies passing a Symbulate distribution object (e.g. `curve(Normal(0, 1))`), which fits the rest of the package's vocabulary better than passing a raw pdf function — worth confirming before anyone builds this (see Open Decisions).
 
 **Rationale**
 > The audience includes students with minimal programming experience. Naming tied to matplotlib or ggplot2 conventions is a barrier. Designing the vocabulary now — even without implementation — ensures the `SymbulatePlot` wrapper is built with the right interface in mind. Implementation is deferred because static graphics must be stable first.
 
 **Alternatives Considered**
-> Expose matplotlib directly — rejected (too low-level for students). Defer vocabulary design entirely — rejected (risks `SymbulatePlot` being designed without a composition interface in mind).
+> Expose matplotlib directly — rejected (too low-level for students). Defer vocabulary design entirely — rejected (risks `SymbulatePlot` being designed without a composition interface in mind). `geom_*` prefix (ggplot2 convention) and `axvline`/`axhline` (matplotlib convention) — both rejected; a general-audience user shouldn't need to know either library to guess what `vline` composes onto a plot.
 
 ---
 
@@ -270,19 +360,54 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: Customization Parameters Deferred to a Future `.customize()` Method
+
+**Status:** Proposed — directional, not yet fully specified (Design Document Section 4 is still unwritten).
+
+**Decision**
+> Individual plot-type functions (and `.plot()` itself) shouldn't expose ad-hoc cosmetic kwargs like `color=` or `label=` to students. Those are reserved for a future chainable `.customize()` method (e.g. `.plot().customize(xlabel=..., color=...)`), which hasn't been designed yet. This doesn't touch internal plumbing like `get_next_color(ax)` — the student never types that in directly. This decision is only about what a student would type into `.plot(...)`, not about internal color-cycle bookkeeping.
+
+**Rationale**
+> From the 7/9 meeting: this keeps `.plot()`'s signature stable and simple while we design a proper customization API separately, instead of piling up one-off cosmetic kwargs per plot type.
+
+**Alternatives Considered**
+> Letting each new plot-type function grow its own cosmetic kwargs (`color=`, `label=`, etc.) as needed — rejected, since it's inconsistent and jumps ahead of the `.customize()` design before it even exists.
+
+---
+
+## Decision: 2D Density / Tile / Hist2D Colormap Direction
+
+**Status:** Finalized
+
+**Decision**
+> Use plain `viridis` (not `viridis_r`) for all 2D magnitude encodings (2D density, tile, hist2d). Density/count of 0 renders as viridis's dark, low end — not light.
+
+**Rationale**
+> We confirmed this independently at both the 7/7 and 7/13 meetings ("Should 0 be dark or light? → Dark"; "2D density colorbar starts at 0"). This settles an ambiguity left open in `symbulate_graphics_plan.md`'s "Known decisions from prototype work already done," which had said `` `viridis_r` or similar `` was preferred — that phrasing is now outdated. It also matches what `team/new_graphics/density2d.py`'s draft already does (`cmap="viridis"`, no `_r` suffix, `level_edges = np.linspace(0, zmax, levels + 1)`), so no code needs to change — this entry just writes down the choice we'd already made in code.
+
+**Alternatives Considered**
+> `viridis_r` (reversed, 0 = light) — what `symbulate_graphics_plan.md` said before this entry; now outdated.
+
+---
+
 ## Open Decisions
 
 The following questions must be resolved before or during Phase 2.
 
-- [ ] `N_UNIQUE_THRESHOLD`: What value? Run Task 1A visual test cases first
-- [ ] `N_SMALL_THRESHOLD`: What value? Run Task 1A visual test cases first
-- [ ] Default plot lookup table: Fill in all cells after Task 1A
-- [ ] Suggestion message: Exact wording template for each data configuration
-- [ ] Suggestion message: Always / first-time / opt-out? If opt-out, what parameter name?
+- [x] `N_UNIQUE_THRESHOLD` / `N_SMALL_THRESHOLD`: picked provisional values (`n=40` everywhere; `k` varies by data configuration) — see "classify_data Thresholds (Provisional)". We expect to revise these, and the `k` values especially still need their own visual check (see the caveat in that decision)
+- [x] Default plot lookup table: filled in provisionally from Task 1A — see "Default Plot Lookup Table". We expect to revise it
+- [x] Suggestion message: wording and trigger condition are finalized — see "Suggestion Message Behavior". The opt-out parameter name (`hints`) is a guess carried over from elsewhere, not independently confirmed
 - [ ] Overlay warning text: Exact student-friendly wording for warning-category plots
 - [ ] Overlay hard-error text: Exact student-friendly wording for `'marginal'` layout conflict
-- [x] Visual style guide: finalized with values + justification (see Decision above); `symbulate.mplstyle` drafted; still need Phase 2 wiring + `plot.py` constants
+- [ ] Overlay behavior discrepancy: `team/phase1_symbulate_plot_comparison.ipynb` found that the reference fork doesn't actually warn on two overlaid tile plots, and doesn't hard-error on a second `.plot()` after `['scatter', 'marginal']` — reconcile this against what the "Overlay Behavior" decision says before implementing it
+- [x] Visual style guide: finalized with values and justification (see Decision above); `symbulate.mplstyle` is drafted; still need Phase 2 wiring plus the `plot.py` constants; point-style got reversed back to filled (see "Visual Style Guide — Point Style")
 - [ ] Accessibility: colorblind palette finalized (Okabe-Ito); black-and-white legibility and font size minimums still open
-- [ ] `type=` parameter: Rename to avoid shadowing Python built-in, or keep?
-- [ ] Backwards compatibility: Deprecation aliases or clean break for `type=` and `jitter=`?
-- [ ] Composition API vocabulary: Finalize geom names even though implementation is deferred
+- [x] `type=` parameter: KEEP — no rename (see "Plot Naming and API Vocabulary")
+- [x] Backwards compatibility for `type=`: moot, since it isn't changing
+- [ ] Backwards compatibility for `jitter=`: new modes (`"bins"`, `"spiral"`) are being discussed (7/9, 7/13 meetings) — final names and behavior, and whether they replace or just extend the `"orderly"` mode already drafted in `team/new_graphics/scatter.py`, are still undecided
+- [x] Composition API vocabulary: finalized (full geom table — see "Plot Composition API"), even though implementation is deferred
+- [ ] `curve(distribution)`: should it accept a Symbulate distribution object, or a raw pdf/pmf function? (flagged as open in the Task 1C notes themselves)
+- [ ] `classify_data()` architecture: how does a per-data-configuration `k` threshold fit into `classify_data()`'s per-variable, configuration-agnostic call signature? (see "classify_data Thresholds (Provisional)")
+- [ ] `.customize()` API: not yet designed (Design Document Section 4 is still unwritten) — see "Customization Parameters Deferred" decision
+- [ ] Violin plot overlays at large `k`: should violins be binned? Should ridgeline plots replace violin plots entirely for the discrete×continuous / continuous×discrete configurations?
+- [ ] Overlay "+color" stacking: discrete groups use the categorical (Okabe-Ito) palette — should continuous groupings use a gradient instead, and if so how does that interact with the sequential (viridis) palette already reserved for magnitude encodings?

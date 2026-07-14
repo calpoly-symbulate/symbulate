@@ -186,6 +186,13 @@ TILE_CBAR_SIZE = "5%"
 TILE_CBAR_PAD = 0.1
 TILE_CBAR_TICKS = 8
 TILE_CBAR_DECIMALS = 3
+# Separator lines drawn on the cell boundaries of the discrete axis of a
+# mixed-data tile plot (one discrete axis, one continuous), so each
+# discrete level reads as its own column/row. White reads clearly on the
+# viridis mesh, matching the density2d contour lines.
+TILE_GRID_LINE_COLOR = "white"
+TILE_GRID_LINE_WIDTH = 1.0
+TILE_GRID_LINE_ALPHA = 0.6
 TILE_OVERLAY_WARNING = (
     "Warning: you drew a second tile plot on the same plot. The two "
     "color scales compete, so the result may be hard to read. Consider "
@@ -708,7 +715,10 @@ def make_tile(
     uses -- and labeled like a numeric histogram axis. This covers
     both two-discrete-variable data and the mixed case (one discrete
     axis, one continuous axis); continuous-x-continuous data is routed
-    to ``hist2d`` / ``density2d`` instead.
+    to ``hist2d`` / ``density2d`` instead. On the mixed case, separator
+    lines are drawn on the discrete axis' cell boundaries (vertical when
+    x is discrete, horizontal when y is discrete) so each discrete level
+    reads as its own column or row.
 
     Unlike the 1D plot types, a tile plot encodes magnitude with a
     colormap instead of the categorical color cycle, so no ``color``
@@ -740,9 +750,8 @@ def make_tile(
         two discrete variables has no effect and raises a warning.
     discrete_x : bool, optional
         Whether the x-axis is discrete (one cell per value) or
-        continuous (binned). If None (default), detected from the
-        data: float values are treated as continuous, everything else
-        (int, bool, string) as discrete.
+        continuous (binned). If None (default), determined by
+        ``classify_data``, the package-wide discreteness check.
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
     colorbar : bool, default True
@@ -778,15 +787,16 @@ def make_tile(
     >>> make_tile(x, y, plt.gca())  # doctest: +SKIP
     """
     xs, ys = np.asarray(x), np.asarray(y)
-    # Auto-detect which axes are continuous (and so need binning) from
-    # their dtype: float is treated as continuous, everything else
-    # (int, bool, string/object) as discrete. The caller can override
-    # either decision with discrete_x / discrete_y -- RVResults.plot()
-    # passes its own discreteness determination explicitly.
+    # Auto-detect which axes are discrete with classify_data, the
+    # package-wide discreteness check, when the caller doesn't say.
+    # RVResults.plot() passes its own classify_data determination in
+    # explicitly; this fallback keeps a direct make_tile() call
+    # consistent with it (e.g. a wide-support integer axis is binned as
+    # continuous rather than given one skinny cell per value).
     if discrete_x is None:
-        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+        discrete_x = classify_data(xs)[0]
     if discrete_y is None:
-        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+        discrete_y = classify_data(ys)[0]
 
     # bins only bins a continuous axis. With two discrete variables
     # there is nothing to bin -- every distinct value already gets its
@@ -852,6 +862,22 @@ def make_tile(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Tile Plot")
+    # On mixed data (exactly one discrete axis), draw separator lines on
+    # the discrete axis' cell boundaries -- halfway between neighboring
+    # level indices -- so each level reads as its own column or row. The
+    # lines span the continuous axis and sit on top of the mesh. Vertical
+    # lines when x is the discrete axis, horizontal when y is.
+    # Both-discrete and both-continuous tiles are left clean.
+    if discrete_x != discrete_y:
+        n_levels = nx if discrete_x else ny
+        draw_line = ax.axvline if discrete_x else ax.axhline
+        for boundary in np.arange(n_levels - 1) + 0.5:
+            draw_line(
+                boundary,
+                color=TILE_GRID_LINE_COLOR,
+                linewidth=TILE_GRID_LINE_WIDTH,
+                alpha=TILE_GRID_LINE_ALPHA,
+            )
     if colorbar:
         # Colorbar on the right, sized relative to the axes so it
         # tracks figure resizing (the approved replacement for the old
@@ -1494,10 +1520,12 @@ def make_segmented_rug(
 
     Either way the ticks run perpendicular to the continuous value
     axis, marking each observation's position along it inside its
-    band. The discrete axis is labeled with the level values; the
-    continuous axis keeps ordinary numeric ticks. The tick marks rise
-    from each level's baseline and are the same small size as the 1D
-    ``make_rug`` ticks (``RUG_TICK_HEIGHT``).
+    band. The discrete axis is labeled with the level values and gets a
+    reference gridline at each level (vertical lines when x is discrete,
+    horizontal when y is discrete); the continuous axis keeps ordinary
+    numeric ticks and no gridlines. The tick marks rise from each
+    level's baseline and are the same small size as the 1D ``make_rug``
+    ticks (``RUG_TICK_HEIGHT``).
 
     This plot is only for mixed data -- exactly one discrete variable
     and one continuous variable. Two discrete variables should use a
@@ -1526,9 +1554,8 @@ def make_segmented_rug(
         read as darker.
     discrete_x : bool, optional
         Whether the x-axis is the discrete (grouping) variable. If
-        None (default), detected from the data: float values are
-        treated as continuous, everything else (int, bool, string) as
-        discrete.
+        None (default), determined by ``classify_data``, the
+        package-wide discreteness check.
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
     **kwargs
@@ -1558,10 +1585,14 @@ def make_segmented_rug(
         alpha = RUG_ALPHA
     kwargs.setdefault("linewidth", RUG_LINEWIDTH)
     xs, ys = np.asarray(x), np.asarray(y)
+    # Fall back to classify_data, the package-wide discreteness check,
+    # when the caller doesn't specify. RVResults.plot() passes its own
+    # classify_data determination in explicitly; this keeps a direct
+    # make_segmented_rug() call consistent with it.
     if discrete_x is None:
-        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+        discrete_x = classify_data(xs)[0]
     if discrete_y is None:
-        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+        discrete_y = classify_data(ys)[0]
 
     # A segmented rug needs one discrete variable (the groups) and one
     # continuous variable (the values). Anything else is a different
@@ -1640,9 +1671,15 @@ def make_segmented_rug(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Segmented Rug Plot")
-    # A rug reads cleanest without a reference grid behind the sparse
-    # ticks (the same choice as the standalone 1D rug).
+    # Reference gridlines run along the discrete axis only -- one line
+    # per level, so the bands read as distinct groups -- while the
+    # continuous value axis stays clean like the standalone 1D rug.
+    # Vertical lines when x is the discrete axis, horizontal when y is
+    # (exactly one is discrete here). axisbelow keeps them behind the
+    # rug ticks; the grid's color and width come from symbulate.mplstyle.
+    ax.set_axisbelow(True)
     ax.grid(False)
+    ax.grid(True, axis="x" if discrete_x else "y")
     return ticks
 
 
