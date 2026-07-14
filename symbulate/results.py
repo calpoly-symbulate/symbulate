@@ -52,6 +52,8 @@ from .plot import (
     make_segmented_rug,
     make_tile,
     make_violin,
+    make_boxplot,
+    make_grouped_boxplot,
     SymbulatePlot,
 )
 from .result import Scalar, Vector, TimeFunction, is_number, is_numeric_vector
@@ -1271,11 +1273,11 @@ class RVResults(Results):
             Plot type or types to display. Valid values are
             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
             ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
-            ``"tile"``, ``"mosaic"``, ``"violin"``, and ``"marginal"``
-            (2D data also accepts ``"hist2d"``, ``"density2d"``, and
-            ``"segmented_rug"``). ``"mosaic"`` is only meaningful for
-            two discrete-ish variables -- the same configuration
-            ``"tile"`` targets.
+            ``"tile"``, ``"mosaic"``, ``"violin"``, ``"box"`` (alias
+            ``"boxplot"``), and ``"marginal"`` (2D data also accepts
+            ``"hist2d"``, ``"density2d"``, and ``"segmented_rug"``).
+            ``"mosaic"`` is only meaningful for two discrete-ish
+            variables -- the same configuration ``"tile"`` targets.
             If None, a default is chosen from the data: whether each
             variable looks discrete (``classify_data``) and whether
             the sample is small select an entry from the
@@ -1288,8 +1290,9 @@ class RVResults(Results):
         alpha : float, optional
             Transparency of plotted elements, between 0 and 1. Each
             plot type has its own default: histograms 0.65, scatter
-            0.25, rug 0.5, impulse / density curves / dot plots fully
-            opaque, and 0.5 for violin and marginal panels.
+            0.25, rug 0.5, box plots 0.75, impulse / density curves /
+            dot plots fully opaque, and 0.5 for violin and marginal
+            panels.
         normalize : bool, default True
             If True, plot relative frequencies or densities. If
             False, plot raw counts. Dot plots always show counts.
@@ -1371,8 +1374,8 @@ class RVResults(Results):
                     f"Unrecognized plot type {type!r}. "
                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
                     "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'mosaic', "
-                    "'violin', 'marginal' (and, for 2D data, 'hist2d', "
-                    "'density2d', 'segmented_rug')."
+                    "'violin', 'box' (alias 'boxplot'), 'marginal' (and, "
+                    "for 2D data, 'hist2d', 'density2d', 'segmented_rug')."
                 )
 
         # Filled in by the dim == 1 and dim == 2 branches with
@@ -1482,6 +1485,8 @@ class RVResults(Results):
                     alpha=alpha,
                     **kwargs,
                 )
+            elif "box" in type or "boxplot" in type:
+                make_boxplot(_plot_array, ax, color, alpha=alpha, **kwargs)
             if "rug" in type:
                 make_rug(_plot_array, ax, color, alpha=alpha)
             if "ecdf" in type:
@@ -1674,10 +1679,20 @@ class RVResults(Results):
             elif "violin" in type:
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))
-                    make_violin(self.array, positions, ax, "x", legacy_alpha)
+                    make_violin(self.array, positions, ax, color, "x", legacy_alpha)
                 elif not discrete_x and discrete_y:
                     positions = sorted(list(y_count.keys()))
-                    make_violin(self.array, positions, ax, "y", legacy_alpha)
+                    make_violin(self.array, positions, ax, color, "y", legacy_alpha)
+            elif "box" in type or "boxplot" in type:
+                make_grouped_boxplot(
+                    x,
+                    y,
+                    ax,
+                    color,
+                    alpha=alpha,
+                    discrete_x=discrete_x,
+                    discrete_y=discrete_y,
+                )
 
             if "marginal" in type:
                 # The marginal layout has no room for the center panel's

@@ -256,6 +256,26 @@ MOSAIC_OVERLAY_WARNING = (
     "subplots) instead."
 )
 
+# Box plot.
+BOXPLOT_ALPHA = 0.75
+BOXPLOT_EDGECOLOR = "black"
+BOXPLOT_LINEWIDTH = 1.2
+BOXPLOT_FLIER_MARKER = "o"
+BOXPLOT_FLIER_SIZE = 4
+
+# Violin plot.
+VIOLIN_EDGECOLOR = "black"
+VIOLIN_EDGEWIDTH = 1
+VIOLIN_WIDTH = 0.5  # matches ax.violinplot's own default width
+VIOLIN_BOX_WIDTH_RATIO = 0.3  # inner IQR box width, as a fraction of VIOLIN_WIDTH
+VIOLIN_BOX_FACECOLOR = "#FDF6E3"  # pale ivory, reads against any hue color
+VIOLIN_OVERLAY_WARNING = (
+    "Warning: you drew a second violin plot on the same plot. Overlapping "
+    "violin shapes are hard to tell apart, so the result may be hard to "
+    "read. Consider plotting them in separate cells, or using type='box' "
+    "instead."
+)
+
 
 class SymbulatePlot:
     """Wrapper object returned by every ``.plot()`` method.
@@ -431,17 +451,26 @@ DEFAULT_PLOT_TYPE = {
         "default": "impulse",
         "alternatives": ["bar", "hist", "dotplot"],
     },
-    ("1D_continuous", True): {"default": "rug", "alternatives": ["dotplot", "hist"]},
-    ("1D_continuous", False): {"default": "hist", "alternatives": ["density", "rug"]},
+    ("1D_continuous", True): {
+        "default": "rug",
+        "alternatives": ["dotplot", "hist", "box"],
+    },
+    ("1D_continuous", False): {
+        "default": "hist",
+        "alternatives": ["density", "rug", "box"],
+    },
     ("2D_dd", True): {"default": "scatter", "alternatives": ["tile", "mosaic"]},
     ("2D_dd", False): {"default": "tile", "alternatives": ["scatter", "mosaic"]},
     ("2D_cc", True): {"default": "scatter", "alternatives": ["density2d", "hist2d"]},
     ("2D_cc", False): {"default": "hist2d", "alternatives": ["density2d", "scatter"]},
     ("2D_mixed", True): {
         "default": "segmented_rug",
-        "alternatives": ["scatter", "tile"],
+        "alternatives": ["scatter", "tile", "box"],
     },
-    ("2D_mixed", False): {"default": "tile", "alternatives": ["violin", "scatter"]},
+    ("2D_mixed", False): {
+        "default": "tile",
+        "alternatives": ["violin", "box", "scatter"],
+    },
 }
 
 
@@ -499,6 +528,8 @@ PLOT_DISPLAY_NAME = {
     "hist2d": "2D Histogram",
     "density2d": "2D Density Plot",
     "violin": "Violin Plot",
+    "box": "Box Plot",
+    "boxplot": "Box Plot",
     "segmented_rug": "Segmented Rug Plot",
     "marginal": "Marginal Plot",
 }
@@ -1248,22 +1279,121 @@ def make_mosaic(
     return bars
 
 
-def make_violin(data, positions, ax, axis, alpha):
-    values = []
+def make_violin(data, positions, ax, color, axis, alpha):
+    """Draw a violin plot of simulated values grouped by one discrete axis.
+
+    One violin per distinct value in ``positions``, along whichever of
+    ``axis="x"``/``"y"`` is discrete -- the other axis holds the
+    continuous values. Every violin carries a narrow inner boxplot
+    (pale ivory box, black median line and whiskers) so the median and
+    IQR stay readable underneath the density shape.
+
+    A second call on the same axes still draws, but two overlapping
+    sets of violin shapes are hard to tell apart, so a warning prints
+    below the plot.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` -- pass the result in as ``color``. This
+    mirrors how ``RVResults.plot()`` calls the other plot helpers
+    (``make_tile``, ``make_segmented_rug``).
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        The simulated (x, y) pairs, e.g. ``RVResults.array``.
+    positions : list
+        The distinct values of the discrete axis; one violin is drawn
+        per position.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Fill color for the violins, from ``get_next_color(ax)``.
+    axis : {"x", "y"}
+        Which axis is discrete. ``"x"`` draws vertical violins along
+        x, with y as the continuous value axis; ``"y"`` draws
+        horizontal violins along y, with x as the continuous value
+        axis.
+    alpha : float
+        Violin body transparency between 0 and 1.
+
+    Returns
+    -------
+    tuple
+        ``(violins, boxplot)`` -- the dicts of Matplotlib artists
+        returned by ``ax.violinplot`` and ``ax.boxplot``, so the
+        caller can inspect or further style them.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> data = np.column_stack(
+    ...     [np.repeat([0, 1, 2], 50), rng.normal(0, 1, 150)]
+    ... )
+    >>> ax = plt.gca()
+    >>> make_violin(data, [0, 1, 2], ax, get_next_color(ax), "x", 0.5)  # doctest: +SKIP
+    """
     i, j = (0, 1) if axis == "x" else (1, 0)
     values = [data[data[:, i] == pos, j].tolist() for pos in positions]
     orientation = "horizontal" if axis == "y" else "vertical"
-    violins = ax.violinplot(dataset=values, showmedians=True, orientation=orientation)
+    violins = ax.violinplot(
+        dataset=values,
+        widths=VIOLIN_WIDTH,
+        showmedians=False,
+        showextrema=False,
+        orientation=orientation,
+    )
     setup_ticks(
         np.array(positions) + 1, positions, ax.xaxis if axis == "x" else ax.yaxis
     )
-    for part in violins["bodies"]:
-        part.set_edgecolor("black")
-        part.set_alpha(alpha)
-    for component in ("cbars", "cmins", "cmaxes", "cmedians"):
-        vp = violins[component]
-        vp.set_edgecolor("black")
-        vp.set_linewidth(1)
+    for body in violins["bodies"]:
+        body.set_facecolor(color)
+        body.set_edgecolor(VIOLIN_EDGECOLOR)
+        body.set_linewidth(VIOLIN_EDGEWIDTH)
+        body.set_alpha(alpha)
+
+    # The inner boxplot marks the median and IQR on top of each violin's
+    # density shape. Its positions match violinplot's own implicit
+    # 1..n default (violinplot above is not given an explicit
+    # positions=), so the two align. manage_ticks=False so this call
+    # doesn't clobber the discrete-axis tick labels setup_ticks() set.
+    box_width = VIOLIN_WIDTH * VIOLIN_BOX_WIDTH_RATIO
+    boxplot = ax.boxplot(
+        values,
+        positions=list(range(1, len(values) + 1)),
+        widths=box_width,
+        orientation=orientation,
+        patch_artist=True,
+        showfliers=False,
+        manage_ticks=False,
+        boxprops=dict(
+            facecolor=VIOLIN_BOX_FACECOLOR,
+            edgecolor=VIOLIN_EDGECOLOR,
+            linewidth=VIOLIN_EDGEWIDTH,
+        ),
+        medianprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
+        whiskerprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
+        capprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
+    )
+    # The boxplot needs to sit above the violin body it's drawn on top of.
+    for artists in boxplot.values():
+        for artist in artists:
+            artist.set_zorder(3)
+
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title("Violin Plot")
+
+    # Count the violin plots drawn on these axes, stored on the axes
+    # object itself (the same pattern get_next_color uses for the
+    # color cycle), to trigger the overlay readability warning.
+    n_prior = getattr(ax, "_violin_count", 0)
+    ax._violin_count = n_prior + 1
+    if ax._violin_count > 1:
+        print(VIOLIN_OVERLAY_WARNING)
+    return violins, boxplot
 
 
 def make_marginal_impulse(count, color, ax_marg, alpha, axis):
@@ -1603,6 +1733,122 @@ def make_hist(
     if ax._hist_count > 1:
         ax.legend(loc=HIST_LEGEND_LOC)
     return histogram
+
+
+def make_boxplot(values, ax, color, alpha=None, label=None, **kwargs):
+    """Draw a box plot of simulated values on the given axes.
+
+    A single box: edges at the first and third quartiles, a black
+    median line, whiskers to the most extreme value within 1.5 times
+    the interquartile range, and individual points beyond that drawn
+    as fliers. Non-finite values (e.g. NaN) are dropped before
+    plotting.
+
+    Box plots overlay naturally: a second call on the same axes adds
+    another box at the next position, and both boxes' x-ticks are
+    labeled automatically -- "Variable 1", "Variable 2", ... in call
+    order, or the given ``label``. Unlike a histogram, no legend is
+    needed since each box already carries its own tick label.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``. This mirrors how ``RVResults.plot()`` calls the other
+    plot helpers (``make_hist``, ``make_rug``).
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values to summarize, e.g. ``RVResults.array``.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Fill color for the box, from ``get_next_color(ax)``.
+    alpha : float, optional
+        Box transparency between 0 and 1. Defaults to the package
+        standard for box plots (``BOXPLOT_ALPHA``, 0.75).
+    label : str, optional
+        Name for this box, shown as its x-tick label. Defaults to
+        "Variable k", where k counts the boxes drawn on these axes so
+        far.
+    **kwargs
+        Additional keyword arguments passed to
+        ``matplotlib.axes.Axes.boxplot``.
+
+    Returns
+    -------
+    dict
+        The dict of Matplotlib artists returned by ``ax.boxplot``
+        (``boxes``, ``medians``, ``whiskers``, ``caps``, ``fliers``),
+        so the caller can inspect or further style them.
+
+    Raises
+    ------
+    ValueError
+        If there are no finite values to plot.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> values = np.random.default_rng().normal(10, 2, 200)
+    >>> ax = plt.gca()
+    >>> make_boxplot(values, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = BOXPLOT_ALPHA
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        raise ValueError(
+            "There are no values to plot. Simulate some values first, "
+            "for example X.sim(30).plot(type='box')."
+        )
+    # The box fill/edges/median/whiskers/caps/fliers are all defaults,
+    # not overrides, so a user's own boxprops= / widths= / etc. keyword
+    # still wins (the same pattern make_hist uses for edgecolor=).
+    kwargs.setdefault(
+        "boxprops",
+        dict(
+            facecolor=color,
+            edgecolor=BOXPLOT_EDGECOLOR,
+            linewidth=BOXPLOT_LINEWIDTH,
+            alpha=alpha,
+        ),
+    )
+    kwargs.setdefault(
+        "medianprops", dict(color=BOXPLOT_EDGECOLOR, linewidth=BOXPLOT_LINEWIDTH)
+    )
+    kwargs.setdefault(
+        "whiskerprops", dict(color=BOXPLOT_EDGECOLOR, linewidth=BOXPLOT_LINEWIDTH)
+    )
+    kwargs.setdefault(
+        "capprops", dict(color=BOXPLOT_EDGECOLOR, linewidth=BOXPLOT_LINEWIDTH)
+    )
+    kwargs.setdefault(
+        "flierprops",
+        dict(
+            marker=BOXPLOT_FLIER_MARKER,
+            markersize=BOXPLOT_FLIER_SIZE,
+            markerfacecolor=color,
+            markeredgecolor=BOXPLOT_EDGECOLOR,
+            alpha=alpha,
+        ),
+    )
+    kwargs.setdefault("patch_artist", True)
+    kwargs.setdefault("orientation", "vertical")
+    # Count the boxes drawn on these axes, stored on the axes object
+    # itself (the same pattern get_next_color uses for the color
+    # cycle) so overlays from separate .plot() calls see it.
+    n_prior_boxes = getattr(ax, "_boxplot_count", 0)
+    position = n_prior_boxes + 1
+    if label is None:
+        label = f"Variable {position}"
+    ax._boxplot_count = position
+    box = ax.boxplot(values, positions=[position], tick_labels=[label], **kwargs)
+    ax.set_ylabel("Value")
+    ax.set_title("Box Plot")
+    return box
 
 
 def _density_xrange(values):
@@ -2144,6 +2390,167 @@ def make_segmented_rug(
     ax.grid(False)
     ax.grid(True, axis="x" if discrete_x else "y")
     return ticks
+
+
+def make_grouped_boxplot(
+    x, y, ax, color, alpha=None, discrete_x=None, discrete_y=None, **kwargs
+):
+    """Draw a box plot for mixed discrete/continuous data.
+
+    One box per distinct value of whichever variable is discrete, using
+    the other (continuous) variable as the value axis -- the box-plot
+    counterpart of ``make_violin`` for this same data configuration.
+
+    The orientation follows which variable is discrete, mirroring
+    ``make_segmented_rug`` and the mixed tile plot so the different
+    views of the same data line up:
+
+    - discrete ``y``, continuous ``x``: one horizontal box per y-level.
+    - discrete ``x``, continuous ``y``: one vertical box per x-level.
+
+    This plot is only for mixed data -- exactly one discrete variable
+    and one continuous variable. Two discrete variables should use a
+    tile plot, and two continuous variables a scatter plot.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` -- pass the result in as ``color``. This
+    mirrors how ``make_segmented_rug`` and the other plot helpers are
+    called.
+
+    Parameters
+    ----------
+    x : array-like
+        Simulated values for the horizontal axis, e.g. the first
+        column of ``RVResults.array``. Discrete or continuous.
+    y : array-like
+        Simulated values for the vertical axis, same length as ``x``.
+        Discrete or continuous.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Fill color for the boxes, from ``get_next_color(ax)``.
+    alpha : float, optional
+        Box transparency between 0 and 1. Defaults to the package
+        standard for box plots (``BOXPLOT_ALPHA``, 0.75).
+    discrete_x : bool, optional
+        Whether the x-axis is the discrete (grouping) variable. If
+        None (default), detected from the data: float values are
+        treated as continuous, everything else (int, bool, string) as
+        discrete.
+    discrete_y : bool, optional
+        Same as ``discrete_x`` for the y-axis.
+    **kwargs
+        Additional keyword arguments passed to
+        ``matplotlib.axes.Axes.boxplot``.
+
+    Returns
+    -------
+    dict
+        The dict of Matplotlib artists returned by ``ax.boxplot``
+        (``boxes``, ``medians``, ``whiskers``, ``caps``, ``fliers``),
+        so the caller can inspect or further style them.
+
+    Raises
+    ------
+    ValueError
+        If the two variables are not one discrete and one continuous.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> rng = np.random.default_rng()
+    >>> x = rng.integers(0, 4, 200)   # discrete groups
+    >>> y = rng.normal(0, 1, 200)     # continuous
+    >>> make_grouped_boxplot(x, y, plt.gca(), "#56B4E9")  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = BOXPLOT_ALPHA
+    xs, ys = np.asarray(x), np.asarray(y)
+    if discrete_x is None:
+        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+    if discrete_y is None:
+        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+
+    # A grouped box plot needs one discrete variable (the groups) and
+    # one continuous variable (the values). Anything else is a
+    # different plot.
+    if discrete_x == discrete_y:
+        if discrete_x:
+            raise ValueError(
+                "A box plot needs one discrete variable and one continuous "
+                "variable, but both of yours look discrete. Try a tile plot "
+                "for two discrete variables."
+            )
+        raise ValueError(
+            "A box plot needs one discrete variable and one continuous "
+            "variable, but both of yours look continuous. Try a scatter "
+            "plot for two continuous variables."
+        )
+
+    if discrete_y:
+        levels = np.unique(ys)
+        continuous, groups = xs, ys
+        orientation = "horizontal"
+    else:
+        levels = np.unique(xs)
+        continuous, groups = ys, xs
+        orientation = "vertical"
+
+    continuous = np.asarray(continuous, dtype=float)
+    finite = np.isfinite(continuous)
+    continuous, groups = continuous[finite], groups[finite]
+    data = [continuous[groups == level] for level in levels]
+    positions = np.arange(len(levels))
+
+    # The box fill/edges/median/whiskers/caps/fliers are all defaults,
+    # not overrides, so a user's own boxprops= / widths= / etc. keyword
+    # still wins (the same pattern make_boxplot / make_hist use).
+    kwargs.setdefault(
+        "boxprops",
+        dict(
+            facecolor=color,
+            edgecolor=BOXPLOT_EDGECOLOR,
+            linewidth=BOXPLOT_LINEWIDTH,
+            alpha=alpha,
+        ),
+    )
+    kwargs.setdefault(
+        "medianprops", dict(color=BOXPLOT_EDGECOLOR, linewidth=BOXPLOT_LINEWIDTH)
+    )
+    kwargs.setdefault(
+        "whiskerprops", dict(color=BOXPLOT_EDGECOLOR, linewidth=BOXPLOT_LINEWIDTH)
+    )
+    kwargs.setdefault(
+        "capprops", dict(color=BOXPLOT_EDGECOLOR, linewidth=BOXPLOT_LINEWIDTH)
+    )
+    kwargs.setdefault(
+        "flierprops",
+        dict(
+            marker=BOXPLOT_FLIER_MARKER,
+            markersize=BOXPLOT_FLIER_SIZE,
+            markerfacecolor=color,
+            markeredgecolor=BOXPLOT_EDGECOLOR,
+            alpha=alpha,
+        ),
+    )
+    kwargs.setdefault("patch_artist", True)
+
+    boxes = ax.boxplot(data, positions=positions, orientation=orientation, **kwargs)
+
+    # Label the discrete axis with the level values (one tick per box);
+    # the continuous axis keeps matplotlib's numeric ticks. Axis labels
+    # match the mixed tile plot's and make_segmented_rug's "X"/"Y".
+    if discrete_y:
+        ax.set_yticks(positions)
+        ax.set_yticklabels(levels)
+    else:
+        ax.set_xticks(positions)
+        ax.set_xticklabels(levels)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title("Box Plot")
+    return boxes
 
 
 def _axes_size_px(ax):
