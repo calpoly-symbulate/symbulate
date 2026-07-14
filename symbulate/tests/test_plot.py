@@ -10,10 +10,9 @@ Covers:
   - Error handling (plotting from a bare ProbabilitySpace)
 
 Tests seed numpy's global generator (np.random.seed) before simulating,
-matching the convention in test_distributions.py: is_discrete()'s 80%
-repeated-values rule is sensitive to rare tail values appearing exactly
-once, so unseeded sims occasionally flip the default plot type and make
-tests flaky.
+matching the convention in test_distributions.py, so the simulated data
+(and with it the classify_data-driven default plot type) is stable from
+run to run.
 """
 
 import importlib
@@ -372,7 +371,7 @@ class TestNumericalPrecision(PlotTestCase):
         """Binomial results have genuine spread; precision fix must not touch them."""
         RV(Binomial(n=10, p=0.5)).sim(500).plot()
         ax = plt.gca()
-        # Discrete data auto-selects impulse, but via the is_discrete path, not ours
+        # Discrete data auto-selects impulse, but via classify_data, not ours
         self.assertGreater(len(ax.collections), 0)
         self.assertEqual(len(ax.patches), 0)
 
@@ -400,12 +399,10 @@ class TestPlot1DOtherDistributions(PlotTestCase):
     def test_poisson_default_is_impulse(self):
         """Poisson results should default to an impulse plot.
 
-        n is large enough that (almost) every value in the support
-        repeats. At small n (e.g. 300), rare tail values appearing
-        exactly once can exceed is_discrete()'s 20% singleton budget
-        and flip the default to a histogram — a known weakness of
-        is_discrete() that classify_data() will fix (see the graphics
-        plan); this test was flaky until n was raised.
+        classify_data counts distinct values (Poisson(3) has far fewer
+        than N_UNIQUE_THRESHOLD), so the discrete determination is
+        stable at any n — unlike the old is_discrete(), whose singleton
+        budget made this test flaky until n was raised.
         """
         RV(Poisson(lam=3)).sim(5000).plot()
         self.assertGreater(len(plt.gca().collections), 0)
@@ -429,11 +426,23 @@ class TestPlot2DContinuous(PlotTestCase):
         X, Y = RV(Normal(0, 1) ** 2)
         self.sims = (X & Y).sim(500)
 
-    def test_default_is_scatter(self):
-        self.sims.plot()
+    def test_default_large_n_is_hist2d(self):
+        """Per DEFAULT_PLOT_TYPE, large-n continuous 2D data defaults to
+        a 2D histogram (a QuadMesh with a Density colorbar)."""
+        self.sims.plot()  # 500 pairs
         ax = plt.gca()
         self.assertGreater(len(ax.collections), 0)
         self.assertEqual(len(ax.patches), 0)
+        self.assertEqual(plt.gcf().axes[-1].get_ylabel(), "Density")
+
+    def test_default_small_n_is_scatter(self):
+        """Per DEFAULT_PLOT_TYPE, small-n continuous 2D data defaults to
+        a scatter plot."""
+        X, Y = RV(Normal(0, 1) ** 2)
+        (X & Y).sim(40).plot()
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "2D Scatter Plot")
+        self.assertEqual(len(ax.collections[0].get_offsets()), 40)
 
     def test_scatter_explicit(self):
         self.sims.plot(type="scatter")
@@ -633,9 +642,16 @@ class TestPlot1DDotplot(PlotTestCase):
         self.assertEqual(ax.get_ylabel(), "Count")
         self.assertEqual(ax.get_title(), "Dot Plot")
 
-    def test_dotplot_default_type_unchanged(self):
-        """Discrete data still defaults to impulse, not dotplot."""
-        self.sims.plot()
+    def test_dotplot_is_default_for_small_discrete(self):
+        """Per DEFAULT_PLOT_TYPE, small-n discrete data defaults to dotplot."""
+        self.sims.plot()  # 30 die rolls
+        offsets = plt.gca().collections[0].get_offsets()
+        self.assertEqual(len(offsets), 30)
+        self.assertEqual(plt.gca().get_title(), "Dot Plot")
+
+    def test_impulse_still_default_for_large_discrete(self):
+        """Per DEFAULT_PLOT_TYPE, large-n discrete data defaults to impulse."""
+        RV(BoxModel([1, 2, 3, 4, 5, 6])).sim(500).plot()
         segs = plt.gca().collections[0].get_segments()
         self.assertGreater(len(segs), 0)
 
@@ -806,6 +822,115 @@ class TestPlot2DMeshFeatures(PlotTestCase):
     def test_marginal_hist_combo_still_draws(self):
         self.sims.plot(type=("marginal", "hist"))
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
+
+
+# ===========================================================================
+# Default plot lookup wired into RVResults.plot() + suggestion note
+# ===========================================================================
+
+
+class TestDefaultLookupDispatch(PlotTestCase):
+    """classify_data + DEFAULT_PLOT_TYPE now drive .plot()'s defaults."""
+
+    def setUp(self):
+        np.random.seed(42)
+
+    def test_small_continuous_defaults_to_rug(self):
+        RV(Normal(0, 1)).sim(50).plot()
+        ax = plt.gca()
+        self.assertGreater(len(ax.collections), 0)  # rug ticks
+        self.assertFalse(ax.yaxis.get_visible())  # standalone rug look
+
+    def test_large_continuous_defaults_to_hist(self):
+        RV(Normal(0, 1)).sim(600).plot()
+        self.assertGreater(len(plt.gca().patches), 0)
+
+    def test_2d_mixed_large_defaults_to_tile(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        (X & Y).sim(500).plot()
+        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+
+    def test_2d_mixed_small_defaults_to_segmented_rug(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        (X & Y).sim(60).plot()
+        self.assertEqual(plt.gca().get_title(), "Segmented Rug Plot")
+
+    def test_2d_discrete_large_defaults_to_tile(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        (X & Y).sim(500).plot()
+        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+
+    def test_2d_discrete_small_defaults_to_scatter(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        (X & Y).sim(40).plot()
+        self.assertEqual(plt.gca().get_title(), "2D Scatter Plot")
+
+    def test_2d_explicit_alias_types_work(self):
+        """The lookup-table tokens are accepted as explicit type= values."""
+        X, Y = RV(Normal(0, 1) ** 2)
+        sims = (X & Y).sim(200)
+        sims.plot(type="hist2d")
+        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        plt.close("all")
+        sims.plot(type="density2d")
+        self.assertEqual(plt.gca().get_title(), "2D Density Plot")
+        plt.close("all")
+        Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
+        (Xm & Ym).sim(200).plot(type="segmented_rug")
+        self.assertEqual(plt.gca().get_title(), "Segmented Rug Plot")
+
+
+class TestSuggestionNote(PlotTestCase):
+    """The 'Currently Showing / Alternative Plots' note under plots."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(Normal(0, 1)).sim(600)
+
+    def _plot_output(self, **kwargs):
+        import io
+        import contextlib
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.sims.plot(**kwargs)
+        return buf.getvalue()
+
+    def test_suggest_true_prints_note(self):
+        out = self._plot_output(suggest=True)
+        self.assertIn("Currently Showing: Histogram (Default)", out)
+        self.assertIn("Alternative Plots:", out)
+
+    def test_suggest_false_prints_nothing(self):
+        out = self._plot_output(suggest=False)
+        self.assertEqual(out, "")
+
+    def test_explicit_type_marks_the_default_alternative(self):
+        out = self._plot_output(type="density", suggest=True)
+        self.assertIn("Currently Showing: Density Plot", out)
+        self.assertIn("Histogram (Default)", out)
+
+    def test_suggest_none_shows_once_per_session(self):
+        import symbulate.plot as _plotmod_check  # noqa: F401 (module import)
+        import importlib
+
+        plotmod = importlib.import_module("symbulate.plot")
+        plotmod._suggestion_shown = False
+        first = self._plot_output()
+        plt.close("all")
+        second = self._plot_output()
+        self.assertIn("Currently Showing", first)
+        self.assertEqual(second, "")
+
+    def test_2d_note_uses_2d_display_names(self):
+        import io
+        import contextlib
+
+        X, Y = RV(Normal(0, 1) ** 2)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            (X & Y).sim(500).plot(type="hist", suggest=True)
+        self.assertIn("Currently Showing: 2D Histogram (Default)", buf.getvalue())
 
 
 # ===========================================================================

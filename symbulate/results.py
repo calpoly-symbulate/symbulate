@@ -27,8 +27,11 @@ from .base import (
 )
 from .plot import (
     HIST_DEFAULT_BINS,
+    classify_data,
+    default_plot_type,
     get_next_color,
-    is_discrete,
+    should_show_suggestion,
+    suggestion_message,
     count_var,
     compute_density,
     add_colorbar,
@@ -1246,7 +1249,14 @@ class RVResults(Results):
         return Table(self._get_counts(), outcomes, normalize, "Value")
 
     def plot(
-        self, type=None, alpha=None, normalize=True, jitter=False, bins=None, **kwargs
+        self,
+        type=None,
+        alpha=None,
+        normalize=True,
+        jitter=False,
+        bins=None,
+        suggest=None,
+        **kwargs,
     ):
         """Plot the simulated random variable results.
 
@@ -1256,8 +1266,12 @@ class RVResults(Results):
             Plot type or types to display. Valid values are
             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
             ``"dotplot"``, ``"rug"``, ``"scatter"``, ``"tile"``,
-            ``"violin"``, and ``"marginal"``. If None, selects
-            automatically based on whether the data appear discrete.
+            ``"violin"``, and ``"marginal"`` (2D data also accepts
+            ``"hist2d"``, ``"density2d"``, and ``"segmented_rug"``).
+            If None, a default is chosen from the data: whether each
+            variable looks discrete (``classify_data``) and whether
+            the sample is small select an entry from the
+            ``DEFAULT_PLOT_TYPE`` lookup table in ``plot.py``.
             On 2D data, ``"hist"`` draws a binned color mesh,
             ``"density"`` a smooth density surface (pass
             ``contour=True`` for a banded contour plot), and
@@ -1285,6 +1299,12 @@ class RVResults(Results):
             Number of bins for histograms, or for a continuous axis
             of a tile plot. Defaults to 30. Dot plots are never
             binned.
+        suggest : bool or None, optional
+            Whether to print a note under the plot naming the plot
+            being shown and the reasonable alternatives for this
+            data. ``None`` (default) prints it only on the first
+            ``.plot()`` call of the session; ``True`` prints it on
+            every call; ``False`` never prints it.
         **kwargs
             Additional keyword arguments passed to the underlying
             matplotlib plotting function. Notable options:
@@ -1340,8 +1360,14 @@ class RVResults(Results):
                     f"Unrecognized plot type {type!r}. "
                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
                     "'dotplot', 'rug', 'scatter', 'tile', 'violin', "
-                    "'marginal'."
+                    "'marginal' (and, for 2D data, 'hist2d', 'density2d', "
+                    "'segmented_rug')."
                 )
+
+        # Filled in by the dim == 1 and dim == 2 branches with
+        # (shown, default, alternatives) so the suggestion note can be
+        # printed after the plot renders.
+        _suggestion = None
 
         if self.dim == 1:
             # make sure self.array, a Numpy array, has been set
@@ -1364,9 +1390,12 @@ class RVResults(Results):
 
             # determine plotting parameters
             counts = count_var(_plot_array)
-            discrete = is_discrete(counts.values())
+            discrete, small_n = classify_data(_plot_array)
+            configuration = "1D_discrete" if discrete else "1D_continuous"
+            default, alternatives = default_plot_type(configuration, small_n)
             if type is None:
-                type = ("impulse",) if discrete else ("hist",)
+                type = (default,)
+            _suggestion = (type[0], default, alternatives)
             # Each 1D plot type defaults its own alpha inside its make_*
             # helper (HIST_ALPHA, DENSITY_ALPHA, RUG_ALPHA, IMPULSE_ALPHA,
             # DOTPLOT_ALPHA), so alpha stays None here unless the user
@@ -1446,15 +1475,34 @@ class RVResults(Results):
             self._set_array()
             x, y = self.array[:, 0], self.array[:, 1]
 
+            # x_count / y_count feed the marginal impulses and violin
+            # positions below; discreteness itself comes from
+            # classify_data.
             x_count = count_var(x)
             y_count = count_var(y)
-            x_height = x_count.values()
-            y_height = y_count.values()
-            discrete_x = is_discrete(x_height)
-            discrete_y = is_discrete(y_height)
+            discrete_x, small_n = classify_data(x)
+            discrete_y, _ = classify_data(y)
 
+            if discrete_x and discrete_y:
+                configuration = "2D_dd"
+            elif not discrete_x and not discrete_y:
+                configuration = "2D_cc"
+            else:
+                configuration = "2D_mixed"
+            default, alternatives = default_plot_type(configuration, small_n)
             if type is None:
-                type = ("scatter",)
+                type = (default,)
+            # The lookup-table tokens name the 2D variants explicitly
+            # (hist2d, density2d, segmented_rug); the shorter names are
+            # what users have always passed on 2D data. The suggestion
+            # note uses the explicit token so its display name reads
+            # "2D Histogram", not "Histogram".
+            _2d_token = {
+                "hist": "hist2d",
+                "density": "density2d",
+                "rug": "segmented_rug",
+            }
+            _suggestion = (_2d_token.get(type[0], type[0]), default, alternatives)
             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
             # make_scatter, and the mesh types (hist/density/tile) encode
             # magnitude with a colormap instead of transparency. The
@@ -1535,7 +1583,7 @@ class RVResults(Results):
                     jitter=jitter,
                     **kwargs,
                 )
-            elif "hist" in type:
+            elif "hist" in type or "hist2d" in type:
                 if "marginal" in type:
                     histo = make_hist2d(
                         x,
@@ -1552,13 +1600,13 @@ class RVResults(Results):
                     )
                 else:
                     make_hist2d(x, y, ax, bins=bins, normalize=normalize, **kwargs)
-            elif "density" in type:
+            elif "density" in type or "density2d" in type:
                 if "marginal" in type:
                     den = make_density2D(x, y, ax, colorbar=False, **kwargs)
                     add_colorbar(fig, type, den, "Density")
                 else:
                     make_density2D(x, y, ax, **kwargs)
-            elif "rug" in type:
+            elif "rug" in type or "segmented_rug" in type:
                 make_segmented_rug(
                     x,
                     y,
@@ -1604,4 +1652,10 @@ class RVResults(Results):
             for result in self.results:
                 result.plot(alpha=alpha, color=color, **kwargs)
             plt.xlabel("Index")
+
+        # Print the suggestion note after the plot has rendered, naming
+        # the plot being shown and the reasonable alternatives for this
+        # data (see should_show_suggestion for the suggest= policy).
+        if _suggestion is not None and should_show_suggestion(suggest):
+            print(suggestion_message(*_suggestion))
         return SymbulatePlot(ax)

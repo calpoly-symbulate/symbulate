@@ -281,10 +281,6 @@ def plot(*args, **kwargs):
         return SymbulatePlot(plt.gca())
 
 
-def is_discrete(heights):
-    return sum([(i > 1) for i in heights]) > 0.8 * len(heights)
-
-
 def classify_data(
     values, n_unique_threshold=N_UNIQUE_THRESHOLD, n_small_threshold=N_SMALL_THRESHOLD
 ):
@@ -438,6 +434,7 @@ PLOT_DISPLAY_NAME = {
     "density2d": "2D Density Plot",
     "violin": "Violin Plot",
     "segmented_rug": "Segmented Rug Plot",
+    "marginal": "Marginal Plot",
 }
 
 
