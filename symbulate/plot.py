@@ -445,19 +445,19 @@ DEFAULT_PLOT_TYPE = {
     },
     ("1D_discrete", True): {
         "default": "dotplot",
-        "alternatives": ["impulse", "bar"],
+        "alternatives": ["impulse", "bar", "ecdf"],
     },
     ("1D_discrete", False): {
         "default": "impulse",
-        "alternatives": ["bar", "hist", "dotplot"],
+        "alternatives": ["bar", "hist", "dotplot", "ecdf"],
     },
     ("1D_continuous", True): {
         "default": "rug",
-        "alternatives": ["dotplot", "hist", "box"],
+        "alternatives": ["hist", "density", "box", "ecdf"],
     },
     ("1D_continuous", False): {
         "default": "hist",
-        "alternatives": ["density", "rug", "box"],
+        "alternatives": ["density", "rug", "box", "ecdf"],
     },
     ("2D_dd", True): {"default": "scatter", "alternatives": ["tile", "mosaic"]},
     ("2D_dd", False): {"default": "tile", "alternatives": ["scatter", "mosaic"]},
@@ -465,11 +465,11 @@ DEFAULT_PLOT_TYPE = {
     ("2D_cc", False): {"default": "hist2d", "alternatives": ["density2d", "scatter"]},
     ("2D_mixed", True): {
         "default": "segmented_rug",
-        "alternatives": ["scatter", "tile", "box"],
+        "alternatives": ["tile", "box", "violin"],
     },
     ("2D_mixed", False): {
         "default": "tile",
-        "alternatives": ["violin", "box", "scatter"],
+        "alternatives": ["violin", "box"],
     },
 }
 
