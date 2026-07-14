@@ -518,6 +518,80 @@ def should_show_suggestion(suggest=None):
     return True
 
 
+# Scatter jitter options, in the order they appear in the jitter note.
+JITTER_OPTION_DESCRIPTIONS = {
+    "spiral": 'jitter="spiral" (points sharing a value form a tight, '
+    "countable cluster)",
+    "bins": 'jitter="bins" (points sharing a value fill that value\'s '
+    "box, like a tiny dot histogram)",
+    "random": 'jitter="random" (small random noise)',
+    False: "jitter=False (exact positions -- repeated points draw on "
+    "top of each other)",
+}
+
+
+def jitter_suggestion_message(shown):
+    """Build the jitter note printed under a discrete 2D scatter plot.
+
+    Names the jitter layout the scatter plot is using and lists the
+    other layouts a student can pass, with the exact ``jitter=...``
+    syntax -- the same discovery role the plot-type suggestion message
+    plays for ``type=``.
+
+    Parameters
+    ----------
+    shown : str or bool
+        The jitter mode actually in use: ``"spiral"``, ``"bins"``,
+        ``"random"``, or ``False``.
+
+    Returns
+    -------
+    str
+        A two-line message: the first line names the layout in use,
+        the second lists the other jitter options.
+    """
+    current = JITTER_OPTION_DESCRIPTIONS[shown]
+    others = [
+        text for mode, text in JITTER_OPTION_DESCRIPTIONS.items() if mode != shown
+    ]
+    return f"Currently Using: {current}\nOther Jitter Options: {', '.join(others)}"
+
+
+_jitter_suggestion_shown = False
+
+
+def should_show_jitter_suggestion(suggest=None):
+    """Decide whether to print the jitter note on this ``.plot()`` call.
+
+    Same policy as ``should_show_suggestion``, tracked with its own
+    session flag so the first *scatter* of the session still shows the
+    jitter note even if the plot-type message already appeared under an
+    earlier plot.
+
+    Parameters
+    ----------
+    suggest : bool or None, optional
+        ``None`` (default): show only on the first jittered scatter of
+        the session. ``True``: show on every call. ``False``: never
+        show.
+
+    Returns
+    -------
+    bool
+        Whether to print the jitter note.
+    """
+    global _jitter_suggestion_shown
+    if suggest is False:
+        return False
+    if suggest is True:
+        _jitter_suggestion_shown = True
+        return True
+    if _jitter_suggestion_shown:
+        return False
+    _jitter_suggestion_shown = True
+    return True
+
+
 def count_var(x):
     counts = {}
     for val in x:
@@ -2084,6 +2158,31 @@ def _max_coincident(x, y):
     return int(counts.max())
 
 
+def auto_jitter_mode(x, y):
+    """Pick the clustered-jitter layout for two discrete variables.
+
+    This is the automatic choice ``RVResults.plot()`` makes when the
+    user does not set ``jitter`` and both variables are discrete
+    (per ``classify_data``): ``"bins"`` once any single (x, y) value
+    holds ``SCATTER_AUTO_BINS_THRESHOLD`` (12) or more points -- past
+    the 9-dot compass template, where a spiral pile-up stops being
+    cleanly countable -- and ``"spiral"`` otherwise.
+
+    Parameters
+    ----------
+    x, y : array-like
+        The two simulated variables. Assumed integer-valued.
+
+    Returns
+    -------
+    str
+        ``"spiral"`` or ``"bins"``.
+    """
+    if _max_coincident(x, y) >= SCATTER_AUTO_BINS_THRESHOLD:
+        return "bins"
+    return "spiral"
+
+
 def make_scatter(
     x,
     y,
@@ -2131,8 +2230,12 @@ def make_scatter(
 
         - ``False`` -- draw points at their exact coordinates. Right
           for two continuous variables (no coincident points).
-        - ``True`` -- add small random noise to both coordinates.
-          Reduces overplotting but scrambles density.
+          (``RVResults.plot()`` resolves its own default from the
+          data: two discrete variables get the clustered layout
+          ``auto_jitter_mode`` picks; anything else gets ``False``.)
+        - ``"random"`` -- add small random noise to both coordinates.
+          Reduces overplotting but scrambles density. ``True`` is
+          accepted as a legacy alias and behaves identically.
         - ``"spiral"`` -- points that share an integer (x, y)
           coordinate form a tight compass-pattern cluster on that
           value's grid crossing (center first, then N/E/S/W on the
@@ -2149,10 +2252,6 @@ def make_scatter(
           up a row -- dots touching, like a tiny dot histogram, so a
           fuller box means a bigger count even when dozens of points
           share one value.
-        - ``"auto"`` -- pick for the data: ``"bins"`` once any single
-          value holds ``SCATTER_AUTO_BINS_THRESHOLD`` (12) or more
-          points, ``"spiral"`` otherwise. Prints a note when it
-          chooses bins.
     label : str, optional
         Name for this series in the legend. Defaults to "Variable k",
         where k counts the scatters drawn on these axes so far.
@@ -2190,32 +2289,19 @@ def make_scatter(
     # The marker size is a default, not an override, so a user's own
     # s= keyword still wins.
     kwargs.setdefault("s", SCATTER_MARKER_SIZE)
-    if jitter not in (False, True, "spiral", "bins", "auto"):
+    if jitter not in (False, True, "random", "spiral", "bins"):
         raise ValueError(
-            f"jitter must be False, True, 'spiral', 'bins', or 'auto', not "
-            f"{jitter!r}. For two discrete variables use jitter='auto' (picks "
-            "the best layout for your data), jitter='spiral' (tight countable "
-            "clusters), or jitter='bins' (spreads big pile-ups across each "
-            "value's bin). Use jitter=True for random noise, or jitter=False "
-            "(the default) for continuous variables."
+            f"jitter must be False, 'random', 'spiral', or 'bins', not "
+            f"{jitter!r}. When you don't set jitter, the best layout is "
+            "chosen automatically for two discrete variables. Use "
+            "jitter='spiral' for tight countable clusters, jitter='bins' "
+            "to spread big pile-ups across each value's bin, "
+            "jitter='random' for random noise, or jitter=False for exact "
+            "positions."
         )
 
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
-
-    if jitter == "auto":
-        peak = _max_coincident(x, y)
-        if peak >= SCATTER_AUTO_BINS_THRESHOLD:
-            jitter = "bins"
-            print(
-                f"The most repeated value appears {peak} times -- too many "
-                "for the tight cluster style to stay countable -- so the "
-                "points are spread across each value's bin "
-                "(jitter='bins'). Pass jitter='spiral' to force tight "
-                "clusters instead."
-            )
-        else:
-            jitter = "spiral"
 
     xi = yi = None
     if jitter in ("spiral", "bins"):
