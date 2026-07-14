@@ -707,21 +707,55 @@ class TestPlot2DScatterFeatures(PlotTestCase):
         self.assertEqual(ax.get_title(), "2D Scatter Plot")
 
     def test_scatter_jitter_true_still_works(self):
-        self.discrete_sims.plot(type="scatter", jitter=True)
+        """jitter=True is the legacy alias for jitter='random'."""
+        self.discrete_sims.plot(type="scatter", jitter=True, suggest=False)
+        self.assertGreater(len(plt.gca().collections), 0)
+
+    def test_scatter_jitter_random(self):
+        self.discrete_sims.plot(type="scatter", jitter="random", suggest=False)
         self.assertGreater(len(plt.gca().collections), 0)
 
     def test_scatter_jitter_spiral(self):
-        self.discrete_sims.plot(type="scatter", jitter="spiral")
+        self.discrete_sims.plot(type="scatter", jitter="spiral", suggest=False)
         self.assertGreater(len(plt.gca().collections), 0)
 
     def test_scatter_jitter_bins(self):
-        self.discrete_sims.plot(type="scatter", jitter="bins")
+        self.discrete_sims.plot(type="scatter", jitter="bins", suggest=False)
         self.assertGreater(len(plt.gca().collections), 0)
+
+    def test_scatter_jitter_auto_no_longer_an_option(self):
+        """'auto' was removed: automatic layout is now the default."""
+        with self.assertRaises(ValueError):
+            self.discrete_sims.plot(type="scatter", jitter="auto", suggest=False)
 
     def test_scatter_invalid_jitter_raises_friendly_error(self):
         with self.assertRaises(ValueError) as cm:
             self.discrete_sims.plot(type="scatter", jitter="wiggle")
         self.assertIn("spiral", str(cm.exception))
+
+    def test_default_jitter_clusters_discrete_pairs(self):
+        """With jitter unset, two discrete variables auto-cluster, so
+        every one of the 40 points lands at its own distinct position
+        instead of overplotting."""
+        self.discrete_sims.plot(type="scatter", suggest=False)
+        offsets = np.asarray(plt.gca().collections[0].get_offsets())
+        self.assertEqual(len(np.unique(offsets, axis=0)), len(offsets))
+
+    def test_default_no_jitter_for_continuous(self):
+        """With jitter unset, continuous data is drawn at its exact
+        coordinates -- never snapped or perturbed."""
+        self.sims.plot(type="scatter", suggest=False)
+        offsets = np.asarray(plt.gca().collections[0].get_offsets())
+        self.assertTrue(
+            np.allclose(np.sort(offsets, axis=0), np.sort(self.sims.array, axis=0))
+        )
+
+    def test_explicit_jitter_false_disables_clustering(self):
+        """jitter=False is respected even for discrete data: repeated
+        pairs draw on top of each other at exact positions."""
+        self.discrete_sims.plot(type="scatter", jitter=False, suggest=False)
+        offsets = np.asarray(plt.gca().collections[0].get_offsets())
+        self.assertLess(len(np.unique(offsets, axis=0)), len(offsets))
 
     def test_scatter_overlay_gets_legend(self):
         self.sims.plot(type="scatter")
@@ -931,6 +965,58 @@ class TestSuggestionNote(PlotTestCase):
         with contextlib.redirect_stdout(buf):
             (X & Y).sim(500).plot(type="hist", suggest=True)
         self.assertIn("Currently Showing: 2D Histogram (Default)", buf.getvalue())
+
+
+class TestJitterNote(PlotTestCase):
+    """The jitter-options note under a scatter of two discrete variables."""
+
+    def setUp(self):
+        import importlib
+
+        np.random.seed(42)
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        self.discrete_sims = (X & Y).sim(40)
+        Xc, Yc = RV(Normal(0, 1) ** 2)
+        self.continuous_sims = (Xc & Yc).sim(40)
+        # Reset the once-per-session flag so each test starts fresh.
+        self.plotmod = importlib.import_module("symbulate.plot")
+        self.plotmod._jitter_suggestion_shown = False
+
+    def _plot_output(self, sims, **kwargs):
+        import io
+        import contextlib
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            sims.plot(type="scatter", **kwargs)
+        return buf.getvalue()
+
+    def test_note_names_current_layout_and_alternatives(self):
+        out = self._plot_output(self.discrete_sims, suggest=True)
+        self.assertIn('Currently Using: jitter="spiral"', out)
+        self.assertIn("Other Jitter Options:", out)
+        self.assertIn('jitter="random"', out)
+        self.assertIn("jitter=False", out)
+
+    def test_note_reflects_explicit_jitter_choice(self):
+        out = self._plot_output(self.discrete_sims, jitter="bins", suggest=True)
+        self.assertIn('Currently Using: jitter="bins"', out)
+        self.assertIn('jitter="spiral"', out)
+
+    def test_no_note_for_continuous_scatter(self):
+        out = self._plot_output(self.continuous_sims, suggest=True)
+        self.assertNotIn("Jitter", out)
+
+    def test_suggest_false_silences_note(self):
+        out = self._plot_output(self.discrete_sims, suggest=False)
+        self.assertEqual(out, "")
+
+    def test_note_shows_once_per_session(self):
+        first = self._plot_output(self.discrete_sims)
+        plt.close("all")
+        second = self._plot_output(self.discrete_sims)
+        self.assertIn("Other Jitter Options:", first)
+        self.assertNotIn("Other Jitter Options:", second)
 
 
 # ===========================================================================

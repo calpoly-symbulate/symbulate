@@ -27,9 +27,12 @@ from .base import (
 )
 from .plot import (
     HIST_DEFAULT_BINS,
+    auto_jitter_mode,
     classify_data,
     default_plot_type,
     get_next_color,
+    jitter_suggestion_message,
+    should_show_jitter_suggestion,
     should_show_suggestion,
     suggestion_message,
     count_var,
@@ -1253,7 +1256,7 @@ class RVResults(Results):
         type=None,
         alpha=None,
         normalize=True,
-        jitter=False,
+        jitter=None,
         bins=None,
         suggest=None,
         **kwargs,
@@ -1285,16 +1288,19 @@ class RVResults(Results):
         normalize : bool, default True
             If True, plot relative frequencies or densities. If
             False, plot raw counts. Dot plots always show counts.
-        jitter : bool or str, default False
+        jitter : bool, str, or None, optional
             How to spread out coincident points in a 2D scatter plot.
-            ``True`` adds small random noise. Two discrete variables
-            can instead use ``"spiral"`` (coincident points form a
-            tight countable cluster on their grid crossing),
-            ``"bins"`` (points fill a histogram-style box around
-            their value), or ``"auto"`` (picks between them based on
-            how many points share a value). Has no effect on 1D
-            impulse and dot plots -- overlays of those already spread
-            apart automatically.
+            If None (default), the layout is chosen from the data:
+            two discrete variables get countable clusters
+            (``"spiral"``, or ``"bins"`` for heavy pile-ups) and
+            anything else draws exact positions. Explicit options:
+            ``"spiral"`` (coincident points form a tight countable
+            cluster on their grid crossing), ``"bins"`` (points fill
+            a histogram-style box around their value), ``"random"``
+            (small random noise; ``True`` is a legacy alias), or
+            ``False`` (exact positions). Has no effect on 1D impulse
+            and dot plots -- overlays of those already spread apart
+            automatically.
         bins : int, optional
             Number of bins for histograms, or for a continuous axis
             of a tile plot. Defaults to 30. Dot plots are never
@@ -1366,8 +1372,11 @@ class RVResults(Results):
 
         # Filled in by the dim == 1 and dim == 2 branches with
         # (shown, default, alternatives) so the suggestion note can be
-        # printed after the plot renders.
+        # printed after the plot renders. _jitter_note is set when a
+        # scatter is drawn on two discrete variables, where the jitter
+        # layout matters.
         _suggestion = None
+        _jitter_note = None
 
         if self.dim == 1:
             # make sure self.array, a Numpy array, has been set
@@ -1574,15 +1583,29 @@ class RVResults(Results):
             # would squeeze the y-marginal panel, so they are called with
             # colorbar=False and add_colorbar places it instead.
             if "scatter" in type:
+                # jitter=None (the default) resolves from the data: two
+                # discrete variables get the countable clustered layout
+                # auto_jitter_mode picks; anything else draws exact
+                # positions. classify_data makes the call so continuous
+                # data is never snapped to integers.
+                scatter_jitter = jitter
+                if scatter_jitter is None:
+                    scatter_jitter = (
+                        auto_jitter_mode(x, y) if discrete_x and discrete_y else False
+                    )
                 make_scatter(
                     x,
                     y,
                     ax,
                     color,
                     alpha=alpha,
-                    jitter=jitter,
+                    jitter=scatter_jitter,
                     **kwargs,
                 )
+                if discrete_x and discrete_y:
+                    _jitter_note = (
+                        "random" if scatter_jitter is True else scatter_jitter
+                    )
             elif "hist" in type or "hist2d" in type:
                 if "marginal" in type:
                     histo = make_hist2d(
@@ -1653,9 +1676,14 @@ class RVResults(Results):
                 result.plot(alpha=alpha, color=color, **kwargs)
             plt.xlabel("Index")
 
-        # Print the suggestion note after the plot has rendered, naming
-        # the plot being shown and the reasonable alternatives for this
-        # data (see should_show_suggestion for the suggest= policy).
+        # Print the suggestion notes after the plot has rendered: the
+        # plot being shown with its reasonable alternatives, and -- for
+        # a scatter of two discrete variables -- the jitter layout in
+        # use with the other layouts a student can pass (see
+        # should_show_suggestion / should_show_jitter_suggestion for
+        # the suggest= policy).
         if _suggestion is not None and should_show_suggestion(suggest):
             print(suggestion_message(*_suggestion))
+        if _jitter_note is not None and should_show_jitter_suggestion(suggest):
+            print(jitter_suggestion_message(_jitter_note))
         return SymbulatePlot(ax)
