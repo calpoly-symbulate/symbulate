@@ -521,6 +521,68 @@ class TestPlot2DViolin(PlotTestCase):
             sims.plot(type="violin")
         self.assertGreater(len(plt.gca().collections), 0)
 
+    def test_violin_title_and_labels(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            sims.plot(type="violin")
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Violin Plot")
+        self.assertEqual(ax.get_xlabel(), "X")
+        self.assertEqual(ax.get_ylabel(), "Y")
+
+    def test_violin_body_uses_okabe_ito_color_not_default(self):
+        """Violin bodies should pick up the color cycle, not mpl's own default."""
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            sims.plot(type="violin")
+        ax = plt.gca()
+        facecolor = tuple(ax.collections[0].get_facecolor()[0])
+        # matplotlib's own unstyled violinplot default is a shade of purple
+        # ((0.267, 0.005, 0.329, ...) from the 'viridis'-adjacent default);
+        # Okabe-Ito sky blue is (0.337, 0.706, 0.914, ...).
+        self.assertAlmostEqual(facecolor[0], 0.337, places=2)
+        self.assertAlmostEqual(facecolor[1], 0.706, places=2)
+
+    def test_violin_has_inner_boxplot(self):
+        """Every violin carries a narrow inner boxplot for median/IQR."""
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            sims.plot(type="violin")
+        ax = plt.gca()
+        self.assertGreater(len(ax.patches), 0)
+
+    def test_violin_discrete_axis_tick_labels_are_the_category_values(self):
+        """The discrete axis is labeled with the actual category values,
+        not the boxplot overlay's own 1..n position defaults."""
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            sims.plot(type="violin")
+        ax = plt.gca()
+        labels = [t.get_text() for t in ax.get_xticklabels() if t.get_text()]
+        self.assertEqual(labels, ["0.0", "1.0", "2.0", "3.0", "4.0", "5.0"])
+
+    def test_violin_overlay_prints_warning(self):
+        import io
+        import contextlib
+
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(300)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            sims.plot(type="violin", suggest=False)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                sims.plot(type="violin", suggest=False)
+        self.assertIn("second violin plot", buf.getvalue())
+
 
 # ===========================================================================
 # New integrated plot types and options (graphics overhaul, Phase 2)
@@ -732,6 +794,98 @@ class TestPlot1DDotplot(PlotTestCase):
 
     def test_dotplot_returns_wrapper(self):
         p = self.sims.plot(type="dotplot")
+        self.assertIsInstance(p, SymbulatePlot)
+
+
+class TestPlot1DBoxStyling(PlotTestCase):
+    """The new type='box' (1D box plot), and its 'boxplot' alias."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(Normal(0, 1)).sim(200)
+
+    def test_box_draws_one_patch(self):
+        self.sims.plot(type="box")
+        self.assertGreater(len(plt.gca().patches), 0)
+
+    def test_box_title_and_ylabel(self):
+        self.sims.plot(type="box")
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Box Plot")
+        self.assertEqual(ax.get_ylabel(), "Value")
+
+    def test_box_default_alpha(self):
+        """Box fill defaults to BOXPLOT_ALPHA (0.75)."""
+        self.sims.plot(type="box")
+        self.assertAlmostEqual(plt.gca().patches[0].get_alpha(), 0.75)
+
+    def test_box_explicit_alpha_wins(self):
+        self.sims.plot(type="box", alpha=0.3)
+        self.assertAlmostEqual(plt.gca().patches[0].get_alpha(), 0.3)
+
+    def test_box_default_label_is_variable_one(self):
+        self.sims.plot(type="box")
+        labels = [t.get_text() for t in plt.gca().get_xticklabels()]
+        self.assertEqual(labels, ["Variable 1"])
+
+    def test_box_label_override(self):
+        self.sims.plot(type="box", label="Control")
+        labels = [t.get_text() for t in plt.gca().get_xticklabels()]
+        self.assertIn("Control", labels)
+
+    def test_boxplot_alias_behaves_like_box(self):
+        self.sims.plot(type="boxplot")
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Box Plot")
+        self.assertGreater(len(ax.patches), 0)
+
+    def test_two_overlaid_boxes_get_two_patches_and_labels(self):
+        """Plotting twice adds a second box at the next position."""
+        self.sims.plot(type="box")
+        RV(Normal(5, 1)).sim(200).plot(type="box")
+        ax = plt.gca()
+        self.assertEqual(len(ax.patches), 2)
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["Variable 1", "Variable 2"])
+
+    def test_box_plus_rug_produces_patch_and_ticks(self):
+        self.sims.plot(type=("box", "rug"))
+        ax = plt.gca()
+        self.assertGreater(len(ax.patches), 0)
+        self.assertGreater(len(ax.collections), 0)
+
+    def test_box_constant_data_does_not_raise(self):
+        from symbulate.plot import make_boxplot, get_next_color
+
+        ax = plt.gca()
+        make_boxplot(np.array([5.0] * 10), ax, get_next_color(ax))
+        self.assertEqual(len(ax.patches), 1)
+
+    def test_box_single_value_does_not_raise(self):
+        from symbulate.plot import make_boxplot, get_next_color
+
+        ax = plt.gca()
+        make_boxplot(np.array([5.0]), ax, get_next_color(ax))
+        self.assertEqual(len(ax.patches), 1)
+
+    def test_box_empty_data_raises_friendly_error(self):
+        from symbulate.plot import make_boxplot, get_next_color
+
+        ax = plt.gca()
+        with self.assertRaises(ValueError) as cm:
+            make_boxplot(np.array([]), ax, get_next_color(ax))
+        self.assertIn("no values", str(cm.exception))
+
+    def test_box_all_nan_data_raises_friendly_error(self):
+        from symbulate.plot import make_boxplot, get_next_color
+
+        ax = plt.gca()
+        with self.assertRaises(ValueError) as cm:
+            make_boxplot(np.array([np.nan, np.nan]), ax, get_next_color(ax))
+        self.assertIn("no values", str(cm.exception))
+
+    def test_box_returns_wrapper(self):
+        p = self.sims.plot(type="box")
         self.assertIsInstance(p, SymbulatePlot)
 
 
@@ -985,6 +1139,46 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
 
+class TestPlot2DBox(PlotTestCase):
+    """The new type='box' (grouped box plot) for mixed discrete/continuous data."""
+
+    def setUp(self):
+        np.random.seed(42)
+
+    def test_box_discrete_x_continuous_y(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        sims.plot(type="box")
+        ax = plt.gca()
+        self.assertGreater(len(ax.patches), 0)
+        self.assertEqual(ax.get_title(), "Box Plot")
+
+    def test_box_continuous_x_discrete_y(self):
+        X, Y = RV(Normal(0, 1) * Binomial(5, 0.4))
+        sims = (X & Y).sim(500)
+        sims.plot(type="box")
+        self.assertGreater(len(plt.gca().patches), 0)
+
+    def test_boxplot_alias_behaves_like_box(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        (X & Y).sim(500).plot(type="boxplot")
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Box Plot")
+        self.assertGreater(len(ax.patches), 0)
+
+    def test_box_two_discrete_raises_friendly_error(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="box")
+        self.assertIn("tile", str(cm.exception))
+
+    def test_box_two_continuous_raises_friendly_error(self):
+        X, Y = RV(Normal(0, 1) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="box")
+        self.assertIn("scatter", str(cm.exception))
+
+
 # ===========================================================================
 # Default plot lookup wired into RVResults.plot() + suggestion note
 # ===========================================================================
@@ -1039,6 +1233,13 @@ class TestDefaultLookupDispatch(PlotTestCase):
         Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
         (Xm & Ym).sim(200).plot(type="segmented_rug")
         self.assertEqual(plt.gca().get_title(), "Segmented Rug Plot")
+
+    def test_2d_mixed_explicit_box_type_works(self):
+        """'box' is a listed alternative for 2D_mixed data and dispatches
+        to make_grouped_boxplot when explicitly requested."""
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        (X & Y).sim(200).plot(type="box")
+        self.assertEqual(plt.gca().get_title(), "Box Plot")
 
 
 class TestSuggestionNote(PlotTestCase):
