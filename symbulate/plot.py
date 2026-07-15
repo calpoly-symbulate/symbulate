@@ -137,10 +137,23 @@ ECDF_LEGEND_LOC = "upper left"
 # heights are directly comparable across levels. The KDE range reuses
 # the density plot's quantile constants (DENSITY_QUANTILE_LOW / HIGH /
 # PADDING_FRAC) via _density_xrange, so outliers can't stretch the
-# value axis.
-SEGMENTED_DENSITY_FILL_ALPHA = 0.4  # translucent fill; the outline stays opaque
+# value axis. By default each level is an unfilled curve, like the 1D
+# density plot; ridge=True fills under each curve for the classic
+# ridgeline look.
+SEGMENTED_DENSITY_LINE_ALPHA = 1.0  # matches DENSITY_ALPHA -- the curves
+# are ordinary density curves, just small
+SEGMENTED_DENSITY_FILL_ALPHA = 0.4  # translucent ridge=True fill; the
+# curve on top stays opaque
 SEGMENTED_DENSITY_LINEWIDTH = 1.8  # ridge outlines are density curves, so this
 # matches DENSITY_LINEWIDTH
+# Each level's baseline is drawn as a shelf styled exactly like a
+# reference gridline -- color, width, and alpha are read from the
+# grid.* rcParams (symbulate.mplstyle, the single source of truth) at
+# draw time, so it can never drift out of sync with the grid. The only
+# difference from a real gridline is zorder: the shelf sits on top of
+# the ridges so a ridge=True fill can't wash it out. The segmented
+# histogram draws the same shelf, so the two segmented plots of one
+# dataset read identically.
 SEGMENTED_DENSITY_PEAK_SCALE = 1.6  # tallest peak's height, in units of the
 # spacing between neighboring baselines; > 1 gives the gentle overlap
 # that makes the stacked ridges read as one connected picture
@@ -165,13 +178,12 @@ SEGMENTED_HIST_ALPHA = 0.65  # matches HIST_ALPHA -- the bars are
 SEGMENTED_HIST_EDGECOLOR = "white"  # matches HIST_EDGECOLOR
 SEGMENTED_HIST_EDGEWIDTH = 0.8  # matches HIST_EDGEWIDTH
 SEGMENTED_HIST_PEAK_SCALE = 1.6  # matches SEGMENTED_DENSITY_PEAK_SCALE
-# Each level's baseline is drawn as a neutral grey shelf (matching the
-# reference grid color, not the series color) spanning that level's bin
-# range, on top of the bars so it stays visible -- a reference gridline
-# would be hidden where the bars sit on it.
-SEGMENTED_HIST_BASELINE_COLOR = "#b0b0b0"  # matches the mplstyle grid color
-SEGMENTED_HIST_BASELINE_LINEWIDTH = 1.0
-SEGMENTED_HIST_BASELINE_ALPHA = 0.8
+# Each level's baseline is drawn as a shelf styled exactly like a
+# reference gridline -- color, width, and alpha are read from the
+# grid.* rcParams (symbulate.mplstyle, the single source of truth) at
+# draw time, so it can never drift out of sync with the grid. The only
+# difference from a real gridline is zorder: the shelf sits on top of
+# the bars, where a real gridline would be hidden under them.
 SEGMENTED_HIST_LEGEND_LOC = "upper right"
 SEGMENTED_HIST_TICK_FRAC = 0.2  # matches SEGMENTED_DENSITY_TICK_FRAC
 SEGMENTED_HIST_TICK_LINEWIDTH = 1.0  # matches RUG_LINEWIDTH
@@ -3006,6 +3018,7 @@ def make_segmented_density(
     ax,
     color,
     bandwidth=None,
+    ridge=False,
     alpha=None,
     label=None,
     discrete_x=None,
@@ -3041,16 +3054,22 @@ def make_segmented_density(
       per x-level, stacked horizontally, each extending to the right of
       its baseline.
 
+    By default each level is an unfilled curve, like the 1D density
+    plot. ``ridge=True`` fills the area under every curve with a
+    translucent wash of the same color -- the classic ridgeline look.
+
     Levels with fewer than two distinct values cannot support a density
     estimate; their observations are drawn as short tick marks on that
     level's baseline instead (a tiny rug), and a note explains which
     levels fell back and why.
 
-    A light reference grid sits behind the ridges on both axes: lines
-    along the continuous axis for reading values off the density curves
-    (as the 1D density plot draws), and one line per level along the
-    discrete axis, extending every baseline across the full plot (as
-    the segmented rug draws).
+    Each level's curve sits on its own baseline styled exactly like a
+    reference gridline (a shelf spanning the shared KDE range, drawn on
+    top so it stays visible through a ``ridge=True`` fill) -- the same
+    shelf the segmented histogram draws. A light reference grid sits
+    behind the ridges along the continuous axis only, for reading
+    values off the curves; the discrete axis needs no gridlines because
+    the shelves already mark every level.
 
     Segmented density plots overlay naturally: a second call on the same
     axes
@@ -3083,19 +3102,23 @@ def make_segmented_density(
     ax : matplotlib.axes.Axes
         The axes to draw on.
     color : color
-        Color for the ridges, from ``get_next_color(ax)``. The outline
-        is drawn fully opaque and the fill translucent
-        (``SEGMENTED_DENSITY_FILL_ALPHA``).
+        Color for the ridges, from ``get_next_color(ax)``.
     bandwidth : float or str, optional
         Passed through to ``scipy.stats.gaussian_kde`` as ``bw_method``
         for every ridge. Defaults to scipy's own default (Scott's
         rule).
+    ridge : bool, optional
+        If False (default), each level is an unfilled density curve,
+        like the 1D density plot. If True, the area under every curve
+        is filled with a translucent wash of the same color (the
+        classic ridgeline look); the curve on top stays opaque.
     alpha : float, optional
-        Fill transparency between 0 and 1. Defaults to the package
-        standard for segmented density fills
-        (``SEGMENTED_DENSITY_FILL_ALPHA``, 0.4).
-        The outline always stays opaque so the density shape reads
-        clearly even where ridges overlap.
+        Transparency between 0 and 1. With ``ridge=False`` it applies
+        to the curves and defaults to fully opaque
+        (``SEGMENTED_DENSITY_LINE_ALPHA``, 1.0, like the 1D density
+        plot); with ``ridge=True`` it applies to the fills and defaults
+        to ``SEGMENTED_DENSITY_FILL_ALPHA`` (0.4), while the curves
+        stay opaque so the shapes read clearly where ridges overlap.
     label : str, optional
         Name for this batch of ridges in the legend. Defaults to
         "Variable k", where k counts the segmented density batches drawn on
@@ -3107,16 +3130,18 @@ def make_segmented_density(
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
     **kwargs
-        Additional keyword arguments passed to ``fill_between`` /
-        ``fill_betweenx`` for the ridges. The ridge styling
-        (``facecolor``, ``edgecolor``, ``linewidth``) is applied with
-        ``setdefault``, so explicit keyword arguments win.
+        Additional keyword arguments passed to ``ax.plot`` for the
+        density curves. ``linewidth`` is applied with ``setdefault``
+        (``SEGMENTED_DENSITY_LINEWIDTH``), so an explicit keyword
+        argument wins; the ``ridge=True`` fill styling comes from the
+        module constants.
 
     Returns
     -------
     list
         The drawn artists, one per level in baseline order -- a
-        ``PolyCollection`` for each ridge, or a ``LineCollection`` for
+        ``Line2D`` for each density curve (or a ``PolyCollection`` for
+        each fill when ``ridge=True``), or a ``LineCollection`` for
         each sparse level's fallback ticks -- so the caller can inspect
         or further style them.
 
@@ -3134,8 +3159,13 @@ def make_segmented_density(
     >>> ax = plt.gca()
     >>> make_segmented_density(x, y, ax, get_next_color(ax))  # doctest: +SKIP
     """
+    # alpha means different things in the two modes: the fill's
+    # transparency when ridge=True (the curve on top stays opaque), the
+    # curve's own transparency when ridge=False (matching the 1D
+    # density plot's fully-opaque default).
     if alpha is None:
-        alpha = SEGMENTED_DENSITY_FILL_ALPHA
+        alpha = SEGMENTED_DENSITY_FILL_ALPHA if ridge else SEGMENTED_DENSITY_LINE_ALPHA
+    line_alpha = SEGMENTED_DENSITY_LINE_ALPHA if ridge else alpha
     xs, ys = np.asarray(x), np.asarray(y)
     if discrete_x is None:
         discrete_x = not np.issubdtype(xs.dtype, np.floating)
@@ -3206,12 +3236,9 @@ def make_segmented_density(
     if densities:
         scale = SEGMENTED_DENSITY_PEAK_SCALE / max(d.max() for d in densities.values())
 
-    # Fill translucent, outline opaque -- one artist per ridge, so the
-    # shape stays readable where neighboring ridges overlap. These are
-    # defaults, not overrides, so a user's own facecolor= / edgecolor= /
-    # linewidth= keyword still wins (the same pattern make_hist uses).
-    kwargs.setdefault("facecolor", mcolors.to_rgba(color, alpha))
-    kwargs.setdefault("edgecolor", color)
+    # The curve line's width is a default, not an override, so a user's
+    # own linewidth= keyword still wins (the same pattern make_hist
+    # uses).
     kwargs.setdefault("linewidth", SEGMENTED_DENSITY_LINEWIDTH)
 
     # Draw from the highest baseline down so that where ridges overlap,
@@ -3221,27 +3248,53 @@ def make_segmented_density(
     for level in sorted(levels, key=positions.get, reverse=True):
         base = positions[level]
         batch_label = label if not artists else None
+        # Each level gets its own baseline spanning the shared KDE
+        # range -- a shelf the curve sits on, styled exactly like a
+        # reference gridline (same grid.* rcParams from
+        # symbulate.mplstyle). It is drawn on top (zorder=2) so a
+        # ridge=True fill from the row below can't wash it out,
+        # mirroring the segmented histogram's shelf.
+        base_line = ax.hlines if discrete_y else ax.vlines
+        base_line(
+            base,
+            vmin,
+            vmax,
+            color=plt.rcParams["grid.color"],
+            linewidth=plt.rcParams["grid.linewidth"],
+            alpha=plt.rcParams["grid.alpha"],
+            zorder=2,
+        )
         if level in densities:
             heights = densities[level] * scale
-            fill = ax.fill_between if discrete_y else ax.fill_betweenx
-            artists[level] = fill(
-                grid,
-                base,
-                base + heights,
+            if ridge:
+                # The classic ridgeline look: a translucent wash under
+                # the curve. No edge stroke -- the opaque curve drawn
+                # below outlines the top, and the grey shelf is the
+                # base.
+                fill = ax.fill_between if discrete_y else ax.fill_betweenx
+                fill(
+                    grid,
+                    base,
+                    base + heights,
+                    facecolor=mcolors.to_rgba(color, alpha),
+                    edgecolor="none",
+                )
+            curve_xy = (grid, base + heights)
+            if not discrete_y:
+                curve_xy = curve_xy[::-1]
+            (artists[level],) = ax.plot(
+                *curve_xy,
+                color=color,
+                alpha=line_alpha,
                 label=batch_label,
                 **kwargs,
             )
         else:
             # Too sparse for a density estimate: a tiny rug on the
-            # baseline keeps the level (and its data) visible. Dense
-            # ridges get their baseline stroke from the fill outline,
-            # so draw one explicitly here to keep the rows uniform.
+            # baseline (the grey shelf drawn above) keeps the level
+            # (and its data) visible.
             values = continuous[groups == level]
             lines = ax.vlines if discrete_y else ax.hlines
-            baseline_xy = ([vmin, vmax], [base, base])
-            if not discrete_y:
-                baseline_xy = baseline_xy[::-1]
-            ax.plot(*baseline_xy, color=color, linewidth=SEGMENTED_DENSITY_LINEWIDTH)
             artists[level] = lines(
                 values,
                 base,
@@ -3279,16 +3332,19 @@ def make_segmented_density(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Segmented Density Plot")
-    # Reference gridlines on both axes: the ridges are density curves,
-    # which show both horizontal and vertical reference lines (the same
-    # per-type override make_density uses -- symbulate.mplstyle's
-    # global grid is horizontal-only), and the lines along the discrete
-    # axis give one line per level, matching the segmented rug's
-    # convention (they extend the baselines across the full axes
-    # width). axisbelow keeps them behind the ridges; the grid's color
-    # and width come from symbulate.mplstyle.
+    # Reference gridlines only along the continuous axis, for reading
+    # values off the curves. The discrete axis gets no gridlines: each
+    # level's baseline is the explicit grey shelf drawn above (a
+    # discrete-axis gridline would sit behind a ridge=True fill and
+    # appear to wash out under it). axisbelow keeps the value grid
+    # behind the ridges; its color and width come from
+    # symbulate.mplstyle. Mirrors the segmented histogram exactly.
     ax.set_axisbelow(True)
-    ax.grid(True, axis="both")
+    # Clear the style sheet's default y-grid first, then enable the
+    # grid on the continuous axis only (the discrete axis uses the grey
+    # baselines).
+    ax.grid(False)
+    ax.grid(True, axis="x" if discrete_y else "y")
     # A legend only helps once there is more than one batch to tell
     # apart; a lone batch stays legend-free.
     if ax._segmented_density_count > 1:
@@ -3344,9 +3400,10 @@ def make_segmented_hist(
     bar would dwarf every real histogram under the shared density
     scale), and a note explains which levels fell back and why.
 
-    Each level's histogram sits on its own neutral grey baseline (a shelf
-    spanning that level's bin range), and a light reference grid runs
-    along the continuous axis for reading values off the bars.
+    Each level's histogram sits on its own baseline styled exactly like
+    a reference gridline (a shelf spanning that level's bin range), and
+    a light reference grid runs along the continuous axis for reading
+    values off the bars.
 
     Segmented histograms overlay naturally: a second call on the same
     axes draws a second set of histograms on the same baselines (levels
@@ -3519,20 +3576,22 @@ def make_segmented_hist(
     for level in sorted(levels, key=positions.get, reverse=True):
         base = positions[level]
         batch_label = label if not artists else None
-        # Each level gets its own neutral grey baseline spanning that
-        # level's bin range -- a shelf the small histogram sits on. It is
-        # drawn on top of the bars (zorder=2, above the default-zorder
-        # patches) so it stays continuous under the whole histogram; a
-        # plain reference gridline would be hidden where the bars sit on
-        # it, making the base look like it vanishes in the middle.
+        # Each level gets its own baseline spanning that level's bin
+        # range -- a shelf the small histogram sits on, styled exactly
+        # like a reference gridline (same grid.* rcParams from
+        # symbulate.mplstyle). It is drawn on top of the bars
+        # (zorder=2, above the default-zorder patches) so it stays
+        # continuous under the whole histogram; a plain reference
+        # gridline would be hidden where the bars sit on it, making the
+        # base look like it vanishes in the middle.
         base_line = ax.hlines if discrete_y else ax.vlines
         base_line(
             base,
             edges[0],
             edges[-1],
-            color=SEGMENTED_HIST_BASELINE_COLOR,
-            linewidth=SEGMENTED_HIST_BASELINE_LINEWIDTH,
-            alpha=SEGMENTED_HIST_BASELINE_ALPHA,
+            color=plt.rcParams["grid.color"],
+            linewidth=plt.rcParams["grid.linewidth"],
+            alpha=plt.rcParams["grid.alpha"],
             zorder=2,
         )
         if level in heights:
