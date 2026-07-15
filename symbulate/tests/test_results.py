@@ -3,6 +3,8 @@
 Covers:
 - _is_hashable: hashable vs unhashable objects
 - _is_boolean_vector: all-bool vs mixed vs non-bool
+- _sim_with_progress: draw count/order, no output when fast, throttled
+  redraws (at most ~101 total) when slow, instead of one per iteration
 - Results: init, len, iter, get, apply, __getitem__, filter, _get_counts,
   tabulate, arithmetic ops, comparison ops, logical ops, _statistic_factory
   raises, plot raises, __repr__, _repr_html_
@@ -11,12 +13,21 @@ Covers:
   tabulate
 """
 
+import contextlib
+import io
+import sys
 import unittest
 
 import numpy as np
 
 from symbulate.result import Scalar, Vector
-from symbulate.results import Results, RVResults, _is_boolean_vector, _is_hashable
+from symbulate.results import (
+    Results,
+    RVResults,
+    _is_boolean_vector,
+    _is_hashable,
+    _sim_with_progress,
+)
 
 SIM_ID = 42.0
 
@@ -69,6 +80,62 @@ class TestIsBooleanVector(unittest.TestCase):
 
     def test_empty(self):
         self.assertTrue(_is_boolean_vector([]))
+
+
+# ---------------------------------------------------------------------------
+# _sim_with_progress
+# ---------------------------------------------------------------------------
+
+
+class TestSimWithProgress(unittest.TestCase):
+    """draw_func is called n times regardless of whether the bar shows, and
+    the bar (once showing) redraws only when the displayed percentage
+    changes -- not on every draw, which was measured to add up to ~40x
+    overhead on cheap draws from the write+flush call alone."""
+
+    def _run_capturing_stderr(self, n, progress_delay):
+        buf = io.StringIO()
+        real_stderr = sys.stderr
+        sys.stderr = buf
+        try:
+            draws = _sim_with_progress(lambda: 1, n, progress_delay=progress_delay)
+        finally:
+            sys.stderr = real_stderr
+        return draws, buf.getvalue()
+
+    def test_returns_all_draws_in_order(self):
+        counter = iter(range(100))
+        draws = _sim_with_progress(lambda: next(counter), 100, progress_delay=999)
+        self.assertEqual(draws, list(range(100)))
+
+    def test_no_output_when_faster_than_progress_delay(self):
+        draws, output = self._run_capturing_stderr(50, progress_delay=999)
+        self.assertEqual(len(draws), 50)
+        self.assertEqual(output, "")
+
+    def test_shows_bar_reaching_100_percent_when_slower_than_delay(self):
+        draws, output = self._run_capturing_stderr(50, progress_delay=0)
+        self.assertEqual(len(draws), 50)
+        self.assertIn("100%", output)
+        self.assertTrue(output.endswith("\n"))
+
+    def test_redraws_are_throttled_not_once_per_iteration(self):
+        """Regression test: redraw count must stay near the number of
+        distinct percentage points (~101), not scale with n."""
+        n = 10_000
+        _, output = self._run_capturing_stderr(n, progress_delay=0)
+        n_redraws = output.count("\r")
+        self.assertLess(
+            n_redraws, 110, f"{n_redraws} redraws for n={n} -- throttling isn't working"
+        )
+        self.assertGreater(n_redraws, 90)
+
+    def test_redraw_count_scales_with_percent_points_not_n(self):
+        """A 10x larger n should not produce meaningfully more redraws,
+        since both are throttled to ~one redraw per percentage point."""
+        _, output_small = self._run_capturing_stderr(1_000, progress_delay=0)
+        _, output_large = self._run_capturing_stderr(10_000, progress_delay=0)
+        self.assertLess(output_large.count("\r") - output_small.count("\r"), 10)
 
 
 # ---------------------------------------------------------------------------
