@@ -165,9 +165,13 @@ SEGMENTED_HIST_ALPHA = 0.65  # matches HIST_ALPHA -- the bars are
 SEGMENTED_HIST_EDGECOLOR = "white"  # matches HIST_EDGECOLOR
 SEGMENTED_HIST_EDGEWIDTH = 0.8  # matches HIST_EDGEWIDTH
 SEGMENTED_HIST_PEAK_SCALE = 1.6  # matches SEGMENTED_DENSITY_PEAK_SCALE
-SEGMENTED_HIST_BASELINE_LINEWIDTH = 1.8  # matches
-# SEGMENTED_DENSITY_LINEWIDTH; the density plot's baseline comes from
-# its fill outline, so this keeps the two plots' baselines identical
+# Each level's baseline is drawn as a neutral grey shelf (matching the
+# reference grid color, not the series color) spanning that level's bin
+# range, on top of the bars so it stays visible -- a reference gridline
+# would be hidden where the bars sit on it.
+SEGMENTED_HIST_BASELINE_COLOR = "#b0b0b0"  # matches the mplstyle grid color
+SEGMENTED_HIST_BASELINE_LINEWIDTH = 1.0
+SEGMENTED_HIST_BASELINE_ALPHA = 0.8
 SEGMENTED_HIST_LEGEND_LOC = "upper right"
 SEGMENTED_HIST_TICK_FRAC = 0.2  # matches SEGMENTED_DENSITY_TICK_FRAC
 SEGMENTED_HIST_TICK_LINEWIDTH = 1.0  # matches RUG_LINEWIDTH
@@ -3340,9 +3344,9 @@ def make_segmented_hist(
     bar would dwarf every real histogram under the shared density
     scale), and a note explains which levels fell back and why.
 
-    A light reference grid sits behind the bars on both axes, and every
-    level draws a baseline across the full shared bin range, matching
-    the segmented density plot.
+    Each level's histogram sits on its own neutral grey baseline (a shelf
+    spanning that level's bin range), and a light reference grid runs
+    along the continuous axis for reading values off the bars.
 
     Segmented histograms overlay naturally: a second call on the same
     axes draws a second set of histograms on the same baselines (levels
@@ -3515,16 +3519,21 @@ def make_segmented_hist(
     for level in sorted(levels, key=positions.get, reverse=True):
         base = positions[level]
         batch_label = label if not artists else None
-        # Unlike the density ridge, whose fill outline strokes its own
-        # baseline, bars only cover occupied bins -- so every level
-        # draws an explicit baseline across the full shared bin range.
-        baseline_xy = ([edges[0], edges[-1]], [base, base])
-        if not discrete_y:
-            baseline_xy = baseline_xy[::-1]
-        ax.plot(
-            *baseline_xy,
-            color=color,
+        # Each level gets its own neutral grey baseline spanning that
+        # level's bin range -- a shelf the small histogram sits on. It is
+        # drawn on top of the bars (zorder=2, above the default-zorder
+        # patches) so it stays continuous under the whole histogram; a
+        # plain reference gridline would be hidden where the bars sit on
+        # it, making the base look like it vanishes in the middle.
+        base_line = ax.hlines if discrete_y else ax.vlines
+        base_line(
+            base,
+            edges[0],
+            edges[-1],
+            color=SEGMENTED_HIST_BASELINE_COLOR,
             linewidth=SEGMENTED_HIST_BASELINE_LINEWIDTH,
+            alpha=SEGMENTED_HIST_BASELINE_ALPHA,
+            zorder=2,
         )
         if level in heights:
             bar_sizes = heights[level] * scale
@@ -3591,13 +3600,17 @@ def make_segmented_hist(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Segmented Histogram")
-    # Reference gridlines on both axes, matching the segmented density
-    # plot: lines along the continuous axis for reading values, one
-    # line per level along the discrete axis extending the baselines.
-    # axisbelow keeps them behind the bars; the grid's color and width
-    # come from symbulate.mplstyle.
+    # Reference gridlines only along the continuous axis, for reading
+    # values off the bars. The discrete axis gets no gridlines: each
+    # level's baseline is the explicit grey shelf drawn above (a discrete-
+    # axis gridline would sit behind the bars and appear to vanish under
+    # them). axisbelow keeps the value grid behind the bars; its color and
+    # width come from symbulate.mplstyle.
     ax.set_axisbelow(True)
-    ax.grid(True, axis="both")
+    # Clear the style sheet's default y-grid first, then enable the grid on
+    # the continuous axis only (the discrete axis uses the grey baselines).
+    ax.grid(False)
+    ax.grid(True, axis="x" if discrete_y else "y")
     # A legend only helps once there is more than one batch to tell
     # apart; a lone batch stays legend-free.
     if ax._segmented_hist_count > 1:

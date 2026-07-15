@@ -1692,6 +1692,30 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
         self.assertEqual(legend_texts, ["Variable 1", "Variable 2"])
 
+    def test_segmented_hist_grey_baseline_shelves_and_value_grid(self):
+        """Each level sits on its own neutral grey baseline shelf (not the
+        series color), and the reference grid runs only along the continuous
+        axis -- not the discrete one, where it would vanish under the bars."""
+        import matplotlib.colors as mcolors
+        from symbulate.plot import SEGMENTED_HIST_BASELINE_COLOR
+
+        values = np.random.normal(0, 1, 300)  # continuous x
+        groups = np.repeat([0, 1, 2], 100)  # discrete y (levels)
+        ax = plt.gca()
+        make_segmented_hist(values, groups, ax, "#56B4E9")
+        # One grey baseline (a LineCollection) per level, not the blue series
+        # color -- so the old colored underline is gone.
+        grey = mcolors.to_rgba(SEGMENTED_HIST_BASELINE_COLOR)
+        baselines = [
+            c
+            for c in ax.collections
+            if len(c.get_color()) and np.allclose(c.get_color()[0][:3], grey[:3])
+        ]
+        self.assertEqual(len(baselines), 3)
+        # Value grid along the continuous axis (x); none on the discrete (y).
+        self.assertTrue(any(gl.get_visible() for gl in ax.xaxis.get_gridlines()))
+        self.assertFalse(any(gl.get_visible() for gl in ax.yaxis.get_gridlines()))
+
     def test_segmented_hist_is_a_mixed_data_alternative(self):
         self.assertIn(
             "segmented_hist", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"]
