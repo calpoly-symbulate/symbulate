@@ -1765,6 +1765,20 @@ class RVResults(Results):
                 elif not discrete_x and discrete_y:
                     positions = sorted(list(y_count.keys()))
                     make_violin(self.array, positions, ax, color, "y", legacy_alpha)
+                elif discrete_x:
+                    raise ValueError(
+                        "A violin plot needs one discrete variable and one "
+                        "continuous variable, but both of yours look "
+                        "discrete. Try a tile plot for two discrete "
+                        "variables."
+                    )
+                else:
+                    raise ValueError(
+                        "A violin plot needs one discrete variable and one "
+                        "continuous variable, but both of yours look "
+                        "continuous. Try a scatter plot for two continuous "
+                        "variables."
+                    )
             elif "box" in type or "boxplot" in type:
                 make_grouped_boxplot(
                     x,
@@ -1813,6 +1827,11 @@ class RVResults(Results):
                 alpha = np.log(2) / np.log(len(self) + 1)
             ax = plt.gca()
             color = get_next_color(ax)
+            # All realizations share one color and read as an ensemble,
+            # so make_sample_path's per-path "Path k" legend entries
+            # would be meaningless here -- suppress them (matplotlib
+            # skips labels that start with an underscore).
+            kwargs.setdefault("label", "_nolegend_")
             for result in self.results:
                 result.plot(alpha=alpha, color=color, **kwargs)
             plt.xlabel("Index")

@@ -172,6 +172,17 @@ SEGMENTED_HIST_LEGEND_LOC = "upper right"
 SEGMENTED_HIST_TICK_FRAC = 0.2  # matches SEGMENTED_DENSITY_TICK_FRAC
 SEGMENTED_HIST_TICK_LINEWIDTH = 1.0  # matches RUG_LINEWIDTH
 
+# Sample path: one simulated realization of a stochastic process,
+# drawn as a plain solid connected line (no per-point markers -- the
+# old ".--" dot-dash format turned into a cluttered mess of dots once
+# a path ran out to 100+ points). Line width is unchanged from the
+# shared rcParams fallback (DECISIONS.md, Visual Style Guide: "sample
+# paths stay at 1.5"); a single path has no overplotting to soften, so
+# it stays fully opaque.
+SAMPLE_PATH_LINEWIDTH = 1.5
+SAMPLE_PATH_ALPHA = 1.0
+SAMPLE_PATH_LEGEND_LOC = "upper right"
+
 # Dot plot: every observation is one dot at its exact value; identical
 # values stack, touching, with the bottom dot on the number line.
 DOTPLOT_ALPHA = 1.0
@@ -1424,8 +1435,18 @@ def make_violin(data, positions, ax, color, axis, alpha):
         showextrema=False,
         orientation=orientation,
     )
+    # violinplot (no positions= given above) places bodies at matplotlib's
+    # own default 1, 2, ..., len(values) -- sequential slots, independent
+    # of what the group values themselves are. The ticks must mark those
+    # same sequential slots (not positions + 1, which only coincides with
+    # them when the discrete values happen to be 0..n-1, e.g. Binomial's
+    # support -- and crashes outright for non-numeric group labels like
+    # "H"/"T"). Labeling each slot with its real value is exactly what the
+    # inner boxplot below already does via its own explicit positions=.
     setup_ticks(
-        np.array(positions) + 1, positions, ax.xaxis if axis == "x" else ax.yaxis
+        list(range(1, len(positions) + 1)),
+        positions,
+        ax.xaxis if axis == "x" else ax.yaxis,
     )
     for body in violins["bodies"]:
         body.set_facecolor(color)
@@ -2674,6 +2695,118 @@ def make_ecdf(values, ax, color, normalize=True, alpha=None, label=None, **kwarg
     # apart; a lone curve stays legend-free.
     if ax._ecdf_count > 1:
         ax.legend(loc=ECDF_LEGEND_LOC)
+    return line
+
+
+def make_sample_path(
+    times,
+    values,
+    ax,
+    color,
+    linewidth=None,
+    alpha=None,
+    label=None,
+    xlabel=None,
+    ylabel=None,
+    **kwargs,
+):
+    """Draw one simulated sample path as a plain connected line.
+
+    This replaces the ``plt.plot(ts, ys, ".--", **kwargs)`` calls
+    previously duplicated across ``Tuple.plot()``,
+    ``InfiniteVector.plot()``, ``DiscreteTimeFunction.plot()``, and
+    ``ContinuousTimeFunction.plot()`` in ``result.py``: the dot-dash
+    marker is dropped in favor of a plain solid line (readable whether
+    the path has 10 points or 1000), and the package's color cycle,
+    axis labels, and title are added.
+
+    Sample paths overlay naturally: a second call on the same axes
+    draws on top of the first, and a legend appears automatically in
+    the top right once two or more paths share the axes -- the common
+    case of comparing several realizations of the same process. Each
+    path is named by ``label``, or "Path 1", "Path 2", ... in call
+    order when no label is given.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``.
+
+    Parameters
+    ----------
+    times : array-like
+        The time or index value of each point along the path, e.g.
+        ``range(len(self))`` for a ``Tuple`` or ``np.linspace(tmin,
+        tmax, 200)`` for a ``ContinuousTimeFunction``.
+    values : array-like
+        The simulated value at each entry of ``times``, same length as
+        ``times``.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Line color, from ``get_next_color(ax)``.
+    linewidth : float, optional
+        Line width. Defaults to the package standard for sample paths
+        (``SAMPLE_PATH_LINEWIDTH``, 1.5 -- unchanged from matplotlib's
+        own default).
+    alpha : float, optional
+        Line transparency between 0 and 1. Defaults to the package
+        standard for sample paths (``SAMPLE_PATH_ALPHA``, fully
+        opaque).
+    label : str, optional
+        Name for this path in the legend. Defaults to "Path k", where
+        k counts the sample paths drawn on these axes so far.
+    xlabel : str, optional
+        Label for the x-axis. Defaults to "Time".
+    ylabel : str, optional
+        Label for the y-axis. Defaults to "Value".
+    **kwargs
+        Additional keyword arguments passed to ``matplotlib.axes.Axes.plot``.
+
+    Returns
+    -------
+    matplotlib.lines.Line2D
+        The line drawn by ``ax.plot``, so the caller can inspect or
+        further style it.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> times = np.arange(101)
+    >>> values = np.concatenate([[0], np.cumsum(rng.choice([-1, 1], size=100))])
+    >>> ax = plt.gca()
+    >>> make_sample_path(times, values, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if linewidth is None:
+        linewidth = SAMPLE_PATH_LINEWIDTH
+    if alpha is None:
+        alpha = SAMPLE_PATH_ALPHA
+
+    # Count the sample paths drawn on these axes, stored on the axes
+    # object itself (the same pattern get_next_color uses for the
+    # color cycle) so overlays from separate .plot() calls see it.
+    n_prior_paths = getattr(ax, "_sample_path_count", 0)
+    if label is None:
+        label = f"Path {n_prior_paths + 1}"
+    ax._sample_path_count = n_prior_paths + 1
+
+    (line,) = ax.plot(
+        times,
+        values,
+        color=color,
+        linewidth=linewidth,
+        alpha=alpha,
+        label=label,
+        **kwargs,
+    )
+
+    ax.set_xlabel("Time" if xlabel is None else xlabel)
+    ax.set_ylabel("Value" if ylabel is None else ylabel)
+    ax.set_title("Sample Path")
+    _refresh_legend(ax, loc=SAMPLE_PATH_LEGEND_LOC)
+
     return line
 
 

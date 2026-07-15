@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import symbulate
 from .base import Arithmetic, Transformable, Statistical, Filterable, _build_mv_filter
 from .index_sets import DiscreteTimeSequence, Reals, Naturals
-from .plot import SymbulatePlot
+from .plot import SymbulatePlot, get_next_color, make_sample_path
 
 
 class Scalar(numbers.Number):
@@ -463,12 +463,20 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
 
     def plot(self, **kwargs):
         """
-        Plot the values of the tuple as a dot-dash line.
+        Plot the values of the tuple as a sample path.
+
+        The values are drawn over their index as a plain solid
+        connected line (``make_sample_path``), colored by the package
+        color cycle. Overlaid paths -- a second ``.plot()`` call on the
+        same axes -- get distinct colors and an automatic "Path 1",
+        "Path 2", ... legend.
 
         Parameters
         ----------
         **kwargs
-            Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+            Additional keyword arguments passed to
+            ``make_sample_path`` (e.g. ``label``, ``alpha``), and from
+            there to ``matplotlib.axes.Axes.plot``.
 
         Returns
         -------
@@ -490,8 +498,13 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         >>> t.plot()  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
         """
-        plt.plot(range(len(self)), self.values, ".--", **kwargs)
-        return SymbulatePlot(plt.gca())
+        ax = plt.gca()
+        color = kwargs.pop("color", None)
+        if color is None:
+            color = get_next_color(ax)
+        kwargs.setdefault("xlabel", "Index")
+        make_sample_path(range(len(self)), self.values, ax, color, **kwargs)
+        return SymbulatePlot(ax)
 
     def __str__(self):
         """
@@ -887,6 +900,12 @@ class InfiniteVector(InfiniteTuple):
         """
         Plot values from the vector over a specified index range.
 
+        The values are drawn over their index as a plain solid
+        connected line (``make_sample_path``), colored by the package
+        color cycle. Overlaid paths -- a second ``.plot()`` call on the
+        same axes -- get distinct colors and an automatic "Path 1",
+        "Path 2", ... legend.
+
         Parameters
         ----------
         tmin : int, optional
@@ -894,7 +913,9 @@ class InfiniteVector(InfiniteTuple):
         tmax : int, optional
             Ending index (exclusive), by default 10.
         **kwargs
-            Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+            Additional keyword arguments passed to
+            ``make_sample_path`` (e.g. ``label``, ``alpha``), and from
+            there to ``matplotlib.axes.Axes.plot``.
 
         Returns
         -------
@@ -918,8 +939,13 @@ class InfiniteVector(InfiniteTuple):
         """
         xs = range(tmin, tmax)
         ys = [self[t] for t in range(tmin, tmax)]
-        plt.plot(xs, ys, ".--", **kwargs)
-        return SymbulatePlot(plt.gca())
+        ax = plt.gca()
+        color = kwargs.pop("color", None)
+        if color is None:
+            color = get_next_color(ax)
+        kwargs.setdefault("xlabel", "Index")
+        make_sample_path(xs, ys, ax, color, **kwargs)
+        return SymbulatePlot(ax)
 
 
 class DiscreteTimeFunction(TimeFunction):
@@ -1256,6 +1282,12 @@ class DiscreteTimeFunction(TimeFunction):
         """
         Plot values over a specified time range.
 
+        The values are drawn over their times as a plain solid
+        connected line (``make_sample_path``), colored by the package
+        color cycle. Overlaid paths -- a second ``.plot()`` call on the
+        same axes -- get distinct colors and an automatic "Path 1",
+        "Path 2", ... legend.
+
         Parameters
         ----------
         tmin : int or float, optional
@@ -1263,7 +1295,9 @@ class DiscreteTimeFunction(TimeFunction):
         tmax : int or float, optional
             Ending time, by default 10.
         **kwargs
-            Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+            Additional keyword arguments passed to
+            ``make_sample_path`` (e.g. ``label``, ``alpha``), and from
+            there to ``matplotlib.axes.Axes.plot``.
 
         Returns
         -------
@@ -1289,8 +1323,12 @@ class DiscreteTimeFunction(TimeFunction):
         nmax = int(np.ceil(tmax * self.index_set.fs))
         ts = [self.index_set[n] for n in range(nmin, nmax)]
         ys = [self[n] for n in range(nmin, nmax)]
-        plt.plot(ts, ys, ".--", **kwargs)
-        return SymbulatePlot(plt.gca())
+        ax = plt.gca()
+        color = kwargs.pop("color", None)
+        if color is None:
+            color = get_next_color(ax)
+        make_sample_path(ts, ys, ax, color, **kwargs)
+        return SymbulatePlot(ax)
 
 
 class ContinuousTimeFunction(TimeFunction):
@@ -1501,6 +1539,12 @@ class ContinuousTimeFunction(TimeFunction):
         """
         Plot values over a specified time range.
 
+        The values are drawn over their times as a plain solid
+        connected line (``make_sample_path``), colored by the package
+        color cycle. Overlaid paths -- a second ``.plot()`` call on the
+        same axes -- get distinct colors and an automatic "Path 1",
+        "Path 2", ... legend.
+
         Parameters
         ----------
         tmin : float, optional
@@ -1508,7 +1552,9 @@ class ContinuousTimeFunction(TimeFunction):
         tmax : float, optional
             Ending time, by default 10.
         **kwargs
-            Additional keyword arguments passed to ``matplotlib.pyplot.plot``.
+            Additional keyword arguments passed to
+            ``make_sample_path`` (e.g. ``label``, ``alpha``), and from
+            there to ``matplotlib.axes.Axes.plot``.
 
         Returns
         -------
@@ -1533,8 +1579,12 @@ class ContinuousTimeFunction(TimeFunction):
         """
         ts = np.linspace(tmin, tmax, 200)
         ys = [self(t) for t in ts]
-        plt.plot(ts, ys, "-", **kwargs)
-        return SymbulatePlot(plt.gca())
+        ax = plt.gca()
+        color = kwargs.pop("color", None)
+        if color is None:
+            color = get_next_color(ax)
+        make_sample_path(ts, ys, ax, color, **kwargs)
+        return SymbulatePlot(ax)
 
 
 class DiscreteValued:
