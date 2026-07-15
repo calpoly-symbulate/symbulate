@@ -38,6 +38,7 @@ from .plot import (
     count_var,
     compute_density,
     add_colorbar,
+    make_bar,
     make_dotplot,
     make_density,
     make_density2D,
@@ -1473,12 +1474,21 @@ class RVResults(Results):
                         bandwidth=kwargs.pop("bandwidth", None),
                         alpha=alpha,
                     )
-            if "hist" in type or "bar" in type:
+            if "hist" in type:
                 make_hist(
                     _plot_array,
                     ax,
                     color,
                     bins=bins,
+                    normalize=normalize,
+                    alpha=alpha,
+                    **kwargs,
+                )
+            elif "bar" in type:
+                make_bar(
+                    _plot_array,
+                    ax,
+                    color,
                     normalize=normalize,
                     alpha=alpha,
                     **kwargs,
