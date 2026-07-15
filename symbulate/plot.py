@@ -1369,8 +1369,18 @@ def make_violin(data, positions, ax, color, axis, alpha):
         showextrema=False,
         orientation=orientation,
     )
+    # violinplot (no positions= given above) places bodies at matplotlib's
+    # own default 1, 2, ..., len(values) -- sequential slots, independent
+    # of what the group values themselves are. The ticks must mark those
+    # same sequential slots (not positions + 1, which only coincides with
+    # them when the discrete values happen to be 0..n-1, e.g. Binomial's
+    # support -- and crashes outright for non-numeric group labels like
+    # "H"/"T"). Labeling each slot with its real value is exactly what the
+    # inner boxplot below already does via its own explicit positions=.
     setup_ticks(
-        np.array(positions) + 1, positions, ax.xaxis if axis == "x" else ax.yaxis
+        list(range(1, len(positions) + 1)),
+        positions,
+        ax.xaxis if axis == "x" else ax.yaxis,
     )
     for body in violins["bodies"]:
         body.set_facecolor(color)

@@ -1702,6 +1702,20 @@ class RVResults(Results):
                 elif not discrete_x and discrete_y:
                     positions = sorted(list(y_count.keys()))
                     make_violin(self.array, positions, ax, color, "y", legacy_alpha)
+                elif discrete_x:
+                    raise ValueError(
+                        "A violin plot needs one discrete variable and one "
+                        "continuous variable, but both of yours look "
+                        "discrete. Try a tile plot for two discrete "
+                        "variables."
+                    )
+                else:
+                    raise ValueError(
+                        "A violin plot needs one discrete variable and one "
+                        "continuous variable, but both of yours look "
+                        "continuous. Try a scatter plot for two continuous "
+                        "variables."
+                    )
             elif "box" in type or "boxplot" in type:
                 make_grouped_boxplot(
                     x,
