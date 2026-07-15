@@ -1601,16 +1601,26 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
         self.assertEqual(legend_texts, ["Variable 1", "Variable 2"])
 
-    def test_segmented_density_is_a_mixed_data_alternative(self):
-        self.assertIn(
-            "segmented_density", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"]
-        )
-        self.assertIn(
-            "segmented_density", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"]
-        )
+    def test_density_is_a_mixed_data_alternative(self):
+        # The table lists the short name "density"; on mixed data it resolves
+        # to the segmented density (the "segmented_density" alias also works).
+        self.assertIn("density", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"])
+        self.assertIn("density", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"])
         self.assertEqual(
             PLOT_DISPLAY_NAME["segmented_density"], "Segmented Density Plot"
         )
+
+    def test_density_short_name_is_segmented_on_mixed(self):
+        """On mixed data, type='density' produces the segmented density."""
+        RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="density", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Segmented Density Plot")
+
+    def test_density2d_still_forces_surface_on_mixed(self):
+        """type='density2d' forces the 2D surface even on mixed data."""
+        RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(
+            type="density2d", suggest=False
+        )
+        self.assertEqual(plt.gca().get_title(), "2D Density Plot")
 
 
 class TestPlot2DSegmentedHist(PlotTestCase):
@@ -1716,14 +1726,27 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         self.assertTrue(any(gl.get_visible() for gl in ax.xaxis.get_gridlines()))
         self.assertFalse(any(gl.get_visible() for gl in ax.yaxis.get_gridlines()))
 
-    def test_segmented_hist_is_a_mixed_data_alternative(self):
-        self.assertIn(
-            "segmented_hist", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"]
-        )
-        self.assertIn(
-            "segmented_hist", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"]
-        )
+    def test_hist_is_a_mixed_data_alternative(self):
+        # The table lists the short name "hist"; on mixed data it resolves to
+        # the segmented histogram (the "segmented_hist" alias also works).
+        self.assertIn("hist", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"])
+        self.assertIn("hist", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"])
         self.assertEqual(PLOT_DISPLAY_NAME["segmented_hist"], "Segmented Histogram")
+
+    def test_hist_short_name_is_segmented_on_mixed(self):
+        """On mixed data, type='hist' produces the segmented histogram."""
+        RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="hist", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Segmented Histogram")
+
+    def test_hist2d_still_forces_mesh_on_mixed(self):
+        """type='hist2d' forces the 2D mesh even on mixed data."""
+        RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="hist2d", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+
+    def test_hist_short_name_stays_2d_on_continuous(self):
+        """On two continuous variables, type='hist' is still the 2D mesh."""
+        RV(Normal(0, 1) * Normal(0, 1)).sim(500).plot(type="hist", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
 
 
 # ===========================================================================
@@ -2423,6 +2446,15 @@ class TestSuggestionMessage(unittest.TestCase):
 
     def test_non_default_alternatives_use_type_syntax(self):
         msg = suggestion_message("impulse", "impulse", ["hist", "density"])
+        self.assertIn('Histogram (type = "hist")', msg)
+        self.assertIn('Density Plot (type = "density")', msg)
+
+    def test_mixed_suggestion_uses_short_type_names(self):
+        """On mixed data the lookup table and suggestion note use the short
+        type names (rug/hist/density), never the segmented_ aliases."""
+        default, alts = default_plot_type("2D_mixed", True)
+        msg = suggestion_message(default, default, alts)
+        self.assertNotIn("segmented_", msg)
         self.assertIn('Histogram (type = "hist")', msg)
         self.assertIn('Density Plot (type = "density")', msg)
 
