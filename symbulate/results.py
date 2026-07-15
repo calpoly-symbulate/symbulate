@@ -38,6 +38,7 @@ from .plot import (
     count_var,
     compute_density,
     add_colorbar,
+    make_bar,
     make_dotplot,
     make_density,
     make_density2D,
@@ -48,6 +49,7 @@ from .plot import (
     make_marginal_impulse,
     make_mosaic,
     make_segmented_density,
+    make_segmented_hist,
     make_rug,
     make_scatter,
     make_segmented_rug,
@@ -1276,13 +1278,14 @@ class RVResults(Results):
             ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
             ``"tile"``, ``"mosaic"``, ``"violin"``, ``"box"`` (alias
             ``"boxplot"``), and ``"marginal"`` (2D data also accepts
-            ``"hist2d"``, ``"density2d"``, ``"segmented_rug"``, and
-            ``"segmented_density"``). ``"mosaic"`` is only meaningful for two
-            discrete-ish variables -- the same configuration
-            ``"tile"`` targets. ``"segmented_density"`` needs one discrete and
-            one continuous variable and draws one small density curve
-            per level of the discrete variable, stacked along the
-            discrete axis.
+            ``"hist2d"``, ``"density2d"``, ``"segmented_rug"``,
+            ``"segmented_density"``, and ``"segmented_hist"``).
+            ``"mosaic"`` is only meaningful for two discrete-ish
+            variables -- the same configuration ``"tile"`` targets.
+            ``"segmented_density"`` and ``"segmented_hist"`` need one
+            discrete and one continuous variable and draw one small
+            density curve (or histogram) per level of the discrete
+            variable, stacked along the discrete axis.
             If None, a default is chosen from the data: whether each
             variable looks discrete (``classify_data``) and whether
             the sample is small select an entry from the
@@ -1294,10 +1297,11 @@ class RVResults(Results):
             continuous variable.
         alpha : float, optional
             Transparency of plotted elements, between 0 and 1. Each
-            plot type has its own default: histograms 0.65, scatter
-            0.25, rug 0.5, box plots 0.75, segmented density fills 0.4,
-            impulse / density curves / dot plots fully opaque, and
-            0.5 for violin and marginal panels.
+            plot type has its own default: histograms (1D, 2D, and
+            segmented) 0.65, scatter 0.25, rug 0.5, box plots 0.75,
+            segmented density fills 0.4, impulse / density curves /
+            dot plots fully opaque, and 0.5 for violin and marginal
+            panels.
         normalize : bool, default True
             If True, plot relative frequencies or densities. If
             False, plot raw counts. Dot plots always show counts.
@@ -1315,9 +1319,9 @@ class RVResults(Results):
             and dot plots -- overlays of those already spread apart
             automatically.
         bins : int, optional
-            Number of bins for histograms, or for a continuous axis
-            of a tile plot. Defaults to 30. Dot plots are never
-            binned.
+            Number of bins for histograms (1D, 2D, and segmented), or
+            for a continuous axis of a tile plot. Defaults to 30. Dot
+            plots are never binned.
         suggest : bool or None, optional
             Whether to print a note under the plot naming the plot
             being shown and the reasonable alternatives for this
@@ -1332,7 +1336,8 @@ class RVResults(Results):
             ``gaussian_kde``), ``contour`` and ``levels`` (2D
             density), ``hex=True`` (hexagonal bins for a 2D
             histogram), and ``label`` (legend name for hist, impulse,
-            dot, scatter, and segmented density plots).
+            dot, scatter, segmented density, and segmented histogram
+            plots).
 
         Returns
         -------
@@ -1382,7 +1387,7 @@ class RVResults(Results):
                     "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'mosaic', "
                     "'violin', 'box' (alias 'boxplot'), 'marginal' (and, "
                     "for 2D data, 'hist2d', 'density2d', 'segmented_rug', "
-                    "'segmented_density')."
+                    "'segmented_density', 'segmented_hist')."
                 )
 
         # Filled in by the dim == 1 and dim == 2 branches with
@@ -1473,12 +1478,21 @@ class RVResults(Results):
                         bandwidth=kwargs.pop("bandwidth", None),
                         alpha=alpha,
                     )
-            if "hist" in type or "bar" in type:
+            if "hist" in type:
                 make_hist(
                     _plot_array,
                     ax,
                     color,
                     bins=bins,
+                    normalize=normalize,
+                    alpha=alpha,
+                    **kwargs,
+                )
+            elif "bar" in type:
+                make_bar(
+                    _plot_array,
+                    ax,
+                    color,
                     normalize=normalize,
                     alpha=alpha,
                     **kwargs,
@@ -1672,6 +1686,19 @@ class RVResults(Results):
                     ax,
                     color,
                     bandwidth=kwargs.pop("bandwidth", None),
+                    alpha=alpha,
+                    discrete_x=discrete_x,
+                    discrete_y=discrete_y,
+                    **kwargs,
+                )
+            elif "segmented_hist" in type:
+                make_segmented_hist(
+                    x,
+                    y,
+                    ax,
+                    color,
+                    bins=bins,
+                    normalize=normalize,
                     alpha=alpha,
                     discrete_x=discrete_x,
                     discrete_y=discrete_y,

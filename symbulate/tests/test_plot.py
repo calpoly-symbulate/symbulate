@@ -54,9 +54,13 @@ from symbulate.plot import (
     default_plot_type,
     suggestion_message,
     should_show_suggestion,
+    get_next_color,
+    make_bar,
+    BAR_ALPHA,
     make_ecdf,
     make_mosaic,
     make_segmented_density,
+    make_segmented_hist,
     make_tile,
     make_segmented_rug,
     DEFAULT_PLOT_TYPE,
@@ -169,9 +173,10 @@ class TestPlot1DContinuous(PlotTestCase):
         self.sims.plot(bins=50)
         self.assertEqual(len(plt.gca().patches), 50)
 
-    def test_bar_type_is_alias_for_hist(self):
-        self.sims.plot(type="bar")
-        self.assertGreater(len(plt.gca().patches), 0)
+    def test_bar_type_produces_bar_chart_not_hist(self):
+        """type='bar' is now a distinct bar chart, no longer a hist alias."""
+        self.sims.plot(type="bar", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Bar Chart")
 
     def test_density_produces_exactly_one_line(self):
         self.sims.plot(type="density")
@@ -697,6 +702,108 @@ class TestPlot1DHistStyling(PlotTestCase):
         RV(Normal(3, 1)).sim(600).plot(label="Second")
         labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
         self.assertIn("Second", labels)
+
+
+class TestPlot1DBar(PlotTestCase):
+    """The integrated make_bar: a no-binning categorical/discrete bar chart."""
+
+    def setUp(self):
+        np.random.seed(42)
+
+    def test_bar_categorical_one_bar_per_value(self):
+        """One bar per distinct category; normalized heights sum to 1."""
+        ax = plt.gca()
+        make_bar(
+            ["red", "green", "blue", "red", "red", "green"], ax, get_next_color(ax)
+        )
+        self.assertEqual(len(ax.patches), 3)
+        self.assertAlmostEqual(sum(p.get_height() for p in ax.patches), 1.0, places=10)
+
+    def test_bar_categories_sorted(self):
+        """Distinct values are placed in sorted (here alphabetical) order."""
+        ax = plt.gca()
+        make_bar(["c", "a", "b", "a"], ax, get_next_color(ax))
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["a", "b", "c"])
+
+    def test_bar_count_mode_integer_heights(self):
+        """normalize=False gives raw integer counts and a Count y-label."""
+        ax = plt.gca()
+        make_bar(["a", "a", "b"], ax, get_next_color(ax), normalize=False)
+        self.assertEqual(ax.get_ylabel(), "Count")
+        self.assertEqual(sorted(p.get_height() for p in ax.patches), [1.0, 2.0])
+
+    def test_bar_xlabel_and_title(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        self.assertEqual(ax.get_xlabel(), "Value")
+        self.assertEqual(ax.get_title(), "Bar Chart")
+
+    def test_bar_default_alpha(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        self.assertAlmostEqual(ax.patches[0].get_alpha(), BAR_ALPHA)
+
+    def test_bar_explicit_alpha_wins(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax), alpha=0.3)
+        self.assertAlmostEqual(ax.patches[0].get_alpha(), 0.3)
+
+    def test_single_bar_has_no_legend(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        self.assertIsNone(ax.get_legend())
+
+    def test_overlaid_bars_get_variable_k_legend(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        make_bar(["a", "c"], ax, get_next_color(ax))
+        legend = ax.get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Variable 2"])
+
+    def test_overlay_shares_union_of_categories(self):
+        """Overlaid series share one sorted axis of every distinct value."""
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        make_bar(["b", "c"], ax, get_next_color(ax))
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["a", "b", "c"])
+
+    def test_overlay_dodges_bars_side_by_side(self):
+        """Within a shared category, the two series' bars sit at different x."""
+        ax = plt.gca()
+        make_bar(["a", "a", "b"], ax, get_next_color(ax))
+        make_bar(["a", "b", "b"], ax, get_next_color(ax))
+        state = ax._bar_state
+        # Category "a" is position 0; each series' bar for it is offset from 0.
+        centers = [
+            s["container"].patches[0].get_x()
+            + s["container"].patches[0].get_width() / 2
+            for s in state["series"]
+        ]
+        self.assertNotAlmostEqual(centers[0], centers[1])
+        # The two bars are dodged by exactly one bar width (no overlap).
+        widths = [s["container"].patches[0].get_width() for s in state["series"]]
+        self.assertAlmostEqual(abs(centers[0] - centers[1]), widths[0])
+
+    def test_overlay_draws_category_boundary_lines(self):
+        """Overlaid bar charts get one separator between each pair of levels."""
+        ax = plt.gca()
+        make_bar(["a", "b", "c"], ax, get_next_color(ax))
+        self.assertEqual(len(ax._bar_state["boundary_lines"]), 0)  # lone chart: none
+        make_bar(["a", "b", "c"], ax, get_next_color(ax))
+        # Three categories -> two interior boundaries, at x = 0.5 and 1.5.
+        xs = sorted(line.get_xdata()[0] for line in ax._bar_state["boundary_lines"])
+        self.assertEqual(xs, [0.5, 1.5])
+
+    def test_bar_numeric_discrete_via_plot_dispatch(self):
+        """type='bar' on a discrete RV routes to make_bar (one bar per face)."""
+        RV(BoxModel([1, 2, 3, 4, 5, 6])).sim(600).plot(type="bar", suggest=False)
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Bar Chart")
+        self.assertEqual(len(ax.patches), 6)
 
 
 class TestPlot1DDensityFeatures(PlotTestCase):
@@ -1408,6 +1515,95 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         self.assertEqual(
             PLOT_DISPLAY_NAME["segmented_density"], "Segmented Density Plot"
         )
+
+
+class TestPlot2DSegmentedHist(PlotTestCase):
+    """The new type='segmented_hist' for mixed discrete/continuous data."""
+
+    def setUp(self):
+        np.random.seed(42)
+
+    def test_segmented_hist_discrete_x_continuous_y(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        sims.plot(type="segmented_hist")
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Segmented Histogram")
+        self.assertGreater(len(ax.patches), 0)
+        # Discrete x -> flipped orientation: baselines on the x-axis
+        n_levels = len(np.unique(sims.array[:, 0]))
+        self.assertEqual(len(ax.get_xticks()), n_levels)
+
+    def test_segmented_hist_continuous_x_discrete_y(self):
+        X, Y = RV(Normal(0, 1) * Binomial(5, 0.4))
+        sims = (X & Y).sim(500)
+        sims.plot(type="segmented_hist")
+        ax = plt.gca()
+        # Discrete y -> classic orientation: baselines on the y-axis
+        n_levels = len(np.unique(sims.array[:, 1]))
+        self.assertGreater(len(ax.patches), 0)
+        self.assertEqual(len(ax.get_yticks()), n_levels)
+
+    def test_segmented_hist_two_discrete_raises_friendly_error(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="segmented_hist")
+        self.assertIn("tile", str(cm.exception))
+
+    def test_segmented_hist_two_continuous_raises_friendly_error(self):
+        X, Y = RV(Normal(0, 1) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="segmented_hist")
+        self.assertIn("scatter", str(cm.exception))
+
+    def test_segmented_hist_shares_bin_edges_across_levels(self):
+        # All levels are binned on one shared grid, so across the whole
+        # plot the bars' left edges take at most `bins` distinct values.
+        values = np.random.normal(0, 1, 300) + np.repeat([0, 1, 2], 100)
+        groups = np.repeat([0, 1, 2], 100)
+        ax = plt.gca()
+        make_segmented_hist(values, groups, ax, "#56B4E9", bins=10)
+        lefts = {round(p.get_x(), 9) for p in ax.patches}
+        self.assertLessEqual(len(lefts), 10)
+
+    def test_segmented_hist_bins_and_normalize_pass_through(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        (X & Y).sim(500).plot(type="segmented_hist", bins=12, normalize=False)
+        self.assertGreater(len(plt.gca().patches), 0)
+
+    def test_segmented_hist_sparse_level_falls_back_to_ticks(self):
+        # Level 9 has a single observation: under the shared scale its
+        # bar would dwarf the real histograms, so it becomes baseline
+        # tick marks (a LineCollection) plus a printed note.
+        values = np.append(np.random.normal(0, 1, 90), 0.0)
+        groups = np.append(np.repeat([0, 1, 2], 30), 9)
+        ax = plt.gca()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            artists = make_segmented_hist(values, groups, ax, "#56B4E9")
+        self.assertIn("tick marks", out.getvalue())
+        self.assertIn("9", out.getvalue())
+        # 3 histogram rows + 1 tick collection, one artist per level
+        self.assertEqual(len(artists), 4)
+
+    def test_segmented_hist_overlay_legend_names(self):
+        values = np.random.normal(0, 1, 120)
+        groups = np.repeat([0, 1, 2], 40)
+        ax = plt.gca()
+        make_segmented_hist(values, groups, ax, "#56B4E9")
+        self.assertIsNone(ax.get_legend())  # a lone batch has no legend
+        make_segmented_hist(values + 1, groups, ax, "#E69F00")
+        legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
+        self.assertEqual(legend_texts, ["Variable 1", "Variable 2"])
+
+    def test_segmented_hist_is_a_mixed_data_alternative(self):
+        self.assertIn(
+            "segmented_hist", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"]
+        )
+        self.assertIn(
+            "segmented_hist", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"]
+        )
+        self.assertEqual(PLOT_DISPLAY_NAME["segmented_hist"], "Segmented Histogram")
 
 
 # ===========================================================================
