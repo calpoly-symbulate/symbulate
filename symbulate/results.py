@@ -47,6 +47,7 @@ from .plot import (
     make_impulse,
     make_marginal_impulse,
     make_mosaic,
+    make_segmented_density,
     make_rug,
     make_scatter,
     make_segmented_rug,
@@ -1275,9 +1276,13 @@ class RVResults(Results):
             ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
             ``"tile"``, ``"mosaic"``, ``"violin"``, ``"box"`` (alias
             ``"boxplot"``), and ``"marginal"`` (2D data also accepts
-            ``"hist2d"``, ``"density2d"``, and ``"segmented_rug"``).
-            ``"mosaic"`` is only meaningful for two discrete-ish
-            variables -- the same configuration ``"tile"`` targets.
+            ``"hist2d"``, ``"density2d"``, ``"segmented_rug"``, and
+            ``"segmented_density"``). ``"mosaic"`` is only meaningful for two
+            discrete-ish variables -- the same configuration
+            ``"tile"`` targets. ``"segmented_density"`` needs one discrete and
+            one continuous variable and draws one small density curve
+            per level of the discrete variable, stacked along the
+            discrete axis.
             If None, a default is chosen from the data: whether each
             variable looks discrete (``classify_data``) and whether
             the sample is small select an entry from the
@@ -1290,9 +1295,9 @@ class RVResults(Results):
         alpha : float, optional
             Transparency of plotted elements, between 0 and 1. Each
             plot type has its own default: histograms 0.65, scatter
-            0.25, rug 0.5, box plots 0.75, impulse / density curves /
-            dot plots fully opaque, and 0.5 for violin and marginal
-            panels.
+            0.25, rug 0.5, box plots 0.75, segmented density fills 0.4,
+            impulse / density curves / dot plots fully opaque, and
+            0.5 for violin and marginal panels.
         normalize : bool, default True
             If True, plot relative frequencies or densities. If
             False, plot raw counts. Dot plots always show counts.
@@ -1322,11 +1327,12 @@ class RVResults(Results):
         **kwargs
             Additional keyword arguments passed to the underlying
             matplotlib plotting function. Notable options:
-            ``bandwidth`` (smoothing for ``type="density"``, passed
-            to scipy's ``gaussian_kde``), ``contour`` and ``levels``
-            (2D density), ``hex=True`` (hexagonal bins for a 2D
+            ``bandwidth`` (smoothing for ``type="density"`` and
+            ``type="segmented_density"``, passed to scipy's
+            ``gaussian_kde``), ``contour`` and ``levels`` (2D
+            density), ``hex=True`` (hexagonal bins for a 2D
             histogram), and ``label`` (legend name for hist, impulse,
-            dot, and scatter plots).
+            dot, scatter, and segmented density plots).
 
         Returns
         -------
@@ -1375,7 +1381,8 @@ class RVResults(Results):
                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
                     "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'mosaic', "
                     "'violin', 'box' (alias 'boxplot'), 'marginal' (and, "
-                    "for 2D data, 'hist2d', 'density2d', 'segmented_rug')."
+                    "for 2D data, 'hist2d', 'density2d', 'segmented_rug', "
+                    "'segmented_density')."
                 )
 
         # Filled in by the dim == 1 and dim == 2 branches with
@@ -1657,6 +1664,18 @@ class RVResults(Results):
                     alpha=alpha,
                     discrete_x=discrete_x,
                     discrete_y=discrete_y,
+                )
+            elif "segmented_density" in type:
+                make_segmented_density(
+                    x,
+                    y,
+                    ax,
+                    color,
+                    bandwidth=kwargs.pop("bandwidth", None),
+                    alpha=alpha,
+                    discrete_x=discrete_x,
+                    discrete_y=discrete_y,
+                    **kwargs,
                 )
             elif "tile" in type:
                 hm = make_tile(

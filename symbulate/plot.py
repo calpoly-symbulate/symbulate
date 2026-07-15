@@ -3,6 +3,7 @@ import os
 import warnings
 
 import numpy as np
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 from matplotlib.lines import Line2D
@@ -108,6 +109,28 @@ RUG_LEGEND_LOC = "upper right"
 ECDF_LINEWIDTH = 1.8
 ECDF_ALPHA = 1.0
 ECDF_LEGEND_LOC = "upper left"
+
+# Segmented density plot (a "ridgeline" plot): one small kernel
+# density curve ("ridge") per level of
+# the discrete variable, stacked along the discrete axis with a gentle
+# overlap. All ridges in one call share a single density scale, so peak
+# heights are directly comparable across levels. The KDE range reuses
+# the density plot's quantile constants (DENSITY_QUANTILE_LOW / HIGH /
+# PADDING_FRAC) via _density_xrange, so outliers can't stretch the
+# value axis.
+SEGMENTED_DENSITY_FILL_ALPHA = 0.4  # translucent fill; the outline stays opaque
+SEGMENTED_DENSITY_LINEWIDTH = 1.8  # ridge outlines are density curves, so this
+# matches DENSITY_LINEWIDTH
+SEGMENTED_DENSITY_PEAK_SCALE = 1.6  # tallest peak's height, in units of the
+# spacing between neighboring baselines; > 1 gives the gentle overlap
+# that makes the stacked ridges read as one connected picture
+SEGMENTED_DENSITY_GRID_POINTS = 1000  # matches DENSITY_GRID_POINTS
+SEGMENTED_DENSITY_LEGEND_LOC = "upper right"
+SEGMENTED_DENSITY_TICK_FRAC = 0.2  # height of the fallback tick marks drawn
+# for levels too sparse for a density curve, as a fraction of the
+# baseline spacing
+SEGMENTED_DENSITY_TICK_LINEWIDTH = 1.0  # matches RUG_LINEWIDTH -- the fallback
+# ticks are just a tiny rug on that level's baseline
 
 # Dot plot: every observation is one dot at its exact value; identical
 # values stack, touching, with the bottom dot on the number line.
@@ -465,11 +488,11 @@ DEFAULT_PLOT_TYPE = {
     ("2D_cc", False): {"default": "hist2d", "alternatives": ["density2d", "scatter"]},
     ("2D_mixed", True): {
         "default": "segmented_rug",
-        "alternatives": ["tile", "box", "violin"],
+        "alternatives": ["tile", "box", "violin", "segmented_density"],
     },
     ("2D_mixed", False): {
         "default": "tile",
-        "alternatives": ["violin", "box"],
+        "alternatives": ["violin", "box", "segmented_density"],
     },
 }
 
@@ -531,6 +554,7 @@ PLOT_DISPLAY_NAME = {
     "box": "Box Plot",
     "boxplot": "Box Plot",
     "segmented_rug": "Segmented Rug Plot",
+    "segmented_density": "Segmented Density Plot",
     "marginal": "Marginal Plot",
 }
 
@@ -2390,6 +2414,302 @@ def make_segmented_rug(
     ax.grid(False)
     ax.grid(True, axis="x" if discrete_x else "y")
     return ticks
+
+
+def make_segmented_density(
+    x,
+    y,
+    ax,
+    color,
+    bandwidth=None,
+    alpha=None,
+    label=None,
+    discrete_x=None,
+    discrete_y=None,
+    **kwargs,
+):
+    """Draw a segmented density plot for mixed discrete/continuous data.
+
+    One small kernel density curve ("ridge") of the continuous variable
+    per level of the discrete variable, stacked along the discrete
+    axis. Where the segmented rug shows every individual observation
+    and the mixed tile plot shows binned counts, the segmented density
+    plot -- commonly called a ridgeline plot -- shows
+    each level's estimated *shape* -- how the continuous variable's
+    distribution shifts or spreads from level to level, read at a
+    glance. It is also the natural view of a discrete-time
+    continuous-state process: one ridge per time point.
+
+    All ridges in one call share a single density scale (the tallest
+    peak reaches ``SEGMENTED_DENSITY_PEAK_SCALE`` baseline spacings), so peak
+    heights are directly comparable across levels. Each ridge is drawn
+    over the same quantile-based value range (``_density_xrange`` of
+    the pooled continuous values), so outlier-heavy data doesn't
+    stretch the axis and flatten the ridges.
+
+    The orientation follows which variable is discrete, mirroring
+    ``make_segmented_rug`` and the mixed tile plot so the different
+    views of the same data line up:
+
+    - discrete ``y``, continuous ``x``: the classic ridgeline look -- one
+      horizontal ridge per y-level, stacked vertically.
+    - discrete ``x``, continuous ``y``: flipped -- one vertical ridge
+      per x-level, stacked horizontally, each extending to the right of
+      its baseline.
+
+    Levels with fewer than two distinct values cannot support a density
+    estimate; their observations are drawn as short tick marks on that
+    level's baseline instead (a tiny rug), and a note explains which
+    levels fell back and why.
+
+    A light reference grid sits behind the ridges on both axes: lines
+    along the continuous axis for reading values off the density curves
+    (as the 1D density plot draws), and one line per level along the
+    discrete axis, extending every baseline across the full plot (as
+    the segmented rug draws).
+
+    Segmented density plots overlay naturally: a second call on the same
+    axes
+    draws a second set of ridges on the same baselines (levels are
+    matched by value, and levels new to the axes get new baselines),
+    and a legend appears automatically once two or more batches share
+    the axes. Each batch is named by ``label``, or
+    "Variable 1", "Variable 2", ... in call order when no label is
+    given. Each batch is scaled to its own tallest peak, so overlays
+    compare shapes, not absolute density values.
+
+    This plot is only for mixed data -- exactly one discrete variable
+    and one continuous variable. Two discrete variables should use a
+    tile plot, and two continuous variables a scatter plot.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``. This mirrors how the other plot helpers here
+    (``make_segmented_rug``, ``make_density``) are called.
+
+    Parameters
+    ----------
+    x : array-like
+        Simulated values for the horizontal axis, e.g. the first column
+        of ``RVResults.array``. Discrete or continuous.
+    y : array-like
+        Simulated values for the vertical axis, same length as ``x``.
+        Discrete or continuous.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Color for the ridges, from ``get_next_color(ax)``. The outline
+        is drawn fully opaque and the fill translucent
+        (``SEGMENTED_DENSITY_FILL_ALPHA``).
+    bandwidth : float or str, optional
+        Passed through to ``scipy.stats.gaussian_kde`` as ``bw_method``
+        for every ridge. Defaults to scipy's own default (Scott's
+        rule).
+    alpha : float, optional
+        Fill transparency between 0 and 1. Defaults to the package
+        standard for segmented density fills
+        (``SEGMENTED_DENSITY_FILL_ALPHA``, 0.4).
+        The outline always stays opaque so the density shape reads
+        clearly even where ridges overlap.
+    label : str, optional
+        Name for this batch of ridges in the legend. Defaults to
+        "Variable k", where k counts the segmented density batches drawn on
+        these axes so far.
+    discrete_x : bool, optional
+        Whether the x-axis is the discrete (grouping) variable. If None
+        (default), detected from the data: float values are treated as
+        continuous, everything else (int, bool, string) as discrete.
+    discrete_y : bool, optional
+        Same as ``discrete_x`` for the y-axis.
+    **kwargs
+        Additional keyword arguments passed to ``fill_between`` /
+        ``fill_betweenx`` for the ridges. The ridge styling
+        (``facecolor``, ``edgecolor``, ``linewidth``) is applied with
+        ``setdefault``, so explicit keyword arguments win.
+
+    Returns
+    -------
+    list
+        The drawn artists, one per level in baseline order -- a
+        ``PolyCollection`` for each ridge, or a ``LineCollection`` for
+        each sparse level's fallback ticks -- so the caller can inspect
+        or further style them.
+
+    Raises
+    ------
+    ValueError
+        If the two variables are not one discrete and one continuous.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> rng = np.random.default_rng()
+    >>> y = rng.integers(0, 4, 200)            # discrete groups
+    >>> x = rng.normal(0, 1, 200) + y          # continuous values
+    >>> ax = plt.gca()
+    >>> make_segmented_density(x, y, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = SEGMENTED_DENSITY_FILL_ALPHA
+    xs, ys = np.asarray(x), np.asarray(y)
+    if discrete_x is None:
+        discrete_x = not np.issubdtype(xs.dtype, np.floating)
+    if discrete_y is None:
+        discrete_y = not np.issubdtype(ys.dtype, np.floating)
+
+    # A segmented density plot needs one discrete variable (the
+    # baselines) and one
+    # continuous variable (the densities). Anything else is a different
+    # plot.
+    if discrete_x == discrete_y:
+        if discrete_x:
+            raise ValueError(
+                "A segmented density plot needs one discrete variable and one "
+                "continuous variable, but both of yours look discrete. Try a "
+                "tile plot or a scatter plot with jitter for two discrete "
+                "variables."
+            )
+        raise ValueError(
+            "A segmented density plot needs one discrete variable and one "
+            "continuous variable, but both of yours look continuous. Try a "
+            "scatter plot for two continuous variables."
+        )
+
+    # The discrete variable defines the baselines; the continuous
+    # variable is the value axis the densities are estimated along.
+    if discrete_y:
+        levels = np.unique(ys)
+        continuous, groups = xs, ys
+    else:
+        levels = np.unique(xs)
+        continuous, groups = ys, xs
+
+    # Baseline positions live on the axes object so a second .plot()
+    # call lands its ridges on the same baselines (matched by level
+    # value); levels the axes hasn't seen yet get the next free
+    # baseline. Same pattern get_next_color and make_density use for
+    # their per-axes state.
+    positions = getattr(ax, "_segmented_density_positions", None)
+    if positions is None:
+        positions = {}
+        ax._segmented_density_positions = positions
+    for level in levels:
+        if level not in positions:
+            positions[level] = len(positions)
+
+    # Count the segmented density batches drawn on these axes, for the
+    # automatic "Variable k" legend names.
+    n_prior = getattr(ax, "_segmented_density_count", 0)
+    if label is None:
+        label = f"Variable {n_prior + 1}"
+    ax._segmented_density_count = n_prior + 1
+
+    # Estimate every level's density over one shared grid so the ridges
+    # align, then scale them jointly: the tallest peak in this call
+    # reaches SEGMENTED_DENSITY_PEAK_SCALE baseline spacings, and every other
+    # peak keeps its true height relative to it.
+    vmin, vmax = _density_xrange(continuous)
+    grid = np.linspace(vmin, vmax, SEGMENTED_DENSITY_GRID_POINTS)
+    densities = {}
+    sparse = []
+    for level in levels:
+        values = continuous[groups == level]
+        if np.unique(values).size < 2:
+            sparse.append(level)
+        else:
+            densities[level] = gaussian_kde(values, bw_method=bandwidth)(grid)
+    if densities:
+        scale = SEGMENTED_DENSITY_PEAK_SCALE / max(d.max() for d in densities.values())
+
+    # Fill translucent, outline opaque -- one artist per ridge, so the
+    # shape stays readable where neighboring ridges overlap. These are
+    # defaults, not overrides, so a user's own facecolor= / edgecolor= /
+    # linewidth= keyword still wins (the same pattern make_hist uses).
+    kwargs.setdefault("facecolor", mcolors.to_rgba(color, alpha))
+    kwargs.setdefault("edgecolor", color)
+    kwargs.setdefault("linewidth", SEGMENTED_DENSITY_LINEWIDTH)
+
+    # Draw from the highest baseline down so that where ridges overlap,
+    # the lower (nearer) ridge sits in front -- the classic ridgeline
+    # look.
+    artists = {}
+    for level in sorted(levels, key=positions.get, reverse=True):
+        base = positions[level]
+        batch_label = label if not artists else None
+        if level in densities:
+            heights = densities[level] * scale
+            fill = ax.fill_between if discrete_y else ax.fill_betweenx
+            artists[level] = fill(
+                grid,
+                base,
+                base + heights,
+                label=batch_label,
+                **kwargs,
+            )
+        else:
+            # Too sparse for a density estimate: a tiny rug on the
+            # baseline keeps the level (and its data) visible. Dense
+            # ridges get their baseline stroke from the fill outline,
+            # so draw one explicitly here to keep the rows uniform.
+            values = continuous[groups == level]
+            lines = ax.vlines if discrete_y else ax.hlines
+            baseline_xy = ([vmin, vmax], [base, base])
+            if not discrete_y:
+                baseline_xy = baseline_xy[::-1]
+            ax.plot(*baseline_xy, color=color, linewidth=SEGMENTED_DENSITY_LINEWIDTH)
+            artists[level] = lines(
+                values,
+                base,
+                base + SEGMENTED_DENSITY_TICK_FRAC,
+                color=color,
+                linewidth=SEGMENTED_DENSITY_TICK_LINEWIDTH,
+                label=batch_label,
+            )
+    if sparse:
+        level_list = ", ".join(str(level) for level in sparse)
+        print(
+            f"Note: level(s) {level_list} have fewer than 2 distinct "
+            "values, so no density curve can be estimated for them. Their "
+            "observations are drawn as tick marks on the baseline instead. "
+            "Simulating more draws will fill those levels in."
+        )
+
+    # Label the discrete axis with the level values, one tick per
+    # baseline (including baselines from earlier overlaid calls), and
+    # leave headroom above the top baseline for its ridge; the
+    # continuous axis keeps ordinary numeric ticks. Axis labels match
+    # the segmented rug and mixed tile plots' "X"/"Y".
+    all_levels = sorted(positions, key=positions.get)
+    ticks = [positions[level] for level in all_levels]
+    lo = min(ticks) - 0.2
+    hi = max(ticks) + SEGMENTED_DENSITY_PEAK_SCALE + 0.1
+    if discrete_y:
+        ax.set_yticks(ticks)
+        ax.set_yticklabels(all_levels)
+        ax.set_ylim(lo, hi)
+    else:
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(all_levels)
+        ax.set_xlim(lo, hi)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title("Segmented Density Plot")
+    # Reference gridlines on both axes: the ridges are density curves,
+    # which show both horizontal and vertical reference lines (the same
+    # per-type override make_density uses -- symbulate.mplstyle's
+    # global grid is horizontal-only), and the lines along the discrete
+    # axis give one line per level, matching the segmented rug's
+    # convention (they extend the baselines across the full axes
+    # width). axisbelow keeps them behind the ridges; the grid's color
+    # and width come from symbulate.mplstyle.
+    ax.set_axisbelow(True)
+    ax.grid(True, axis="both")
+    # A legend only helps once there is more than one batch to tell
+    # apart; a lone batch stays legend-free.
+    if ax._segmented_density_count > 1:
+        ax.legend(loc=SEGMENTED_DENSITY_LEGEND_LOC)
+    return [artists[level] for level in all_levels if level in artists]
 
 
 def make_grouped_boxplot(
