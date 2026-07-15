@@ -165,9 +165,13 @@ SEGMENTED_HIST_ALPHA = 0.65  # matches HIST_ALPHA -- the bars are
 SEGMENTED_HIST_EDGECOLOR = "white"  # matches HIST_EDGECOLOR
 SEGMENTED_HIST_EDGEWIDTH = 0.8  # matches HIST_EDGEWIDTH
 SEGMENTED_HIST_PEAK_SCALE = 1.6  # matches SEGMENTED_DENSITY_PEAK_SCALE
-SEGMENTED_HIST_BASELINE_LINEWIDTH = 1.8  # matches
-# SEGMENTED_DENSITY_LINEWIDTH; the density plot's baseline comes from
-# its fill outline, so this keeps the two plots' baselines identical
+# Each level's baseline is drawn as a neutral grey shelf (matching the
+# reference grid color, not the series color) spanning that level's bin
+# range, on top of the bars so it stays visible -- a reference gridline
+# would be hidden where the bars sit on it.
+SEGMENTED_HIST_BASELINE_COLOR = "#b0b0b0"  # matches the mplstyle grid color
+SEGMENTED_HIST_BASELINE_LINEWIDTH = 1.0
+SEGMENTED_HIST_BASELINE_ALPHA = 0.8
 SEGMENTED_HIST_LEGEND_LOC = "upper right"
 SEGMENTED_HIST_TICK_FRAC = 0.2  # matches SEGMENTED_DENSITY_TICK_FRAC
 SEGMENTED_HIST_TICK_LINEWIDTH = 1.0  # matches RUG_LINEWIDTH
@@ -338,6 +342,8 @@ BOXPLOT_FLIER_MARKER = "o"
 BOXPLOT_FLIER_SIZE = 4
 
 # Violin plot.
+VIOLIN_ALPHA = 0.5  # default body transparency for a 1D violin (the 2D
+# grouped make_violin is passed its alpha explicitly by RVResults.plot)
 VIOLIN_EDGECOLOR = "black"
 VIOLIN_EDGEWIDTH = 1
 VIOLIN_WIDTH = 0.5  # matches ax.violinplot's own default width
@@ -511,27 +517,27 @@ def classify_data(
 DEFAULT_PLOT_TYPE = {
     ("1D_categorical", True): {
         "default": "dotplot",
-        "alternatives": ["impulse", "bar"],
+        "alternatives": ["bar", "impulse"],
     },
     ("1D_categorical", False): {
-        "default": "impulse",
-        "alternatives": ["bar", "dotplot"],
+        "default": "bar",
+        "alternatives": ["dotplot", "impulse"],
     },
     ("1D_discrete", True): {
         "default": "dotplot",
-        "alternatives": ["impulse", "bar", "ecdf"],
+        "alternatives": ["impulse", "hist", "ecdf"],
     },
     ("1D_discrete", False): {
         "default": "impulse",
-        "alternatives": ["bar", "hist", "dotplot", "ecdf"],
+        "alternatives": ["hist", "dotplot", "ecdf"],
     },
     ("1D_continuous", True): {
         "default": "rug",
-        "alternatives": ["hist", "density", "box", "ecdf"],
+        "alternatives": ["hist", "density", "box", "violin", "ecdf"],
     },
     ("1D_continuous", False): {
         "default": "hist",
-        "alternatives": ["density", "rug", "box", "ecdf"],
+        "alternatives": ["rug", "density", "box", "violin", "ecdf"],
     },
     ("2D_dd", True): {"default": "scatter", "alternatives": ["tile", "mosaic"]},
     ("2D_dd", False): {"default": "tile", "alternatives": ["scatter", "mosaic"]},
@@ -549,7 +555,13 @@ DEFAULT_PLOT_TYPE = {
     },
     ("2D_mixed", False): {
         "default": "tile",
-        "alternatives": ["violin", "box", "segmented_density", "segmented_hist"],
+        "alternatives": [
+            "segmented_rug",
+            "box",
+            "violin",
+            "segmented_density",
+            "segmented_hist",
+        ],
     },
 }
 
@@ -1506,6 +1518,42 @@ def _refresh_legend(ax, loc=IMPULSE_LEGEND_LOC):
         ax.legend(loc=loc)
 
 
+def _encode_categories(values):
+    """Map values to numeric x positions, keeping category labels for ticks.
+
+    Numeric values are returned unchanged (as floats) so the plot keeps its
+    real number line. Categorical values (strings/objects) have no numeric
+    position, so each distinct value is assigned an evenly spaced integer
+    code -- sorted (alphabetical for strings) so the same categories map to
+    the same positions across overlaid calls -- and the sorted category
+    labels are returned for the tick labels.
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values for one variable.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, list or None)
+        ``(codes, categories)``. ``codes`` is a float array of x positions.
+        ``categories`` is the sorted list of distinct category labels when
+        the data is categorical, or ``None`` when it is numeric (so the
+        caller leaves the numeric axis alone).
+    """
+    arr = np.asarray(list(values))
+    if arr.dtype.kind in "iufb":
+        return arr.astype(float), None
+    try:
+        categories = sorted(set(arr.tolist()))
+    except TypeError:
+        # Mutually incomparable types (a rare mixed-type outcome): keep
+        # first-seen order instead of sorting.
+        categories = list(dict.fromkeys(arr.tolist()))
+    code = {c: i for i, c in enumerate(categories)}
+    return np.array([code[v] for v in arr.tolist()], dtype=float), categories
+
+
 def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kwargs):
     """Draw a 1D impulse (stem) plot of simulated discrete values.
 
@@ -1567,10 +1615,16 @@ def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kw
     if alpha is None:
         alpha = IMPULSE_ALPHA
 
-    n = len(values)
-    counts = count_var(values)
-    xs = list(counts.keys())
-    freqs = list(counts.values())
+    # Categorical values have no numeric position, so map them to evenly
+    # spaced integer codes and remember the labels for the ticks; numeric
+    # values keep their real positions (categories is None).
+    codes, categories = _encode_categories(values)
+    n = len(codes)
+    counts = count_var(codes)
+    # Sort the code positions when categorical so the stems line up with
+    # the sorted tick labels; keep first-seen order for numeric data.
+    xs = sorted(counts.keys()) if categories is not None else list(counts.keys())
+    freqs = [counts[x] for x in xs]
     if normalize:
         freqs = [freq / n for freq in freqs]
 
@@ -1631,6 +1685,12 @@ def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kw
         xlabel="Value",
         ylabel="Relative Frequency" if normalize else "Count",
     )
+
+    # Label the integer code positions with the category names, so a
+    # categorical impulse plot reads as one stem per category.
+    if categories is not None:
+        ax.set_xticks(range(len(categories)))
+        ax.set_xticklabels([str(c) for c in categories])
 
     ax.set_title(
         "Relative Frequency Impulse Plot" if normalize else "Count Impulse Plot"
@@ -2156,6 +2216,135 @@ def make_boxplot(values, ax, color, alpha=None, label=None, **kwargs):
     ax.set_ylabel("Value")
     ax.set_title("Box Plot")
     return box
+
+
+def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
+    """Draw a single violin plot of 1D simulated values on the given axes.
+
+    One violin: a mirrored kernel density of the values, with a narrow
+    inner box plot (pale ivory box, black median line and whiskers) marking
+    the median and interquartile range. This is the 1D, single-variable
+    counterpart of ``make_violin`` (which draws one violin per level of a
+    discrete grouping variable for 2D data), the same way ``make_boxplot``
+    is the single-box counterpart of ``make_grouped_boxplot``. Non-finite
+    values (e.g. NaN) are dropped before plotting.
+
+    Violin plots overlay side by side: a second call on the same axes adds
+    another violin at the next position, and both violins' x-ticks are
+    labeled automatically -- "Variable 1", "Variable 2", ... in call order,
+    or the given ``label``. Placing them side by side (rather than on top of
+    one another) keeps overlapping density shapes readable, matching how
+    ``make_boxplot`` overlays.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as ``color``.
+    This mirrors how ``RVResults.plot()`` calls the other plot helpers
+    (``make_boxplot``, ``make_hist``).
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values to summarize, e.g. ``RVResults.array``.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Fill color for the violin body, from ``get_next_color(ax)``.
+    alpha : float, optional
+        Body transparency between 0 and 1. Defaults to the package
+        standard for violins (``VIOLIN_ALPHA``, 0.5).
+    label : str, optional
+        Name for this violin, shown as its x-tick label. Defaults to
+        "Variable k", where k counts the violins drawn on these axes so
+        far.
+    **kwargs
+        Additional keyword arguments passed to
+        ``matplotlib.axes.Axes.violinplot``.
+
+    Returns
+    -------
+    dict
+        The dict of Matplotlib artists returned by ``ax.violinplot``, so
+        the caller can inspect or further style the body.
+
+    Raises
+    ------
+    ValueError
+        If there are no finite values to plot.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> values = np.random.default_rng().normal(10, 2, 200)
+    >>> ax = plt.gca()
+    >>> make_violinplot(values, ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = VIOLIN_ALPHA
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        raise ValueError(
+            "There are no values to plot. Simulate some values first, "
+            "for example X.sim(30).plot(type='violin')."
+        )
+    # Count the violins drawn on these axes, stored on the axes object
+    # itself (the same pattern make_boxplot uses) so overlays from
+    # separate .plot() calls sit side by side at successive positions.
+    position = getattr(ax, "_violinplot_count", 0) + 1
+    if label is None:
+        label = f"Variable {position}"
+    ax._violinplot_count = position
+
+    violins = ax.violinplot(
+        dataset=[values],
+        positions=[position],
+        widths=VIOLIN_WIDTH,
+        showmedians=False,
+        showextrema=False,
+        **kwargs,
+    )
+    for body in violins["bodies"]:
+        body.set_facecolor(color)
+        body.set_edgecolor(VIOLIN_EDGECOLOR)
+        body.set_linewidth(VIOLIN_EDGEWIDTH)
+        body.set_alpha(alpha)
+
+    # The inner box plot marks the median and IQR on top of the density
+    # shape. manage_ticks=False so it doesn't clobber the tick labels set
+    # below (the same approach make_violin uses for its inner boxes).
+    box_width = VIOLIN_WIDTH * VIOLIN_BOX_WIDTH_RATIO
+    boxplot = ax.boxplot(
+        values,
+        positions=[position],
+        widths=box_width,
+        patch_artist=True,
+        showfliers=False,
+        manage_ticks=False,
+        boxprops=dict(
+            facecolor=VIOLIN_BOX_FACECOLOR,
+            edgecolor=VIOLIN_EDGECOLOR,
+            linewidth=VIOLIN_EDGEWIDTH,
+        ),
+        medianprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
+        whiskerprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
+        capprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
+    )
+    for artists in boxplot.values():
+        for artist in artists:
+            artist.set_zorder(3)
+
+    # Label each violin's position on the x-axis, accumulating across
+    # overlaid calls so every violin keeps its own tick label.
+    labels = getattr(ax, "_violinplot_labels", [])
+    labels.append((position, label))
+    ax._violinplot_labels = labels
+    ax.set_xticks([pos for pos, _ in labels])
+    ax.set_xticklabels([lab for _, lab in labels])
+    ax.set_ylabel("Value")
+    ax.set_title("Violin Plot")
+    return violins
 
 
 def _density_xrange(values):
@@ -3155,9 +3344,9 @@ def make_segmented_hist(
     bar would dwarf every real histogram under the shared density
     scale), and a note explains which levels fell back and why.
 
-    A light reference grid sits behind the bars on both axes, and every
-    level draws a baseline across the full shared bin range, matching
-    the segmented density plot.
+    Each level's histogram sits on its own neutral grey baseline (a shelf
+    spanning that level's bin range), and a light reference grid runs
+    along the continuous axis for reading values off the bars.
 
     Segmented histograms overlay naturally: a second call on the same
     axes draws a second set of histograms on the same baselines (levels
@@ -3330,16 +3519,21 @@ def make_segmented_hist(
     for level in sorted(levels, key=positions.get, reverse=True):
         base = positions[level]
         batch_label = label if not artists else None
-        # Unlike the density ridge, whose fill outline strokes its own
-        # baseline, bars only cover occupied bins -- so every level
-        # draws an explicit baseline across the full shared bin range.
-        baseline_xy = ([edges[0], edges[-1]], [base, base])
-        if not discrete_y:
-            baseline_xy = baseline_xy[::-1]
-        ax.plot(
-            *baseline_xy,
-            color=color,
+        # Each level gets its own neutral grey baseline spanning that
+        # level's bin range -- a shelf the small histogram sits on. It is
+        # drawn on top of the bars (zorder=2, above the default-zorder
+        # patches) so it stays continuous under the whole histogram; a
+        # plain reference gridline would be hidden where the bars sit on
+        # it, making the base look like it vanishes in the middle.
+        base_line = ax.hlines if discrete_y else ax.vlines
+        base_line(
+            base,
+            edges[0],
+            edges[-1],
+            color=SEGMENTED_HIST_BASELINE_COLOR,
             linewidth=SEGMENTED_HIST_BASELINE_LINEWIDTH,
+            alpha=SEGMENTED_HIST_BASELINE_ALPHA,
+            zorder=2,
         )
         if level in heights:
             bar_sizes = heights[level] * scale
@@ -3406,13 +3600,17 @@ def make_segmented_hist(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Segmented Histogram")
-    # Reference gridlines on both axes, matching the segmented density
-    # plot: lines along the continuous axis for reading values, one
-    # line per level along the discrete axis extending the baselines.
-    # axisbelow keeps them behind the bars; the grid's color and width
-    # come from symbulate.mplstyle.
+    # Reference gridlines only along the continuous axis, for reading
+    # values off the bars. The discrete axis gets no gridlines: each
+    # level's baseline is the explicit grey shelf drawn above (a discrete-
+    # axis gridline would sit behind the bars and appear to vanish under
+    # them). axisbelow keeps the value grid behind the bars; its color and
+    # width come from symbulate.mplstyle.
     ax.set_axisbelow(True)
-    ax.grid(True, axis="both")
+    # Clear the style sheet's default y-grid first, then enable the grid on
+    # the continuous axis only (the discrete axis uses the grey baselines).
+    ax.grid(False)
+    ax.grid(True, axis="x" if discrete_y else "y")
     # A legend only helps once there is more than one batch to tell
     # apart; a lone batch stays legend-free.
     if ax._segmented_hist_count > 1:
@@ -3639,6 +3837,7 @@ def _dotplot_init_state(ax):
         "boundary_lines": [],
         "last_size_px": None,
         "relayout_running": False,
+        "categories": None,
     }
     ax._dotplot_state = state
     # Horizontal reference gridlines help students read a count off
@@ -3721,7 +3920,23 @@ def _dotplot_relayout(ax):
         series["dots"].set_offsets(np.column_stack([xs, ys]))
         series["dots"].set_sizes(np.full(len(xs), size))
 
-    if np.all(positions == np.round(positions)):
+    # Categorical data: label each integer code position with its category
+    # name. Numeric data: keep the integer locator so whole-number values
+    # get whole-number ticks.
+    categories = state.get("categories")
+    if categories is not None:
+        ax.set_xticks(positions)
+        ax.set_xticklabels(
+            [
+                (
+                    str(categories[int(round(p))])
+                    if 0 <= int(round(p)) < len(categories)
+                    else ""
+                )
+                for p in positions
+            ]
+        )
+    elif np.all(positions == np.round(positions)):
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     # The y-axis is always integer counts.
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -3833,8 +4048,9 @@ def make_dotplot(values, ax, color, alpha=None, label=None, **kwargs):
     Parameters
     ----------
     values : array-like
-        The simulated values to plot, e.g. ``RVResults.array``. Must
-        be numeric.
+        The simulated values to plot, e.g. ``RVResults.array``. May be
+        numeric or categorical (strings). Categorical values are placed
+        as evenly spaced categories, labeled with the value.
     ax : matplotlib.axes.Axes
         The axes to draw on.
     color : color
@@ -3860,8 +4076,6 @@ def make_dotplot(values, ax, color, alpha=None, label=None, **kwargs):
 
     Raises
     ------
-    TypeError
-        If the values are not numeric.
     ValueError
         If there are no (finite) values to plot.
 
@@ -3873,12 +4087,19 @@ def make_dotplot(values, ax, color, alpha=None, label=None, **kwargs):
     >>> ax = plt.gca()
     >>> make_dotplot(values, ax, get_next_color(ax))  # doctest: +SKIP
     """
-    values = _dotplot_clean_values(values)
+    # Categorical values have no numeric position, so map them to evenly
+    # spaced integer codes and remember the labels for the ticks; numeric
+    # values keep their real positions (categories is None). The codes are
+    # then validated (finite, non-empty) like any numeric dot plot.
+    codes, categories = _encode_categories(values)
+    values = _dotplot_clean_values(codes)
     if alpha is None:
         alpha = DOTPLOT_ALPHA
     state = getattr(ax, "_dotplot_state", None)
     if state is None:
         state = _dotplot_init_state(ax)
+    if categories is not None:
+        state["categories"] = categories
     if label is None:
         label = "Variable {}".format(len(state["series"]) + 1)
     # Dots start empty; _dotplot_relayout fills in positions and sizes

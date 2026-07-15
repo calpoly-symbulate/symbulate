@@ -55,6 +55,7 @@ from .plot import (
     make_segmented_rug,
     make_tile,
     make_violin,
+    make_violinplot,
     make_boxplot,
     make_grouped_boxplot,
     SymbulatePlot,
@@ -99,6 +100,39 @@ def _is_boolean_vector(vector):
         ``numpy.bool_``, False otherwise.
     """
     return all(isinstance(x, (bool, np.bool_)) for x in vector)
+
+
+def _is_categorical_1d(results):
+    """Check whether results are a 1D collection of categorical (string) values.
+
+    Categorical outcomes -- e.g. ``BoxModel(["H", "T"])`` -- are not numbers,
+    so an ``RVResults`` built from them gets ``dim=None`` and skips the
+    ``dim == 1`` plotting branch. ``RVResults.plot()`` uses this to route them
+    to the 1D categorical plot types (bar / dot plot / impulse) instead of the
+    higher-dimensional catch-all, which would fail on non-plottable values.
+
+    Parameters
+    ----------
+    results : iterable
+        The stored simulation outcomes.
+
+    Returns
+    -------
+    bool
+        True if the outcomes are a 1D collection of strings/bytes, False
+        otherwise (numeric, higher-dimensional, or non-string objects).
+    """
+    try:
+        arr = np.asarray(list(results))
+    except Exception:
+        return False
+    if arr.ndim != 1:
+        return False
+    if arr.dtype.kind in ("U", "S"):
+        return True
+    if arr.dtype.kind == "O":
+        return all(isinstance(x, (str, bytes)) for x in arr.tolist())
+    return False
 
 
 def _sim_with_progress(draw_func, n, progress_delay=5.0, bar_width=30):
@@ -1520,6 +1554,8 @@ class RVResults(Results):
                 )
             elif "box" in type or "boxplot" in type:
                 make_boxplot(_plot_array, ax, color, alpha=alpha, **kwargs)
+            elif "violin" in type:
+                make_violinplot(_plot_array, ax, color, alpha=alpha, **kwargs)
             if "rug" in type:
                 make_rug(_plot_array, ax, color, alpha=alpha)
             if "ecdf" in type:
@@ -1770,6 +1806,34 @@ class RVResults(Results):
                 # The marginal layout has no room for the center panel's
                 # title -- it would collide with the top marginal panel.
                 ax.set_title("")
+        elif self.index_set is None and _is_categorical_1d(self.results):
+            # 1D categorical (string) outcomes. These are not numbers, so
+            # they get dim=None and skip the dim == 1 branch, but they are a
+            # genuine 1D categorical variable: route them to the
+            # "1D_categorical" lookup configuration and the categorical plot
+            # types (bar / dot plot / impulse), which all accept strings.
+            values = np.asarray(list(self.results))
+            discrete, small_n = classify_data(values)
+            default, alternatives = default_plot_type("1D_categorical", small_n)
+            if type is None:
+                type = (default,)
+            _suggestion = (type[0], default, alternatives)
+            ax = plt.gca()
+            color = get_next_color(ax)
+            if "bar" in type:
+                make_bar(values, ax, color, normalize=normalize, alpha=alpha, **kwargs)
+            elif "dotplot" in type:
+                make_dotplot(values, ax, color, alpha=alpha, **kwargs)
+            elif "impulse" in type:
+                make_impulse(
+                    values, ax, color, normalize=normalize, alpha=alpha, **kwargs
+                )
+            else:
+                raise ValueError(
+                    f"{type[0]!r} can't be used for categorical (text) data. "
+                    "Categorical data works with type='bar', type='dotplot', or "
+                    "type='impulse'."
+                )
         else:
             if alpha is None:
                 alpha = np.log(2) / np.log(len(self) + 1)

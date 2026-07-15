@@ -57,6 +57,9 @@ from symbulate.plot import (
     should_show_suggestion,
     make_bar,
     BAR_ALPHA,
+    make_dotplot,
+    make_impulse,
+    make_violinplot,
     make_ecdf,
     make_mosaic,
     make_sample_path,
@@ -809,6 +812,93 @@ class TestPlot1DBar(PlotTestCase):
         self.assertEqual(len(ax.patches), 6)
 
 
+class TestPlot1DViolin(PlotTestCase):
+    """The 1D single violin (make_violinplot), wired into type='violin'."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(Normal(0, 1)).sim(400)
+
+    def test_violin_via_plot_renders(self):
+        """type='violin' on 1D data draws a violin (not an empty plot)."""
+        self.sims.plot(type="violin", suggest=False)
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Violin Plot")
+        # A violin body is a PolyCollection; the inner box adds patches/lines.
+        self.assertGreater(len(ax.collections), 0)
+
+    def test_violin_default_alpha(self):
+        ax = plt.gca()
+        make_violinplot(np.random.normal(0, 1, 200), ax, get_next_color(ax))
+        self.assertAlmostEqual(ax.collections[0].get_alpha(), 0.5)
+
+    def test_violin_empty_raises(self):
+        ax = plt.gca()
+        with self.assertRaises(ValueError):
+            make_violinplot(np.array([]), ax, get_next_color(ax))
+
+    def test_violin_overlay_side_by_side(self):
+        """A second violin sits at the next position with its own tick label."""
+        ax = plt.gca()
+        make_violinplot(np.random.normal(0, 1, 200), ax, get_next_color(ax))
+        make_violinplot(np.random.normal(2, 1, 200), ax, get_next_color(ax))
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["Variable 1", "Variable 2"])
+
+
+class TestPlotCategorical(PlotTestCase):
+    """1D categorical (string) outcomes, routed through .plot()."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.colors = RV(BoxModel(["red", "green", "blue"]))
+
+    def test_string_rv_default_small_is_dotplot(self):
+        """Small-n categorical default is a dot plot, labeled by category."""
+        self.colors.sim(30).plot(suggest=False)
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Dot Plot")
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["blue", "green", "red"])
+
+    def test_string_rv_default_large_is_bar(self):
+        """Large-n categorical default is a bar chart."""
+        self.colors.sim(2000).plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Bar Chart")
+
+    def test_string_rv_impulse_labels(self):
+        """type='impulse' on strings draws stems labeled by category."""
+        self.colors.sim(500).plot(type="impulse", suggest=False)
+        ax = plt.gca()
+        self.assertIn("Impulse", ax.get_title())
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["blue", "green", "red"])
+
+    def test_string_rv_dotplot_labels(self):
+        self.colors.sim(500).plot(type="dotplot", suggest=False)
+        labels = [t.get_text() for t in plt.gca().get_xticklabels()]
+        self.assertEqual(labels, ["blue", "green", "red"])
+
+    def test_string_rv_invalid_type_raises(self):
+        """A non-categorical type on string data gives a friendly error."""
+        with self.assertRaises(ValueError):
+            self.colors.sim(100).plot(type="hist", suggest=False)
+
+    def test_make_dotplot_categorical_direct(self):
+        """make_dotplot handles strings directly (one stack per category)."""
+        ax = plt.gca()
+        make_dotplot(np.array(["b", "a", "b", "c", "a", "b"]), ax, get_next_color(ax))
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["a", "b", "c"])
+
+    def test_make_impulse_categorical_direct(self):
+        """make_impulse handles strings directly, labeled by category."""
+        ax = plt.gca()
+        make_impulse(np.array(["b", "a", "b", "c"]), ax, get_next_color(ax))
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["a", "b", "c"])
+
+
 class TestPlot1DDensityFeatures(PlotTestCase):
     """The integrated make_density: styling, bandwidth, discrete pmf."""
 
@@ -947,12 +1037,15 @@ class TestPlot1DDotplot(PlotTestCase):
         with self.assertWarns(UserWarning):
             self.sims.plot(type="dotplot", bins=5)
 
-    def test_dotplot_non_numeric_raises_friendly_error(self):
+    def test_dotplot_categorical_now_renders(self):
+        """make_dotplot now accepts categorical (string) data: one stack per
+        category, labeled with the value (it no longer raises)."""
         from symbulate.plot import make_dotplot
 
-        with self.assertRaises(TypeError) as cm:
-            make_dotplot(["H", "T", "H"], plt.gca(), "#56B4E9")
-        self.assertIn("tabulate", str(cm.exception))
+        ax = plt.gca()
+        make_dotplot(["H", "T", "H"], ax, "#56B4E9")
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["H", "T"])
 
     def test_dotplot_returns_wrapper(self):
         p = self.sims.plot(type="dotplot")
@@ -1598,6 +1691,30 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         make_segmented_hist(values + 1, groups, ax, "#E69F00")
         legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
         self.assertEqual(legend_texts, ["Variable 1", "Variable 2"])
+
+    def test_segmented_hist_grey_baseline_shelves_and_value_grid(self):
+        """Each level sits on its own neutral grey baseline shelf (not the
+        series color), and the reference grid runs only along the continuous
+        axis -- not the discrete one, where it would vanish under the bars."""
+        import matplotlib.colors as mcolors
+        from symbulate.plot import SEGMENTED_HIST_BASELINE_COLOR
+
+        values = np.random.normal(0, 1, 300)  # continuous x
+        groups = np.repeat([0, 1, 2], 100)  # discrete y (levels)
+        ax = plt.gca()
+        make_segmented_hist(values, groups, ax, "#56B4E9")
+        # One grey baseline (a LineCollection) per level, not the blue series
+        # color -- so the old colored underline is gone.
+        grey = mcolors.to_rgba(SEGMENTED_HIST_BASELINE_COLOR)
+        baselines = [
+            c
+            for c in ax.collections
+            if len(c.get_color()) and np.allclose(c.get_color()[0][:3], grey[:3])
+        ]
+        self.assertEqual(len(baselines), 3)
+        # Value grid along the continuous axis (x); none on the discrete (y).
+        self.assertTrue(any(gl.get_visible() for gl in ax.xaxis.get_gridlines()))
+        self.assertFalse(any(gl.get_visible() for gl in ax.yaxis.get_gridlines()))
 
     def test_segmented_hist_is_a_mixed_data_alternative(self):
         self.assertIn(
