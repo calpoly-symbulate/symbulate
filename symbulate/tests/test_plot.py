@@ -60,6 +60,7 @@ from symbulate.plot import (
     make_ecdf,
     make_mosaic,
     make_segmented_density,
+    make_segmented_hist,
     make_tile,
     make_segmented_rug,
     DEFAULT_PLOT_TYPE,
@@ -1466,6 +1467,95 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         self.assertEqual(
             PLOT_DISPLAY_NAME["segmented_density"], "Segmented Density Plot"
         )
+
+
+class TestPlot2DSegmentedHist(PlotTestCase):
+    """The new type='segmented_hist' for mixed discrete/continuous data."""
+
+    def setUp(self):
+        np.random.seed(42)
+
+    def test_segmented_hist_discrete_x_continuous_y(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        sims.plot(type="segmented_hist")
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Segmented Histogram")
+        self.assertGreater(len(ax.patches), 0)
+        # Discrete x -> flipped orientation: baselines on the x-axis
+        n_levels = len(np.unique(sims.array[:, 0]))
+        self.assertEqual(len(ax.get_xticks()), n_levels)
+
+    def test_segmented_hist_continuous_x_discrete_y(self):
+        X, Y = RV(Normal(0, 1) * Binomial(5, 0.4))
+        sims = (X & Y).sim(500)
+        sims.plot(type="segmented_hist")
+        ax = plt.gca()
+        # Discrete y -> classic orientation: baselines on the y-axis
+        n_levels = len(np.unique(sims.array[:, 1]))
+        self.assertGreater(len(ax.patches), 0)
+        self.assertEqual(len(ax.get_yticks()), n_levels)
+
+    def test_segmented_hist_two_discrete_raises_friendly_error(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="segmented_hist")
+        self.assertIn("tile", str(cm.exception))
+
+    def test_segmented_hist_two_continuous_raises_friendly_error(self):
+        X, Y = RV(Normal(0, 1) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="segmented_hist")
+        self.assertIn("scatter", str(cm.exception))
+
+    def test_segmented_hist_shares_bin_edges_across_levels(self):
+        # All levels are binned on one shared grid, so across the whole
+        # plot the bars' left edges take at most `bins` distinct values.
+        values = np.random.normal(0, 1, 300) + np.repeat([0, 1, 2], 100)
+        groups = np.repeat([0, 1, 2], 100)
+        ax = plt.gca()
+        make_segmented_hist(values, groups, ax, "#56B4E9", bins=10)
+        lefts = {round(p.get_x(), 9) for p in ax.patches}
+        self.assertLessEqual(len(lefts), 10)
+
+    def test_segmented_hist_bins_and_normalize_pass_through(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        (X & Y).sim(500).plot(type="segmented_hist", bins=12, normalize=False)
+        self.assertGreater(len(plt.gca().patches), 0)
+
+    def test_segmented_hist_sparse_level_falls_back_to_ticks(self):
+        # Level 9 has a single observation: under the shared scale its
+        # bar would dwarf the real histograms, so it becomes baseline
+        # tick marks (a LineCollection) plus a printed note.
+        values = np.append(np.random.normal(0, 1, 90), 0.0)
+        groups = np.append(np.repeat([0, 1, 2], 30), 9)
+        ax = plt.gca()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            artists = make_segmented_hist(values, groups, ax, "#56B4E9")
+        self.assertIn("tick marks", out.getvalue())
+        self.assertIn("9", out.getvalue())
+        # 3 histogram rows + 1 tick collection, one artist per level
+        self.assertEqual(len(artists), 4)
+
+    def test_segmented_hist_overlay_legend_names(self):
+        values = np.random.normal(0, 1, 120)
+        groups = np.repeat([0, 1, 2], 40)
+        ax = plt.gca()
+        make_segmented_hist(values, groups, ax, "#56B4E9")
+        self.assertIsNone(ax.get_legend())  # a lone batch has no legend
+        make_segmented_hist(values + 1, groups, ax, "#E69F00")
+        legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
+        self.assertEqual(legend_texts, ["Variable 1", "Variable 2"])
+
+    def test_segmented_hist_is_a_mixed_data_alternative(self):
+        self.assertIn(
+            "segmented_hist", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"]
+        )
+        self.assertIn(
+            "segmented_hist", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"]
+        )
+        self.assertEqual(PLOT_DISPLAY_NAME["segmented_hist"], "Segmented Histogram")
 
 
 # ===========================================================================
