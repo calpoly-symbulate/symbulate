@@ -1140,6 +1140,43 @@ class TestPlot1DBoxStyling(PlotTestCase):
             make_boxplot(np.array([np.nan, np.nan]), ax, get_next_color(ax))
         self.assertIn("no values", str(cm.exception))
 
+    def test_box_outliers_default_draws_outlier_points(self):
+        """With outliers=True (default), extreme points become fliers."""
+        from symbulate.plot import make_boxplot, get_next_color
+
+        values = np.append(np.random.normal(0, 1, 50), 25.0)
+        ax = plt.gca()
+        box = make_boxplot(values, ax, get_next_color(ax))
+        self.assertIn(25.0, box["fliers"][0].get_ydata())
+
+    def test_box_outliers_false_extends_whiskers_to_extremes(self):
+        """outliers=False stretches the whiskers to min/max, no fliers."""
+        from symbulate.plot import make_boxplot, get_next_color
+
+        values = np.append(np.random.normal(0, 1, 50), 25.0)
+        ax = plt.gca()
+        box = make_boxplot(values, ax, get_next_color(ax), outliers=False)
+        self.assertEqual(len(box["fliers"][0].get_ydata()), 0)
+        whisker_ends = [w.get_ydata()[1] for w in box["whiskers"]]
+        self.assertAlmostEqual(max(whisker_ends), 25.0)
+        self.assertAlmostEqual(min(whisker_ends), values.min())
+
+    def test_box_outliers_kwarg_flows_through_plot(self):
+        """outliers= passed to .plot() reaches the box plot helper."""
+
+        def n_flier_points():
+            return sum(
+                len(line.get_xdata())
+                for line in plt.gca().lines
+                if line.get_linestyle() == "None"
+            )
+
+        self.sims.plot(type="box")
+        self.assertGreater(n_flier_points(), 0)
+        plt.close("all")
+        self.sims.plot(type="box", outliers=False)
+        self.assertEqual(n_flier_points(), 0)
+
     def test_box_returns_wrapper(self):
         p = self.sims.plot(type="box")
         self.assertIsInstance(p, SymbulatePlot)
@@ -1530,6 +1567,37 @@ class TestPlot2DBox(PlotTestCase):
         with self.assertRaises(ValueError) as cm:
             (X & Y).sim(200).plot(type="box")
         self.assertIn("scatter", str(cm.exception))
+
+    def test_box_outliers_false_extends_whiskers_to_extremes(self):
+        """outliers=False stretches each group's whiskers to min/max."""
+        from symbulate.plot import make_grouped_boxplot, get_next_color
+
+        x = np.repeat([0, 1], 50)
+        y = np.append(np.random.normal(0, 1, 99), 30.0)
+        ax = plt.gca()
+        boxes = make_grouped_boxplot(x, y, ax, get_next_color(ax), outliers=False)
+        for flier in boxes["fliers"]:
+            self.assertEqual(len(flier.get_ydata()), 0)
+        whisker_ends = [w.get_ydata()[1] for w in boxes["whiskers"]]
+        self.assertAlmostEqual(max(whisker_ends), 30.0)
+
+    def test_box_outliers_kwarg_flows_through_plot(self):
+        """outliers= passed to .plot() reaches the grouped box helper."""
+
+        def n_flier_points():
+            return sum(
+                len(line.get_xdata())
+                for line in plt.gca().lines
+                if line.get_linestyle() == "None"
+            )
+
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        sims.plot(type="box")
+        self.assertGreater(n_flier_points(), 0)
+        plt.close("all")
+        sims.plot(type="box", outliers=False)
+        self.assertEqual(n_flier_points(), 0)
 
 
 class TestPlot2DSegmentedDensity(PlotTestCase):

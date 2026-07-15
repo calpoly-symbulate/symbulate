@@ -2114,14 +2114,16 @@ def make_bar(values, ax, color, normalize=True, alpha=None, label=None, **kwargs
     return state["series"][-1]["container"]
 
 
-def make_boxplot(values, ax, color, alpha=None, label=None, **kwargs):
+def make_boxplot(values, ax, color, alpha=None, label=None, outliers=True, **kwargs):
     """Draw a box plot of simulated values on the given axes.
 
     A single box: edges at the first and third quartiles, a black
     median line, whiskers to the most extreme value within 1.5 times
     the interquartile range, and individual points beyond that drawn
-    as fliers. Non-finite values (e.g. NaN) are dropped before
-    plotting.
+    as outliers. Pass ``outliers=False`` to instead extend the
+    whiskers all the way to the minimum and maximum values, with no
+    individual outlier points. Non-finite values (e.g. NaN) are
+    dropped before plotting.
 
     Box plots overlay naturally: a second call on the same axes adds
     another box at the next position, and both boxes' x-ticks are
@@ -2150,6 +2152,13 @@ def make_boxplot(values, ax, color, alpha=None, label=None, **kwargs):
         Name for this box, shown as its x-tick label. Defaults to
         "Variable k", where k counts the boxes drawn on these axes so
         far.
+    outliers : bool, optional
+        If True (default), the whiskers stop at the most extreme
+        value within 1.5 times the interquartile range, and any
+        points beyond that are drawn individually as outliers. If
+        False, the whiskers extend to the minimum and maximum
+        values, so every point falls inside the whiskers and no
+        individual outlier points are drawn.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.boxplot``.
@@ -2216,6 +2225,12 @@ def make_boxplot(values, ax, color, alpha=None, label=None, **kwargs):
     )
     kwargs.setdefault("patch_artist", True)
     kwargs.setdefault("orientation", "vertical")
+    # outliers=False stretches the whiskers to the 0th and 100th
+    # percentiles (the data's min and max), leaving nothing beyond
+    # them to draw as an individual outlier point. A default, not an
+    # override, so a user's own whis= keyword still wins.
+    if not outliers:
+        kwargs.setdefault("whis", (0, 100))
     # Count the boxes drawn on these axes, stored on the axes object
     # itself (the same pattern get_next_color uses for the color
     # cycle) so overlays from separate .plot() calls see it.
@@ -3678,13 +3693,25 @@ def make_segmented_hist(
 
 
 def make_grouped_boxplot(
-    x, y, ax, color, alpha=None, discrete_x=None, discrete_y=None, **kwargs
+    x,
+    y,
+    ax,
+    color,
+    alpha=None,
+    discrete_x=None,
+    discrete_y=None,
+    outliers=True,
+    **kwargs,
 ):
     """Draw a box plot for mixed discrete/continuous data.
 
     One box per distinct value of whichever variable is discrete, using
     the other (continuous) variable as the value axis -- the box-plot
     counterpart of ``make_violin`` for this same data configuration.
+    Each box's whiskers stop at the most extreme value within 1.5
+    times the interquartile range, with more extreme points drawn
+    individually as outliers; pass ``outliers=False`` to instead
+    extend the whiskers to each group's minimum and maximum values.
 
     The orientation follows which variable is discrete, mirroring
     ``make_segmented_rug`` and the mixed tile plot so the different
@@ -3725,6 +3752,13 @@ def make_grouped_boxplot(
         discrete.
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
+    outliers : bool, optional
+        If True (default), each box's whiskers stop at the most
+        extreme value within 1.5 times the interquartile range, and
+        any points beyond that are drawn individually as outliers.
+        If False, the whiskers extend to each group's minimum and
+        maximum values, so every point falls inside the whiskers and
+        no individual outlier points are drawn.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.boxplot``.
@@ -3820,6 +3854,12 @@ def make_grouped_boxplot(
         ),
     )
     kwargs.setdefault("patch_artist", True)
+    # outliers=False stretches the whiskers to the 0th and 100th
+    # percentiles (each group's min and max), leaving nothing beyond
+    # them to draw as an individual outlier point. A default, not an
+    # override, so a user's own whis= keyword still wins.
+    if not outliers:
+        kwargs.setdefault("whis", (0, 100))
 
     boxes = ax.boxplot(data, positions=positions, orientation=orientation, **kwargs)
 

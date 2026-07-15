@@ -1383,9 +1383,13 @@ class RVResults(Results):
             ``gaussian_kde``), ``ridge=True`` (fill under each
             segmented density curve for the classic ridgeline look),
             ``contour`` and ``levels`` (2D density), ``hex=True``
-            (hexagonal bins for a 2D histogram), and ``label``
-            (legend name for hist, impulse, dot, scatter, segmented
-            density, and segmented histogram plots).
+            (hexagonal bins for a 2D histogram), ``outliers`` (box
+            plots: ``True``, the default, stops the whiskers at 1.5
+            times the interquartile range and draws more extreme
+            points individually as outliers; ``False`` extends the
+            whiskers to the minimum and maximum values instead), and
+            ``label`` (legend name for hist, impulse, dot, scatter,
+            segmented density, and segmented histogram plots).
 
         Returns
         -------
@@ -1802,6 +1806,7 @@ class RVResults(Results):
                     alpha=alpha,
                     discrete_x=discrete_x,
                     discrete_y=discrete_y,
+                    **kwargs,
                 )
 
             if "marginal" in type:
