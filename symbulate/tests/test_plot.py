@@ -52,19 +52,22 @@ from symbulate.plot import (
     SymbulatePlot,
     classify_data,
     default_plot_type,
+    get_next_color,
     suggestion_message,
     should_show_suggestion,
-    get_next_color,
     make_bar,
     BAR_ALPHA,
     make_ecdf,
     make_mosaic,
+    make_sample_path,
     make_segmented_density,
     make_segmented_hist,
     make_tile,
     make_segmented_rug,
     DEFAULT_PLOT_TYPE,
     PLOT_DISPLAY_NAME,
+    SAMPLE_PATH_ALPHA,
+    SAMPLE_PATH_LINEWIDTH,
     TILE_DEFAULT_BINS,
 )
 
@@ -1933,6 +1936,114 @@ class TestProcessPlots(PlotTestCase):
         X = RV(PoissonProcess(rate=2))
         X.sim(4).plot()
         self.assertEqual(len(plt.gca().lines), 4)
+
+    def test_ensemble_paths_share_one_color(self):
+        """Many realizations of one process read as an ensemble: one color."""
+        X = RV(MarkovChain([[0.5, 0.5], [0.3, 0.7]], [0.5, 0.5]))
+        X.sim(5).plot()
+        colors = {line.get_color() for line in plt.gca().lines}
+        self.assertEqual(len(colors), 1)
+
+    def test_ensemble_plot_has_no_legend(self):
+        """Per-path 'Path k' legend entries are suppressed for ensembles."""
+        X = RV(MarkovChain([[0.5, 0.5], [0.3, 0.7]], [0.5, 0.5]))
+        X.sim(5).plot()
+        self.assertIsNone(plt.gca().get_legend())
+
+    def test_ensemble_paths_are_solid_lines_without_markers(self):
+        """The old '.--' dot-dash format is gone: solid line, no marker."""
+        X = RV(PoissonProcess(rate=2))
+        X.sim(3).plot()
+        for line in plt.gca().lines:
+            self.assertEqual(line.get_linestyle(), "-")
+            self.assertEqual(line.get_marker(), "None")
+
+    def test_two_time_function_plots_get_distinct_colors_and_legend(self):
+        """Separate .plot() calls on realizations overlay like the prototype."""
+        X = RV(PoissonProcess(rate=2))
+        sims = X.sim(2)
+        sims.get(0).plot()
+        sims.get(1).plot()
+        ax = plt.gca()
+        self.assertEqual(len({line.get_color() for line in ax.lines}), 2)
+        legend = ax.get_legend()
+        self.assertIsNotNone(legend)
+        labels = [text.get_text() for text in legend.get_texts()]
+        self.assertEqual(labels, ["Path 1", "Path 2"])
+
+
+# ===========================================================================
+# make_sample_path
+# ===========================================================================
+
+
+class TestMakeSamplePath(PlotTestCase):
+    """The sample path helper: solid line, package defaults, auto legend."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.times = np.arange(101)
+        self.values = np.concatenate(
+            [[0], np.cumsum(np.random.choice([-1, 1], size=100))]
+        )
+
+    def draw_path(self, **kwargs):
+        ax = plt.gca()
+        return make_sample_path(
+            self.times, self.values, ax, get_next_color(ax), **kwargs
+        )
+
+    def test_draws_solid_line_without_markers(self):
+        line = self.draw_path()
+        self.assertEqual(line.get_linestyle(), "-")
+        self.assertEqual(line.get_marker(), "None")
+
+    def test_default_linewidth_and_alpha_are_package_standards(self):
+        line = self.draw_path()
+        self.assertEqual(line.get_linewidth(), SAMPLE_PATH_LINEWIDTH)
+        self.assertEqual(line.get_alpha(), SAMPLE_PATH_ALPHA)
+
+    def test_linewidth_and_alpha_overrides(self):
+        line = self.draw_path(linewidth=2.5, alpha=0.7)
+        self.assertEqual(line.get_linewidth(), 2.5)
+        self.assertEqual(line.get_alpha(), 0.7)
+
+    def test_default_labels_and_title(self):
+        self.draw_path()
+        ax = plt.gca()
+        self.assertEqual(ax.get_xlabel(), "Time")
+        self.assertEqual(ax.get_ylabel(), "Value")
+        self.assertEqual(ax.get_title(), "Sample Path")
+
+    def test_xlabel_ylabel_overrides(self):
+        self.draw_path(xlabel="t (seconds)", ylabel="Position")
+        ax = plt.gca()
+        self.assertEqual(ax.get_xlabel(), "t (seconds)")
+        self.assertEqual(ax.get_ylabel(), "Position")
+
+    def test_lone_path_has_no_legend(self):
+        self.draw_path()
+        self.assertIsNone(plt.gca().get_legend())
+
+    def test_second_path_turns_on_path_k_legend(self):
+        self.draw_path()
+        self.draw_path()
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        labels = [text.get_text() for text in legend.get_texts()]
+        self.assertEqual(labels, ["Path 1", "Path 2"])
+
+    def test_custom_label_replaces_auto_name(self):
+        self.draw_path(label="Fair coin")
+        self.draw_path(label="Biased coin")
+        labels = [text.get_text() for text in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Fair coin", "Biased coin"])
+
+    def test_underscore_label_is_kept_out_of_the_legend(self):
+        """RVResults.plot suppresses ensemble legends via '_nolegend_'."""
+        self.draw_path(label="_nolegend_")
+        self.draw_path(label="_nolegend_")
+        self.assertIsNone(plt.gca().get_legend())
 
 
 # ===========================================================================

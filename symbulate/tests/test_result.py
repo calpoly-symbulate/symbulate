@@ -834,5 +834,73 @@ class TestResultPlotsReturnWrapper(unittest.TestCase):
         self.assertIs(p.ax, plt.gca())
 
 
+# ---------------------------------------------------------------------------
+# plot() methods draw sample paths (make_sample_path)
+# ---------------------------------------------------------------------------
+
+
+class TestResultSamplePathPlots(unittest.TestCase):
+    """Result-type plot() methods draw sample paths via make_sample_path.
+
+    The old ".--" dot-dash format is replaced by a plain solid line;
+    index-based results label the x-axis "Index", time-based ones
+    "Time"; overlaid paths get distinct colors and an automatic
+    "Path 1", "Path 2", ... legend.
+    """
+
+    def tearDown(self):
+        plt.close("all")
+
+    def test_tuple_plot_is_solid_line_without_markers(self):
+        Tuple([1, 4, 2, 8, 5]).plot()
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_linestyle(), "-")
+        self.assertEqual(line.get_marker(), "None")
+
+    def test_tuple_plot_labels_index_axis(self):
+        Tuple([1, 4, 2, 8, 5]).plot()
+        ax = plt.gca()
+        self.assertEqual(ax.get_xlabel(), "Index")
+        self.assertEqual(ax.get_ylabel(), "Value")
+        self.assertEqual(ax.get_title(), "Sample Path")
+
+    def test_infinite_vector_plot_labels_index_axis(self):
+        InfiniteVector(lambda n: n**2).plot(tmin=0, tmax=5)
+        self.assertEqual(plt.gca().get_xlabel(), "Index")
+
+    def test_discrete_time_function_plot_labels_time_axis(self):
+        DiscreteTimeFunction(lambda n: n, fs=1).plot(tmin=0, tmax=5)
+        self.assertEqual(plt.gca().get_xlabel(), "Time")
+
+    def test_continuous_time_function_plot_labels_time_axis(self):
+        ContinuousTimeFunction(lambda t: np.sin(t)).plot(tmin=0, tmax=6)
+        self.assertEqual(plt.gca().get_xlabel(), "Time")
+
+    def test_overlaid_tuples_get_distinct_colors_and_legend(self):
+        Tuple([1, 4, 2, 8, 5]).plot()
+        Tuple([2, 2, 6, 3, 9]).plot()
+        ax = plt.gca()
+        self.assertEqual(len({line.get_color() for line in ax.lines}), 2)
+        legend = ax.get_legend()
+        self.assertIsNotNone(legend)
+        labels = [text.get_text() for text in legend.get_texts()]
+        self.assertEqual(labels, ["Path 1", "Path 2"])
+
+    def test_lone_path_has_no_legend(self):
+        Tuple([1, 4, 2, 8, 5]).plot()
+        self.assertIsNone(plt.gca().get_legend())
+
+    def test_explicit_color_kwarg_is_honored(self):
+        Tuple([1, 4, 2, 8, 5]).plot(color="black")
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_color(), "black")
+
+    def test_label_kwarg_names_the_path(self):
+        Tuple([1, 4, 2, 8, 5]).plot(label="First walk")
+        Tuple([2, 2, 6, 3, 9]).plot()
+        labels = [text.get_text() for text in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["First walk", "Path 2"])
+
+
 if __name__ == "__main__":
     unittest.main()

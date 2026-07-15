@@ -1763,6 +1763,11 @@ class RVResults(Results):
                 alpha = np.log(2) / np.log(len(self) + 1)
             ax = plt.gca()
             color = get_next_color(ax)
+            # All realizations share one color and read as an ensemble,
+            # so make_sample_path's per-path "Path k" legend entries
+            # would be meaningless here -- suppress them (matplotlib
+            # skips labels that start with an underscore).
+            kwargs.setdefault("label", "_nolegend_")
             for result in self.results:
                 result.plot(alpha=alpha, color=color, **kwargs)
             plt.xlabel("Index")
