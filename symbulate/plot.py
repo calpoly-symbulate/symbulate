@@ -76,6 +76,26 @@ HIST_EDGEWIDTH = 0.8
 HIST_DEFAULT_BINS = 30
 HIST_LEGEND_LOC = "upper right"
 
+# Bar chart (1D categorical / discrete): one bar per distinct value, no
+# binning -- the categorical counterpart of the histogram. Same solid
+# fill with thin white edges so adjacent bars stay visually distinct,
+# and the same alpha (bars don't overplot). Values are placed as evenly
+# spaced categories, not on a numeric axis, so string labels and gappy
+# integer supports both read as one bar per value.
+BAR_ALPHA = 0.65
+BAR_EDGECOLOR = "white"
+BAR_EDGEWIDTH = 0.8
+BAR_WIDTH = 0.8  # total width of one category's group of bars, in the
+# category spacing (categories sit one unit apart); a lone bar chart uses
+# the whole width, and overlays split it evenly between the dodged series
+BAR_LEGEND_LOC = "upper right"
+# Separator lines drawn between neighboring categories when two or more bar
+# charts overlay, so each category's dodged group reads as its own column
+# (the same tile-style boundary the dot plot draws between its stacks).
+BAR_BOUNDARY_LINE_COLOR = "#b0b0b0"
+BAR_BOUNDARY_LINE_WIDTH = 0.8
+BAR_BOUNDARY_LINE_ALPHA = 0.6
+
 # Density curve (1D). Line width per DECISIONS.md Visual Style Guide
 # (2.0 -> 1.8). Full opacity for a standalone curve: the Guide's
 # alpha=0.15 is specifically for the density-overlaid-on-a-histogram
@@ -1784,6 +1804,221 @@ def make_hist(
     if ax._hist_count > 1:
         ax.legend(loc=HIST_LEGEND_LOC)
     return histogram
+
+
+def _bar_categories(series):
+    """Union of every series' distinct values, in display order.
+
+    Sorted for a clean, stable order (numbers ascending, strings
+    alphabetical); values of mutually incomparable types (a rare
+    mixed-type outcome) fall back to first-seen order.
+    """
+    ordered = []
+    seen = set()
+    for s in series:
+        for value in count_var(s["values"]):
+            if value not in seen:
+                seen.add(value)
+                ordered.append(value)
+    try:
+        return sorted(ordered)
+    except TypeError:
+        return ordered
+
+
+def _bar_boundary_lines(ax):
+    """Draw category separator lines between the dodged groups.
+
+    With two or more overlaid bar charts, each category holds a group of
+    dodged bars, so a light vertical line halfway between neighboring
+    categories makes it clear which group belongs to which value -- the
+    tile-style boundary the dot plot draws between its stacks. A lone bar
+    chart stays boundary-free.
+    """
+    state = ax._bar_state
+    for line in state["boundary_lines"]:
+        line.remove()
+    state["boundary_lines"] = []
+    if len(state["series"]) < 2:
+        return
+    # Categories sit at integer positions 0, 1, ..., so the boundary
+    # between neighbors k and k + 1 is at k + 0.5.
+    for k in range(len(state["positions"]) - 1):
+        state["boundary_lines"].append(
+            ax.axvline(
+                k + 0.5,
+                color=BAR_BOUNDARY_LINE_COLOR,
+                linewidth=BAR_BOUNDARY_LINE_WIDTH,
+                alpha=BAR_BOUNDARY_LINE_ALPHA,
+                zorder=0,
+            )
+        )
+
+
+def _bar_relayout(ax):
+    """Redraw every bar series dodged side by side over shared categories.
+
+    Every distinct value across all series becomes one evenly spaced
+    category at an integer position. Within each category the series'
+    bars are dodged side by side, together spanning ``BAR_WIDTH``, so
+    overlaid charts sit next to each other rather than on top of one
+    another. Called whenever a new series is added.
+    """
+    state = getattr(ax, "_bar_state", None)
+    if state is None or not state["series"]:
+        return
+    series = state["series"]
+    # Clear the previous bars so they can be redrawn at their new dodged
+    # positions (a new series shifts every earlier series' bars).
+    for s in series:
+        if s["container"] is not None:
+            s["container"].remove()
+            s["container"] = None
+
+    categories = _bar_categories(series)
+    positions = np.arange(len(categories))
+    state["positions"] = positions
+    n = len(series)
+    width = BAR_WIDTH / n
+
+    for i, s in enumerate(series):
+        counts = count_var(s["values"])
+        heights = [counts.get(c, 0) for c in categories]
+        if s["normalize"]:
+            total = sum(heights)
+            if total:
+                heights = [h / total for h in heights]
+        # Dodge each series within the category: series i sits at an
+        # offset from the category center so the group straddles it
+        # symmetrically. A lone series (n == 1) has offset 0.
+        offset = (i - (n - 1) / 2) * width
+        s["container"] = ax.bar(
+            positions + offset,
+            heights,
+            width=width,
+            color=s["color"],
+            alpha=s["alpha"],
+            label=s["label"],
+            **s["kwargs"],
+        )
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels([str(c) for c in categories])
+    if len(categories) > 0:
+        ax.set_xlim(-0.5, len(categories) - 0.5)
+    _bar_boundary_lines(ax)
+
+
+def make_bar(values, ax, color, normalize=True, alpha=None, label=None, **kwargs):
+    """Draw a 1D bar chart of simulated values on the given axes.
+
+    One bar per distinct value, sized by how often that value occurred.
+    Unlike a histogram, values are never binned and never placed on a
+    numeric axis: each distinct value becomes its own evenly spaced
+    category, labeled with the value itself. This makes the bar chart
+    the right view for categorical outcomes (e.g. ``"H"`` / ``"T"``) and
+    for discrete numbers whose exact values matter, where a histogram's
+    bins would blur adjacent values together.
+
+    Drawn in the style of the histogram -- solid bars with thin white
+    edges so adjacent bars stay visually distinct. The x-axis is always
+    labeled "Value"; the y-axis label and title read "Relative
+    Frequency" / "Bar Chart" when normalized and "Count" / "Bar Chart"
+    otherwise.
+
+    Bar charts overlay as a grouped bar chart: a second call on the same
+    axes redraws every series' bars dodged side by side within each
+    category (together spanning ``BAR_WIDTH``), rather than on top of one
+    another, so no bar hides another. Light vertical separator lines
+    appear between neighboring categories, and a legend appears
+    automatically in the top right, once two or more bar charts share the
+    axes. Each is named by ``label``, or "Variable 1", "Variable 2", ...
+    in call order when no label is given. A lone bar chart takes the full
+    category width, with no separators and no legend.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working) and for advancing the color cycle with
+    ``get_next_color(ax)`` exactly once -- pass the result in as
+    ``color``. This mirrors how ``RVResults.plot()`` calls the other
+    plot helpers (``make_hist``, ``make_impulse``).
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values to count, e.g. ``RVResults.array``. May be
+        numeric or categorical (strings).
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    color : color
+        Fill color for the bars, from ``get_next_color(ax)``.
+    normalize : bool, default True
+        If True, bar heights are relative frequencies that sum to 1,
+        comparable to a pmf (each overlaid series is normalized on its
+        own). If False, bar heights are raw counts.
+    alpha : float, optional
+        Bar transparency between 0 and 1. Defaults to the package
+        standard for bar charts (``BAR_ALPHA``, 0.65).
+    label : str, optional
+        Name for this bar chart in the legend. Defaults to "Variable k",
+        where k counts the bar charts drawn on these axes so far.
+    **kwargs
+        Additional keyword arguments passed to
+        ``matplotlib.axes.Axes.bar``. The bar ``width`` is managed by the
+        grouped layout, so a ``width=`` keyword is ignored.
+
+    Returns
+    -------
+    matplotlib.container.BarContainer
+        This series' bars, as returned by ``ax.bar``, so the caller can
+        inspect or further style them.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> ax = plt.gca()
+    >>> make_bar(["H", "T", "H", "H", "T"], ax, get_next_color(ax))  # doctest: +SKIP
+    """
+    if alpha is None:
+        alpha = BAR_ALPHA
+    # The white bar edges are defaults, not overrides, so a user's own
+    # edgecolor= / linewidth= keyword still wins (the same pattern
+    # make_hist uses for edgecolor=). The bar width is owned by the
+    # grouped layout -- it splits BAR_WIDTH between the dodged series --
+    # so drop any width the caller passed.
+    kwargs.setdefault("edgecolor", BAR_EDGECOLOR)
+    kwargs.setdefault("linewidth", BAR_EDGEWIDTH)
+    kwargs.pop("width", None)
+
+    # Series live on the axes object itself (the same pattern
+    # get_next_color uses for the color cycle) so overlays from separate
+    # .plot() calls share one grouped layout.
+    state = getattr(ax, "_bar_state", None)
+    if state is None:
+        state = {"series": [], "boundary_lines": [], "positions": np.array([])}
+        ax._bar_state = state
+    if label is None:
+        label = f"Variable {len(state['series']) + 1}"
+    state["series"].append(
+        {
+            "values": values,
+            "color": color,
+            "label": label,
+            "normalize": normalize,
+            "alpha": alpha,
+            "kwargs": kwargs,
+            "container": None,
+        }
+    )
+
+    _bar_relayout(ax)
+    ax.set_xlabel("Value")
+    ax.set_ylabel("Relative Frequency" if normalize else "Count")
+    ax.set_title("Bar Chart")
+    # A legend only helps once there is more than one bar chart to tell
+    # apart; a lone bar chart stays legend-free.
+    if len(state["series"]) > 1:
+        ax.legend(loc=BAR_LEGEND_LOC)
+    return state["series"][-1]["container"]
 
 
 def make_boxplot(values, ax, color, alpha=None, label=None, **kwargs):

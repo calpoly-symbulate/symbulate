@@ -54,6 +54,9 @@ from symbulate.plot import (
     default_plot_type,
     suggestion_message,
     should_show_suggestion,
+    get_next_color,
+    make_bar,
+    BAR_ALPHA,
     make_ecdf,
     make_mosaic,
     make_segmented_density,
@@ -170,9 +173,10 @@ class TestPlot1DContinuous(PlotTestCase):
         self.sims.plot(bins=50)
         self.assertEqual(len(plt.gca().patches), 50)
 
-    def test_bar_type_is_alias_for_hist(self):
-        self.sims.plot(type="bar")
-        self.assertGreater(len(plt.gca().patches), 0)
+    def test_bar_type_produces_bar_chart_not_hist(self):
+        """type='bar' is now a distinct bar chart, no longer a hist alias."""
+        self.sims.plot(type="bar", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Bar Chart")
 
     def test_density_produces_exactly_one_line(self):
         self.sims.plot(type="density")
@@ -650,6 +654,108 @@ class TestPlot1DHistStyling(PlotTestCase):
         RV(Normal(3, 1)).sim(600).plot(label="Second")
         labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
         self.assertIn("Second", labels)
+
+
+class TestPlot1DBar(PlotTestCase):
+    """The integrated make_bar: a no-binning categorical/discrete bar chart."""
+
+    def setUp(self):
+        np.random.seed(42)
+
+    def test_bar_categorical_one_bar_per_value(self):
+        """One bar per distinct category; normalized heights sum to 1."""
+        ax = plt.gca()
+        make_bar(
+            ["red", "green", "blue", "red", "red", "green"], ax, get_next_color(ax)
+        )
+        self.assertEqual(len(ax.patches), 3)
+        self.assertAlmostEqual(sum(p.get_height() for p in ax.patches), 1.0, places=10)
+
+    def test_bar_categories_sorted(self):
+        """Distinct values are placed in sorted (here alphabetical) order."""
+        ax = plt.gca()
+        make_bar(["c", "a", "b", "a"], ax, get_next_color(ax))
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["a", "b", "c"])
+
+    def test_bar_count_mode_integer_heights(self):
+        """normalize=False gives raw integer counts and a Count y-label."""
+        ax = plt.gca()
+        make_bar(["a", "a", "b"], ax, get_next_color(ax), normalize=False)
+        self.assertEqual(ax.get_ylabel(), "Count")
+        self.assertEqual(sorted(p.get_height() for p in ax.patches), [1.0, 2.0])
+
+    def test_bar_xlabel_and_title(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        self.assertEqual(ax.get_xlabel(), "Value")
+        self.assertEqual(ax.get_title(), "Bar Chart")
+
+    def test_bar_default_alpha(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        self.assertAlmostEqual(ax.patches[0].get_alpha(), BAR_ALPHA)
+
+    def test_bar_explicit_alpha_wins(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax), alpha=0.3)
+        self.assertAlmostEqual(ax.patches[0].get_alpha(), 0.3)
+
+    def test_single_bar_has_no_legend(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        self.assertIsNone(ax.get_legend())
+
+    def test_overlaid_bars_get_variable_k_legend(self):
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        make_bar(["a", "c"], ax, get_next_color(ax))
+        legend = ax.get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Variable 2"])
+
+    def test_overlay_shares_union_of_categories(self):
+        """Overlaid series share one sorted axis of every distinct value."""
+        ax = plt.gca()
+        make_bar(["a", "b"], ax, get_next_color(ax))
+        make_bar(["b", "c"], ax, get_next_color(ax))
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["a", "b", "c"])
+
+    def test_overlay_dodges_bars_side_by_side(self):
+        """Within a shared category, the two series' bars sit at different x."""
+        ax = plt.gca()
+        make_bar(["a", "a", "b"], ax, get_next_color(ax))
+        make_bar(["a", "b", "b"], ax, get_next_color(ax))
+        state = ax._bar_state
+        # Category "a" is position 0; each series' bar for it is offset from 0.
+        centers = [
+            s["container"].patches[0].get_x()
+            + s["container"].patches[0].get_width() / 2
+            for s in state["series"]
+        ]
+        self.assertNotAlmostEqual(centers[0], centers[1])
+        # The two bars are dodged by exactly one bar width (no overlap).
+        widths = [s["container"].patches[0].get_width() for s in state["series"]]
+        self.assertAlmostEqual(abs(centers[0] - centers[1]), widths[0])
+
+    def test_overlay_draws_category_boundary_lines(self):
+        """Overlaid bar charts get one separator between each pair of levels."""
+        ax = plt.gca()
+        make_bar(["a", "b", "c"], ax, get_next_color(ax))
+        self.assertEqual(len(ax._bar_state["boundary_lines"]), 0)  # lone chart: none
+        make_bar(["a", "b", "c"], ax, get_next_color(ax))
+        # Three categories -> two interior boundaries, at x = 0.5 and 1.5.
+        xs = sorted(line.get_xdata()[0] for line in ax._bar_state["boundary_lines"])
+        self.assertEqual(xs, [0.5, 1.5])
+
+    def test_bar_numeric_discrete_via_plot_dispatch(self):
+        """type='bar' on a discrete RV routes to make_bar (one bar per face)."""
+        RV(BoxModel([1, 2, 3, 4, 5, 6])).sim(600).plot(type="bar", suggest=False)
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Bar Chart")
+        self.assertEqual(len(ax.patches), 6)
 
 
 class TestPlot1DDensityFeatures(PlotTestCase):
