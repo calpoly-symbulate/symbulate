@@ -595,6 +595,54 @@ class TestPlot2DViolin(PlotTestCase):
                 sims.plot(type="violin", suggest=False)
         self.assertIn("second violin plot", buf.getvalue())
 
+    def test_violin_tick_position_matches_its_own_label(self):
+        """Regression test: tick marks must sit at the same x-position as
+        the violin body they label, not one unit off. Binomial(5, 0.4)'s
+        support (0-5) happens to make the old positions + 1 bug
+        invisible, so this uses a die roll (1-6) instead, where the old
+        bug placed every tick one unit away from its violin."""
+        X, Y = RV(BoxModel([1, 2, 3, 4, 5, 6]) * Normal(0, 1))
+        sims = (X & Y).sim(300)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            sims.plot(type="violin")
+        ax = plt.gca()
+        xticks = list(ax.get_xticks())
+        labels = [float(t.get_text()) for t in ax.get_xticklabels() if t.get_text()]
+        self.assertEqual(xticks, labels)
+
+    def test_violin_categorical_group_labels_do_not_crash(self):
+        """Regression test: a categorical (non-numeric) discrete axis used
+        to crash with a numpy UFuncTypeError from `positions + 1`."""
+        from symbulate.plot import make_violin, get_next_color
+
+        data = np.column_stack(
+            [
+                np.array(["H"] * 20 + ["T"] * 20, dtype=object),
+                np.random.normal(0, 1, 40),
+            ]
+        )
+        ax = plt.gca()
+        make_violin(data, ["H", "T"], ax, get_next_color(ax), "x", 0.5)
+        labels = [t.get_text() for t in ax.get_xticklabels() if t.get_text()]
+        self.assertEqual(labels, ["H", "T"])
+
+    def test_violin_two_discrete_raises_friendly_error(self):
+        """Regression test: two discrete variables used to silently draw
+        nothing instead of raising, unlike make_grouped_boxplot."""
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="violin")
+        self.assertIn("tile", str(cm.exception))
+
+    def test_violin_two_continuous_raises_friendly_error(self):
+        """Regression test: two continuous variables used to silently draw
+        nothing instead of raising, unlike make_grouped_boxplot."""
+        X, Y = RV(Normal(0, 1) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="violin")
+        self.assertIn("scatter", str(cm.exception))
+
 
 # ===========================================================================
 # New integrated plot types and options (graphics overhaul, Phase 2)
