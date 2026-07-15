@@ -56,6 +56,7 @@ from symbulate.plot import (
     should_show_suggestion,
     make_ecdf,
     make_mosaic,
+    make_segmented_density,
     make_tile,
     make_segmented_rug,
     DEFAULT_PLOT_TYPE,
@@ -1277,6 +1278,88 @@ class TestPlot2DBox(PlotTestCase):
         with self.assertRaises(ValueError) as cm:
             (X & Y).sim(200).plot(type="box")
         self.assertIn("scatter", str(cm.exception))
+
+
+class TestPlot2DSegmentedDensity(PlotTestCase):
+    """The new type='segmented_density' for mixed discrete/continuous data."""
+
+    def setUp(self):
+        np.random.seed(42)
+
+    def test_segmented_density_discrete_x_continuous_y(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        sims = (X & Y).sim(500)
+        sims.plot(type="segmented_density")
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Segmented Density Plot")
+        # One PolyCollection ridge per observed level of X
+        n_levels = len(np.unique(sims.array[:, 0]))
+        self.assertEqual(len(ax.collections), n_levels)
+        # Discrete x -> flipped orientation: baselines on the x-axis
+        self.assertEqual(len(ax.get_xticks()), n_levels)
+
+    def test_segmented_density_continuous_x_discrete_y(self):
+        X, Y = RV(Normal(0, 1) * Binomial(5, 0.4))
+        sims = (X & Y).sim(500)
+        sims.plot(type="segmented_density")
+        ax = plt.gca()
+        # Discrete y -> classic orientation: baselines on the y-axis
+        n_levels = len(np.unique(sims.array[:, 1]))
+        self.assertEqual(len(ax.collections), n_levels)
+        self.assertEqual(len(ax.get_yticks()), n_levels)
+
+    def test_segmented_density_two_discrete_raises_friendly_error(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="segmented_density")
+        self.assertIn("tile", str(cm.exception))
+
+    def test_segmented_density_two_continuous_raises_friendly_error(self):
+        X, Y = RV(Normal(0, 1) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(200).plot(type="segmented_density")
+        self.assertIn("scatter", str(cm.exception))
+
+    def test_segmented_density_bandwidth_passes_through(self):
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        (X & Y).sim(500).plot(type="segmented_density", bandwidth=0.2)
+        self.assertGreater(len(plt.gca().collections), 0)
+
+    def test_segmented_density_sparse_level_falls_back_to_ticks(self):
+        # Level 9 has a single observation: no KDE is possible, so it
+        # becomes baseline tick marks (a LineCollection) plus a printed
+        # note saying what happened and how to fix it.
+        values = np.append(np.random.normal(0, 1, 90), 4.0)
+        groups = np.append(np.repeat([0, 1, 2], 30), 9)
+        ax = plt.gca()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            artists = make_segmented_density(values, groups, ax, "#56B4E9")
+        self.assertIn("tick marks", out.getvalue())
+        self.assertIn("9", out.getvalue())
+        # 3 dense ridges + 1 tick collection, one artist per level
+        self.assertEqual(len(artists), 4)
+
+    def test_segmented_density_overlay_legend_names(self):
+        values = np.random.normal(0, 1, 120)
+        groups = np.repeat([0, 1, 2], 40)
+        ax = plt.gca()
+        make_segmented_density(values, groups, ax, "#56B4E9")
+        self.assertIsNone(ax.get_legend())  # a lone batch has no legend
+        make_segmented_density(values + 1, groups, ax, "#E69F00")
+        legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
+        self.assertEqual(legend_texts, ["Variable 1", "Variable 2"])
+
+    def test_segmented_density_is_a_mixed_data_alternative(self):
+        self.assertIn(
+            "segmented_density", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"]
+        )
+        self.assertIn(
+            "segmented_density", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"]
+        )
+        self.assertEqual(
+            PLOT_DISPLAY_NAME["segmented_density"], "Segmented Density Plot"
+        )
 
 
 # ===========================================================================
