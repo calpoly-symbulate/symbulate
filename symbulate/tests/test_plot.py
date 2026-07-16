@@ -74,6 +74,7 @@ from symbulate.plot import (
     SAMPLE_PATH_LINEWIDTH,
     TILE_DEFAULT_BINS,
 )
+from symbulate.results import RVResults
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1171,10 +1172,16 @@ class TestPlot1DBoxStyling(PlotTestCase):
                 if line.get_linestyle() == "None"
             )
 
-        self.sims.plot(type="box")
+        # A planted extreme value is always a flier under the default
+        # 1.5-IQR rule, so the assertion does not depend on a random draw
+        # happening to contain an outlier (Normal(0, 1) sometimes has
+        # none). self.sims uses the package RNG, which np.random.seed does
+        # not control, so plotting it directly made this test flaky.
+        planted = RVResults(np.append(np.random.normal(0, 1, 200), 25.0))
+        planted.plot(type="box")
         self.assertGreater(n_flier_points(), 0)
         plt.close("all")
-        self.sims.plot(type="box", outliers=False)
+        planted.plot(type="box", outliers=False)
         self.assertEqual(n_flier_points(), 0)
 
     def test_box_returns_wrapper(self):
@@ -1642,6 +1649,33 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         self.assertEqual(len(fills), n_levels)
         self.assertEqual(len(ax.lines), n_levels)
 
+    def test_segmented_density_baselines_full_width_and_on_top(self):
+        """Each level's baseline is a grey gridline-styled line spanning the
+        full axes (x endpoints 0 and 1 in axes fractions, so it touches both
+        edges like the segmented rug plot) and drawn on top of the ridges, so
+        it stays continuous even under a ridge=True fill. A value grid runs
+        along the continuous axis only."""
+        import matplotlib.colors as mcolors
+
+        values = np.random.normal(0, 1, 120)  # continuous x
+        groups = np.repeat([0, 1, 2], 40)  # discrete y (levels)
+        ax = plt.gca()
+        make_segmented_density(values, groups, ax, "#56B4E9")
+        grey = mcolors.to_rgba(plt.rcParams["grid.color"])
+        baselines = [
+            c
+            for c in ax.collections
+            if len(c.get_color()) and np.allclose(c.get_color()[0][:3], grey[:3])
+        ]
+        self.assertEqual(len(baselines), 3)
+        for base in baselines:
+            xs = [pt[0] for seg in base.get_segments() for pt in seg]
+            self.assertEqual((min(xs), max(xs)), (0.0, 1.0))  # full width
+            self.assertGreater(base.get_zorder(), 1)
+        # Value grid along the continuous axis (x), not the discrete (y).
+        self.assertTrue(any(gl.get_visible() for gl in ax.xaxis.get_gridlines()))
+        self.assertFalse(any(gl.get_visible() for gl in ax.yaxis.get_gridlines()))
+
     def test_segmented_density_two_discrete_raises_friendly_error(self):
         X, Y = RV(Binomial(5, 0.4) ** 2)
         with self.assertRaises(ValueError) as cm:
@@ -1785,31 +1819,36 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
         self.assertEqual(legend_texts, ["Variable 1", "Variable 2"])
 
-    def test_segmented_hist_grey_baseline_shelves_and_value_grid(self):
-        """Each level sits on its own baseline shelf styled like a gridline
-        (grid.* rcParams, not the series color), and the reference grid runs
-        only along the continuous axis -- not the discrete one, where it
-        would vanish under the bars."""
+    def test_segmented_hist_baselines_full_width_and_on_top(self):
+        """Each level's baseline is a grey gridline-styled line that spans the
+        full axes (x endpoints 0 and 1 in axes fractions, so it touches both
+        edges like the segmented rug plot) and sits on top of the bars, so it
+        stays continuous across each histogram instead of vanishing where the
+        bars cover it. A value grid still runs along the continuous axis
+        only."""
         import matplotlib.colors as mcolors
 
         values = np.random.normal(0, 1, 300)  # continuous x
         groups = np.repeat([0, 1, 2], 100)  # discrete y (levels)
         ax = plt.gca()
         make_segmented_hist(values, groups, ax, "#56B4E9")
-        # One baseline (a LineCollection) per level, in the gridline color
-        # with the gridline width -- not the blue series color, so the old
-        # colored underline is gone.
         grey = mcolors.to_rgba(plt.rcParams["grid.color"])
         baselines = [
             c
             for c in ax.collections
             if len(c.get_color()) and np.allclose(c.get_color()[0][:3], grey[:3])
         ]
+        # One baseline per level, styled like the reference grid.
         self.assertEqual(len(baselines), 3)
-        for shelf in baselines:
-            self.assertEqual(shelf.get_linewidth()[0], plt.rcParams["grid.linewidth"])
-            self.assertEqual(shelf.get_alpha(), plt.rcParams["grid.alpha"])
-        # Value grid along the continuous axis (x); none on the discrete (y).
+        for base in baselines:
+            self.assertEqual(base.get_linewidth()[0], plt.rcParams["grid.linewidth"])
+            self.assertEqual(base.get_alpha(), plt.rcParams["grid.alpha"])
+            # Full width: x endpoints are 0 and 1 (axes fractions), and it
+            # sits on top of the bars (default patch zorder is 1).
+            xs = [pt[0] for seg in base.get_segments() for pt in seg]
+            self.assertEqual((min(xs), max(xs)), (0.0, 1.0))
+            self.assertGreater(base.get_zorder(), 1)
+        # Value grid runs along the continuous axis (x), not the discrete (y).
         self.assertTrue(any(gl.get_visible() for gl in ax.xaxis.get_gridlines()))
         self.assertFalse(any(gl.get_visible() for gl in ax.yaxis.get_gridlines()))
 

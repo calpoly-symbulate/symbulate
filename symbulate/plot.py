@@ -146,14 +146,13 @@ SEGMENTED_DENSITY_FILL_ALPHA = 0.4  # translucent ridge=True fill; the
 # curve on top stays opaque
 SEGMENTED_DENSITY_LINEWIDTH = 1.8  # ridge outlines are density curves, so this
 # matches DENSITY_LINEWIDTH
-# Each level's baseline is drawn as a shelf styled exactly like a
-# reference gridline -- color, width, and alpha are read from the
-# grid.* rcParams (symbulate.mplstyle, the single source of truth) at
-# draw time, so it can never drift out of sync with the grid. The only
-# difference from a real gridline is zorder: the shelf sits on top of
-# the ridges so a ridge=True fill can't wash it out. The segmented
-# histogram draws the same shelf, so the two segmented plots of one
-# dataset read identically.
+# Each level's baseline is a grey line styled like a reference gridline
+# -- color, width, and alpha come from the grid.* rcParams in
+# symbulate.mplstyle. A blended transform makes it span the full axes and
+# touch both edges (like the segmented rug plot's gridlines), and it is
+# drawn on top of the ridges (zorder=2) so a ridge=True fill can't wash it
+# out. The segmented histogram draws its baselines the same way, so the
+# two segmented plots of one dataset read identically.
 SEGMENTED_DENSITY_PEAK_SCALE = 1.6  # tallest peak's height, in units of the
 # spacing between neighboring baselines; > 1 gives the gentle overlap
 # that makes the stacked ridges read as one connected picture
@@ -178,12 +177,13 @@ SEGMENTED_HIST_ALPHA = 0.65  # matches HIST_ALPHA -- the bars are
 SEGMENTED_HIST_EDGECOLOR = "white"  # matches HIST_EDGECOLOR
 SEGMENTED_HIST_EDGEWIDTH = 0.8  # matches HIST_EDGEWIDTH
 SEGMENTED_HIST_PEAK_SCALE = 1.6  # matches SEGMENTED_DENSITY_PEAK_SCALE
-# Each level's baseline is drawn as a shelf styled exactly like a
-# reference gridline -- color, width, and alpha are read from the
-# grid.* rcParams (symbulate.mplstyle, the single source of truth) at
-# draw time, so it can never drift out of sync with the grid. The only
-# difference from a real gridline is zorder: the shelf sits on top of
-# the bars, where a real gridline would be hidden under them.
+# Each level's baseline is a grey line styled like a reference gridline
+# -- color, width, and alpha come from the grid.* rcParams in
+# symbulate.mplstyle. A blended transform makes it span the full axes and
+# touch both edges (like the segmented rug plot's gridlines), and it is
+# drawn on top of the bars (zorder=2) so the baseline stays continuous
+# across each histogram instead of vanishing where the bars cover it,
+# exactly like the segmented density plot.
 SEGMENTED_HIST_LEGEND_LOC = "upper right"
 SEGMENTED_HIST_TICK_FRAC = 0.2  # matches SEGMENTED_DENSITY_TICK_FRAC
 SEGMENTED_HIST_TICK_LINEWIDTH = 1.0  # matches RUG_LINEWIDTH
@@ -3071,13 +3071,12 @@ def make_segmented_density(
     level's baseline instead (a tiny rug), and a note explains which
     levels fell back and why.
 
-    Each level's curve sits on its own baseline styled exactly like a
-    reference gridline (a shelf spanning the shared KDE range, drawn on
-    top so it stays visible through a ``ridge=True`` fill) -- the same
-    shelf the segmented histogram draws. A light reference grid sits
-    behind the ridges along the continuous axis only, for reading
-    values off the curves; the discrete axis needs no gridlines because
-    the shelves already mark every level.
+    Each level's curve sits on its own baseline: a grey line spanning
+    the full axes and touching both edges -- one per level, matching the
+    segmented rug plot's gridlines. It is drawn on top of the ridges so
+    it stays continuous across every level, even under a ``ridge=True``
+    fill. A light reference grid also runs along the continuous axis, for
+    reading values off the curves.
 
     Segmented density plots overlay naturally: a second call on the same
     axes
@@ -3256,17 +3255,24 @@ def make_segmented_density(
     for level in sorted(levels, key=positions.get, reverse=True):
         base = positions[level]
         batch_label = label if not artists else None
-        # Each level gets its own baseline spanning the shared KDE
-        # range -- a shelf the curve sits on, styled exactly like a
-        # reference gridline (same grid.* rcParams from
-        # symbulate.mplstyle). It is drawn on top (zorder=2) so a
-        # ridge=True fill from the row below can't wash it out,
-        # mirroring the segmented histogram's shelf.
+        # Each level's baseline is a grey line styled like a reference
+        # gridline (grid.* rcParams from symbulate.mplstyle). The blended
+        # transform makes it span the full axes and touch both edges --
+        # 0 and 1 are axes fractions along the value axis, base is in data
+        # units on the discrete axis -- like the segmented rug plot's
+        # gridlines. zorder=2 keeps it on top of the ridges so a
+        # ridge=True fill can't wash it out and it stays continuous across
+        # every level. The segmented histogram draws its baselines the
+        # same way.
         base_line = ax.hlines if discrete_y else ax.vlines
+        base_transform = (
+            ax.get_yaxis_transform() if discrete_y else ax.get_xaxis_transform()
+        )
         base_line(
             base,
-            vmin,
-            vmax,
+            0,
+            1,
+            transform=base_transform,
             color=plt.rcParams["grid.color"],
             linewidth=plt.rcParams["grid.linewidth"],
             alpha=plt.rcParams["grid.alpha"],
@@ -3298,9 +3304,9 @@ def make_segmented_density(
                 **kwargs,
             )
         else:
-            # Too sparse for a density estimate: a tiny rug on the
-            # baseline (the grey shelf drawn above) keeps the level
-            # (and its data) visible.
+            # Too sparse for a density estimate: a tiny rug rising from
+            # the level's baseline keeps the level (and its data)
+            # visible.
             values = continuous[groups == level]
             lines = ax.vlines if discrete_y else ax.hlines
             artists[level] = lines(
@@ -3340,17 +3346,15 @@ def make_segmented_density(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Segmented Density Plot")
-    # Reference gridlines only along the continuous axis, for reading
-    # values off the curves. The discrete axis gets no gridlines: each
-    # level's baseline is the explicit grey shelf drawn above (a
-    # discrete-axis gridline would sit behind a ridge=True fill and
-    # appear to wash out under it). axisbelow keeps the value grid
-    # behind the ridges; its color and width come from
-    # symbulate.mplstyle. Mirrors the segmented histogram exactly.
+    # A light reference grid along the continuous axis only, for reading
+    # values off the curves. The discrete axis needs no grid line: each
+    # level's baseline (the full-width grey line drawn on top above)
+    # already marks it. axisbelow keeps the value grid behind the ridges;
+    # its color and width come from symbulate.mplstyle. Mirrors the
+    # segmented histogram exactly.
     ax.set_axisbelow(True)
-    # Clear the style sheet's default y-grid first, then enable the
-    # grid on the continuous axis only (the discrete axis uses the grey
-    # baselines).
+    # Clear the style sheet's default single-axis grid first, then enable
+    # it on the continuous axis only.
     ax.grid(False)
     ax.grid(True, axis="x" if discrete_y else "y")
     # A legend only helps once there is more than one batch to tell
@@ -3408,10 +3412,12 @@ def make_segmented_hist(
     bar would dwarf every real histogram under the shared density
     scale), and a note explains which levels fell back and why.
 
-    Each level's histogram sits on its own baseline styled exactly like
-    a reference gridline (a shelf spanning that level's bin range), and
-    a light reference grid runs along the continuous axis for reading
-    values off the bars.
+    Each level's histogram sits on its own baseline: a grey line
+    spanning the full axes and touching both edges -- one per level,
+    matching the segmented rug plot's gridlines. It is drawn on top of
+    the bars so it stays continuous across each histogram instead of
+    vanishing where the bars cover it. A light reference grid also runs
+    along the continuous axis for reading values off the bars.
 
     Segmented histograms overlay naturally: a second call on the same
     axes draws a second set of histograms on the same baselines (levels
@@ -3584,19 +3590,23 @@ def make_segmented_hist(
     for level in sorted(levels, key=positions.get, reverse=True):
         base = positions[level]
         batch_label = label if not artists else None
-        # Each level gets its own baseline spanning that level's bin
-        # range -- a shelf the small histogram sits on, styled exactly
-        # like a reference gridline (same grid.* rcParams from
-        # symbulate.mplstyle). It is drawn on top of the bars
-        # (zorder=2, above the default-zorder patches) so it stays
-        # continuous under the whole histogram; a plain reference
-        # gridline would be hidden where the bars sit on it, making the
-        # base look like it vanishes in the middle.
+        # Each level's baseline is a grey line styled like a reference
+        # gridline (grid.* rcParams from symbulate.mplstyle). The blended
+        # transform makes it span the full axes and touch both edges --
+        # 0 and 1 are axes fractions along the value axis, base is in data
+        # units on the discrete axis -- like the segmented rug plot's
+        # gridlines. zorder=2 keeps it on top of the bars so the baseline
+        # stays continuous across each histogram instead of vanishing
+        # where the bars cover it. Mirrors the segmented density plot.
         base_line = ax.hlines if discrete_y else ax.vlines
+        base_transform = (
+            ax.get_yaxis_transform() if discrete_y else ax.get_xaxis_transform()
+        )
         base_line(
             base,
-            edges[0],
-            edges[-1],
+            0,
+            1,
+            transform=base_transform,
             color=plt.rcParams["grid.color"],
             linewidth=plt.rcParams["grid.linewidth"],
             alpha=plt.rcParams["grid.alpha"],
@@ -3667,15 +3677,14 @@ def make_segmented_hist(
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Segmented Histogram")
-    # Reference gridlines only along the continuous axis, for reading
-    # values off the bars. The discrete axis gets no gridlines: each
-    # level's baseline is the explicit grey shelf drawn above (a discrete-
-    # axis gridline would sit behind the bars and appear to vanish under
-    # them). axisbelow keeps the value grid behind the bars; its color and
-    # width come from symbulate.mplstyle.
+    # A light reference grid along the continuous axis only, for reading
+    # values off the bars. The discrete axis needs no grid line: each
+    # level's baseline (the full-width grey line drawn on top above)
+    # already marks it. axisbelow keeps the value grid behind the bars;
+    # its color and width come from symbulate.mplstyle.
     ax.set_axisbelow(True)
-    # Clear the style sheet's default y-grid first, then enable the grid on
-    # the continuous axis only (the discrete axis uses the grey baselines).
+    # Clear the style sheet's default single-axis grid first, then enable
+    # it on the continuous axis only.
     ax.grid(False)
     ax.grid(True, axis="x" if discrete_y else "y")
     # A legend only helps once there is more than one batch to tell
