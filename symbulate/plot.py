@@ -5,7 +5,6 @@ import warnings
 import numpy as np
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as pe
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -341,16 +340,38 @@ MOSAIC_LEGEND_BBOX = (1.02, 0.5)  # legend sits outside the axes, to the
 # patch's own edgecolor (which stays unset -- see above), so the pattern
 # stays visible without reintroducing a border around every cell.
 MOSAIC_HATCH_PATTERNS = ["", "//", "xx", "..", "oo"]
-MOSAIC_MIN_LABEL_HEIGHT = 0.04  # a cell's count/percentage label is only
-# drawn if the cell is at least this tall...
+MOSAIC_MIN_LABEL_HEIGHT = 0.04  # a cell's count/decimal-proportion label
+# is only drawn if the cell is at least this tall...
 MOSAIC_MIN_LABEL_WIDTH = 0.05  # ...and at least this wide (both in
 # [0, 1] axis-fraction units), so labels never crowd tiny cells
 MOSAIC_LABEL_FONT_SIZE = 9
-MOSAIC_LABEL_STROKE_WIDTH = 2  # white outline behind the label text so
-# it stays readable against every Okabe-Ito color, including the darker
-# blue
-MOSAIC_LABEL_DECIMALS = 1  # decimal places for percentage labels (e.g.
-# "18.2%"); raw counts (normalize=False) are always whole numbers
+MOSAIC_LABEL_DECIMALS = 2  # decimal places for the in-cell decimal
+# proportion labels (e.g. "0.18"), matching the y-axis's own 2-decimal
+# tick format; raw counts (normalize=False) are always whole numbers
+MOSAIC_LABEL_LUMINANCE_THRESHOLD = 0.5  # perceived luminance (ITU-R
+# BT.709 weights, 0=black to 1=white) above which black label text reads
+# better than white against that cell's fill color -- e.g. the palette's
+# yellow and sky blue land above this line (black text), its dark blue
+# and green fall below it (white text)
+
+MOSAIC_MARGINAL_WIDTH_FRAC = 0.035  # width, in [0, 1] axis-fraction
+# units, reserved for the extra reference column showing y's marginal
+# distribution (see marginal_column= below) -- deliberately skinny,
+# since it's a color reference to compare the real columns against, not
+# real data to read counts or proportions off of (it never gets in-cell
+# labels, regardless of annotate=)
+MOSAIC_MARGINAL_GAP = 0.03  # gap between the real columns and the
+# marginal reference column -- wider than MOSAIC_COLUMN_GAP so the break
+# reads as "this one isn't a real x category" rather than just another
+# column
+MOSAIC_LEGEND_LABEL_GAP = 0.02  # gap, in [0, 1] axis-fraction units,
+# between the marginal column's right edge and its category-name labels
+# -- these double as the plot's legend (see make_mosaic's legend=)
+
+MOSAIC_YAXIS_TICKS = [0.0, 0.25, 0.5, 0.75, 1.0]  # every column's
+# segments -- real or marginal -- independently span 0 to 1 as a
+# cumulative share of that column, so unlike the x-axis, one shared
+# proportion scale on the left is meaningful across every column
 
 MOSAIC_OVERLAY_WARNING = (
     "Warning: you drew a second mosaic plot on the same axes. A mosaic "
@@ -1113,7 +1134,7 @@ def make_tile(
     return mesh
 
 
-def _mosaic_spans(weights, gap):
+def _mosaic_spans(weights, gap, total=1.0):
     """Left edges and widths for a row of segments with fixed gaps.
 
     Parameters
@@ -1124,24 +1145,50 @@ def _mosaic_spans(weights, gap):
     gap : float
         Fixed gap, in the same [0, 1] units as the returned spans,
         reserved between each pair of adjacent segments.
+    total : float, default 1.0
+        The span the segments (plus their gaps) fill, starting at 0.
+        The default fills the whole axes; a mosaic plot that reserves
+        part of the axes for a marginal reference column (see
+        ``make_mosaic``'s ``marginal_column=``) passes a smaller value
+        here so the real columns fill only the remaining space.
 
     Returns
     -------
     tuple of numpy.ndarray
         ``(starts, widths)``. Segment ``i`` spans ``[starts[i],
         starts[i] + widths[i]]``; consecutive segments are separated by
-        exactly ``gap``, and the whole row spans exactly ``[0, 1]``. A
-        segment with weight 0 gets width 0 (invisible), but still
+        exactly ``gap``, and the whole row spans exactly ``[0, total]``.
+        A segment with weight 0 gets width 0 (invisible), but still
         occupies its slot -- and its gap -- in the layout.
     """
     weights = np.asarray(weights, dtype=float)
     n = len(weights)
     total_gap = gap * max(n - 1, 0)
-    available = max(1.0 - total_gap, 0.0)
+    available = max(total - total_gap, 0.0)
     total_weight = weights.sum()
     widths = weights / total_weight * available if total_weight > 0 else weights
     starts = np.concatenate([[0.0], np.cumsum(widths + gap)[:-1]])
     return starts, widths
+
+
+def _readable_text_color(bg_color):
+    """Pick a label text color that stays readable on ``bg_color``.
+
+    Parameters
+    ----------
+    bg_color : color
+        Any matplotlib color spec (hex string, named color, RGB tuple).
+
+    Returns
+    -------
+    str
+        ``"black"`` for a light background, ``"white"`` for a dark one,
+        based on ``bg_color``'s perceived luminance (see
+        ``MOSAIC_LABEL_LUMINANCE_THRESHOLD``).
+    """
+    r, g, b = mcolors.to_rgb(bg_color)
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return "black" if luminance > MOSAIC_LABEL_LUMINANCE_THRESHOLD else "white"
 
 
 def make_mosaic(
@@ -1153,6 +1200,7 @@ def make_mosaic(
     legend=True,
     x_label="X",
     y_label="Y",
+    marginal_column=True,
     **kwargs,
 ):
     """Draw a mosaic plot of simulated (x, y) pairs on the given axes.
@@ -1171,14 +1219,36 @@ def make_mosaic(
 
     Segments are colored by ``y`` category, one color per distinct
     value from the package's categorical palette (Okabe-Ito, from
-    ``symbulate.mplstyle``), consistent across every column, with a
-    legend placed outside the axes (an in-plot legend would sit on top
-    of real data, since the mosaic fills the whole axes). With more than
-    7 distinct ``y`` values, colors repeat -- each repeat also adds a
-    hatch pattern, so two categories never look identical in the plot or
-    the legend, and a warning explains why. Small gaps separate columns
-    and the segments within each column so the plot reads as a mosaic of
-    distinct tiles.
+    ``symbulate.mplstyle``), consistent across every column. With more
+    than 7 distinct ``y`` values, colors repeat -- each repeat also adds
+    a hatch pattern, so two categories never look identical, and a
+    warning explains why. Small gaps separate columns and the segments
+    within each column so the plot reads as a mosaic of distinct tiles.
+    Each in-cell label switches between black and white text (see
+    ``_readable_text_color``) so it stays legible against its own
+    cell's color, whichever end of the palette that is.
+
+    With ``marginal_column=True`` (the default), one extra, deliberately
+    skinny column is added after the real ``x`` columns, set off by a
+    wider gap. Instead of a conditional distribution of ``y`` within one
+    ``x`` value, its segments show ``y``'s *marginal* distribution --
+    ``y``'s overall shape with ``x`` ignored entirely. Placed next to
+    the real columns, it gives a visual baseline: a real column whose
+    segments look like the marginal column suggests ``x`` and ``y`` are
+    close to independent there, while one that looks different suggests
+    an association -- the conditional-vs-marginal comparison a mosaic
+    plot is meant to support. It's a color reference only, not real data
+    to read counts off of, so it never gets in-cell labels -- instead,
+    each of its segments carries its category name just to its right
+    (see ``legend`` below), so the marginal column doubles as the
+    plot's legend instead of a separate floating legend box. Its
+    x-tick label is ``y_label`` itself (e.g. "Y", the default), since
+    the column represents ``y``'s own distribution.
+
+    A shared proportion scale (0 to 1) is shown on the left of the
+    axes: every column's segments, real or marginal, independently span
+    0 to 1 as a cumulative share of that column, so this one scale
+    applies the same way to every column.
 
     Meant for two discrete-ish variables -- the same configuration
     ``tile`` targets. Continuous data is not binned here: every
@@ -1209,23 +1279,39 @@ def make_mosaic(
         Only affects the in-cell labels (the geometry is always
         proportion-based, since column widths and segment heights must
         sum to 1 by construction). If True, labels show each cell's
-        joint relative frequency as a percentage (e.g. "18.2%"). If
-        False, labels show the raw count instead.
+        frequency conditional on that column's own ``x`` value, as a
+        decimal proportion (e.g. "0.18") -- the same quantity the
+        segment's height encodes, so the printed number always matches
+        what's drawn. If False, labels show the raw joint count
+        instead.
     annotate : bool, default True
-        If True, print each cell's count or percentage (see
-        ``normalize``) inside the cell, but only when the cell is large
-        enough to hold it legibly (see ``MOSAIC_MIN_LABEL_HEIGHT`` /
-        ``MOSAIC_MIN_LABEL_WIDTH``). If False, no in-cell labels.
+        If True, print each cell's conditional proportion or joint
+        count (see ``normalize``) inside the cell, but only when the
+        cell is large enough to hold it legibly (see
+        ``MOSAIC_MIN_LABEL_HEIGHT`` / ``MOSAIC_MIN_LABEL_WIDTH``). If
+        False, no in-cell labels.
     legend : bool, default True
-        If True, add a legend outside the right edge of the axes
-        naming each ``y`` category's color.
+        If True, label each ``y`` category's color. With
+        ``marginal_column=True`` (the default), these labels are
+        printed directly beside that column's segments, so the
+        marginal column doubles as the legend. With
+        ``marginal_column=False``, there's no column to hang labels
+        off of, so a standard legend is placed outside the right edge
+        of the axes instead.
     x_label : str, default "X"
         Label for the x-axis.
     y_label : str, default "Y"
-        Title for the legend naming the ``y`` categories. (The y-axis
-        itself has no numeric meaning shared across columns -- each
-        column's segments independently span 0 to 1 -- so it is
-        hidden rather than labeled.)
+        With ``marginal_column=True`` (the default), the x-tick label
+        for the marginal reference column. With
+        ``marginal_column=False``, the title of the standard legend
+        instead (there's no marginal column to label). Either way, the
+        y-axis itself always shows the same 0-to-1 cumulative-share
+        scale, independent of ``y_label``.
+    marginal_column : bool, default True
+        If True, add an extra column (labeled "Marginal" on the x-axis)
+        showing ``y``'s overall distribution with ``x`` ignored, so it
+        can be compared by eye against each real column's conditional
+        distribution. If False, only the real ``x`` columns are drawn.
     **kwargs
         Additional keyword arguments passed to every ``ax.bar`` call
         (one per ``y`` category). For example ``linewidth=`` to
@@ -1235,8 +1321,10 @@ def make_mosaic(
     -------
     dict
         Maps each distinct ``y`` value to the ``matplotlib.container.
-        BarContainer`` of its segments (one bar per column), so the
-        caller can inspect or further style a specific category.
+        BarContainer`` of its segments (one bar per real ``x`` column,
+        plus one more for the marginal column when
+        ``marginal_column=True``), so the caller can inspect or further
+        style a specific category.
 
     Raises
     ------
@@ -1272,21 +1360,48 @@ def make_mosaic(
     joint = np.zeros((len(x_labels), len(y_labels)))
     np.add.at(joint, (x_idx, y_idx), 1)
 
-    # Columns: width proportional to each x value's marginal count.
+    # Columns: width proportional to each x value's marginal count. When
+    # marginal_column is on, the real columns only fill the space left
+    # after reserving a narrower column (plus a wider gap) for the y
+    # marginal reference column added below.
     x_counts = joint.sum(axis=1)
-    x_starts, x_widths = _mosaic_spans(x_counts, MOSAIC_COLUMN_GAP)
+    real_width = (
+        1.0 - MOSAIC_MARGINAL_WIDTH_FRAC - MOSAIC_MARGINAL_GAP
+        if marginal_column
+        else 1.0
+    )
+    x_starts, x_widths = _mosaic_spans(x_counts, MOSAIC_COLUMN_GAP, total=real_width)
     x_positions = x_starts + x_widths / 2
+    x_tick_labels = [str(v) for v in x_labels]
+
+    n_cols = len(x_labels)
+    if marginal_column:
+        marginal_start = real_width + MOSAIC_MARGINAL_GAP
+        x_starts = np.append(x_starts, marginal_start)
+        x_widths = np.append(x_widths, MOSAIC_MARGINAL_WIDTH_FRAC)
+        x_positions = np.append(
+            x_positions, marginal_start + MOSAIC_MARGINAL_WIDTH_FRAC / 2
+        )
+        x_tick_labels.append(y_label)
+        n_cols += 1
 
     # Rows within each column: height proportional to that column's
     # conditional frequency of each y value. Computed independently per
     # column, since each column's own total (not the grand total) is
-    # what its segment heights divide.
-    row_starts = np.zeros((len(x_labels), len(y_labels)))
-    row_heights = np.zeros((len(x_labels), len(y_labels)))
+    # what its segment heights divide. The marginal column (if any) is
+    # laid out the same way, but from y's totals summed over every x
+    # value instead of one column's joint counts -- its own "conditional
+    # distribution" is just y's marginal distribution.
+    row_starts = np.zeros((n_cols, len(y_labels)))
+    row_heights = np.zeros((n_cols, len(y_labels)))
     for i in range(len(x_labels)):
         starts_i, heights_i = _mosaic_spans(joint[i, :], MOSAIC_ROW_GAP)
         row_starts[i, :] = starts_i
         row_heights[i, :] = heights_i
+    if marginal_column:
+        starts_m, heights_m = _mosaic_spans(joint.sum(axis=0), MOSAIC_ROW_GAP)
+        row_starts[-1, :] = starts_m
+        row_heights[-1, :] = heights_m
 
     # One color per y category, read directly from the active style
     # sheet's categorical cycle (Okabe-Ito) rather than advancing the
@@ -1322,6 +1437,7 @@ def make_mosaic(
     ax._mosaic_count = n_prior + 1
 
     bars = {}
+    text_colors = []
     for j, y_label_value in enumerate(y_labels):
         heights = row_heights[:, j]
         bottoms = row_starts[:, j]
@@ -1337,8 +1453,16 @@ def make_mosaic(
             label=str(y_label_value),
             **kwargs,
         )
+        # A hatch pattern only changes readability at the edges of a
+        # cell (where the pattern's own lines sit), not its fill -- the
+        # label sits at the cell's center, so only the base color
+        # matters here.
+        text_colors.append(_readable_text_color(color))
 
     if annotate:
+        # Real columns only -- the marginal reference column (if any) is
+        # a color-only comparison, not real data to read counts or
+        # proportions off of, so it never gets in-cell labels.
         for i in range(len(x_labels)):
             for j in range(len(y_labels)):
                 if (
@@ -1347,7 +1471,12 @@ def make_mosaic(
                 ):
                     continue
                 if normalize:
-                    text = f"{100 * joint[i, j] / n:.{MOSAIC_LABEL_DECIMALS}f}%"
+                    # Conditional on this column's own x value (matches
+                    # what the segment's height encodes), not the joint
+                    # frequency over the whole dataset. A decimal
+                    # proportion, not a percentage, to match the
+                    # y-axis's own 0-to-1 scale.
+                    text = f"{joint[i, j] / x_counts[i]:.{MOSAIC_LABEL_DECIMALS}f}"
                 else:
                     text = f"{int(round(joint[i, j]))}"
                 ax.text(
@@ -1357,24 +1486,22 @@ def make_mosaic(
                     ha="center",
                     va="center",
                     fontsize=MOSAIC_LABEL_FONT_SIZE,
-                    color="black",
-                    path_effects=[
-                        pe.withStroke(
-                            linewidth=MOSAIC_LABEL_STROKE_WIDTH, foreground="white"
-                        )
-                    ],
+                    color=text_colors[j],
                 )
 
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_xticks(x_positions)
-    ax.set_xticklabels([str(v) for v in x_labels])
+    ax.set_xticklabels(x_tick_labels)
     ax.set_xlabel(x_label)
-    # The y-axis has no numeric meaning shared across columns -- each
-    # column's segments independently span 0 to 1 -- so it is hidden
-    # entirely rather than labeled, the same way a standalone rug plot
-    # hides its uninformative axis.
-    ax.yaxis.set_visible(False)
+    # Every column's segments -- real or marginal -- independently span
+    # 0 to 1 as a cumulative share of that column, so (unlike the
+    # x-axis) one shared proportion scale on the left is meaningful
+    # across every column: a left-hand reading of "0.40" always means
+    # "40% of the way up this column's total," no matter which column.
+    ax.yaxis.set_visible(True)
+    ax.set_yticks(MOSAIC_YAXIS_TICKS)
+    ax.set_yticklabels([f"{t:.2f}" for t in MOSAIC_YAXIS_TICKS])
     ax.set_title("Mosaic Plot")
     # A filled plot covers the whole axes, so the reference grid has
     # nothing to sit on -- turn it off rather than let fragments show
@@ -1382,11 +1509,29 @@ def make_mosaic(
     ax.grid(False)
 
     if legend:
-        ax.legend(
-            loc=MOSAIC_LEGEND_LOC,
-            bbox_to_anchor=MOSAIC_LEGEND_BBOX,
-            title=y_label,
-        )
+        if marginal_column:
+            # The marginal column's segments already give each y
+            # category a color swatch -- print its name just to the
+            # right of that swatch instead of a separate floating
+            # legend box.
+            for j, y_label_value in enumerate(y_labels):
+                label_y = row_starts[-1, j] + row_heights[-1, j] / 2
+                ax.text(
+                    x_positions[-1] + x_widths[-1] / 2 + MOSAIC_LEGEND_LABEL_GAP,
+                    label_y,
+                    str(y_label_value),
+                    ha="left",
+                    va="center",
+                    fontsize=MOSAIC_LABEL_FONT_SIZE,
+                )
+        else:
+            # No marginal column to hang labels off of -- fall back to
+            # a standard legend outside the right edge of the axes.
+            ax.legend(
+                loc=MOSAIC_LEGEND_LOC,
+                bbox_to_anchor=MOSAIC_LEGEND_BBOX,
+                title=y_label,
+            )
 
     if ax._mosaic_count > 1:
         print(MOSAIC_OVERLAY_WARNING)

@@ -65,6 +65,8 @@ from symbulate.plot import (
     make_violinplot,
     make_ecdf,
     make_mosaic,
+    _mosaic_spans,
+    _readable_text_color,
     make_sample_path,
     make_segmented_density,
     make_segmented_hist,
@@ -1461,16 +1463,38 @@ class TestPlot2DMosaic(PlotTestCase):
         self.discrete_sims.plot(type="mosaic")
         self.assertEqual(plt.gca().get_xlabel(), "X")
 
-    def test_mosaic_yaxis_is_hidden(self):
-        """The y-axis has no meaning shared across columns, so it's hidden."""
+    def test_mosaic_yaxis_shows_zero_to_one_ticks(self):
+        """Every column's segments span 0 to 1 the same way, so a shared
+        0-to-1 proportion scale on the left is meaningful across every
+        column."""
         self.discrete_sims.plot(type="mosaic")
-        self.assertFalse(plt.gca().yaxis.get_visible())
+        ax = plt.gca()
+        self.assertTrue(ax.yaxis.get_visible())
+        labels = [t.get_text() for t in ax.get_yticklabels()]
+        self.assertEqual(labels, ["0.00", "0.25", "0.50", "0.75", "1.00"])
 
-    def test_mosaic_legend_present_with_y_title(self):
+    def test_mosaic_legend_uses_marginal_column_labels_by_default(self):
+        """With marginal_column=True (the default), category names are
+        printed beside the marginal column instead of a floating legend."""
         self.discrete_sims.plot(type="mosaic")
+        ax = plt.gca()
+        self.assertIsNone(ax.get_legend())
+        arr = np.asarray(self.discrete_sims.results)
+        y_labels = sorted(str(v) for v in np.unique(arr[:, 1]))
+        label_texts = sorted(t.get_text() for t in ax.texts if t.get_text() in y_labels)
+        self.assertEqual(label_texts, y_labels)
+
+    def test_mosaic_legend_falls_back_without_marginal_column(self):
+        """With marginal_column=False, there's no column to hang labels
+        off of, so a standard floating legend appears instead."""
+        self.discrete_sims.plot(type="mosaic", marginal_column=False)
         legend = plt.gca().get_legend()
         self.assertIsNotNone(legend)
         self.assertEqual(legend.get_title().get_text(), "Y")
+
+    def test_mosaic_legend_false_shows_no_category_labels(self):
+        p = self.discrete_sims.plot(type="mosaic", legend=False, annotate=False)
+        self.assertEqual(len(p.ax.texts), 0)
 
     def test_mosaic_columns_sum_to_full_width(self):
         """Column widths (plus gaps) must span the full [0, 1] x-axis."""
@@ -1479,22 +1503,35 @@ class TestPlot2DMosaic(PlotTestCase):
         self.assertAlmostEqual(p.ax.get_xlim()[1], 1.0)
 
     def test_mosaic_normalize_false_labels_are_whole_numbers(self):
-        """normalize=False switches in-cell labels from percentages to counts."""
+        """normalize=False switches in-cell labels from decimal
+        proportions to whole-number counts."""
         p = self.discrete_sims.plot(type="mosaic", normalize=False)
         texts = [t.get_text() for t in p.ax.texts]
         self.assertGreater(len(texts), 0)
         for text in texts:
-            self.assertNotIn("%", text)
+            self.assertNotIn(".", text)
 
-    def test_mosaic_normalize_true_labels_are_percentages(self):
+    def test_mosaic_normalize_true_labels_are_decimals(self):
         p = self.discrete_sims.plot(type="mosaic")
         texts = [t.get_text() for t in p.ax.texts]
         self.assertGreater(len(texts), 0)
-        self.assertTrue(any("%" in text for text in texts))
+        self.assertTrue(any("." in text for text in texts))
 
     def test_mosaic_annotate_false_has_no_labels(self):
-        p = self.discrete_sims.plot(type="mosaic", annotate=False)
+        """annotate=False alone: no in-cell labels, but the marginal
+        column's legend labels (controlled separately by legend=) still
+        draw as ax.text(), so isolate with legend=False too."""
+        p = self.discrete_sims.plot(type="mosaic", annotate=False, legend=False)
         self.assertEqual(len(p.ax.texts), 0)
+
+    def test_mosaic_annotate_false_still_shows_legend_labels(self):
+        """With annotate=False, only the marginal column's category-name
+        legend labels remain -- no in-cell proportion/count labels."""
+        p = self.discrete_sims.plot(type="mosaic", annotate=False)
+        arr = np.asarray(self.discrete_sims.results)
+        y_labels = sorted(str(v) for v in np.unique(arr[:, 1]))
+        texts = sorted(t.get_text() for t in p.ax.texts)
+        self.assertEqual(texts, y_labels)
 
     def test_mosaic_overlay_prints_warning(self):
         """A second mosaic call on the same axes prints (not warns) a
@@ -1536,6 +1573,138 @@ class TestPlot2DMosaic(PlotTestCase):
 
     def test_mosaic_display_name(self):
         self.assertEqual(PLOT_DISPLAY_NAME["mosaic"], "Mosaic Plot")
+
+    def test_mosaic_spans_total_parameter_rescales_span(self):
+        """total= lets a row of segments fill less than the whole [0, 1]
+        axis -- used to reserve room for the marginal reference column."""
+        starts, widths = _mosaic_spans([1, 1], gap=0.0, total=0.5)
+        self.assertAlmostEqual(widths.sum(), 0.5)
+        self.assertAlmostEqual(starts[0], 0.0)
+
+    def test_mosaic_marginal_column_present_by_default(self):
+        """marginal_column defaults to True: an extra column, labeled
+        with y_label (default "Y"), appears after the real x
+        categories."""
+        p = self.discrete_sims.plot(type="mosaic")
+        labels = [t.get_text() for t in p.ax.get_xticklabels()]
+        self.assertEqual(labels[-1], "Y")
+
+    def test_mosaic_marginal_column_uses_custom_y_label(self):
+        p = self.discrete_sims.plot(type="mosaic", y_label="Outcome")
+        labels = [t.get_text() for t in p.ax.get_xticklabels()]
+        self.assertEqual(labels[-1], "Outcome")
+
+    def test_mosaic_marginal_column_false_omits_it(self):
+        """With marginal_column=False, there's no extra column -- exactly
+        one x-tick per real x category."""
+        arr = np.asarray(self.discrete_sims.results)
+        n_x = len(np.unique(arr[:, 0]))
+        p = self.discrete_sims.plot(type="mosaic", marginal_column=False)
+        labels = [t.get_text() for t in p.ax.get_xticklabels()]
+        self.assertEqual(len(labels), n_x)
+
+    def test_mosaic_marginal_column_extends_every_bar_container(self):
+        """Every category's BarContainer gets one extra bar (the marginal
+        column) on top of one per real x category."""
+        arr = np.asarray(self.discrete_sims.results)
+        x, y = arr[:, 0], arr[:, 1]
+        n_x = len(np.unique(x))
+        bars = make_mosaic(x, y, plt.gca())
+        for container in bars.values():
+            self.assertEqual(len(container.patches), n_x + 1)
+
+    def test_mosaic_marginal_column_is_skinnier_than_real_columns(self):
+        """The marginal column is a color reference, not real data -- it
+        should read as visibly narrower than a typical real x column
+        (individual real columns can still be narrower still, if that x
+        value is rare)."""
+        arr = np.asarray(self.discrete_sims.results)
+        x, y = arr[:, 0], arr[:, 1]
+        bars = make_mosaic(x, y, plt.gca())
+        any_container = next(iter(bars.values()))
+        real_widths = [p.get_width() for p in any_container.patches[:-1]]
+        marginal_width = any_container.patches[-1].get_width()
+        self.assertLess(marginal_width, np.mean(real_widths))
+
+    def test_mosaic_marginal_column_has_no_in_cell_labels(self):
+        """The marginal column is a color reference only -- it never gets
+        count/percentage labels, even with annotate=True (the default).
+        legend=False on both sides isolates in-cell labels from the
+        marginal column's separate legend-label text."""
+        arr = np.asarray(self.discrete_sims.results)
+        x, y = arr[:, 0], arr[:, 1]
+        p = self.discrete_sims.plot(type="mosaic", legend=False)
+        n_labels_with_marginal = len(p.ax.texts)
+        plt.close("all")
+        p2 = self.discrete_sims.plot(type="mosaic", marginal_column=False, legend=False)
+        n_labels_without_marginal = len(p2.ax.texts)
+        self.assertEqual(n_labels_with_marginal, n_labels_without_marginal)
+
+    def test_mosaic_label_decimal_is_conditional_not_joint(self):
+        """In-cell decimal labels show the frequency conditional on each
+        column's own x value (matching the segment's height), not the
+        joint frequency over the whole dataset."""
+        x = np.array([0] * 80 + [1] * 20)
+        y = np.array([0] * 60 + [1] * 20 + [0] * 5 + [1] * 15)
+        make_mosaic(x, y, plt.gca(), marginal_column=False)
+        texts = sorted(t.get_text() for t in plt.gca().texts)
+        self.assertEqual(texts, ["0.25", "0.25", "0.75", "0.75"])
+
+    def test_mosaic_marginal_column_matches_y_marginal_frequency(self):
+        """The marginal column's segment heights track y's overall relative
+        frequency (summed over every x value), not any one column's."""
+        arr = np.asarray(self.discrete_sims.results)
+        x, y = arr[:, 0], arr[:, 1]
+        bars = make_mosaic(x, y, plt.gca())
+        y_labels = np.unique(y)
+        counts = np.array([(y == val).sum() for val in y_labels], dtype=float)
+        expected_fracs = counts / counts.sum()
+        marginal_heights = np.array(
+            [bars[val].patches[-1].get_height() for val in y_labels]
+        )
+        actual_fracs = marginal_heights / marginal_heights.sum()
+        for expected, actual in zip(expected_fracs, actual_fracs):
+            self.assertAlmostEqual(expected, actual, places=6)
+
+    def test_mosaic_column_heights_match_conditional_frequency(self):
+        """Each real column's segment heights track y's frequency
+        *conditional* on that column's own x value -- not the joint
+        frequency over the whole dataset, and not y's marginal shape."""
+        arr = np.asarray(self.discrete_sims.results)
+        x, y = arr[:, 0], arr[:, 1]
+        bars = make_mosaic(x, y, plt.gca())
+        x_labels = np.unique(x)
+        y_labels = np.unique(y)
+        for i, x_val in enumerate(x_labels):
+            mask = x == x_val
+            counts = np.array(
+                [(y[mask] == y_val).sum() for y_val in y_labels], dtype=float
+            )
+            expected_fracs = counts / counts.sum()
+            heights = np.array(
+                [bars[y_val].patches[i].get_height() for y_val in y_labels]
+            )
+            actual_fracs = heights / heights.sum()
+            for expected, actual in zip(expected_fracs, actual_fracs):
+                self.assertAlmostEqual(expected, actual, places=6)
+
+    def test_readable_text_color_black_on_light_background(self):
+        self.assertEqual(_readable_text_color("#F0E442"), "black")
+
+    def test_readable_text_color_white_on_dark_background(self):
+        self.assertEqual(_readable_text_color("#0072B2"), "white")
+
+    def test_mosaic_labels_use_contrasting_colors(self):
+        """Labels drawn on a dark-palette category use white text; labels on
+        a light-palette category use black text -- not one hardcoded color
+        for every cell regardless of its background."""
+        rng = np.random.default_rng(1)
+        x = rng.integers(0, 3, 3000)
+        y = rng.integers(0, 7, 3000)  # covers every Okabe-Ito color
+        make_mosaic(x, y, plt.gca())
+        label_colors = {t.get_color() for t in plt.gca().texts}
+        self.assertIn("black", label_colors)
+        self.assertIn("white", label_colors)
 
 
 class TestPlot2DBox(PlotTestCase):
