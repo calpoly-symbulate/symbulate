@@ -24,10 +24,10 @@ must be understandable by a general audience without assuming prior knowledge.
 
 ## Key Files
 
-- `symbulate/plot.py` — all plotting helpers, `SymbulatePlot` wrapper
-  (already implemented). `classify_data()` and the `DEFAULT_PLOT_TYPE`
-  lookup are planned but **not yet implemented** — `is_discrete()` is
-  still the live discreteness check today (see "classify_data" below).
+- `symbulate/plot.py` — all plotting helpers, `SymbulatePlot` wrapper,
+  `classify_data()`, the `DEFAULT_PLOT_TYPE` lookup, and the discreteness
+  budget constants (`B_1D`, `K_2D`, `N_SMALL_THRESHOLD`) — all implemented
+  and live (see "classify_data" below).
 - `symbulate/results.py` — RVResults.plot() dispatch method (main entry point)
 - `symbulate/result.py` — plot() on individual TimeFunction and Tuple objects
 - `symbulate/distributions.py` — plot() on distribution objects (true pdf/pmf)
@@ -128,43 +128,42 @@ See design document Section 5 for exact warning and error text.
 
 ## classify_data
 
-Will replace `is_discrete()`. **`is_discrete()` still exists and is still
-the live discreteness check in `results.py` today** — imported at the top
-of that file and called at the `is_discrete(counts.values())` /
-`is_discrete(x_height)` / `is_discrete(y_height)` sites. `classify_data()`
-has not been written yet. Do not remove or bypass `is_discrete()` until
-`classify_data()` actually lands and every call site is migrated in the
-same PR.
+`classify_data()` is **implemented and live** in `plot.py`, and it is what
+`results.py` uses to choose the default plot type (imported and called in the
+1D, 2D, and categorical `.plot()` branches). It returns
+`(discrete_ish: bool, small_n: bool)`. `is_discrete()` still exists as a
+standalone utility in `math.py` (tested in `test_math.py`), but it is **no
+longer the discreteness check in `results.py`** — do not reintroduce it there.
 
-Planned return signature: `(discrete_ish: bool, small_n: bool)`.
+Logic (per variable):
+- dtype object / string / bool → discrete_ish = True (categorical, can't bin)
+- dtype float, all values unique → discrete_ish = False (continuous)
+- dtype float, some values repeat → discrete_ish = (n_unique <= threshold)
+- dtype int → discrete_ish = (n_unique <= threshold)
+- small_n = (len(values) < N_SMALL_THRESHOLD)
 
-Planned logic:
-- dtype object or bool → discrete_ish = True
-- dtype float, all values unique → discrete_ish = False
-- dtype float, some values repeat → discrete_ish = (n_unique <= k)
-- dtype int → discrete_ish = (n_unique <= k)
-- small_n = (len(values) < n)
+Thresholds are a **crowding budget** anchored to the default histogram bin
+count (30), so a discrete plot stays discrete exactly while it is no finer than
+the histogram it would bin into (constants at the top of `plot.py`; values
+**provisional**, to be tuned after inspecting
+`team/discrete_continuous_threshold_tests.ipynb`):
+- `B_1D = 30` — 1-D discreteness budget. `n_unique_threshold` defaults to this.
+- `K_2D = 30` — 2-D **per-axis** discreteness cap. Each 2-D axis is judged
+  independently: both axes discrete → tile; one over → mixed tile (that axis
+  binned); both over → 2-D histogram.
+- `N_SMALL_THRESHOLD = 100` — small/large-n crossover (global, unchanged).
 
-Provisional thresholds — **team expects to revise these; treat as a
-working first pass, not settled** (see `DECISIONS.md`, "classify_data
-Thresholds (Provisional)"):
-- `n` (small/large-n crossover) = **40**, uniformly across every data
-  configuration. Replaces the originally-proposed `N_SMALL_THRESHOLD = 100`.
-- `k` (unique-value/discreteness cutoff) is **not a single global
-  constant** — it varies by data configuration:
-  - 1D discrete-ish / 1D categorical-string / process time point
-    (discrete-valued): `k = 20`
-  - 1D continuous-ish / 2D continuous×continuous / process time point
-    (continuous-valued): `k = NA` (already continuous by dtype/uniqueness)
-  - 2D discrete×discrete: `k = 5` per axis (25 combinations)
-  - 2D discrete×continuous and continuous×discrete: `k = 10`
-  - **Open implementation question:** how a per-configuration `k` composes
-    with `classify_data()`'s per-variable, configuration-agnostic call
-    signature is not yet decided. Resolve before wiring the lookup table
-    into `results.py`.
+The threshold is **passed in at the dispatch layer**, not baked into
+`classify_data`: `results.py` passes `B_1D` in the 1-D branch and `K_2D` in
+each of the two 2-D axis calls. `classify_data` keeps its per-variable dtype
+gate; the budget is applied per call site by the branch that knows the
+dimensionality (this is the non-circular resolution of the old
+"per-variable vs per-configuration `k`" question). Categorical data is always
+discrete regardless of the threshold; all-distinct float data is always
+continuous.
 
-See design document Section 2 and `DECISIONS.md` for full logic, edge
-cases, and worked examples.
+See `DECISIONS.md`, "classify_data Thresholds (Budget Model)", for the full
+rationale, the visual justification for `K_2D < B_1D`, and edge cases.
 
 ## Default Plot Lookup Table
 
@@ -284,7 +283,8 @@ pytest tests/
 - Do not use `plt.subplots()` inside plot type functions
 - Do not hardcode colors, font sizes, or figure/spine/grid values inline — use `symbulate.mplstyle`
 - Do not hardcode per-plot-type alpha or line-width values inline — use the named constants at the top of `plot.py` (rcParams can't express per-plot-type values)
-- Do not remove or bypass `is_discrete()` yet — it is still the live discreteness check in `results.py` today. `classify_data()` is planned but not yet written; only retire `is_discrete()` once `classify_data()` lands and every call site is migrated in the same PR.
+- Do not reintroduce `is_discrete()` into `results.py` — `classify_data()` is the live discreteness check there now. (`is_discrete()` remains a standalone utility in `math.py`; leave it.)
+- Do not hardcode the discreteness thresholds — use `B_1D` (1-D) and `K_2D` (2-D per axis) from `plot.py`, passed into `classify_data()` at the `results.py` dispatch (`B_1D` for 1-D, `K_2D` per axis for 2-D). Values are provisional (see `DECISIONS.md`).
 - Do not rename `type=` to `kind=` or anything else — considered and decided against.
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
 - Do not use `viridis_r` (reversed) for 2D density/tile/hist2d — plain `viridis`, 0 = dark.

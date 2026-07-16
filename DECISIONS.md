@@ -42,7 +42,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: `N_UNIQUE_THRESHOLD` Value
 
-**Status:** Superseded — see "classify_data Thresholds (Provisional)" below.
+**Status:** Superseded — see "classify_data Thresholds (Budget Model)" below.
 
 **Decision**
 > _To be finalized after Task 1A visual test cases. Planning document suggests 40 as a starting point, placing the discrete/continuous-ish boundary around `Poisson(30)` at n=10,000 simulations._
@@ -57,7 +57,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: `N_SMALL_THRESHOLD` Value
 
-**Status:** Superseded — see "classify_data Thresholds (Provisional)" below.
+**Status:** Superseded — see "classify_data Thresholds (Budget Model)" below.
 
 **Decision**
 > _To be finalized after Task 1A visual test cases. Planning document suggests 100 as a starting point._
@@ -70,27 +70,34 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
-## Decision: classify_data Thresholds (Provisional)
+## Decision: classify_data Thresholds (Budget Model)
 
-**Status:** Provisional — team's own framing is "just to see functionality and use with symbulate for now"; expect revision.
+**Status:** Implemented (in `plot.py` / `results.py`); threshold *values* are provisional and expected to be tuned after inspecting `team/discrete_continuous_threshold_tests.ipynb`. Supersedes the "classify_data Thresholds (Provisional)" per-configuration-`k` table this decision previously held, and the two superseded decisions above.
 
 **Decision**
-> This replaces the single-global-constant idea behind `N_UNIQUE_THRESHOLD` / `N_SMALL_THRESHOLD` above. Task 1A's visual sweep ended up giving us two different kinds of threshold, not one pair of global constants:
+> The discreteness cutoff is framed as a **crowding budget**: the number of *labeled discrete marks/cells* a plot can show before it should bin instead. This gives two constants plus the unchanged small-n threshold (all in `plot.py`):
 >
-> - **`n` (small-vs-large sample size crossover): 40, everywhere.** Same number across every data configuration (1D discrete-ish, 1D continuous-ish, all four 2D combinations, both process-time-point cases, and 1D categorical/string). Replaces the earlier placeholder of 100 for `N_SMALL_THRESHOLD`.
-> - **`k` (unique-value / discreteness threshold): different per data configuration**, not one global number:
->   - 1D discrete-ish, 1D categorical/string, process time point (discrete-valued): `k = 20` (dot plot/impulse → histogram)
->   - 1D continuous-ish, 2D continuous × continuous, process time point (continuous-valued): `k = NA` (already continuous by dtype/uniqueness, so there's no count to cut off)
->   - 2D discrete × discrete: `k = 5` per axis (25 combinations) (scatter+jitter → tile/heatmap)
->   - 2D discrete × continuous / continuous × discrete: `k = 10` (violin plots → binned violins)
+> - **`B_1D` — 1-D discreteness budget = 30 (provisional).** A 1-D numeric variable is discrete-ish iff its number of distinct values `k <= B_1D` (else histogram/rug). Categorical/string data is always discrete (a category can't be binned); all-distinct float data is always continuous (`k = NA`).
+> - **`K_2D` — 2-D per-axis discreteness cap = 30 (provisional).** In 2-D, **each axis is judged independently** by the same `k <= K_2D` rule. The three outcomes fall out of the per-axis verdicts:
+>   - both axes discrete → **tile**
+>   - one axis over budget → that axis is binned, the other stays discrete → **mixed tile** (`discrete × continuous`)
+>   - both axes over budget → both binned → **2-D histogram**
+> - **`N_SMALL_THRESHOLD` — small/large-n crossover = 100 (kept global).** Unchanged; decides small-n vs large-n rendering across every configuration.
 >
-> **One thing we haven't figured out yet:** `classify_data()`'s spec (see `symbulate_graphics_plan.md`) calls it independently per variable, using one global `n_unique_threshold`, regardless of what configuration that variable ends up in. We haven't decided how a per-configuration `k` fits into that per-variable signature — whether `classify_data()` itself should take a configuration-aware threshold, or whether the per-configuration `k` gets applied as a second check inside the lookup-table dispatch, after `classify_data()`'s own single-value discreteness call. Sort this out before wiring the lookup table into `results.py`.
+> **Why 30 — anchored to the default bin count.** Both budgets equal the default histogram bin count (`HIST_DEFAULT_BINS` / `HIST2D_DEFAULT_BINS` / `TILE_DEFAULT_BINS`, all 30). The principle: a discrete plot (impulse stems, tile cells) should stay discrete exactly while it is **no finer than the histogram it would otherwise bin into**. At `k <= 30` a one-mark-per-value plot is equal to or coarser than the 30-bin histogram *and* carries exact value labels, so it strictly wins; at `k > 30` it would be finer than the histogram (more divisions, denser labels), so binning to 30 is a genuine simplification. `k = 30` is exactly that crossover, and the transition is monotonic in resolution (a discrete plot never has more divisions than the histogram it becomes). Note the flip does **not** change per-cell sparsity — at the boundary a `30×30` tile and the `30×30` histogram it becomes have identical cell counts and sample-per-cell, so the flip is "labeled exact values → binned ranges," not a crowding fix; that is why the bin count, not an absolute crowding limit, is the right anchor.
+>
+> **Why still per-axis (not the product `kx·ky`).** Even with equal values, the 2-D rule is applied *per axis*, which gives the graceful middle state — one busy axis becomes a mixed tile rather than forcing the whole plot to a 2-D histogram.
+>
+> **How this resolves the old "per-variable vs per-configuration" question.** `classify_data()` keeps its per-variable signature and its dtype gate (all-distinct float → continuous; object/bool/string → discrete). The *count* threshold is passed in **at the dispatch layer** (`results.py`): the 1-D branch passes `B_1D`; each of the two 2-D axis calls passes `K_2D`. This is non-circular — the dtype gate is per-variable, and the budget is applied per call site by the branch that already knows the dimensionality. (`make_tile` / `make_segmented_rug` default their own fallback classification to `K_2D`.)
 
 **Rationale**
-> Values come from the Task 1A visual sweep (see `team/design_default_threshold_exploration.ipynb`, `team/design_plot_lookup_exploration.ipynb`). **One caveat straight from our own "Questions as we go" notes: the sweep varied `n` across simulations at a roughly fixed number of distinct values — it didn't separately vary the number of distinct values to visually check the `k` thresholds.** So treat the `k` values above as provisional guesses until that follow-up happens, not as visually confirmed the way `n = 40` is.
+> The budget started from the crowding rationale (the thing that gets crowded is the number of distinct marks/cells, and in 2-D that is judged per axis so a busy axis can bin on its own). We first guessed a smaller 2-D cap than the 1-D budget, then found a cleaner anchor: tie both to the resolution of the continuous fallback — the default histogram bin count (30). A discrete plot then stays discrete exactly while it is no finer than the histogram it would become, which happens to make both budgets the same number, `30`, with a reason behind it rather than a guess. Values remain provisional: the original Task 1A sweep varied `n` at a roughly fixed number of distinct values and never separately swept `k`, so the cutoffs still want a dedicated visual check — which is exactly what `team/discrete_continuous_threshold_tests.ipynb` is for (in particular, whether a `30×30` tile is acceptable or `K_2D` should come down).
 
 **Alternatives Considered**
-> One global `N_UNIQUE_THRESHOLD` for `k` (the original plan) — didn't hold up once we ran real examples across configurations (discrete×discrete pairs need a much smaller per-axis count before a tile plot reads better than jittered scatter).
+> - **One flat global `N_UNIQUE_THRESHOLD`** (the original plan, shipped as `= 40`) — replaced; it had no principled anchor and applied the same count to 1-D marks and 2-D grids without distinguishing them.
+> - **A per-configuration `k` lookup table** (20 for 1-D, 5-per-axis for 2-D d×d, 10 for mixed) — more knobs than needed; the two-constant budget covers the same cases.
+> - **A smaller 2-D cap than 1-D** (e.g. `K_2D = 20`, `B_1D = 40`) — considered, on the grounds that 2-D grids crowd faster; dropped once we anchored to the bin count, which makes them equal and monotonic across the tile→histogram flip (a `K_2D > 30` tile would be *finer* than the 30-bin histogram it becomes, which is backwards).
+> - **Product rule `kx·ky <= B`, bin both when over** — bounds total cells but has no graceful middle state (jumps straight to a 2-D histogram); the per-axis rule was preferred for the mixed-tile intermediate.
 
 ---
 
@@ -394,7 +401,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 The following questions must be resolved before or during Phase 2.
 
-- [x] `N_UNIQUE_THRESHOLD` / `N_SMALL_THRESHOLD`: picked provisional values (`n=40` everywhere; `k` varies by data configuration) — see "classify_data Thresholds (Provisional)". We expect to revise these, and the `k` values especially still need their own visual check (see the caveat in that decision)
+- [x] Discreteness thresholds: replaced the single `N_UNIQUE_THRESHOLD` with a crowding-budget model — `B_1D` and per-axis `K_2D` both anchored to the default histogram bin count (provisional 30), `N_SMALL_THRESHOLD` kept at 100 — implemented in `plot.py`/`results.py`; see "classify_data Thresholds (Budget Model)". Values still need a dedicated visual check (`team/discrete_continuous_threshold_tests.ipynb`)
 - [x] Default plot lookup table: filled in provisionally from Task 1A — see "Default Plot Lookup Table". We expect to revise it
 - [x] Suggestion message: wording and trigger condition are finalized — see "Suggestion Message Behavior". The opt-out parameter name (`hints`) is a guess carried over from elsewhere, not independently confirmed
 - [ ] Overlay warning text: Exact student-friendly wording for warning-category plots
@@ -407,7 +414,7 @@ The following questions must be resolved before or during Phase 2.
 - [ ] Backwards compatibility for `jitter=`: new modes (`"bins"`, `"spiral"`) are being discussed (7/9, 7/13 meetings) — final names and behavior, and whether they replace or just extend the `"orderly"` mode already drafted in `team/new_graphics/scatter.py`, are still undecided
 - [x] Composition API vocabulary: finalized (full geom table — see "Plot Composition API"), even though implementation is deferred
 - [ ] `curve(distribution)`: should it accept a Symbulate distribution object, or a raw pdf/pmf function? (flagged as open in the Task 1C notes themselves)
-- [ ] `classify_data()` architecture: how does a per-data-configuration `k` threshold fit into `classify_data()`'s per-variable, configuration-agnostic call signature? (see "classify_data Thresholds (Provisional)")
+- [x] `classify_data()` architecture: resolved — `classify_data()` keeps its per-variable dtype gate and takes the count threshold as an argument; the dispatch in `results.py` passes `B_1D` for 1-D and `K_2D` per axis for 2-D (non-circular). See "classify_data Thresholds (Budget Model)"
 - [ ] `.customize()` API: not yet designed (Design Document Section 4 is still unwritten) — see "Customization Parameters Deferred" decision
 - [ ] Violin plot overlays at large `k`: should violins be binned? Should ridgeline plots replace violin plots entirely for the discrete×continuous / continuous×discrete configurations?
 - [ ] Overlay "+color" stacking: discrete groups use the categorical (Okabe-Ito) palette — should continuous groupings use a gradient instead, and if so how does that interact with the sequential (viridis) palette already reserved for magnitude encodings?

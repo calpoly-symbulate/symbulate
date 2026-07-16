@@ -27,6 +27,8 @@ from .base import (
 )
 from .plot import (
     HIST_DEFAULT_BINS,
+    B_1D,
+    K_2D,
     auto_jitter_mode,
     classify_data,
     default_plot_type,
@@ -1471,7 +1473,8 @@ class RVResults(Results):
 
             # determine plotting parameters
             counts = count_var(_plot_array)
-            discrete, small_n = classify_data(_plot_array)
+            # 1-D uses the 1-D crowding budget B_1D (see classify_data).
+            discrete, small_n = classify_data(_plot_array, n_unique_threshold=B_1D)
             configuration = "1D_discrete" if discrete else "1D_continuous"
             default, alternatives = default_plot_type(configuration, small_n)
             if type is None:
@@ -1583,8 +1586,11 @@ class RVResults(Results):
             # classify_data.
             x_count = count_var(x)
             y_count = count_var(y)
-            discrete_x, small_n = classify_data(x)
-            discrete_y, _ = classify_data(y)
+            # Each 2-D axis is judged independently against the per-axis budget
+            # K_2D, so one axis over budget bins only that axis (-> a mixed
+            # tile) and both over budget bin both (-> a 2-D histogram).
+            discrete_x, small_n = classify_data(x, n_unique_threshold=K_2D)
+            discrete_y, _ = classify_data(y, n_unique_threshold=K_2D)
 
             if discrete_x and discrete_y:
                 configuration = "2D_dd"

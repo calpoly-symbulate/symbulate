@@ -21,9 +21,22 @@ plt.style.use(os.path.join(os.path.dirname(__file__), "symbulate.mplstyle"))
 
 rng = np.random.default_rng()
 
-# Data-classification thresholds for the default plot lookup -- see
-# classify_data() and DECISIONS.md, "Decision: Data Classification".
-N_UNIQUE_THRESHOLD = 40
+# Discreteness budgets for the default plot lookup -- see classify_data()
+# and DECISIONS.md, "Decision: Data Classification Thresholds (Budget Model)".
+# A numeric variable reads as discrete-ish while its number of distinct values
+# stays within a crowding budget: B_1D marks for a 1-D plot, and K_2D per axis
+# for a 2-D plot's grid. Each 2-D axis is judged independently, so one axis
+# over budget bins only that axis (-> a mixed tile) and both over budget bin
+# both (-> a 2-D histogram). Categorical (string) data is always discrete (a
+# category can't be binned); all-distinct float data is always continuous.
+#
+# Both budgets are anchored to the default histogram bin count (30): a discrete
+# plot stays discrete exactly while it is no finer than the histogram it would
+# otherwise bin into (HIST_DEFAULT_BINS / HIST2D_DEFAULT_BINS / TILE_DEFAULT_BINS,
+# all 30). Provisional -- expect to tune after inspecting
+# team/discrete_continuous_threshold_tests.ipynb.
+B_1D = 30
+K_2D = 30
 N_SMALL_THRESHOLD = 100
 
 figure = plt.figure
@@ -478,9 +491,7 @@ def plot(*args, **kwargs):
         return SymbulatePlot(plt.gca())
 
 
-def classify_data(
-    values, n_unique_threshold=N_UNIQUE_THRESHOLD, n_small_threshold=N_SMALL_THRESHOLD
-):
+def classify_data(values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THRESHOLD):
     """Classify simulated values for choosing a default plot type.
 
     Makes two independent determinations that together drive the default
@@ -504,13 +515,18 @@ def classify_data(
       ``n_unique_threshold`` distinct ones, so wide-support integer
       distributions (e.g. ``Binomial(10000, 0.5)``) read as continuous.
 
+    The threshold is a crowding budget (see ``B_1D`` / ``K_2D`` and
+    DECISIONS.md): callers pass ``B_1D`` for a 1-D plot and ``K_2D`` per
+    axis for a 2-D plot. It defaults to ``B_1D``.
+
     Parameters
     ----------
     values : array-like
         The simulated values for one variable, e.g. ``RVResults.array``.
     n_unique_threshold : int, optional
         Largest number of distinct values that still counts as discrete-ish.
-        Defaults to the module constant ``N_UNIQUE_THRESHOLD``.
+        Defaults to the module constant ``B_1D``; the 2-D dispatch passes
+        ``K_2D`` per axis instead.
     n_small_threshold : int, optional
         A sample with fewer than this many values counts as small. Defaults
         to the module constant ``N_SMALL_THRESHOLD``.
@@ -1004,9 +1020,9 @@ def make_tile(
     # consistent with it (e.g. a wide-support integer axis is binned as
     # continuous rather than given one skinny cell per value).
     if discrete_x is None:
-        discrete_x = classify_data(xs)[0]
+        discrete_x = classify_data(xs, n_unique_threshold=K_2D)[0]
     if discrete_y is None:
-        discrete_y = classify_data(ys)[0]
+        discrete_y = classify_data(ys, n_unique_threshold=K_2D)[0]
 
     # bins only bins a continuous axis. With two discrete variables
     # there is nothing to bin -- every distinct value already gets its
@@ -3072,9 +3088,9 @@ def make_segmented_rug(
     # classify_data determination in explicitly; this keeps a direct
     # make_segmented_rug() call consistent with it.
     if discrete_x is None:
-        discrete_x = classify_data(xs)[0]
+        discrete_x = classify_data(xs, n_unique_threshold=K_2D)[0]
     if discrete_y is None:
-        discrete_y = classify_data(ys)[0]
+        discrete_y = classify_data(ys, n_unique_threshold=K_2D)[0]
 
     # A segmented rug needs one discrete variable (the groups) and one
     # continuous variable (the values). Anything else is a different
