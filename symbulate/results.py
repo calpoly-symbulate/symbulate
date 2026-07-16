@@ -1345,9 +1345,10 @@ class RVResults(Results):
             Transparency of plotted elements, between 0 and 1. Each
             plot type has its own default: histograms (1D, 2D, and
             segmented) 0.65, scatter 0.25, rug 0.5, box plots 0.75,
-            segmented density fills 0.4, impulse / density curves /
-            dot plots fully opaque, and 0.5 for violin and marginal
-            panels.
+            segmented density fills 0.4 (with ``ridge=True``; the
+            curves themselves default to fully opaque), impulse /
+            density curves / dot plots fully opaque, and 0.5 for
+            violin and marginal panels.
         normalize : bool, default True
             If True, plot relative frequencies or densities. If
             False, plot raw counts. Dot plots always show counts.
@@ -1379,15 +1380,16 @@ class RVResults(Results):
             matplotlib plotting function. Notable options:
             ``bandwidth`` (smoothing for ``type="density"`` and
             ``type="segmented_density"``, passed to scipy's
-            ``gaussian_kde``), ``contour`` and ``levels`` (2D
-            density), ``hex=True`` (hexagonal bins for a 2D
-            histogram), ``outliers`` (box plots: ``True``, the
-            default, stops the whiskers at 1.5 times the
-            interquartile range and draws more extreme points
-            individually as outliers; ``False`` extends the whiskers
-            to the minimum and maximum values instead), and ``label``
-            (legend name for hist, impulse, dot, scatter, segmented
-            density, and segmented histogram plots).
+            ``gaussian_kde``), ``ridge=True`` (fill under each
+            segmented density curve for the classic ridgeline look),
+            ``contour`` and ``levels`` (2D density), ``hex=True``
+            (hexagonal bins for a 2D histogram), ``outliers`` (box
+            plots: ``True``, the default, stops the whiskers at 1.5
+            times the interquartile range and draws more extreme
+            points individually as outliers; ``False`` extends the
+            whiskers to the minimum and maximum values instead), and
+            ``label`` (legend name for hist, impulse, dot, scatter,
+            segmented density, and segmented histogram plots).
 
         Returns
         -------
