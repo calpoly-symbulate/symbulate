@@ -25,6 +25,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
 import matplotlib.pyplot as plt
+from matplotlib.collections import PolyCollection
 
 from symbulate import (
     RV,
@@ -1611,9 +1612,11 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         sims.plot(type="segmented_density")
         ax = plt.gca()
         self.assertEqual(ax.get_title(), "Segmented Density Plot")
-        # One PolyCollection ridge per observed level of X
+        # One unfilled Line2D curve per observed level of X, and no
+        # fills by default (ridge=False)
         n_levels = len(np.unique(sims.array[:, 0]))
-        self.assertEqual(len(ax.collections), n_levels)
+        self.assertEqual(len(ax.lines), n_levels)
+        self.assertFalse(any(isinstance(c, PolyCollection) for c in ax.collections))
         # Discrete x -> flipped orientation: baselines on the x-axis
         self.assertEqual(len(ax.get_xticks()), n_levels)
 
@@ -1624,8 +1627,20 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         ax = plt.gca()
         # Discrete y -> classic orientation: baselines on the y-axis
         n_levels = len(np.unique(sims.array[:, 1]))
-        self.assertEqual(len(ax.collections), n_levels)
+        self.assertEqual(len(ax.lines), n_levels)
         self.assertEqual(len(ax.get_yticks()), n_levels)
+
+    def test_segmented_density_ridge_fills_under_curves(self):
+        X, Y = RV(Normal(0, 1) * Binomial(5, 0.4))
+        sims = (X & Y).sim(500)
+        sims.plot(type="segmented_density", ridge=True)
+        ax = plt.gca()
+        # ridge=True adds one translucent PolyCollection fill per
+        # level, under the same opaque curves
+        n_levels = len(np.unique(sims.array[:, 1]))
+        fills = [c for c in ax.collections if isinstance(c, PolyCollection)]
+        self.assertEqual(len(fills), n_levels)
+        self.assertEqual(len(ax.lines), n_levels)
 
     def test_segmented_density_two_discrete_raises_friendly_error(self):
         X, Y = RV(Binomial(5, 0.4) ** 2)
@@ -1642,7 +1657,7 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
     def test_segmented_density_bandwidth_passes_through(self):
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         (X & Y).sim(500).plot(type="segmented_density", bandwidth=0.2)
-        self.assertGreater(len(plt.gca().collections), 0)
+        self.assertGreater(len(plt.gca().lines), 0)
 
     def test_segmented_density_sparse_level_falls_back_to_ticks(self):
         # Level 9 has a single observation: no KDE is possible, so it
@@ -1761,25 +1776,29 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         self.assertEqual(legend_texts, ["Variable 1", "Variable 2"])
 
     def test_segmented_hist_grey_baseline_shelves_and_value_grid(self):
-        """Each level sits on its own neutral grey baseline shelf (not the
-        series color), and the reference grid runs only along the continuous
-        axis -- not the discrete one, where it would vanish under the bars."""
+        """Each level sits on its own baseline shelf styled like a gridline
+        (grid.* rcParams, not the series color), and the reference grid runs
+        only along the continuous axis -- not the discrete one, where it
+        would vanish under the bars."""
         import matplotlib.colors as mcolors
-        from symbulate.plot import SEGMENTED_HIST_BASELINE_COLOR
 
         values = np.random.normal(0, 1, 300)  # continuous x
         groups = np.repeat([0, 1, 2], 100)  # discrete y (levels)
         ax = plt.gca()
         make_segmented_hist(values, groups, ax, "#56B4E9")
-        # One grey baseline (a LineCollection) per level, not the blue series
-        # color -- so the old colored underline is gone.
-        grey = mcolors.to_rgba(SEGMENTED_HIST_BASELINE_COLOR)
+        # One baseline (a LineCollection) per level, in the gridline color
+        # with the gridline width -- not the blue series color, so the old
+        # colored underline is gone.
+        grey = mcolors.to_rgba(plt.rcParams["grid.color"])
         baselines = [
             c
             for c in ax.collections
             if len(c.get_color()) and np.allclose(c.get_color()[0][:3], grey[:3])
         ]
         self.assertEqual(len(baselines), 3)
+        for shelf in baselines:
+            self.assertEqual(shelf.get_linewidth()[0], plt.rcParams["grid.linewidth"])
+            self.assertEqual(shelf.get_alpha(), plt.rcParams["grid.alpha"])
         # Value grid along the continuous axis (x); none on the discrete (y).
         self.assertTrue(any(gl.get_visible() for gl in ax.xaxis.get_gridlines()))
         self.assertFalse(any(gl.get_visible() for gl in ax.yaxis.get_gridlines()))
