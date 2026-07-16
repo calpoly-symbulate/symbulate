@@ -555,25 +555,18 @@ DEFAULT_PLOT_TYPE = {
     ("2D_dd", False): {"default": "tile", "alternatives": ["scatter", "mosaic"]},
     ("2D_cc", True): {"default": "scatter", "alternatives": ["density2d", "hist2d"]},
     ("2D_cc", False): {"default": "hist2d", "alternatives": ["density2d", "scatter"]},
+    # On mixed data the short names rug / hist / density resolve to the
+    # segmented rug / histogram / density (RVResults.plot dispatch), so the
+    # table lists the short names students actually type. The explicit
+    # segmented_rug / segmented_hist / segmented_density names still work as
+    # aliases.
     ("2D_mixed", True): {
-        "default": "segmented_rug",
-        "alternatives": [
-            "tile",
-            "box",
-            "violin",
-            "segmented_density",
-            "segmented_hist",
-        ],
+        "default": "rug",
+        "alternatives": ["tile", "box", "violin", "density", "hist"],
     },
     ("2D_mixed", False): {
         "default": "tile",
-        "alternatives": [
-            "segmented_rug",
-            "box",
-            "violin",
-            "segmented_density",
-            "segmented_hist",
-        ],
+        "alternatives": ["rug", "box", "violin", "density", "hist"],
     },
 }
 

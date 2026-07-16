@@ -1323,24 +1323,24 @@ class RVResults(Results):
             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
             ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
             ``"tile"``, ``"mosaic"``, ``"violin"``, ``"box"`` (alias
-            ``"boxplot"``), and ``"marginal"`` (2D data also accepts
-            ``"hist2d"``, ``"density2d"``, ``"segmented_rug"``,
-            ``"segmented_density"``, and ``"segmented_hist"``).
+            ``"boxplot"``), and ``"marginal"``.
             ``"mosaic"`` is only meaningful for two discrete-ish
             variables -- the same configuration ``"tile"`` targets.
-            ``"segmented_density"`` and ``"segmented_hist"`` need one
-            discrete and one continuous variable and draw one small
-            density curve (or histogram) per level of the discrete
-            variable, stacked along the discrete axis.
             If None, a default is chosen from the data: whether each
             variable looks discrete (``classify_data``) and whether
             the sample is small select an entry from the
             ``DEFAULT_PLOT_TYPE`` lookup table in ``plot.py``.
-            On 2D data, ``"hist"`` draws a binned color mesh,
+            The short names adapt to the data. On two continuous
+            variables, ``"hist"`` draws a binned color mesh and
             ``"density"`` a smooth density surface (pass
-            ``contour=True`` for a banded contour plot), and
-            ``"rug"`` a segmented rug for one discrete and one
-            continuous variable.
+            ``contour=True`` for a banded contour plot). On mixed data
+            (one discrete, one continuous), ``"rug"``, ``"hist"``, and
+            ``"density"`` draw the *segmented* rug / histogram / density
+            -- one small plot per level of the discrete variable,
+            stacked along the discrete axis. The explicit names
+            ``"hist2d"``, ``"density2d"``, ``"segmented_rug"``,
+            ``"segmented_density"``, and ``"segmented_hist"`` are also
+            accepted if you want to force a particular one.
         alpha : float, optional
             Transparency of plotted elements, between 0 and 1. Each
             plot type has its own default: histograms (1D, 2D, and
@@ -1595,16 +1595,16 @@ class RVResults(Results):
             default, alternatives = default_plot_type(configuration, small_n)
             if type is None:
                 type = (default,)
-            # The lookup-table tokens name the 2D variants explicitly
-            # (hist2d, density2d, segmented_rug); the shorter names are
-            # what users have always passed on 2D data. The suggestion
-            # note uses the explicit token so its display name reads
-            # "2D Histogram", not "Histogram".
-            _2d_token = {
-                "hist": "hist2d",
-                "density": "density2d",
-                "rug": "segmented_rug",
-            }
+            # On continuous x continuous data the short names hist/density
+            # mean the 2D mesh variants, so map them to the explicit tokens
+            # for the suggestion note's display name ("2D Histogram" rather
+            # than "Histogram"). On mixed data the short names are already
+            # what the table lists (they resolve to the segmented variants in
+            # the dispatch), so no remap is needed there.
+            if configuration == "2D_mixed":
+                _2d_token = {}
+            else:
+                _2d_token = {"hist": "hist2d", "density": "density2d"}
             _suggestion = (_2d_token.get(type[0], type[0]), default, alternatives)
             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
             # make_scatter, and the mesh types (hist/density/tile) encode
@@ -1701,7 +1701,22 @@ class RVResults(Results):
                         "random" if scatter_jitter is True else scatter_jitter
                     )
             elif "hist" in type or "hist2d" in type:
-                if "marginal" in type:
+                # On mixed data the short name "hist" means the segmented
+                # histogram; "hist2d" always forces the 2D mesh.
+                if configuration == "2D_mixed" and "hist2d" not in type:
+                    make_segmented_hist(
+                        x,
+                        y,
+                        ax,
+                        color,
+                        bins=bins,
+                        normalize=normalize,
+                        alpha=alpha,
+                        discrete_x=discrete_x,
+                        discrete_y=discrete_y,
+                        **kwargs,
+                    )
+                elif "marginal" in type:
                     histo = make_hist2d(
                         x,
                         y,
@@ -1718,7 +1733,21 @@ class RVResults(Results):
                 else:
                     make_hist2d(x, y, ax, bins=bins, normalize=normalize, **kwargs)
             elif "density" in type or "density2d" in type:
-                if "marginal" in type:
+                # On mixed data the short name "density" means the segmented
+                # density; "density2d" always forces the 2D surface.
+                if configuration == "2D_mixed" and "density2d" not in type:
+                    make_segmented_density(
+                        x,
+                        y,
+                        ax,
+                        color,
+                        bandwidth=kwargs.pop("bandwidth", None),
+                        alpha=alpha,
+                        discrete_x=discrete_x,
+                        discrete_y=discrete_y,
+                        **kwargs,
+                    )
+                elif "marginal" in type:
                     den = make_density2D(x, y, ax, colorbar=False, **kwargs)
                     add_colorbar(fig, type, den, "Density")
                 else:
