@@ -51,6 +51,8 @@ from symbulate import (
 from symbulate import plot as symbulate_plot
 from symbulate.plot import (
     SymbulatePlot,
+    B_1D,
+    K_2D,
     classify_data,
     default_plot_type,
     get_next_color,
@@ -1901,6 +1903,30 @@ class TestDefaultLookupDispatch(PlotTestCase):
         (X & Y).sim(500).plot()
         self.assertEqual(plt.gca().get_title(), "Tile Plot")
 
+    def test_2d_both_axes_under_K_2D_is_tile(self):
+        """Two discrete axes both within the per-axis cap -> tile."""
+        RV(BoxModel(list(range(5))) * BoxModel(list(range(5)))).sim(3000).plot(
+            suggest=False
+        )
+        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+
+    def test_2d_one_axis_over_K_2D_stays_tile(self):
+        """One axis over the per-axis cap bins only that axis -> still a
+        (mixed) tile, not yet a 2-D histogram: per-axis independence."""
+        RV(BoxModel(list(range(5))) * BoxModel(list(range(40)))).sim(3000).plot(
+            suggest=False
+        )
+        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+
+    def test_2d_both_axes_over_K_2D_is_hist2d(self):
+        """Both axes over the per-axis cap now bin to a 2-D histogram -- the
+        behavior change from the budget model (both axes were a tile under the
+        old flat single-threshold rule)."""
+        RV(BoxModel(list(range(40))) * BoxModel(list(range(40)))).sim(3000).plot(
+            suggest=False
+        )
+        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+
     def test_2d_mixed_small_defaults_to_segmented_rug(self):
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         (X & Y).sim(60).plot()
@@ -2497,6 +2523,22 @@ class TestClassifyData(unittest.TestCase):
         _, small_at = classify_data(np.arange(100))
         self.assertTrue(small_below)
         self.assertFalse(small_at)
+
+    def test_1d_budget_boundary_at_B_1D(self):
+        """Default threshold is the 1-D budget B_1D: a numeric variable flips
+        discrete -> continuous just above B_1D distinct values."""
+        self.assertTrue(classify_data(np.tile(np.arange(B_1D), 50))[0])
+        self.assertFalse(classify_data(np.tile(np.arange(B_1D + 1), 50))[0])
+
+    def test_2d_per_axis_budget_at_K_2D(self):
+        """With the per-axis 2-D cap K_2D passed in, an axis flips discrete ->
+        continuous just above K_2D distinct values."""
+        self.assertTrue(
+            classify_data(np.tile(np.arange(K_2D), 50), n_unique_threshold=K_2D)[0]
+        )
+        self.assertFalse(
+            classify_data(np.tile(np.arange(K_2D + 1), 50), n_unique_threshold=K_2D)[0]
+        )
 
 
 # ===========================================================================
