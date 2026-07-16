@@ -1381,9 +1381,13 @@ class RVResults(Results):
             ``type="segmented_density"``, passed to scipy's
             ``gaussian_kde``), ``contour`` and ``levels`` (2D
             density), ``hex=True`` (hexagonal bins for a 2D
-            histogram), and ``label`` (legend name for hist, impulse,
-            dot, scatter, segmented density, and segmented histogram
-            plots).
+            histogram), ``outliers`` (box plots: ``True``, the
+            default, stops the whiskers at 1.5 times the
+            interquartile range and draws more extreme points
+            individually as outliers; ``False`` extends the whiskers
+            to the minimum and maximum values instead), and ``label``
+            (legend name for hist, impulse, dot, scatter, segmented
+            density, and segmented histogram plots).
 
         Returns
         -------
@@ -1829,6 +1833,7 @@ class RVResults(Results):
                     alpha=alpha,
                     discrete_x=discrete_x,
                     discrete_y=discrete_y,
+                    **kwargs,
                 )
 
             if "marginal" in type:
