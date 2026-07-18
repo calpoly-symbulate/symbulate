@@ -134,8 +134,10 @@ codebase:
 - Needs only the one additive change in §3.1.
 - Fixes the rare-discrete-event problem: local moves from an already-valid
   state are far more likely to stay valid than fresh i.i.d. redraws.
-- Fixes the continuous-band problem too, with *zero* new `Event` machinery:
+- Helps with the continuous-band problem, with *zero* new `Event` machinery:
   users' existing `abs(Y - y) < eps` trick works unmodified as the MH target.
+  **This is narrower than it first sounds — see §9 for what MH does and does
+  not fix here.**
 - Generalizes cleanly to a real Gibbs sampler, HMC, etc. later — the
   `.factors` / `.log_density` infrastructure is reusable, not single-purpose.
 
@@ -179,7 +181,8 @@ regression check specific to this feature.
 |---|---|---|---|---|---|
 | **Current: pure rejection** | Yes | No — cost scales with `1/P(event)` | Only via manual `abs(Y-y)<eps` band, still slow | None | Status quo; kept as default |
 | **Independence-sampler-as-chain** ("sticky rejection": repeat previous value on reject instead of looping) | No | Bounded cost (`n` draws total, not `n` acceptances) | No — still needs a fresh global hit on the band each step | Minimal — same `draw()`/`func()`, just don't discard on reject | Cheapest possible upgrade; doesn't fix continuous case at all |
-| **Component-wise random-walk MH** (recommended first target, §3) | No | Yes — local moves stay valid much more often | Yes — local moves near an already-valid band point tend to stay in the band | `IndependentProductSpace` + small `mcmc.py` | Needs per-factor `.pdf`/`.discrete`/`.sd()` |
+| **Component-wise random-walk MH** (recommended first target, §3) | No | Yes — local moves stay valid much more often | Partially — helps *once inside* the band, but doesn't remove the `eps` approximation or the cost of finding the first valid state; step size must be tuned relative to `eps` (see §9) | `IndependentProductSpace` + small `mcmc.py` | Needs per-factor `.pdf`/`.discrete`/`.sd()` |
+| **Single-site exact-conditional Gibbs** (candidate alternative first algorithm, see §10) | No | Yes, exactly — every draw is a true conditional draw, no rejection | Same `eps`-band caveat as MH applies to *what* is being sampled, but no step-size tuning needed once the target is defined | Reuses `IndependentProductSpace`; continuous factors need `ContinuousProbabilitySpace`'s tier-1 inverse-CDF machinery | Depends on the `ContinuousProbabilitySpace` thread landing (or a smaller stand-alone inverse-CDF utility) |
 | **Exact manifold sampling for linear constraints** (e.g. `Y = X+Z == y`, change of variables to sample the 1-D conditional of `X` directly) | Yes | Yes, exactly | Yes, exactly (no eps-band needed at all) | Special-cased per relation type (sum, invertible maps only) | Best answer *when it applies*; doesn't generalize to arbitrary events |
 | **Self-normalized importance sampling** | Yes (weighted) | Yes, if a good proposal exists | Yes, same caveat | Weighted-sample support in `RVResults` (bigger change) | Preserves independence, at the cost of needing a good proposal distribution and weight-aware downstream stats |
 
@@ -308,7 +311,179 @@ slow for a rare conditioning event).
 
 ---
 
-## 8. Summary table across all three threads
+## 9. The `eps`-band caveat, decomposed
+
+This section exists because an earlier draft of this doc implied MH "handles
+continuous conditioning" more cleanly than it actually does. That claim
+conflates three genuinely separate issues, and MH only helps with one of
+them.
+
+**Issue 1 — defining a nonzero-probability target (algorithm-independent,
+unavoidable).** `P(Z = 1) = 0` for continuous `Z`. No sampling method —
+rejection, MH, anything — can draw from a measure-zero set by simulation.
+The `abs(Z - 1) < eps` band isn't an MCMC trick; it's a redefinition of *what
+distribution is being asked for*, done before any sampling method touches
+it. MH doesn't remove this. The approximation error introduced by `eps` is
+the same size regardless of which algorithm samples from the band.
+
+**Issue 2 — finding the first valid state (no easier under MH).** Before any
+local-move machinery can run, the chain needs a starting outcome `ω₀` with
+`abs(g(ω₀) - 1) < eps`. As sketched in §3.3, that's found by ordinary
+rejection sampling. If `eps` is small enough that hitting the band is rare,
+*this step* costs exactly what full rejection sampling would have cost —
+MH provides no advantage here, only after this point.
+
+**Issue 3 — staying in / exploring the band once inside (the actual MH win,
+with a real catch).** This is the only place local moves genuinely help, and
+whether "local moves tend to stay in the band" holds depends on how the
+proposal direction relates to the band's geometry, not just on locality.
+Example: for `Z = X + Y`, a component-wise sweep that moves `X` alone (`Y`
+fixed) shifts `Z` by exactly as much as `X` moved. If the per-coordinate step
+size is comparable to or larger than `eps`, most such proposals kick `Z`
+clean out of the band and get rejected — close to rejection sampling again,
+just local. The fix is to shrink the step size relative to `eps` (and to how
+much moving that coordinate shifts `g`), which works but forces smaller
+steps, which means slower mixing. **Shrinking `eps` for accuracy shrinks the
+usable step size too, which slows the chain — this tradeoff has to be tuned,
+it isn't free.**
+
+**The better fix for linear constraints.** For `Z = X + Y = z` specifically,
+propose along the constraint surface directly: `X' = X + δ`, `Y' = Y - δ`
+simultaneously. If the chain started exactly on `Z = z`, this keeps it
+exactly on `Z = z` for *any* `δ` — no band, no rejection due to leaving the
+constraint, no step-size-vs-`eps` tuning at all. This is the "exact manifold
+sampling for linear constraints" row from §4's table, and it's the right
+tool specifically because `X + Y` is linear. It generalizes to any
+invertible linear relation but not to a generic nonlinear `g`, where staying
+on the level set needs either an analytic inverse or a numerical projection
+(Newton-correct back onto the constraint after each proposal) — heavier
+machinery, a legitimate later-phase item, not a naive extension of
+component-wise MH.
+
+**Net effect on how this should be described to the team:** component-wise
+MH should not be sold as "solves continuous conditioning." It should be
+described as: `eps` is still required and still introduces approximation
+error regardless of algorithm (issue 1); finding an initial valid state is
+exactly as hard as it is today (issue 2); mixing efficiency inside the band
+depends on tuning step size relative to `eps` and to the constraint's local
+sensitivity, which the naive version does not do automatically (issue 3).
+The linear-constraint exact sampler is worth prioritizing precisely because
+it removes all three issues at once for a common pattern (sums), not because
+it's a nice-to-have.
+
+---
+
+## 10. Which algorithm should actually go first: MH vs. single-site exact Gibbs
+
+The original recommendation (§3.2) was component-wise random-walk MH. Worth
+naming a real competitor rather than treating that as settled.
+
+**Single-site Gibbs with exact full-conditional draws.** For an
+independent-product model, the full conditional of coordinate `i` given
+everything else and given the event is a one-dimensional distribution:
+
+```
+π(ω_i | ω_{-i}, event) ∝ f_i(ω_i) · 1{event holds when coordinate i = ω_i, others fixed}
+```
+
+This is exactly the shape two pieces of existing/proposed machinery already
+handle:
+
+- **Discrete factor with countable support** (Poisson, Geometric, …): enumerate
+  this conditional on a truncated grid, normalize exactly, sample directly —
+  no accept/reject step, because it's an exact draw from the true conditional,
+  not a proposal.
+- **Continuous factor**: this is precisely the problem `ContinuousProbabilitySpace`'s
+  tier-1 inverse-CDF sampler already solves — numerically integrate an
+  arbitrary (possibly unnormalized) 1-D density and invert it. Reusing that
+  machinery here means each Gibbs step draws exactly from the conditional,
+  up to the same numerical tolerance already accepted elsewhere in that
+  design.
+
+**Advantages over MH, specific to this problem:**
+- No step-size tuning at all — §9's step-size-vs-`eps` tradeoff simply
+  doesn't arise, since there's no proposal to tune.
+- No wasted proposals — every Gibbs draw is accepted by construction, versus
+  MH wasting some fraction of proposals even once inside the band.
+- Direct architectural coherence with the `ContinuousProbabilitySpace`
+  thread: rather than two features sharing only an eligibility check, Gibbs
+  would actually *use* that thread's core sampler as a subroutine.
+
+**Real costs, and why this isn't a clean swap:**
+- Every continuous-factor update pays a full numerical integration +
+  inversion, once per coordinate per iteration — versus MH's cheap
+  `pdf(ω_i')/pdf(ω_i)` ratio. Could be slower per-iteration despite better
+  mixing per-iteration; an empirical question, not obvious in advance.
+- Creates a **hard dependency** on `ContinuousProbabilitySpace` landing first
+  (or building a smaller stand-alone inverse-CDF utility just for this) — MH
+  has no such dependency and can ship standalone.
+- Needs a genuinely different code path per factor type (enumeration vs.
+  numerical inversion), versus MH's uniform propose/evaluate/accept shape
+  across discrete and continuous factors alike.
+
+**Recommendation (still not final):** lean toward implementing MH first,
+specifically because it can ship without waiting on the
+`ContinuousProbabilitySpace` thread. But flag single-site exact-conditional
+Gibbs as the stronger candidate *if* that thread is being built anyway, since
+the two would compose naturally rather than duplicating effort. This
+replaces §3.2's implicit "MH is simply the right first choice" with an
+explicit tradeoff — both are legitimate, the tie-breaker is really about
+sequencing with the other in-flight thread, not about one being better in
+the abstract.
+
+---
+
+## 11. Hamiltonian Monte Carlo / NUTS: not now, and specifically why
+
+Worth a concrete answer rather than a vague "too advanced," since the
+blockers are specific facts about this codebase, not HMC/NUTS in general.
+
+1. **Mixed discrete/continuous factors are the normal case here, and HMC
+   doesn't handle discrete variables at all.** `Poisson(1) * Normal(0, 1)`
+   is an entirely ordinary Symbulate model; HMC's leapfrog integrator
+   fundamentally requires a continuous, differentiable state space. A mixed
+   model would need HMC-for-continuous-factors plus a separate mechanism for
+   discrete ones from day one — not "HMC," but HMC-plus-a-second-algorithm.
+2. **The conditioning event is usually a hard indicator, and that's exactly
+   what HMC is weak at.** HMC's efficiency comes from following the gradient
+   of a smooth log-target to make large, informed proposals. A band event
+   like `abs(Z - 1) < eps` is a hard wall — zero gradient almost everywhere,
+   a discontinuity at the boundary. Making HMC work there needs
+   reflection/refraction handling at the boundary (a real technique, used in
+   "billiard" HMC variants) — additional machinery layered on top of
+   already-nontrivial HMC, specifically to compensate for HMC's main
+   advantage not applying well to event-conditioning in the first place.
+3. **No gradients are available anywhere in Symbulate today.** HMC needs
+   `d/dω log f(ω)` for every factor, chained through `Y.func` — an arbitrary
+   user-built Python function assembled via operator overloading (`+`, `*`,
+   `.apply(arbitrary_lambda)`, indexing, …). There's no autodiff layer in
+   this codebase, and building one (or adopting `jax`/`torch` as a
+   dependency) is a large, separate architectural commitment, not an add-on
+   to this feature. Finite-difference gradients as a fallback are fragile
+   and add cost exactly where the goal is to save cost.
+
+**NUTS is strictly more of all three** — HMC plus adaptive trajectory-length
+selection plus (typically) dual-averaging step-size adaptation during
+warmup. That's the engineering underlying entire dedicated libraries (Stan,
+PyMC); a correct, robust implementation is a multi-month project on its own,
+not an incremental step past MH.
+
+There's also a pedagogical angle, since this is a teaching library: MH's
+accept/reject logic is readable line-by-line by an intro-stats student; HMC/
+NUTS trade that transparency for efficiency in a regime (smooth,
+high-dimensional, continuous-only posteriors) that mostly isn't what
+Symbulate's own example set (small mixed discrete/continuous models,
+event-based conditioning) needs efficiency for.
+
+**Conclusion:** MH (or single-site exact Gibbs, per §10) first. HMC/NUTS
+belong in a "not now, and here's specifically what would have to change
+first" note: Symbulate would need (a) a continuous-only differentiable model
+subset, (b) an autodiff layer, and (c) a smooth (not hard-indicator)
+conditioning API, before HMC/NUTS became a reasonable investment.
+
+---
+
+## 12. Summary table across all three threads
 
 | Design | Status | What it needs from the others | What it gives the others |
 |---|---|---|---|
