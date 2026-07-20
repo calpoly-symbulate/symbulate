@@ -82,7 +82,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 >   - both axes discrete → **tile**
 >   - one axis over budget → that axis is binned, the other stays discrete → **mixed tile** (`discrete × continuous`)
 >   - both axes over budget → both binned → **2-D histogram**
-> - **`N_SMALL_THRESHOLD` — small/large-n crossover = 100 (kept global).** Unchanged; decides small-n vs large-n rendering across every configuration.
+> - **`N_SMALL_THRESHOLD` — small/large-n crossover = 123 (global).** Raised from 100; decides small-n vs large-n rendering across every configuration. Still provisional. (Raising it widens the small-n band, which is what surfaced the dot-plot tall-stack problem — see "Dot-Plot Tall-Stack Fallback" below.)
 >
 > **Why 30 — anchored to the default bin count.** Both budgets equal the default histogram bin count (`HIST_DEFAULT_BINS` / `HIST2D_DEFAULT_BINS` / `TILE_DEFAULT_BINS`, all 30). The principle: a discrete plot (impulse stems, tile cells) should stay discrete exactly while it is **no finer than the histogram it would otherwise bin into**. At `k <= 30` a one-mark-per-value plot is equal to or coarser than the 30-bin histogram *and* carries exact value labels, so it strictly wins; at `k > 30` it would be finer than the histogram (more divisions, denser labels), so binning to 30 is a genuine simplification. `k = 30` is exactly that crossover, and the transition is monotonic in resolution (a discrete plot never has more divisions than the histogram it becomes). Note the flip does **not** change per-cell sparsity — at the boundary a `30×30` tile and the `30×30` histogram it becomes have identical cell counts and sample-per-cell, so the flip is "labeled exact values → binned ranges," not a crowding fix; that is why the bin count, not an absolute crowding limit, is the right anchor.
 >
@@ -98,6 +98,28 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 > - **A per-configuration `k` lookup table** (20 for 1-D, 5-per-axis for 2-D d×d, 10 for mixed) — more knobs than needed; the two-constant budget covers the same cases.
 > - **A smaller 2-D cap than 1-D** (e.g. `K_2D = 20`, `B_1D = 40`) — considered, on the grounds that 2-D grids crowd faster; dropped once we anchored to the bin count, which makes them equal and monotonic across the tile→histogram flip (a `K_2D > 30` tile would be *finer* than the 30-bin histogram it becomes, which is backwards).
 > - **Product rule `kx·ky <= B`, bin both when over** — bounds total cells but has no graceful middle state (jumps straight to a 2-D histogram); the per-axis rule was preferred for the mixed-tile intermediate.
+
+---
+
+## Decision: Dot-Plot Tall-Stack Fallback
+
+**Status:** Implemented (`DOTPLOT_MAX_STACK` in `plot.py`, dispatch in `results.py`); value provisional, tune via `team/discrete_continuous_threshold_tests.ipynb`.
+
+**Decision**
+> The dot plot is the 1-D small-n discrete default, but it draws one dot per observation and stacks identical values. A **third** kind of crowding — stack height — can make it unreadable even when the two budget checks (`B_1D` distinct values, `N_SMALL_THRESHOLD` sample size) both pass: if most of the mass lands on a few values, each stacks into a tall column of specks. So when a dot plot would be the *automatic default* but the **tallest single stack** exceeds **`DOTPLOT_MAX_STACK` = 30 (provisional)**, the default is redirected to that configuration's **large-n** default — impulse for numeric 1-D discrete, bar for 1-D categorical.
+>
+> - The check is independent of `n` and of the distinct-value count — it's purely `max(count per distinct value)`, computed by `dotplot_tallest_stack()`.
+> - Only the *default* is redirected. An explicit `type='dotplot'` is always honored (a student who asks for a dot plot gets one).
+> - The suggestion note stays honest: it names the impulse/bar default it actually drew and keeps the dot plot in the alternatives list (`type='dotplot'`).
+> - Anchored to the same bin count (30) as the budgets: once one stack alone is taller than the whole histogram has bins, the aggregated plot reads better.
+
+**Rationale**
+> Surfaced by raising `N_SMALL_THRESHOLD` 100 → 123, which pulls samples like `RV(Binomial(1, 0.1)).sim(111)` (≈106 dots on the value 0, ≈5 on 1) into the small-n band, where the discrete default is the dot plot. At 100 that case was large-n and already drew an impulse; widening the small-n band re-exposed it, so the fallback restores the impulse without giving up the wider small-n band elsewhere. Framing "tall stack" as "behave like large n" reuses the existing lookup rather than inventing a new plot type — the tall stack *is* a large-n symptom (lots of data on one value).
+
+**Alternatives Considered**
+> - **Guard inside `make_dotplot` itself** — rejected: it would also fire on an explicit `type='dotplot'` (this is about the *default*, not the draw), and the suggestion note built in `results.py` would still claim a dot plot. The dispatch layer is where `type`/default/suggestion stay consistent.
+> - **Fold stack height into `classify_data` / the budget model** — rejected: `classify_data` is per-variable and configuration-agnostic; stack height is a rendering concern of one specific plot type, so it lives next to the dot-plot code.
+> - **Hard-code the fallback to impulse for every configuration** — rejected: categorical data's natural large-n default is the bar chart, so redirecting to the configuration's own large-n default is more consistent than always picking impulse.
 
 ---
 
@@ -401,7 +423,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 The following questions must be resolved before or during Phase 2.
 
-- [x] Discreteness thresholds: replaced the single `N_UNIQUE_THRESHOLD` with a crowding-budget model — `B_1D` and per-axis `K_2D` both anchored to the default histogram bin count (provisional 30), `N_SMALL_THRESHOLD` kept at 100 — implemented in `plot.py`/`results.py`; see "classify_data Thresholds (Budget Model)". Values still need a dedicated visual check (`team/discrete_continuous_threshold_tests.ipynb`)
+- [x] Discreteness thresholds: replaced the single `N_UNIQUE_THRESHOLD` with a crowding-budget model — `B_1D` and per-axis `K_2D` both anchored to the default histogram bin count (provisional 30), `N_SMALL_THRESHOLD` raised to 123 — implemented in `plot.py`/`results.py`; see "classify_data Thresholds (Budget Model)". Values still need a dedicated visual check (`team/discrete_continuous_threshold_tests.ipynb`)
 - [x] Default plot lookup table: filled in provisionally from Task 1A — see "Default Plot Lookup Table". We expect to revise it
 - [x] Suggestion message: wording and trigger condition are finalized — see "Suggestion Message Behavior". The opt-out parameter name (`hints`) is a guess carried over from elsewhere, not independently confirmed
 - [ ] Overlay warning text: Exact student-friendly wording for warning-category plots

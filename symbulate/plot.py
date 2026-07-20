@@ -37,7 +37,11 @@ rng = np.random.default_rng()
 # team/discrete_continuous_threshold_tests.ipynb.
 B_1D = 30
 K_2D = 30
-N_SMALL_THRESHOLD = 100
+# Small/large-n crossover: a sample with fewer than this many observations
+# renders as small-n (show every observation) rather than large-n
+# (aggregated summary). Provisional -- expect to tune alongside the budgets
+# after inspecting team/discrete_continuous_threshold_tests.ipynb.
+N_SMALL_THRESHOLD = 123
 
 figure = plt.figure
 
@@ -226,6 +230,21 @@ DOTPLOT_LEGEND_MARKER_SIZE = 8
 # short the stacks are. (The y-axis extends past the tallest stack as
 # needed to keep the dots touching at this size.)
 DOTPLOT_MAX_DOT_SIZE = 12
+# Tallest single stack a dot plot can show before it stops being a good
+# automatic default. A dot plot draws one dot per observation and stacks
+# identical values, so a single very tall stack shrinks every dot to an
+# unreadable speck -- no matter how few distinct values there are or how
+# small the sample is (e.g. a rare-event indicator like Binomial(1, 0.1),
+# which piles most of its mass on one value). When the tallest stack would
+# exceed this many dots, the dispatch in RVResults.plot falls back to the
+# configuration's large-n default (impulse for numeric, bar for categorical)
+# instead. Deliberately independent of n and of the distinct-value budget
+# B_1D -- it measures a third kind of crowding (stack height) those two
+# don't. Anchored to the same histogram bin count (30): once one stack alone
+# is taller than the whole histogram has bins, an aggregated plot reads
+# better. Provisional -- tune alongside the budgets via
+# team/discrete_continuous_threshold_tests.ipynb.
+DOTPLOT_MAX_STACK = 30
 # Vertical headroom above the tallest stack (multiplier on its height).
 DOTPLOT_STACK_HEADROOM = 1.05
 # Tile-style boundary lines halfway between neighboring stacks, shown
@@ -4280,6 +4299,46 @@ def _dotplot_on_canvas_change(ax):
         ax.figure.canvas.draw_idle()
     finally:
         state["relayout_running"] = False
+
+
+def dotplot_tallest_stack(values):
+    """Return the height of the tallest stack a dot plot would draw.
+
+    A dot plot places one dot per observation and stacks identical
+    values, so the tallest stack is simply the largest number of
+    observations sharing a single value. This is what decides whether a
+    dot plot stays legible: unlike the sample size or the number of
+    distinct values, one very tall stack alone shrinks every dot to an
+    unreadable speck. ``RVResults.plot`` compares this against
+    ``DOTPLOT_MAX_STACK`` to decide whether a dot plot is a good
+    automatic default (see that constant).
+
+    Parameters
+    ----------
+    values : array-like
+        The simulated values a dot plot would be drawn from. Numeric or
+        categorical; values are grouped by exact equality, matching how
+        ``make_dotplot`` stacks them.
+
+    Returns
+    -------
+    int
+        The number of observations in the most-repeated value, or 0 if
+        there are no values.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> dotplot_tallest_stack(np.array([0, 0, 0, 1, 2]))
+    3
+    >>> dotplot_tallest_stack(np.array(["H", "H", "T"]))
+    2
+    """
+    data = np.asarray(list(values))
+    if data.size == 0:
+        return 0
+    _, counts = np.unique(data, return_counts=True)
+    return int(counts.max())
 
 
 def make_dotplot(values, ax, color, alpha=None, label=None, **kwargs):
