@@ -3,6 +3,7 @@ import numbers
 import warnings
 import numpy as np
 import scipy.stats as stats
+from scipy.optimize import brentq, minimize_scalar
 import matplotlib.pyplot as plt
 
 from .probability_space import ProbabilitySpace
@@ -51,6 +52,126 @@ def _validate(*checks):
     if len(errors) == 1:
         raise Exception(errors[0])
     raise Exception("Invalid parameters:\n" + "\n".join("  - " + e for e in errors))
+
+
+# Share of the total probability the default plotting window should cover.
+# Matches the central 99.8% the old equal-tailed ppf(0.001)/ppf(0.999) default
+# spanned, so switching a distribution to a highest-density window keeps the
+# same amount of mass on screen -- only its placement changes.
+_PLOT_COVERAGE = 0.998
+
+
+def _discrete_hdi_xlim(dist, low, coverage=_PLOT_COVERAGE):
+    """Highest-density plotting x-limits for an unbounded discrete distribution.
+
+    Returns the smallest and largest of the fewest integer values whose
+    probabilities, taken largest first, together reach ``coverage`` of the
+    total mass -- an exact highest-density interval. For a right-skewed
+    distribution (e.g. a low-rate ``Poisson``) this keeps the dense low
+    values and trims the long, thin upper tail, unlike the equal-tailed
+    ``ppf(0.001)``/``ppf(0.999)`` window it replaces.
+
+    Parameters
+    ----------
+    dist : Distribution
+        The distribution to measure, read through its ``pmf`` and
+        ``quantile``.
+    low : int
+        The smallest value in the distribution's support (0 for ``Poisson``
+        and ``Pascal``, 1 for ``Geometric``, ``r`` for ``NegativeBinomial``).
+    coverage : float, optional
+        Target share of the total probability the interval must cover.
+        Defaults to ``_PLOT_COVERAGE`` (the central 99.8% the old
+        equal-tailed default spanned).
+
+    Returns
+    -------
+    tuple of (int, int)
+        ``(min, max)`` of the selected highest-probability values.
+    """
+    # Enumerate from the support minimum out to a far upper quantile -- past
+    # where any high-probability value could sit -- so the accumulation below
+    # sees every value that could belong to the interval.
+    high = max(int(dist.quantile(1 - 1e-6)), low)
+    values = np.arange(low, high + 1)
+    probs = dist.pmf(values)
+    # Take values in order of decreasing probability, stopping as soon as the
+    # accumulated mass first reaches the target coverage.
+    order = np.argsort(probs)[::-1]
+    accumulated = np.cumsum(probs[order])
+    count = min(int(np.searchsorted(accumulated, coverage)) + 1, len(values))
+    chosen = values[order[:count]]
+    return (int(chosen.min()), int(chosen.max()))
+
+
+def _continuous_hdi_xlim(dist, low, coverage=_PLOT_COVERAGE):
+    """Highest-density plotting x-limits for a skewed, unbounded continuous distribution.
+
+    Finds the horizontal density level ``h`` for which the region
+    ``{x : pdf(x) >= h}`` -- a single interval ``[a, b]`` for these unimodal
+    densities -- encloses ``coverage`` of the total probability, and returns
+    that interval. The endpoints ``a`` and ``b`` are the two equal-density
+    points found with :func:`scipy.optimize.brentq`; ``h`` is located by
+    bisection, since raising it shrinks the interval and lowers its coverage.
+    For a right-skewed density this trims the long upper tail and lifts the
+    lower edge off the near-zero-density region, unlike the equal-tailed
+    ``ppf(0.001)``/``ppf(0.999)`` window it replaces.
+
+    Handles both interior-mode densities (e.g. ``LogNormal``) and
+    monotone-decreasing ones (e.g. ``Pareto``, or ``Gamma`` with shape below
+    1): when the density at the lower support bound already exceeds ``h`` --
+    including when it is infinite there -- that bound is used as ``a``
+    directly, since the density is maximal there and no left equal-density
+    point exists. Using the true support bound (not a near-boundary quantile)
+    also keeps ``a`` at a clean value and lets the plot's own ``isfinite``
+    filter handle a density singularity at the bound.
+
+    Parameters
+    ----------
+    dist : Distribution
+        The distribution to measure, read through its ``pdf``, ``cdf`` and
+        ``quantile``.
+    low : float
+        The lower bound of the distribution's support (0 for ``Gamma``,
+        ``ChiSquare``, ``F`` and ``LogNormal``; ``scale`` for ``Pareto``).
+    coverage : float, optional
+        Target share of the total probability the interval must cover.
+        Defaults to ``_PLOT_COVERAGE``.
+
+    Returns
+    -------
+    tuple of (float, float)
+        The equal-density interval ``(a, b)`` enclosing ``coverage``.
+    """
+    pdf, cdf, quantile = dist.pdf, dist.cdf, dist.quantile
+    # Mode-search bounds sit just inside each tail, so the density is never
+    # sampled at a boundary where it may be infinite; the right bound also
+    # serves as the practical upper edge for a heavy tail.
+    search_low = quantile(1e-9)
+    right = quantile(1 - 1e-9)
+    # The mode is where the density peaks; for a monotone-decreasing density
+    # this lands at the left search bound.
+    mode = minimize_scalar(
+        lambda x: -pdf(x), bounds=(search_low, right), method="bounded"
+    ).x
+    peak = pdf(mode)
+    # Bisect on the density threshold h in (0, peak). At each h the interval is
+    # [a, b], the equal-density points on either side of the mode -- clamped to
+    # the support's lower bound / practical upper edge when the density there
+    # already exceeds h (as on either side of a monotone-decreasing density).
+    # Raising h shrinks [a, b] and lowers cdf(b) - cdf(a), so coverage is
+    # monotone in h and the bisection converges.
+    h_low, h_high = 0.0, peak
+    a, b = low, right
+    for _ in range(80):
+        h = 0.5 * (h_low + h_high)
+        a = low if pdf(low) >= h else brentq(lambda x: pdf(x) - h, low, mode)
+        b = right if pdf(right) >= h else brentq(lambda x: pdf(x) - h, mode, right)
+        if cdf(b) - cdf(a) > coverage:
+            h_low = h
+        else:
+            h_high = h
+    return (float(a), float(b))
 
 
 class Distribution(ProbabilitySpace):
@@ -522,10 +643,9 @@ class Geometric(Distribution):
 
         params = {"p": p}
         super().__init__(params, stats.geom, True)
-        self.xlim = (
-            1,
-            self.xlim[1],
-        )  # Geometric distributions are not defined for x < 1
+        # Highest-density window over the support [1, inf); trims the long
+        # upper tail the old equal-tailed ppf window left on screen.
+        self.xlim = _discrete_hdi_xlim(self, 1)
 
 
 class NegativeBinomial(Distribution):
@@ -584,10 +704,9 @@ class NegativeBinomial(Distribution):
 
         params = {"n": r, "p": p, "loc": r}
         super().__init__(params, stats.nbinom, True)
-        self.xlim = (
-            r,
-            self.xlim[1],
-        )  # Negative Binomial distributions are not defined for x < r
+        # Highest-density window over the support [r, inf); trims the long
+        # upper tail the old equal-tailed ppf window left on screen.
+        self.xlim = _discrete_hdi_xlim(self, r)
 
     def draw(self):
         """Draw a single random sample from the negative binomial distribution.
@@ -668,7 +787,9 @@ class Pascal(Distribution):
 
         params = {"n": r, "p": p}
         super().__init__(params, stats.nbinom, True)
-        self.xlim = (0, self.xlim[1])  # Pascal distributions are not defined for x < 0
+        # Highest-density window over the support [0, inf); trims the long
+        # upper tail the old equal-tailed ppf window left on screen.
+        self.xlim = _discrete_hdi_xlim(self, 0)
 
 
 class Poisson(Distribution):
@@ -721,7 +842,9 @@ class Poisson(Distribution):
 
         params = {"mu": lam}
         super().__init__(params, stats.poisson, True)
-        self.xlim = (0, self.xlim[1])  # Poisson distributions are not defined for x < 0
+        # Highest-density window over the support [0, inf); trims the long
+        # upper tail the old equal-tailed ppf window left on screen.
+        self.xlim = _discrete_hdi_xlim(self, 0)
 
 
 class DiscreteUniform(Distribution):
@@ -1140,7 +1263,9 @@ class Gamma(Distribution):
             params = {"a": shape, "scale": scale}
 
         super().__init__(params, stats.gamma, False)
-        self.xlim = (0, self.xlim[1])  # Gamma distributions are not defined for x < 0
+        # Highest-density window: trims the long right tail and, for shapes
+        # above 1, lifts the left edge off the near-zero-density region.
+        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Beta(Distribution):
@@ -1301,10 +1426,9 @@ class ChiSquare(Distribution):
 
         params = {"df": df}
         super().__init__(params, stats.chi2, False)
-        self.xlim = (
-            0,
-            self.xlim[1],
-        )  # Chi-Square distributions are not defined for x < 0
+        # Highest-density window: trims the long right tail and, for df above
+        # 2, lifts the left edge off the near-zero-density region.
+        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class F(Distribution):
@@ -1362,7 +1486,9 @@ class F(Distribution):
 
         params = {"dfn": dfN, "dfd": dfD}
         super().__init__(params, stats.f, False)
-        self.xlim = (0, self.xlim[1])  # F distributions are not defined for x < 0
+        # Highest-density window: trims the long right tail and, for numerator
+        # df above 2, lifts the left edge off the near-zero-density region.
+        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Cauchy(Distribution):
@@ -1518,10 +1644,9 @@ class LogNormal(Distribution):
 
         params = {"s": self.s, "scale": np.exp(mu)}
         super().__init__(params, stats.lognorm, False)
-        self.xlim = (
-            0,
-            self.xlim[1],
-        )  # Log-Normal distributions are not defined for x < 0
+        # Highest-density window over the interior-mode density: trims the long
+        # right tail and lifts the left edge off the near-zero-density region.
+        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Pareto(Distribution):
@@ -1582,10 +1707,9 @@ class Pareto(Distribution):
 
         params = {"b": self.b, "scale": self.scale}
         super().__init__(params, stats.pareto, False)
-        self.xlim = (
-            scale,
-            self.xlim[1],
-        )  # Pareto distributions are not defined for x < scale
+        # Highest-density window over the monotone-decreasing density: keeps
+        # the peak at the lower bound (scale) and trims the long right tail.
+        self.xlim = _continuous_hdi_xlim(self, scale)
 
     def draw(self):
         """Draw a single random sample from the Pareto distribution.
