@@ -4,6 +4,11 @@ import numpy as np
 import scipy.stats as stats
 import warnings
 
+import matplotlib
+
+matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
+import matplotlib.pyplot as plt
+
 from symbulate import *
 from symbulate import distributions
 
@@ -1805,3 +1810,152 @@ class TestDistributionXlim(unittest.TestCase):
             lo, hi = d.xlim
             equal_tailed_width = float(d.quantile(0.999)) - float(d.quantile(0.001))
             self.assertLess(hi - lo, equal_tailed_width)
+
+
+class TestDistributionProbWindow(unittest.TestCase):
+    """The ``prob=`` parameter of ``Distribution.plot()`` (task 11).
+
+    ``prob`` frames a plot on the highest-density window holding a given
+    share of the probability, reusing task 10's HDI helpers. ``None``
+    (the default) keeps the usual full window; ``True`` uses the standard
+    default coverage; a float in ``(0, 1)`` sets the coverage directly.
+    Most checks read the deterministic ``_prob_window`` helper; the
+    overlay and regression checks render on a non-interactive backend.
+    """
+
+    COVERAGE = distributions._PLOT_COVERAGE
+
+    def tearDown(self):
+        plt.close("all")
+
+    # --- the window covers the requested share of the probability ---
+
+    def test_prob_window_covers_target_discrete(self):
+        for d in [Binomial(100, 0.5), Poisson(20), Geometric(0.2)]:
+            lo, hi = d._prob_window(0.95)
+            cover = float(d.cdf(hi) - d.cdf(lo - 1))
+            self.assertGreaterEqual(cover, 0.95 - 1e-9)
+
+    def test_prob_window_covers_target_continuous(self):
+        for d in [Gamma(2), LogNormal(0, 1), Normal(0, 1)]:
+            lo, hi = d._prob_window(0.95)
+            self.assertAlmostEqual(float(d.cdf(hi) - d.cdf(lo)), 0.95, places=3)
+
+    # --- prob overrides a bounded distribution's full-support default ---
+
+    def test_prob_true_trims_bounded_binomial(self):
+        d = Binomial(100, 0.5)
+        self.assertEqual(d.xlim, (0, 100))  # default window unchanged
+        lo, hi = d._prob_window(self.COVERAGE)  # the prob=True window
+        self.assertGreater(lo, 0)
+        self.assertLess(hi, 100)
+
+    # --- prob=True reuses the default coverage, so it is a no-op for a
+    #     distribution already framed on its highest-density window ---
+
+    def test_prob_true_matches_default_for_unbounded(self):
+        for d in [Poisson(50), Geometric(0.3), NegativeBinomial(3, 0.5)]:
+            self.assertEqual(d._prob_window(self.COVERAGE), d.xlim)
+        for d in [Gamma(2), LogNormal(0, 1), Normal(0, 1), Cauchy(0, 1)]:
+            lo, hi = d._prob_window(self.COVERAGE)
+            self.assertAlmostEqual(lo, float(d.xlim[0]), places=6)
+            self.assertAlmostEqual(hi, float(d.xlim[1]), places=6)
+
+    # --- a smaller coverage gives a strictly tighter window ---
+
+    def test_smaller_coverage_is_tighter(self):
+        d = Normal(0, 1)
+        lo_50, hi_50 = d._prob_window(0.50)
+        lo_99, hi_99 = d._prob_window(0.99)
+        self.assertGreater(lo_50, lo_99)
+        self.assertLess(hi_50, hi_99)
+
+    # --- overlay: the theoretical curve no longer stretches the shared axis ---
+
+    def test_overlay_does_not_stretch_to_full_support(self):
+        # The motivating case: 10000 draws of Binomial(100, 0.5) realize only a
+        # narrow band, but the theoretical curve's full (0, 100) support used to
+        # widen the shared axis to the whole range. prob=True keeps it tight.
+        plt.figure()
+        RV(Binomial(100, 0.5)).sim(10000).plot()
+        Binomial(100, 0.5).plot(prob=True)
+        lo, hi = plt.gca().get_xlim()
+        self.assertGreater(lo, 5)
+        self.assertLess(hi, 95)
+
+    # --- prob=None leaves the default window untouched (regression) ---
+
+    def test_prob_none_keeps_default_window(self):
+        plt.figure()
+        Binomial(100, 0.5).plot()  # prob defaults to None
+        self.assertEqual(tuple(plt.gca().get_xlim()), (0.0, 100.0))
+
+    # --- friendly errors ---
+
+    def test_prob_and_xlim_together_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            Binomial(100, 0.5).plot(xlim=(0, 50), prob=True)
+        self.assertIn("either", str(cm.exception))
+
+    def test_invalid_prob_value_raises(self):
+        for bad in [1.5, 0.0, 1.0, -0.2, "high"]:
+            with self.assertRaises(ValueError) as cm:
+                Normal(0, 1).plot(prob=bad)
+            self.assertIn("prob", str(cm.exception))
+
+    # --- every base-plot distribution accepts prob= and renders cleanly ---
+
+    def test_prob_renders_for_every_distribution(self):
+        dists = [
+            Bernoulli(0.3),
+            Binomial(20, 0.4),
+            Hypergeometric(5, 10, 20),
+            Geometric(0.3),
+            NegativeBinomial(3, 0.5),
+            Pascal(2, 0.3),
+            Poisson(4),
+            DiscreteUniform(1, 6),
+            Uniform(2, 5),
+            Normal(0, 1),
+            Exponential(1),
+            Gamma(2),
+            Beta(2, 3),
+            StudentT(3),
+            ChiSquare(4),
+            F(5, 10),
+            Cauchy(0, 1),
+            LogNormal(0, 1),
+            Pareto(2, 1),
+            Rayleigh(),
+        ]
+        for d in dists:
+            for prob in (True, 0.9):
+                coverage = self.COVERAGE if prob is True else prob
+                lo, hi = d._prob_window(coverage)
+                self.assertTrue(np.isfinite(lo) and np.isfinite(hi), type(d).__name__)
+                self.assertLessEqual(lo, hi, type(d).__name__)
+                plt.figure()
+                d.plot(prob=prob)  # must not raise
+                plt.close("all")
+
+    # --- a window that collapses to one value still yields a usable axis ---
+
+    def test_single_value_window_expands_and_is_quiet(self):
+        # When one outcome carries essentially all the mass the window
+        # collapses to a point; the axis must not be set to a singular
+        # (equal) range, and no raw matplotlib warning should reach the user.
+        for call in [
+            lambda: Bernoulli(0.999).plot(prob=True),  # prob= path
+            lambda: Geometric(0.999).plot(),  # default path (pre-existing)
+        ]:
+            plt.figure()
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                call()
+                lo, hi = plt.gca().get_xlim()
+            plt.close("all")
+            self.assertLess(lo, hi)  # not singular
+            self.assertFalse(
+                any("identical" in str(w.message).lower() for w in caught),
+                "set_xlim received identical limits",
+            )

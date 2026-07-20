@@ -316,7 +316,42 @@ class Distribution(ProbabilitySpace):
 
         return ProbabilitySpace(draw)
 
-    def plot(self, xlim=None, alpha=None, ax=None, **kwargs):
+    def _prob_window(self, coverage):
+        """Compute the x-range framing a given share of the probability.
+
+        Returns the highest-density plotting window -- the tightest range
+        of x-values that together hold ``coverage`` of the probability --
+        by reusing the same helpers that set the default window for
+        unbounded distributions (:func:`_discrete_hdi_xlim` and
+        :func:`_continuous_hdi_xlim`). Used by :meth:`plot` when ``prob``
+        is set, so a curve can be framed on the region where the
+        probability actually lives -- even for a bounded distribution
+        whose default window spans its full support.
+
+        Parameters
+        ----------
+        coverage : float
+            Share of the total probability to enclose, strictly between
+            0 and 1.
+
+        Returns
+        -------
+        tuple of float
+            The ``(low, high)`` x-range enclosing ``coverage`` of the
+            probability.
+        """
+        # The support's lower bound. For a discrete distribution scipy's
+        # quantile(0) sits one step below it -- a safe (never too high)
+        # start for the enumeration; for a distribution unbounded below it
+        # is -inf, so fall back to a far-left finite quantile.
+        low = self.quantile(0.0)
+        if not np.isfinite(low):
+            low = self.quantile(1e-9)
+        if self.discrete:
+            return _discrete_hdi_xlim(self, int(np.floor(low)), coverage)
+        return _continuous_hdi_xlim(self, low, coverage)
+
+    def plot(self, xlim=None, alpha=None, ax=None, prob=None, **kwargs):
         """Plot the probability density or mass function.
 
         For discrete distributions, dots are drawn at each integer value.
@@ -326,7 +361,16 @@ class Distribution(ProbabilitySpace):
         ----------
         xlim : tuple of float, optional
             x-axis range as ``(min, max)``. Uses distribution defaults
-            if not provided.
+            if not provided. Cannot be combined with ``prob``.
+        prob : bool or float, optional
+            Frame the plot on the region holding this much of the
+            probability -- a highest-density window -- instead of the
+            full default range. ``None`` (default) keeps the usual range;
+            ``True`` uses the standard default coverage; a float in
+            ``(0, 1)`` sets the coverage directly (e.g. ``prob=0.95``).
+            Handy for lining a theoretical curve up against simulated
+            data, which occupies only the high-probability part of the
+            support. Cannot be combined with ``xlim``.
         alpha : float, optional
             Transparency of the plot, from 0 (invisible) to 1 (opaque).
         ax : matplotlib.axes.Axes, optional
@@ -346,9 +390,38 @@ class Distribution(ProbabilitySpace):
         --------
         >>> from symbulate import *
         >>> Normal(0, 1).plot()  # doctest: +SKIP
+        >>> Binomial(100, 0.5).plot(prob=True)  # tight window, not (0, 100)  # doctest: +SKIP
         """
-        # use distribution defaults for xlim if none set
-        if xlim is None:
+        # Resolve the x-axis range. `xlim` sets it directly; `prob` instead
+        # frames the plot on the tightest window holding that share of the
+        # probability, overriding even a bounded distribution's full-support
+        # default. The two options are mutually exclusive.
+        if prob is not None and prob is not False:
+            if xlim is not None:
+                raise ValueError(
+                    "Pass either `xlim` or `prob`, not both. `xlim` sets the "
+                    "x-axis range directly, while `prob` computes the range "
+                    "holding that much of the probability. Use "
+                    "`xlim=(low, high)` for an exact range, or `prob=0.99` to "
+                    "frame the region holding 99% of the probability."
+                )
+            if prob is True:
+                coverage = _PLOT_COVERAGE
+            elif (
+                isinstance(prob, numbers.Real)
+                and not isinstance(prob, bool)
+                and 0 < prob < 1
+            ):
+                coverage = float(prob)
+            else:
+                raise ValueError(
+                    "`prob` must be True or a number strictly between 0 and 1 "
+                    "(for example, prob=0.99 to frame the region holding 99% "
+                    f"of the probability). You passed prob={prob!r}."
+                )
+            xlim = self._prob_window(coverage)
+        elif xlim is None:
+            # use distribution defaults for xlim if none set
             xlim = self.xlim
 
         # get the x and y values
@@ -377,6 +450,12 @@ class Distribution(ProbabilitySpace):
             ax = plt.gca()  # creates new axis
 
         # set the axis limits
+        if xlim[0] == xlim[1]:
+            # A window can collapse onto a single value when one outcome
+            # carries essentially all the probability (e.g. Geometric(0.99),
+            # or a bounded distribution under prob=True). Give the lone point
+            # room so the axis stays well-formed instead of singular.
+            xlim = (xlim[0] - 0.5, xlim[1] + 0.5)
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
 
