@@ -31,7 +31,7 @@ from .plot import (
     K_2D,
     DOTPLOT_MAX_STACK,
     auto_jitter_mode,
-    classify_data,
+    classify_values,
     default_plot_type,
     dotplot_tallest_stack,
     get_next_color,
@@ -1331,7 +1331,7 @@ class RVResults(Results):
             ``"mosaic"`` is only meaningful for two discrete-ish
             variables -- the same configuration ``"tile"`` targets.
             If None, a default is chosen from the data: whether each
-            variable looks discrete (``classify_data``) and whether
+            variable looks discrete (``classify_values``) and whether
             the sample is small select an entry from the
             ``DEFAULT_PLOT_TYPE`` lookup table in ``plot.py``.
             The short names adapt to the data. On two continuous
@@ -1475,8 +1475,8 @@ class RVResults(Results):
 
             # determine plotting parameters
             counts = count_var(_plot_array)
-            # 1-D uses the 1-D crowding budget B_1D (see classify_data).
-            discrete, small_n = classify_data(_plot_array, n_unique_threshold=B_1D)
+            # 1-D uses the 1-D crowding budget B_1D (see classify_values).
+            discrete, small_n = classify_values(_plot_array, n_unique_threshold=B_1D)
             configuration = "1D_discrete" if discrete else "1D_continuous"
             default, alternatives = default_plot_type(configuration, small_n)
             # A dot plot stacks one dot per observation, so a single tall
@@ -1599,14 +1599,14 @@ class RVResults(Results):
 
             # x_count / y_count feed the marginal impulses and violin
             # positions below; discreteness itself comes from
-            # classify_data.
+            # classify_values.
             x_count = count_var(x)
             y_count = count_var(y)
             # Each 2-D axis is judged independently against the per-axis budget
             # K_2D, so one axis over budget bins only that axis (-> a mixed
             # tile) and both over budget bin both (-> a 2-D histogram).
-            discrete_x, small_n = classify_data(x, n_unique_threshold=K_2D)
-            discrete_y, _ = classify_data(y, n_unique_threshold=K_2D)
+            discrete_x, small_n = classify_values(x, n_unique_threshold=K_2D)
+            discrete_y, _ = classify_values(y, n_unique_threshold=K_2D)
 
             if discrete_x and discrete_y:
                 configuration = "2D_dd"
@@ -1702,7 +1702,7 @@ class RVResults(Results):
                 # jitter=None (the default) resolves from the data: two
                 # discrete variables get the countable clustered layout
                 # auto_jitter_mode picks; anything else draws exact
-                # positions. classify_data makes the call so continuous
+                # positions. classify_values makes the call so continuous
                 # data is never snapped to integers.
                 scatter_jitter = jitter
                 if scatter_jitter is None:
@@ -1871,7 +1871,7 @@ class RVResults(Results):
             # "1D_categorical" lookup configuration and the categorical plot
             # types (bar / dot plot / impulse), which all accept strings.
             values = np.asarray(list(self.results))
-            discrete, small_n = classify_data(values)
+            discrete, small_n = classify_values(values)
             default, alternatives = default_plot_type("1D_categorical", small_n)
             # Same tall-stack fallback as the numeric 1D branch above: a
             # dot plot of a few categories at large-ish n stacks each into

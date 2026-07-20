@@ -21,7 +21,7 @@ plt.style.use(os.path.join(os.path.dirname(__file__), "symbulate.mplstyle"))
 
 rng = np.random.default_rng()
 
-# Discreteness budgets for the default plot lookup -- see classify_data()
+# Discreteness budgets for the default plot lookup -- see classify_values()
 # and DECISIONS.md, "Decision: Data Classification Thresholds (Budget Model)".
 # A numeric variable reads as discrete-ish while its number of distinct values
 # stays within a crowding budget: B_1D marks for a 1-D plot, and K_2D per axis
@@ -42,6 +42,39 @@ K_2D = 30
 # (aggregated summary). Provisional -- expect to tune alongside the budgets
 # after inspecting team/discrete_continuous_threshold_tests.ipynb.
 N_SMALL_THRESHOLD = 123
+
+# Large-n secondary discreteness rule (see classify_values). A genuinely
+# discrete distribution whose support just overruns the crowding budget -- e.g.
+# Binomial(70, 0.5) or Poisson(15), which land around 30-33 distinct values at
+# n=10000, a hair past B_1D=30 -- should still read as discrete. At large n its
+# values recur reliably, so the fraction of distinct values seen more than once
+# is a good signal, the same repeat-density idea as main's old is_discrete.
+#
+# The reason is_discrete was replaced is that this signal, applied
+# unconditionally, also fires on wide-support rounded-float or genuinely
+# continuous data (rounding makes values repeat too). So the clause is bounded
+# on three sides and only ever flips continuous -> discrete, never the reverse:
+#   - REPEAT_CEILING_FACTOR: only distinct-value counts up to this many times
+#     the budget are eligible. A wide support (rounded floats spread over
+#     hundreds of values, Poisson(1000), ...) stays continuous no matter how
+#     much it repeats -- this is the guard that fixes the is_discrete failure.
+#   - REPEAT_MIN_OCCUPANCY: only when there are at least this many observations
+#     per distinct value, so repeats are a reliable large-n signal rather than
+#     sampling noise (n well into the thousands for a 30-60 value support).
+#   - REPEAT_FRACTION_THRESHOLD: then discrete-ish only if more than this
+#     fraction of the distinct values appear more than once (the is_discrete
+#     criterion). Deliberately well below is_discrete's 0.8: a moderate-support
+#     discrete distribution always has a handful of low-probability tail values
+#     seen exactly once, and across thousands of Poisson(15) samples at
+#     n=10000 the repeat-fraction bottomed out near 0.79 -- so a 0.6 bar clears
+#     every sample with room to spare and keeps the verdict stable seed to
+#     seed. Being lenient here costs nothing on the continuous side: genuinely
+#     continuous data is turned away by the ceiling and occupancy bounds above,
+#     not by this fraction (any variable that passes those with few enough
+#     distinct values already repeats nearly all of them).
+REPEAT_CEILING_FACTOR = 2
+REPEAT_MIN_OCCUPANCY = 100
+REPEAT_FRACTION_THRESHOLD = 0.6
 
 figure = plt.figure
 
@@ -510,7 +543,7 @@ def plot(*args, **kwargs):
         return SymbulatePlot(plt.gca())
 
 
-def classify_data(values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THRESHOLD):
+def classify_values(values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THRESHOLD):
     """Classify simulated values for choosing a default plot type.
 
     Makes two independent determinations that together drive the default
@@ -538,6 +571,20 @@ def classify_data(values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THR
     DECISIONS.md): callers pass ``B_1D`` for a 1-D plot and ``K_2D`` per
     axis for a 2-D plot. It defaults to ``B_1D``.
 
+    A large-n secondary rule catches numeric distributions that are
+    genuinely discrete but whose support just overruns that budget -- e.g.
+    ``Binomial(70, 0.5)`` or ``Poisson(15)``, around 30-33 distinct values
+    at ``n = 10000``. When a sample has more than ``n_unique_threshold``
+    distinct values but still no more than ``REPEAT_CEILING_FACTOR`` times
+    that many, has at least ``REPEAT_MIN_OCCUPANCY`` observations per
+    distinct value, and repeats more than ``REPEAT_FRACTION_THRESHOLD`` of
+    its distinct values, it is treated as discrete-ish after all. This is
+    the repeat-density idea of the old ``is_discrete``, but bounded by the
+    unique-value ceiling and the occupancy requirement so that wide-support
+    rounded-float or genuinely continuous data -- the case ``is_discrete``
+    misclassified -- stays continuous. The clause only ever turns a
+    continuous verdict into a discrete one, never the reverse.
+
     Parameters
     ----------
     values : array-like
@@ -558,12 +605,14 @@ def classify_data(values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THR
     Examples
     --------
     >>> import numpy as np
-    >>> classify_data(np.array([0, 1, 2, 1, 3, 2] * 2000))  # narrow int, large n
+    >>> classify_values(np.array([0, 1, 2, 1, 3, 2] * 2000))  # narrow int, large n
     (True, False)
-    >>> classify_data(np.array([0.1, 0.2, 0.3, 0.4, 0.5]))  # all-distinct float, small n
+    >>> classify_values(np.array([0.1, 0.2, 0.3, 0.4, 0.5]))  # all-distinct float, small n
     (False, True)
-    >>> classify_data(np.array(["H", "T", "H", "T"]))        # categorical
+    >>> classify_values(np.array(["H", "T", "H", "T"]))        # categorical
     (True, True)
+    >>> classify_values(np.repeat(np.arange(40), 200))  # 40 distinct ints past the budget, large n, all repeat
+    (True, False)
     """
     data = np.asarray(list(values))
     n = len(data)
@@ -577,6 +626,24 @@ def classify_data(values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THR
         discrete_ish = n_unique <= n_unique_threshold
     else:
         discrete_ish = n_unique <= n_unique_threshold
+
+    # Large-n secondary rule: rescue a genuinely discrete distribution whose
+    # support just overran the budget. Only when there are repeats to reason
+    # about (n_unique < n excludes all-distinct data), the support stays under
+    # its own ceiling (so wide-support continuous/rounded-float data can't be
+    # pulled in -- the is_discrete failure mode), and there are enough samples
+    # per distinct value that repeats are a reliable signal. Then it is
+    # discrete-ish if a clear majority of its distinct values recur. This can
+    # only flip a continuous verdict to discrete, never the reverse.
+    if (
+        not discrete_ish
+        and n_unique < n
+        and n_unique <= REPEAT_CEILING_FACTOR * n_unique_threshold
+        and n >= REPEAT_MIN_OCCUPANCY * n_unique
+    ):
+        _, counts = np.unique(data, return_counts=True)
+        if np.mean(counts > 1) > REPEAT_FRACTION_THRESHOLD:
+            discrete_ish = True
 
     small_n = n < n_small_threshold
     return discrete_ish, small_n
@@ -631,7 +698,7 @@ def default_plot_type(configuration, small_n):
     """Look up the default plot type and alternatives for a data configuration.
 
     The lookup key is ``(configuration, small_n)``. ``configuration`` is
-    derived from ``classify_data`` output, the data's dtype, and its
+    derived from ``classify_values`` output, the data's dtype, and its
     dimension, and is one of:
 
     - ``"1D_categorical"`` -- 1D string/object outcomes
@@ -650,7 +717,7 @@ def default_plot_type(configuration, small_n):
     configuration : str
         A configuration key (see the list above).
     small_n : bool
-        Whether the sample is small, as returned by ``classify_data``.
+        Whether the sample is small, as returned by ``classify_values``.
 
     Returns
     -------
@@ -996,7 +1063,7 @@ def make_tile(
     discrete_x : bool, optional
         Whether the x-axis is discrete (one cell per value) or
         continuous (binned). If None (default), determined by
-        ``classify_data``, the package-wide discreteness check.
+        ``classify_values``, the package-wide discreteness check.
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
     colorbar : bool, default True
@@ -1032,16 +1099,16 @@ def make_tile(
     >>> make_tile(x, y, plt.gca())  # doctest: +SKIP
     """
     xs, ys = np.asarray(x), np.asarray(y)
-    # Auto-detect which axes are discrete with classify_data, the
+    # Auto-detect which axes are discrete with classify_values, the
     # package-wide discreteness check, when the caller doesn't say.
-    # RVResults.plot() passes its own classify_data determination in
+    # RVResults.plot() passes its own classify_values determination in
     # explicitly; this fallback keeps a direct make_tile() call
     # consistent with it (e.g. a wide-support integer axis is binned as
     # continuous rather than given one skinny cell per value).
     if discrete_x is None:
-        discrete_x = classify_data(xs, n_unique_threshold=K_2D)[0]
+        discrete_x = classify_values(xs, n_unique_threshold=K_2D)[0]
     if discrete_y is None:
-        discrete_y = classify_data(ys, n_unique_threshold=K_2D)[0]
+        discrete_y = classify_values(ys, n_unique_threshold=K_2D)[0]
 
     # bins only bins a continuous axis. With two discrete variables
     # there is nothing to bin -- every distinct value already gets its
@@ -3071,7 +3138,7 @@ def make_segmented_rug(
         read as darker.
     discrete_x : bool, optional
         Whether the x-axis is the discrete (grouping) variable. If
-        None (default), determined by ``classify_data``, the
+        None (default), determined by ``classify_values``, the
         package-wide discreteness check.
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
@@ -3102,14 +3169,14 @@ def make_segmented_rug(
         alpha = RUG_ALPHA
     kwargs.setdefault("linewidth", RUG_LINEWIDTH)
     xs, ys = np.asarray(x), np.asarray(y)
-    # Fall back to classify_data, the package-wide discreteness check,
+    # Fall back to classify_values, the package-wide discreteness check,
     # when the caller doesn't specify. RVResults.plot() passes its own
-    # classify_data determination in explicitly; this keeps a direct
+    # classify_values determination in explicitly; this keeps a direct
     # make_segmented_rug() call consistent with it.
     if discrete_x is None:
-        discrete_x = classify_data(xs, n_unique_threshold=K_2D)[0]
+        discrete_x = classify_values(xs, n_unique_threshold=K_2D)[0]
     if discrete_y is None:
-        discrete_y = classify_data(ys, n_unique_threshold=K_2D)[0]
+        discrete_y = classify_values(ys, n_unique_threshold=K_2D)[0]
 
     # A segmented rug needs one discrete variable (the groups) and one
     # continuous variable (the values). Anything else is a different
@@ -4603,7 +4670,7 @@ def auto_jitter_mode(x, y):
 
     This is the automatic choice ``RVResults.plot()`` makes when the
     user does not set ``jitter`` and both variables are discrete
-    (per ``classify_data``): ``"bins"`` once any single (x, y) value
+    (per ``classify_values``): ``"bins"`` once any single (x, y) value
     holds ``SCATTER_AUTO_BINS_THRESHOLD`` (12) or more points -- past
     the 9-dot compass template, where a spiral pile-up stops being
     cleanly countable -- and ``"spiral"`` otherwise.
