@@ -76,6 +76,23 @@ REPEAT_CEILING_FACTOR = 2
 REPEAT_MIN_OCCUPANCY = 100
 REPEAT_FRACTION_THRESHOLD = 0.6
 
+# Discrete-axis tick label crowding for 2D plots (tile, segmented rug/
+# density/hist/box, and violin) -- a separate crowding budget from B_1D /
+# K_2D above. classify_data can let a discrete axis carry up to K_2D (30)
+# distinct values, and every one of those functions used to label a
+# discrete axis with one tick per distinct value; past a few dozen, the
+# labels overlapped into an unreadable smear (confirmed with Poisson(200):
+# 29 distinct values, 172-224, all crowded onto one axis). MAX_DISCRETE_TICKS
+# caps a real-valued numeric axis's matplotlib locator (see MaxNLocator
+# usage in make_tile and DECISIONS.md, "Discrete-Axis Tick Label Thinning
+# (2D Plots)") and is also the fallback cap for a compacted rank-index
+# axis (categorical data, or data that can't be laid out in real values --
+# _thin_discrete_ticks). Labels stay horizontal, matching every other axis
+# in the package -- rotation was tried and dropped, since a straight label
+# reads the same as any other plot's axis, and the cap already keeps the
+# count low enough to fit unrotated.
+MAX_DISCRETE_TICKS = 10
+
 figure = plt.figure
 
 xlabel = plt.xlabel
@@ -347,6 +364,11 @@ DENSITY2D_CBAR_TICKS = 8  # evenly spaced colorbar ticks (including
 TILE_DEFAULT_BINS = 30  # equal-width bins for a continuous axis;
 # matches make_hist2d's default so mixed discrete/continuous tiles bin
 # the same way
+TILE_MAX_GAP_FILL_RANGE = 2000  # a whole-number discrete axis is laid out
+# in real data units, one unit-width cell per possible value across its
+# observed range (see _setup_tile_axis) -- past this range, that would
+# allocate a pathologically huge, mostly-empty grid (e.g. two masses at 0
+# and 10000), so it falls back to compacted rank-index cells instead.
 TILE_CBAR_SIZE = "5%"
 TILE_CBAR_PAD = 0.1
 TILE_CBAR_TICKS = 8
@@ -926,6 +948,46 @@ def setup_ticks(pos, lab, ax):
     ax.set_ticklabels(lab)
 
 
+def _thin_discrete_ticks(positions, labels, max_ticks):
+    """Evenly spaced subset of discrete-axis tick positions and labels.
+
+    A discrete axis labels every distinct value by default, which reads
+    fine for a handful of levels but overlaps into an unreadable smear
+    past a few dozen (see ``MAX_DISCRETE_TICKS`` at the top of this
+    module). Above ``max_ticks``, keep only an evenly
+    spaced subset of positions -- always including the first and last, so
+    the axis's full range still reads -- instead of forcing every label
+    onto the axis regardless of how many there are. This only thins which
+    labels are *displayed*; it never changes how many cells/bands/bars are
+    drawn for the underlying data (callers pass the full, untouched
+    position list for drawing and only the thinned result to
+    ``set_xticks``/``set_yticks``).
+
+    Parameters
+    ----------
+    positions : array-like
+        Tick positions (cell indices or slot positions), in axis order.
+    labels : array-like
+        The value to label each position with -- same length and order
+        as ``positions``.
+    max_ticks : int
+        Largest number of labels to keep. If there are already at most
+        this many, nothing is thinned.
+
+    Returns
+    -------
+    tuple
+        ``(positions, labels)``, thinned to at most ``max_ticks`` entries.
+    """
+    positions = np.asarray(positions)
+    labels = np.asarray(labels)
+    n = len(positions)
+    if n <= max_ticks:
+        return positions, labels
+    keep = np.unique(np.linspace(0, n - 1, max_ticks).round().astype(int))
+    return positions[keep], labels[keep]
+
+
 def add_colorbar(fig, type, mappable, label):
     # create axis for cbar to place on left
     if "marginal" not in type:
@@ -940,12 +1002,31 @@ def add_colorbar(fig, type, mappable, label):
 
 
 def _setup_tile_axis(values, discrete, bins):
-    """Cell indices, count, extent, and ticks for one tile-plot axis.
+    """Cell indices, count, extent, and (untrimmed) ticks for one tile-plot axis.
 
-    A discrete axis gets one cell per distinct value; a continuous axis
-    is split into ``bins`` equal-width bins the same way ``make_hist2d``
-    does (``np.histogram``-style edges, with the largest value falling
-    in the last bin).
+    A continuous axis is split into ``bins`` equal-width bins the same
+    way ``make_hist2d`` does (``np.histogram``-style edges, with the
+    largest value falling in the last bin) and positioned in real data
+    units, so matplotlib's own numeric locator labels it like a numeric
+    histogram axis.
+
+    A discrete, whole-number axis (a count-style variable -- Binomial,
+    Poisson, a die roll, ...) is positioned in real data units too: one
+    unit-width cell per whole number across the observed range, not just
+    the values that happened to occur. This means an unobserved-but-
+    possible value (e.g. a count that never came up in this many
+    simulations) shows as a visibly empty column instead of silently
+    vanishing, and -- because the axis is now a genuine number line --
+    matplotlib's own numeric locator can pick nice, evenly spaced tick
+    values for it (a consistent scale), the same as the continuous case,
+    instead of a hand-picked subset of whichever values happened to be
+    observed. ``TILE_MAX_GAP_FILL_RANGE`` guards against a pathologically
+    wide range (e.g. two masses at 0 and 10000) blowing up the cell grid.
+
+    Categorical data (strings/bools/objects) and non-whole-number discrete
+    data (repeated floats) have no natural "possible value in between" to
+    fill, so they fall back to compacted rank-index cells instead, with
+    tick labels thinned by the caller (see ``_thin_discrete_ticks``).
 
     Parameters
     ----------
@@ -962,18 +1043,35 @@ def _setup_tile_axis(values, discrete, bins):
     tuple
         ``(idx, n_cells, extent, ticks)`` -- the cell index of every
         value, the number of cells along the axis, the ``(low, high)``
-        imshow extent for the axis, and either ``(positions, labels)``
-        for a discrete axis or ``None`` for a continuous one (whose
-        ticks are left to matplotlib's numeric locator).
+        imshow extent for the axis, and either the full, untrimmed
+        ``(positions, labels)`` for a compacted rank-index discrete axis,
+        or ``None`` for a real-valued axis (whole-number discrete or
+        continuous) whose ticks are left to matplotlib's numeric locator.
     """
     if discrete:
         labels = np.unique(values)
-        idx = np.searchsorted(labels, values)
-        n_cells = len(labels)
-        # imshow centers each cell on its integer index, so a cell
-        # spans index +/- 0.5.
-        extent = (-0.5, n_cells - 0.5)
-        ticks = (np.arange(n_cells), labels)
+        # A whole number, regardless of storage dtype -- Symbulate often
+        # stores discrete outcomes as float64 (e.g. Binomial's 0.0..5.0),
+        # not int.
+        is_whole_number = (
+            np.issubdtype(values.dtype, np.number)
+            and not np.issubdtype(values.dtype, np.complexfloating)
+            and np.all(labels == np.round(labels))
+        )
+        span = int(labels[-1] - labels[0]) + 1 if is_whole_number else None
+        if is_whole_number and span <= TILE_MAX_GAP_FILL_RANGE:
+            lo = int(labels[0])
+            idx = (values - lo).astype(int)
+            n_cells = span
+            extent = (lo - 0.5, lo + span - 0.5)
+            ticks = None  # matplotlib's own numeric locator runs free
+        else:
+            idx = np.searchsorted(labels, values)
+            n_cells = len(labels)
+            # imshow centers each cell on its integer index, so a cell
+            # spans index +/- 0.5.
+            extent = (-0.5, n_cells - 0.5)
+            ticks = (np.arange(n_cells), labels)
     else:
         low, high = values.min(), values.max()
         if low == high:
@@ -1031,6 +1129,22 @@ def make_tile(
     lines are drawn on the discrete axis' cell boundaries (vertical when
     x is discrete, horizontal when y is discrete) so each discrete level
     reads as its own column or row.
+
+    A discrete axis whose values are whole numbers (a count-style
+    variable -- Binomial, Poisson, a die roll, ...) is laid out on a real
+    number line: one unit-width cell per possible whole number across the
+    observed range, so a value that never came up in this many
+    simulations shows as a visibly empty column instead of silently
+    vanishing. Because it's a genuine number line, matplotlib's own
+    numeric locator picks nice, evenly spaced tick values for it (a
+    consistent scale, capped at ``MAX_DISCRETE_TICKS``), exactly like the
+    continuous axis case, rather than a hand-picked subset of whichever
+    values happened to occur. Categorical data, non-whole-number discrete
+    data, or a pathologically wide range instead falls back to compacted
+    cells with a curated, evenly spaced subset of labels so the axis
+    stays legible. Each axis is capped independently at
+    ``MAX_DISCRETE_TICKS`` -- a consistent numeric scale on each axis is
+    prioritized over forcing the exact same tick count on both.
 
     Unlike the 1D plot types, a tile plot encodes magnitude with a
     colormap instead of the categorical color cycle, so no ``color``
@@ -1139,6 +1253,18 @@ def make_tile(
     # equal-width bins exactly like make_hist2d.
     x_idx, nx, x_extent, x_ticks = _setup_tile_axis(xs, discrete_x, bins)
     y_idx, ny, y_extent, y_ticks = _setup_tile_axis(ys, discrete_y, bins)
+
+    # A whole-number discrete axis (x_ticks/y_ticks is None even though
+    # discrete_x/discrete_y is True) is laid out in real data units by
+    # _setup_tile_axis, so it's handled with the continuous axis below --
+    # matplotlib's own numeric locator, capped at MAX_DISCRETE_TICKS. A
+    # categorical / non-whole-number / pathologically wide-range discrete
+    # axis instead falls back to compacted rank-index cells, thinned here.
+    if discrete_x and x_ticks is not None:
+        x_ticks = _thin_discrete_ticks(x_ticks[0], x_ticks[1], MAX_DISCRETE_TICKS)
+    if discrete_y and y_ticks is not None:
+        y_ticks = _thin_discrete_ticks(y_ticks[0], y_ticks[1], MAX_DISCRETE_TICKS)
+
     intensity = np.zeros((ny, nx))
     np.add.at(intensity, (y_idx, x_idx), 1)
     if normalize:
@@ -1162,28 +1288,38 @@ def make_tile(
     # nothing to sit on -- turn it off rather than let fragments show
     # at the edges.
     ax.grid(False)
-    # A discrete axis gets one tick per cell, labeled with the value; a
-    # continuous (binned) axis keeps matplotlib's automatic numeric
-    # ticks over its data range, matching the make_hist2d look.
-    if x_ticks is not None:
+    # A real-valued axis (continuous, or whole-number discrete) keeps
+    # matplotlib's own numeric locator -- capped at MAX_DISCRETE_TICKS and
+    # restricted to whole numbers for a discrete axis, so it picks nice,
+    # evenly spaced tick values instead of crowding. A compacted
+    # rank-index discrete axis (categorical data, or data that couldn't
+    # be laid out in real values) instead gets its own pre-thinned ticks.
+    if discrete_x and x_ticks is None:
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+    elif x_ticks is not None:
         ax.set_xticks(x_ticks[0])
         ax.set_xticklabels(x_ticks[1])
-    if y_ticks is not None:
+    if discrete_y and y_ticks is None:
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+    elif y_ticks is not None:
         ax.set_yticks(y_ticks[0])
         ax.set_yticklabels(y_ticks[1])
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Tile Plot")
     # On mixed data (exactly one discrete axis), draw separator lines on
-    # the discrete axis' cell boundaries -- halfway between neighboring
-    # level indices -- so each level reads as its own column or row. The
-    # lines span the continuous axis and sit on top of the mesh. Vertical
-    # lines when x is the discrete axis, horizontal when y is.
-    # Both-discrete and both-continuous tiles are left clean.
+    # the discrete axis' cell boundaries -- every integer position between
+    # the axis's own extent endpoints, which are always half a cell-width
+    # in from the first/last cell's center, so this works whether that
+    # axis is compacted rank-index cells or real-valued whole-number
+    # cells -- so each level reads as its own column or row. The lines
+    # span the continuous axis and sit on top of the mesh. Vertical lines
+    # when x is the discrete axis, horizontal when y is. Both-discrete and
+    # both-continuous tiles are left clean.
     if discrete_x != discrete_y:
-        n_levels = nx if discrete_x else ny
+        disc_extent = x_extent if discrete_x else y_extent
         draw_line = ax.axvline if discrete_x else ax.axhline
-        for boundary in np.arange(n_levels - 1) + 0.5:
+        for boundary in np.arange(disc_extent[0] + 1, disc_extent[1]):
             draw_line(
                 boundary,
                 color=TILE_GRID_LINE_COLOR,
@@ -1699,11 +1835,14 @@ def make_violin(data, positions, ax, color, axis, alpha):
     # support -- and crashes outright for non-numeric group labels like
     # "H"/"T"). Labeling each slot with its real value is exactly what the
     # inner boxplot below already does via its own explicit positions=.
-    setup_ticks(
-        list(range(1, len(positions) + 1)),
-        positions,
-        ax.xaxis if axis == "x" else ax.yaxis,
+    # Every slot still gets its own violin; past MAX_DISCRETE_TICKS, only
+    # an evenly spaced subset of the slots is labeled, mirroring the mixed
+    # tile plot and segmented rug/box/density.
+    slot_positions = list(range(1, len(positions) + 1))
+    tick_pos, tick_lab = _thin_discrete_ticks(
+        slot_positions, positions, MAX_DISCRETE_TICKS
     )
+    setup_ticks(tick_pos, tick_lab, ax.xaxis if axis == "x" else ax.yaxis)
     for body in violins["bodies"]:
         body.set_facecolor(color)
         body.set_edgecolor(VIOLIN_EDGECOLOR)
@@ -3242,15 +3381,20 @@ def make_segmented_rug(
     # Label the discrete axis with the level values (one tick per band)
     # and give it a little padding so the outer bands aren't clipped;
     # the continuous axis keeps matplotlib's numeric ticks. Axis labels
-    # match the mixed tile plot's "X"/"Y".
+    # match the mixed tile plot's "X"/"Y". Every level still gets its own
+    # band (drawn above using the full, untouched `positions`); past
+    # MAX_DISCRETE_TICKS, only an evenly spaced subset of the bands is
+    # labeled, mirroring the mixed tile plot.
     positions = np.arange(len(levels))
     if discrete_y:
-        ax.set_yticks(positions)
-        ax.set_yticklabels(levels)
+        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
+        ax.set_yticks(tick_pos)
+        ax.set_yticklabels(tick_lab)
         ax.set_ylim(-0.5, len(levels) - 0.5)
     else:
-        ax.set_xticks(positions)
-        ax.set_xticklabels(levels)
+        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
+        ax.set_xticks(tick_pos)
+        ax.set_xticklabels(tick_lab)
         ax.set_xlim(-0.5, len(levels) - 0.5)
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
@@ -3582,13 +3726,19 @@ def make_segmented_density(
     ticks = [positions[level] for level in all_levels]
     lo = min(ticks) - 0.2
     hi = max(ticks) + SEGMENTED_DENSITY_PEAK_SCALE + 0.1
+    # Every level still gets its own baseline and ridge (drawn above using
+    # the full, untouched `ticks`); past MAX_DISCRETE_TICKS, only an
+    # evenly spaced subset of the baselines is labeled, mirroring the
+    # mixed tile plot and segmented rug.
     if discrete_y:
-        ax.set_yticks(ticks)
-        ax.set_yticklabels(all_levels)
+        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
+        ax.set_yticks(tick_pos)
+        ax.set_yticklabels(tick_lab)
         ax.set_ylim(lo, hi)
     else:
-        ax.set_xticks(ticks)
-        ax.set_xticklabels(all_levels)
+        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
+        ax.set_xticks(tick_pos)
+        ax.set_xticklabels(tick_lab)
         ax.set_xlim(lo, hi)
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
@@ -3913,13 +4063,19 @@ def make_segmented_hist(
     ticks = [positions[level] for level in all_levels]
     lo = min(ticks) - 0.2
     hi = max(ticks) + SEGMENTED_HIST_PEAK_SCALE + 0.1
+    # Every level still gets its own baseline and bars (drawn above using
+    # the full, untouched `ticks`); past MAX_DISCRETE_TICKS, only an
+    # evenly spaced subset of the baselines is labeled, mirroring the
+    # segmented density plot.
     if discrete_y:
-        ax.set_yticks(ticks)
-        ax.set_yticklabels(all_levels)
+        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
+        ax.set_yticks(tick_pos)
+        ax.set_yticklabels(tick_lab)
         ax.set_ylim(lo, hi)
     else:
-        ax.set_xticks(ticks)
-        ax.set_xticklabels(all_levels)
+        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
+        ax.set_xticks(tick_pos)
+        ax.set_xticklabels(tick_lab)
         ax.set_xlim(lo, hi)
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
@@ -4114,13 +4270,18 @@ def make_grouped_boxplot(
 
     # Label the discrete axis with the level values (one tick per box);
     # the continuous axis keeps matplotlib's numeric ticks. Axis labels
-    # match the mixed tile plot's and make_segmented_rug's "X"/"Y".
+    # match the mixed tile plot's and make_segmented_rug's "X"/"Y". Every
+    # level still gets its own box (drawn above using the full, untouched
+    # `positions`); past MAX_DISCRETE_TICKS, only an evenly spaced subset
+    # of the boxes is labeled.
     if discrete_y:
-        ax.set_yticks(positions)
-        ax.set_yticklabels(levels)
+        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
+        ax.set_yticks(tick_pos)
+        ax.set_yticklabels(tick_lab)
     else:
-        ax.set_xticks(positions)
-        ax.set_xticklabels(levels)
+        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
+        ax.set_xticks(tick_pos)
+        ax.set_xticklabels(tick_lab)
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title("Box Plot")
