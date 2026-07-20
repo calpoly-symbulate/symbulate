@@ -1697,3 +1697,111 @@ class TestStackedErrorMessages(unittest.TestCase):
         message = str(cm.exception)
         self.assertIn("Specify either rate or scale", message)
         self.assertNotIn("shape must be a positive number", message)
+
+
+class TestDistributionXlim(unittest.TestCase):
+    """Default plotting x-limits (task 10).
+
+    Bounded distributions keep their true full support; skewed unbounded
+    distributions use a highest-density interval; symmetric unbounded ones
+    stay on the equal-tailed window. All checks read the closed-form
+    ``xlim`` (no simulation), so they are deterministic.
+    """
+
+    COVERAGE = distributions._PLOT_COVERAGE
+
+    # --- bounded distributions keep true full support (HDI must not leak in) ---
+
+    def test_binomial_keeps_full_support(self):
+        # The large-n case is the tempting one to trim, and must not be.
+        self.assertEqual(Binomial(1000, 0.5).xlim, (0, 1000))
+        self.assertEqual(Binomial(10, 0.3).xlim, (0, 10))
+
+    def test_bounded_continuous_keep_full_support(self):
+        self.assertEqual(Beta(2, 5).xlim, (0, 1))
+        self.assertEqual(Uniform(2, 7).xlim, (2, 7))
+
+    def test_bounded_discrete_keep_full_support(self):
+        self.assertEqual(DiscreteUniform(1, 6).xlim, (1, 6))
+        self.assertEqual(Bernoulli(0.3).xlim, (0, 1))
+
+    def test_hypergeometric_window_holds_all_mass(self):
+        # Its support isn't a simple (0, n), so assert the window covers all
+        # of the probability rather than a specific tuple -- i.e. not trimmed.
+        d = Hypergeometric(n=5, N0=10, N1=20)
+        lo, hi = d.xlim
+        self.assertAlmostEqual(float(d.cdf(hi) - d.cdf(lo - 1)), 1.0, places=9)
+
+    # --- symmetric unbounded stay on the equal-tailed window (HDI == that) ---
+
+    def test_symmetric_unbounded_stay_equal_tailed(self):
+        for d in [Normal(0, 1), StudentT(5), Cauchy(0, 1)]:
+            lo, hi = d.xlim
+            self.assertAlmostEqual(lo, float(d.quantile(0.001)), places=6)
+            self.assertAlmostEqual(hi, float(d.quantile(0.999)), places=6)
+
+    # --- unbounded discrete: exact highest-density interval ---
+
+    def test_poisson_hdi_trims_right_tail(self):
+        # Right-skewed: keeps the dense low values, trims the thin upper tail
+        # below where the equal-tailed window would have stopped.
+        d = Poisson(0.5)
+        lo, hi = d.xlim
+        self.assertEqual(lo, 0)
+        self.assertLess(hi, int(d.quantile(0.999)))
+
+    def test_discrete_hdi_covers_target(self):
+        for d in [
+            Poisson(3),
+            Poisson(50),
+            Geometric(0.3),
+            NegativeBinomial(3, 0.5),
+            Pascal(2, 0.3),
+        ]:
+            lo, hi = d.xlim
+            cover = float(d.cdf(hi) - d.cdf(lo - 1))
+            self.assertGreaterEqual(cover, self.COVERAGE - 1e-9)
+
+    def test_discrete_hdi_respects_support_lower_bound(self):
+        self.assertGreaterEqual(Geometric(0.3).xlim[0], 1)
+        self.assertGreaterEqual(NegativeBinomial(3, 0.5).xlim[0], 3)
+
+    # --- skewed unbounded continuous: HDI via equal-density root-finding ---
+
+    def test_continuous_hdi_covers_target(self):
+        for d in [
+            Gamma(2),
+            Gamma(0.5),
+            ChiSquare(10),
+            ChiSquare(1),
+            F(5, 10),
+            LogNormal(0, 1),
+            Pareto(2, 1),
+        ]:
+            lo, hi = d.xlim
+            self.assertAlmostEqual(
+                float(d.cdf(hi) - d.cdf(lo)), self.COVERAGE, places=3
+            )
+
+    def test_continuous_interior_mode_endpoints_equal_density(self):
+        # For an interior-mode density the two HDI endpoints are the pair of
+        # equal-density points enclosing the coverage.
+        for d in [Gamma(9), ChiSquare(10), F(5, 10), LogNormal(0, 1)]:
+            lo, hi = d.xlim
+            self.assertAlmostEqual(float(d.pdf(lo)), float(d.pdf(hi)), places=6)
+
+    def test_continuous_monotone_starts_at_support_bound(self):
+        # Monotone-decreasing densities peak at the lower bound, so the HDI
+        # keeps that bound instead of solving for a left equal-density point.
+        self.assertEqual(Pareto(2, 1).xlim[0], 1)  # scale
+        self.assertEqual(Pareto(3, 5).xlim[0], 5)  # scale
+        self.assertEqual(Gamma(0.5).xlim[0], 0)  # shape < 1 -> mode at 0
+        self.assertEqual(ChiSquare(1).xlim[0], 0)  # df = 1 -> mode at 0
+
+    def test_skewed_hdi_narrower_than_equal_tailed(self):
+        # The whole point: for a skewed density the HDI is the shortest window
+        # for its coverage, so it is narrower than the old equal-tailed span.
+        for d in [Gamma(2), LogNormal(0, 1), F(5, 10)]:
+            lo, hi = d.xlim
+            equal_tailed_width = float(d.quantile(0.999)) - float(d.quantile(0.001))
+            self.assertLess(hi - lo, equal_tailed_width)
