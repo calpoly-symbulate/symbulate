@@ -11,7 +11,7 @@ Covers:
 
 Tests seed numpy's global generator (np.random.seed) before simulating,
 matching the convention in test_distributions.py, so the simulated data
-(and with it the classify_data-driven default plot type) is stable from
+(and with it the classify_values-driven default plot type) is stable from
 run to run.
 """
 
@@ -53,7 +53,7 @@ from symbulate.plot import (
     SymbulatePlot,
     B_1D,
     K_2D,
-    classify_data,
+    classify_values,
     default_plot_type,
     get_next_color,
     suggestion_message,
@@ -396,7 +396,7 @@ class TestNumericalPrecision(PlotTestCase):
         """Binomial results have genuine spread; precision fix must not touch them."""
         RV(Binomial(n=10, p=0.5)).sim(500).plot()
         ax = plt.gca()
-        # Discrete data auto-selects impulse, but via classify_data, not ours
+        # Discrete data auto-selects impulse, but via classify_values, not ours
         self.assertGreater(len(ax.collections), 0)
         self.assertEqual(len(ax.patches), 0)
 
@@ -424,7 +424,7 @@ class TestPlot1DOtherDistributions(PlotTestCase):
     def test_poisson_default_is_impulse(self):
         """Poisson results should default to an impulse plot.
 
-        classify_data counts distinct values (Poisson(3) has far fewer
+        classify_values counts distinct values (Poisson(3) has far fewer
         than N_UNIQUE_THRESHOLD), so the discrete determination is
         stable at any n — unlike the old is_discrete(), whose singleton
         budget made this test flaky until n was raised.
@@ -1384,9 +1384,9 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         ]
         self.assertEqual(len(separators), 0)
 
-    def test_tile_fallback_uses_classify_data_not_dtype(self):
+    def test_tile_fallback_uses_classify_values_not_dtype(self):
         """A direct make_tile call with unspecified discreteness classifies
-        with classify_data, not the raw dtype: a wide-support integer axis
+        with classify_values, not the raw dtype: a wide-support integer axis
         (many distinct values) is treated as continuous and binned into
         TILE_DEFAULT_BINS cells, not given one skinny cell per value."""
         rng = np.random.default_rng(0)
@@ -1397,14 +1397,14 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         # columns, whereas the old dtype rule would have made ~200.
         self.assertEqual(mesh.get_array().shape[1], TILE_DEFAULT_BINS)
 
-    def test_segmented_rug_fallback_uses_classify_data_not_dtype(self):
-        """A direct make_segmented_rug call classifies with classify_data:
+    def test_segmented_rug_fallback_uses_classify_values_not_dtype(self):
+        """A direct make_segmented_rug call classifies with classify_values:
         a wide-support integer variable counts as continuous, so pairing it
         with another continuous variable raises the friendly two-continuous
         error instead of drawing hundreds of bands (the old dtype rule
         would have called the integer axis discrete and drawn them)."""
         rng = np.random.default_rng(0)
-        x = rng.integers(0, 200, 2000)  # continuous under classify_data
+        x = rng.integers(0, 200, 2000)  # continuous under classify_values
         y = rng.normal(0, 1, 2000)  # continuous
         with self.assertRaises(ValueError) as cm:
             make_segmented_rug(x, y, plt.gca(), "#56B4E9")
@@ -2052,7 +2052,7 @@ class TestPlot2DSegmentedHist(PlotTestCase):
 
 
 class TestDefaultLookupDispatch(PlotTestCase):
-    """classify_data + DEFAULT_PLOT_TYPE now drive .plot()'s defaults."""
+    """classify_values + DEFAULT_PLOT_TYPE now drive .plot()'s defaults."""
 
     def setUp(self):
         np.random.seed(42)
@@ -2641,7 +2641,7 @@ class TestAxesManagement(PlotTestCase):
 
 
 # ===========================================================================
-# classify_data: discrete-ish / small-n classification
+# classify_values: discrete-ish / small-n classification
 # ===========================================================================
 
 
@@ -2649,65 +2649,117 @@ class TestClassifyData(unittest.TestCase):
     """The two-boolean classifier that replaces is_discrete."""
 
     def test_narrow_int_large_n_is_discrete(self):
-        discrete_ish, small_n = classify_data(np.array([0, 1, 2, 1, 3] * 400))
+        discrete_ish, small_n = classify_values(np.array([0, 1, 2, 1, 3] * 400))
         self.assertTrue(discrete_ish)
         self.assertFalse(small_n)
 
     def test_all_unique_float_is_continuous(self):
-        discrete_ish, small_n = classify_data(np.array([0.1, 0.2, 0.3, 0.4, 0.5]))
+        discrete_ish, small_n = classify_values(np.array([0.1, 0.2, 0.3, 0.4, 0.5]))
         self.assertFalse(discrete_ish)
         self.assertTrue(small_n)
 
     def test_wide_support_int_is_continuous(self):
         """Wide-support integers (e.g. Binomial(10000, 0.5)) read as continuous."""
-        discrete_ish, _ = classify_data(np.arange(200))
+        discrete_ish, _ = classify_values(np.arange(200))
         self.assertFalse(discrete_ish)
 
     def test_repeated_float_narrow_support_is_discrete(self):
         """Float data with few repeated values is a user-defined finite support."""
-        discrete_ish, small_n = classify_data(np.array([1.0, 1.5, 2.71, 4.0] * 250))
+        discrete_ish, small_n = classify_values(np.array([1.0, 1.5, 2.71, 4.0] * 250))
         self.assertTrue(discrete_ish)
         self.assertFalse(small_n)
 
     def test_string_categorical_is_discrete(self):
-        discrete_ish, _ = classify_data(np.array(["H", "T"] * 60))
+        discrete_ish, _ = classify_values(np.array(["H", "T"] * 60))
         self.assertTrue(discrete_ish)
 
     def test_many_category_strings_still_discrete(self):
         """A wide-support categorical (52 labels) must not read as continuous."""
-        discrete_ish, _ = classify_data(np.array([f"c{i % 52}" for i in range(1000)]))
+        discrete_ish, _ = classify_values(np.array([f"c{i % 52}" for i in range(1000)]))
         self.assertTrue(discrete_ish)
 
     def test_boolean_is_discrete(self):
-        discrete_ish, _ = classify_data(np.array([True, False, True, True]))
+        discrete_ish, _ = classify_values(np.array([True, False, True, True]))
         self.assertTrue(discrete_ish)
 
     def test_degenerate_constant_is_discrete(self):
-        discrete_ish, _ = classify_data(np.full(500, 5))
+        discrete_ish, _ = classify_values(np.full(500, 5))
         self.assertTrue(discrete_ish)
 
     def test_small_n_boundary(self):
         """small_n is True below N_SMALL_THRESHOLD and False at/above it."""
-        _, small_below = classify_data(np.arange(99))
-        _, small_at = classify_data(np.arange(100))
+        _, small_below = classify_values(np.arange(99))
+        _, small_at = classify_values(np.arange(100))
         self.assertTrue(small_below)
         self.assertFalse(small_at)
 
     def test_1d_budget_boundary_at_B_1D(self):
         """Default threshold is the 1-D budget B_1D: a numeric variable flips
         discrete -> continuous just above B_1D distinct values."""
-        self.assertTrue(classify_data(np.tile(np.arange(B_1D), 50))[0])
-        self.assertFalse(classify_data(np.tile(np.arange(B_1D + 1), 50))[0])
+        self.assertTrue(classify_values(np.tile(np.arange(B_1D), 50))[0])
+        self.assertFalse(classify_values(np.tile(np.arange(B_1D + 1), 50))[0])
 
     def test_2d_per_axis_budget_at_K_2D(self):
         """With the per-axis 2-D cap K_2D passed in, an axis flips discrete ->
         continuous just above K_2D distinct values."""
         self.assertTrue(
-            classify_data(np.tile(np.arange(K_2D), 50), n_unique_threshold=K_2D)[0]
+            classify_values(np.tile(np.arange(K_2D), 50), n_unique_threshold=K_2D)[0]
         )
         self.assertFalse(
-            classify_data(np.tile(np.arange(K_2D + 1), 50), n_unique_threshold=K_2D)[0]
+            classify_values(np.tile(np.arange(K_2D + 1), 50), n_unique_threshold=K_2D)[0]
         )
+
+    def test_over_budget_discrete_distribution_large_n_is_discrete(self):
+        """Large-n secondary rule: a genuinely discrete distribution whose
+        support just overruns the budget still reads as discrete-ish.
+
+        Poisson(15) and Binomial(70, 0.5) land around 30-33 distinct values at
+        n=10000 -- right at or a hair past B_1D=30 -- so a bare distinct-count
+        budget would call them continuous on the seeds where they top 30. The
+        repeat-density clause rescues them, reliably across seeds. Samples are
+        generated with numpy (mirroring RV(Poisson(15)).sim(10000) etc.) so the
+        seeds are fixed and the test is deterministic."""
+        for seed in range(15):
+            rng = np.random.default_rng(seed)
+            poisson = rng.poisson(15, 10000)
+            binomial = rng.binomial(70, 0.5, 10000)
+            self.assertTrue(
+                classify_values(poisson)[0],
+                msg=f"Poisson(15) seed {seed} should classify as discrete-ish",
+            )
+            self.assertTrue(
+                classify_values(binomial)[0],
+                msg=f"Binomial(70, 0.5) seed {seed} should classify as discrete-ish",
+            )
+
+    def test_rounded_float_continuous_large_n_stays_continuous(self):
+        """The large-n rule must not regress the failure mode is_discrete was
+        replaced for: a genuinely continuous variable, even rounded so its
+        values repeat, spreads over far more than the unique-value ceiling and
+        stays continuous -- reliably across seeds. N(0, 1) rounded to two
+        decimals has hundreds of distinct values at n=10000."""
+        for seed in range(15):
+            rng = np.random.default_rng(seed)
+            rounded = np.round(rng.normal(0, 1, 10000), 2)
+            self.assertFalse(
+                classify_values(rounded)[0],
+                msg=f"rounded continuous seed {seed} should stay continuous",
+            )
+
+    def test_over_budget_uniform_large_n_is_discrete_via_repeat_rule(self):
+        """A synthetic just-over-budget integer support (45 distinct values,
+        past B_1D) with heavy repeats at large n is caught by the secondary
+        rule -- the deterministic core of the Poisson/Binomial case."""
+        over_budget = np.repeat(np.arange(45), 300)  # 45 distinct, each x300
+        self.assertTrue(classify_values(over_budget)[0])
+
+    def test_repeat_rule_bounded_by_unique_value_ceiling(self):
+        """The repeat-density rule is bounded, not unconditional: a variable
+        whose every value repeats but whose support (500 distinct values) is
+        far wider than the ceiling stays continuous. This is exactly the case
+        an unconditional repeat check -- old is_discrete -- got wrong."""
+        wide_support = np.repeat(np.arange(500), 100)  # every value repeats x100
+        self.assertFalse(classify_values(wide_support)[0])
 
 
 # ===========================================================================
