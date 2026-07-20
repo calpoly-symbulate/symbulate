@@ -65,6 +65,7 @@ from symbulate.plot import (
     BAR_ALPHA,
     make_dotplot,
     make_impulse,
+    make_violin,
     make_violinplot,
     make_ecdf,
     make_mosaic,
@@ -75,6 +76,9 @@ from symbulate.plot import (
     make_segmented_hist,
     make_tile,
     make_segmented_rug,
+    make_grouped_boxplot,
+    _thin_discrete_ticks,
+    MAX_DISCRETE_TICKS,
     DEFAULT_PLOT_TYPE,
     PLOT_DISPLAY_NAME,
     SAMPLE_PATH_ALPHA,
@@ -91,6 +95,19 @@ from symbulate.results import RVResults
 def histogram_area(ax):
     """Return the total area (width × height) of all histogram bars on ax."""
     return sum(p.get_width() * p.get_height() for p in ax.patches)
+
+
+def visible_ticks(ax, axis="x"):
+    """Tick locations actually within the axis's current view limits.
+
+    ``ax.get_xticks()``/``get_yticks()`` include candidate locations a
+    locator considered just outside the visible range (never drawn), so
+    tests that care about what a viewer would actually see filter to this
+    instead.
+    """
+    lim = ax.get_xlim() if axis == "x" else ax.get_ylim()
+    ticks = ax.get_xticks() if axis == "x" else ax.get_yticks()
+    return [t for t in ticks if lim[0] <= t <= lim[1]]
 
 
 class PlotTestCase(unittest.TestCase):
@@ -2127,6 +2144,167 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         """On two continuous variables, type='hist' is still the 2D mesh."""
         RV(Normal(0, 1) * Normal(0, 1)).sim(500).plot(type="hist", suggest=False)
         self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+
+
+# ===========================================================================
+# Discrete-axis tick label thinning (tile, segmented rug/density/hist/box,
+# violin) -- regression coverage for the dense, overlapping tick labels a
+# high-cardinality discrete axis used to produce (e.g. Poisson(200): 29
+# distinct values, 172-224, all crowded onto one axis).
+# ===========================================================================
+
+
+class TestThinDiscreteTicksHelper(unittest.TestCase):
+    """Direct unit tests for the shared _thin_discrete_ticks() helper."""
+
+    def test_passthrough_below_threshold(self):
+        positions = np.arange(5)
+        labels = np.array([10, 20, 30, 40, 50])
+        pos, lab = _thin_discrete_ticks(positions, labels, 10)
+        np.testing.assert_array_equal(pos, positions)
+        np.testing.assert_array_equal(lab, labels)
+
+    def test_passthrough_at_exact_threshold(self):
+        positions = np.arange(10)
+        labels = np.arange(10)
+        pos, lab = _thin_discrete_ticks(positions, labels, 10)
+        self.assertEqual(len(pos), 10)
+
+    def test_thins_above_threshold(self):
+        positions = np.arange(29)
+        labels = np.arange(200, 229)
+        pos, lab = _thin_discrete_ticks(positions, labels, 20)
+        self.assertLessEqual(len(pos), 20)
+        self.assertEqual(len(pos), len(lab))
+        # The edges are always kept so the axis's full range still reads.
+        self.assertEqual(pos[0], positions[0])
+        self.assertEqual(pos[-1], positions[-1])
+        # Every kept label is one of the real distinct values.
+        self.assertTrue(np.isin(lab, labels).all())
+
+
+class TestPlot2DDiscreteTickThinning(PlotTestCase):
+    """Every 2D plot helper that labels a discrete axis thins its tick
+    labels past MAX_DISCRETE_TICKS, while still drawing every distinct
+    value's cell/band/box/violin -- only the *displayed labels* are
+    thinned, never the underlying data."""
+
+    def test_tile_dense_discrete_axis_gets_a_consistent_evenly_spaced_scale(self):
+        x = np.resize(np.arange(29), 3000)  # 29 distinct values (like Poisson(200))
+        y = np.resize(np.arange(25), 3000)  # 25 distinct values
+        ax = plt.gca()
+        mesh = make_tile(x, y, ax, discrete_x=True, discrete_y=True)
+        # Every distinct value still gets its own cell.
+        self.assertEqual(mesh.get_array().shape, (25, 29))
+        # Both axes are laid out on a real number line, so matplotlib's own
+        # locator picks a *constant step* between tick values (0, 3, 6, ...)
+        # instead of a hand-picked subset of whichever values happened to
+        # occur, and keeps roughly to MAX_DISCRETE_TICKS.
+        x_ticks, y_ticks = visible_ticks(ax, "x"), visible_ticks(ax, "y")
+        self.assertLessEqual(len(x_ticks), MAX_DISCRETE_TICKS + 2)
+        self.assertLessEqual(len(y_ticks), MAX_DISCRETE_TICKS + 2)
+        self.assertEqual(len(set(np.diff(x_ticks))), 1)  # one constant step
+        self.assertEqual(len(set(np.diff(y_ticks))), 1)
+        # Labels stay horizontal, matching every other axis in the package.
+        self.assertTrue(all(t.get_rotation() == 0 for t in ax.get_xticklabels()))
+
+    def test_tile_no_thinning_when_both_axes_are_small(self):
+        """Two discrete axes with the same low cardinality are unaffected:
+        every value is still labeled on both (step of 1), no rotation."""
+        x = np.resize(np.arange(5), 500)
+        y = np.resize(np.arange(5), 500)
+        ax = plt.gca()
+        make_tile(x, y, ax, discrete_x=True, discrete_y=True)
+        self.assertEqual([int(t) for t in visible_ticks(ax, "x")], [0, 1, 2, 3, 4])
+        self.assertEqual([int(t) for t in visible_ticks(ax, "y")], [0, 1, 2, 3, 4])
+        self.assertTrue(all(t.get_rotation() == 0 for t in ax.get_xticklabels()))
+
+    def test_tile_mismatched_axes_each_get_their_own_consistent_scale(self):
+        """When one axis has far fewer distinct values than the other, each
+        axis gets its own evenly spaced, constant-step ticks -- the tick
+        *count* can now differ between axes (5 vs several), because a
+        consistent numeric scale on each axis takes priority over forcing
+        an identical count on both (see DECISIONS.md)."""
+        x = np.resize(np.arange(5), 3000)  # 5 distinct values
+        y = np.resize(np.arange(30), 3000)  # 30 distinct values
+        ax = plt.gca()
+        make_tile(x, y, ax, discrete_x=True, discrete_y=True)
+        x_ticks, y_ticks = visible_ticks(ax, "x"), visible_ticks(ax, "y")
+        self.assertEqual([int(t) for t in x_ticks], [0, 1, 2, 3, 4])
+        self.assertEqual(len(set(np.diff(y_ticks))), 1)  # y still has a constant step
+        self.assertGreater(len(y_ticks), len(x_ticks))  # counts need not match
+
+    def test_tile_unobserved_value_shows_as_empty_column_not_dropped(self):
+        """A whole-number discrete axis fills in any unobserved-but-possible
+        value within its range instead of silently skipping it -- here 3
+        never occurs, so the axis still has 6 cells (0-5) and that column's
+        count is exactly zero, instead of the axis silently shrinking to 5
+        cells for the 5 values that did occur."""
+        x = np.resize(np.array([0, 1, 2, 4, 5]), 500)  # 3 never occurs
+        y = np.resize(np.array([0, 1]), 500)
+        ax = plt.gca()
+        mesh = make_tile(x, y, ax, discrete_x=True, discrete_y=True, normalize=False)
+        self.assertEqual(mesh.get_array().shape[1], 6)  # 0,1,2,3,4,5 -- 3 filled in
+        self.assertEqual(mesh.get_array()[:, 3].sum(), 0)  # the unobserved column
+
+    def test_segmented_rug_thins_dense_discrete_ticks_but_draws_every_band(self):
+        x = np.random.normal(0, 1, 3000)  # continuous
+        y = np.resize(np.arange(29), 3000)  # discrete, 29 levels
+        ax = plt.gca()
+        color = get_next_color(ax)
+        ticks = make_segmented_rug(x, y, ax, color, discrete_x=False, discrete_y=True)
+        self.assertEqual(len(ticks), 29)  # every level still gets its own band
+        self.assertLessEqual(len(ax.get_yticks()), MAX_DISCRETE_TICKS)
+
+    def test_segmented_density_thins_dense_discrete_ticks_but_draws_every_level(self):
+        x = np.random.normal(0, 1, 3000)
+        y = np.resize(np.arange(25), 3000)  # discrete, 25 levels
+        ax = plt.gca()
+        color = get_next_color(ax)
+        artists = make_segmented_density(
+            x, y, ax, color, discrete_x=False, discrete_y=True
+        )
+        self.assertEqual(len(artists), 25)  # every level still gets its own ridge
+        self.assertLessEqual(len(ax.get_yticks()), MAX_DISCRETE_TICKS)
+
+    def test_segmented_hist_thins_dense_discrete_ticks_but_draws_every_level(self):
+        x = np.random.normal(0, 1, 3000)
+        y = np.resize(np.arange(25), 3000)  # discrete, 25 levels
+        ax = plt.gca()
+        color = get_next_color(ax)
+        artists = make_segmented_hist(
+            x, y, ax, color, discrete_x=False, discrete_y=True
+        )
+        self.assertEqual(len(artists), 25)  # every level still gets its own histogram
+        self.assertLessEqual(len(ax.get_yticks()), MAX_DISCRETE_TICKS)
+
+    def test_grouped_boxplot_thins_dense_discrete_ticks_but_draws_every_box(self):
+        x = np.resize(
+            np.arange(22), 3000
+        )  # discrete, 22 levels (over MAX_DISCRETE_TICKS)
+        y = np.random.normal(0, 1, 3000)
+        ax = plt.gca()
+        color = get_next_color(ax)
+        boxes = make_grouped_boxplot(x, y, ax, color, discrete_x=True, discrete_y=False)
+        self.assertEqual(len(boxes["boxes"]), 22)  # every level still gets its own box
+        self.assertLessEqual(len(ax.get_xticks()), MAX_DISCRETE_TICKS)
+        # Labels stay horizontal, matching every other axis in the package.
+        self.assertTrue(all(t.get_rotation() == 0 for t in ax.get_xticklabels()))
+
+    def test_violin_thins_dense_discrete_ticks_but_draws_every_violin(self):
+        positions = list(
+            range(22)
+        )  # 22 distinct group values (over MAX_DISCRETE_TICKS)
+        groups = np.resize(np.array(positions), 3000)
+        values = np.random.normal(0, 1, 3000)
+        data = np.column_stack([groups, values])
+        ax = plt.gca()
+        color = get_next_color(ax)
+        violins, _boxplot = make_violin(data, positions, ax, color, "x", 0.5)
+        self.assertEqual(len(violins["bodies"]), 22)  # every group still gets a violin
+        self.assertLessEqual(len(ax.get_xticks()), MAX_DISCRETE_TICKS)
+        # Labels stay horizontal, matching every other axis in the package.
+        self.assertTrue(all(t.get_rotation() == 0 for t in ax.get_xticklabels()))
 
 
 # ===========================================================================

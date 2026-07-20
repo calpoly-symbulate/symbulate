@@ -39,7 +39,7 @@ import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Per-plot-type constants. matplotlib rcParams are global and cannot
@@ -50,12 +50,29 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 # (viridis) in symbulate.mplstyle.
 TILE_DEFAULT_BINS = 30  # equal-width bins for a continuous axis; matches
 # make_hist2d's default so mixed discrete/continuous tiles bin the same way
+TILE_MAX_GAP_FILL_RANGE = 2000  # a whole-number discrete axis is laid out
+# in real data units, one unit-width cell per possible value across its
+# observed range (see _setup_tile_axis) -- past this range, that would
+# allocate a pathologically huge, mostly-empty grid (e.g. two masses at 0
+# and 10000), so it falls back to compacted rank-index cells instead.
 TILE_CBAR_SIZE = "5%"  # colorbar width, as a fraction of the axes
 TILE_CBAR_PAD = 0.1  # gap between the axes and the colorbar, inches
 TILE_CBAR_TICKS = 8  # number of evenly spaced colorbar ticks, including
 # both endpoints (0 and the peak value); matches density2d's colorbar
 TILE_CBAR_DECIMALS = 3  # decimal places for the relative-frequency colorbar
 # labels (raw counts are labeled as whole numbers instead)
+
+# Discrete-axis tick label crowding: a discrete axis used to label every
+# distinct value, which overlapped into an unreadable smear past a few
+# dozen values (confirmed with Poisson(200): 29 distinct values, 172-224,
+# all crowded onto one axis). TILE_MAX_TICKS caps a real-valued numeric
+# axis's matplotlib locator (see MaxNLocator usage in make_tile) and is
+# also the fallback cap for a compacted rank-index axis (categorical data,
+# or data that can't be laid out in real values -- _thin_discrete_ticks).
+# Labels stay horizontal, matching every other axis -- see symbulate/plot.py's
+# live copy of this same fix and DECISIONS.md, "Discrete-Axis Tick Label
+# Thinning (2D Plots)".
+TILE_MAX_TICKS = 10
 
 TILE_OVERLAY_WARNING = (
     "Warning: you drew a second tile plot on the same plot. The two "
@@ -64,13 +81,67 @@ TILE_OVERLAY_WARNING = (
 )
 
 
-def _setup_tile_axis(values, discrete, bins):
-    """Cell indices, count, extent, and ticks for one tile-plot axis.
+def _thin_discrete_ticks(positions, labels, max_ticks):
+    """Evenly spaced subset of discrete-axis tick positions and labels.
 
-    A discrete axis gets one cell per distinct value; a continuous axis
-    is split into ``bins`` equal-width bins the same way ``make_hist2d``
-    does (``np.histogram``-style edges, with the largest value falling in
-    the last bin).
+    A discrete axis labels every distinct value by default, which reads
+    fine for a handful of levels but overlaps into an unreadable smear
+    past a few dozen (see ``TILE_MAX_TICKS``). Above ``max_ticks``, keep
+    only an evenly spaced subset of positions -- always including the
+    first and last, so the axis's full range still reads -- instead of
+    forcing every label onto the axis regardless of how many there are.
+    This only thins which labels are *displayed*; it
+    never changes how many cells are drawn for the underlying data.
+
+    Parameters
+    ----------
+    positions : array-like
+        Tick positions (cell indices), in axis order.
+    labels : array-like
+        The value to label each position with -- same length and order
+        as ``positions``.
+    max_ticks : int
+        Largest number of labels to keep. If there are already at most
+        this many, nothing is thinned.
+
+    Returns
+    -------
+    tuple
+        ``(positions, labels)``, thinned to at most ``max_ticks`` entries.
+    """
+    positions = np.asarray(positions)
+    labels = np.asarray(labels)
+    n = len(positions)
+    if n <= max_ticks:
+        return positions, labels
+    keep = np.unique(np.linspace(0, n - 1, max_ticks).round().astype(int))
+    return positions[keep], labels[keep]
+
+
+def _setup_tile_axis(values, discrete, bins):
+    """Cell indices, count, extent, and (untrimmed) ticks for one tile-plot axis.
+
+    A continuous axis is split into ``bins`` equal-width bins the same way
+    ``make_hist2d`` does (``np.histogram``-style edges, with the largest
+    value falling in the last bin) and positioned in real data units, so
+    matplotlib's own numeric locator labels it like a numeric histogram
+    axis.
+
+    A discrete, whole-number axis (a count-style variable -- Binomial,
+    Poisson, a die roll, ...) is positioned in real data units too: one
+    unit-width cell per whole number across the observed range, not just
+    the values that happened to occur. This means an unobserved-but-
+    possible value shows as a visibly empty column instead of silently
+    vanishing, and -- because the axis is now a genuine number line --
+    matplotlib's own numeric locator can pick nice, evenly spaced tick
+    values for it (a consistent scale), the same as the continuous case.
+    ``TILE_MAX_GAP_FILL_RANGE`` guards against a pathologically wide range
+    blowing up the cell grid.
+
+    Categorical data and non-whole-number discrete data (repeated floats)
+    have no natural "possible value in between" to fill, so they fall
+    back to compacted rank-index cells instead, with tick labels thinned
+    by the caller (see ``_thin_discrete_ticks``).
 
     Parameters
     ----------
@@ -87,18 +158,35 @@ def _setup_tile_axis(values, discrete, bins):
     tuple
         ``(idx, n_cells, extent, ticks)`` -- the cell index of every
         value, the number of cells along the axis, the ``(low, high)``
-        imshow extent for the axis, and either ``(positions, labels)``
-        for a discrete axis or ``None`` for a continuous one (whose ticks
-        are left to matplotlib's numeric locator).
+        imshow extent for the axis, and either the full, untrimmed
+        ``(positions, labels)`` for a compacted rank-index discrete axis,
+        or ``None`` for a real-valued axis (whole-number discrete or
+        continuous) whose ticks are left to matplotlib's numeric locator.
     """
     if discrete:
         labels = np.unique(values)
-        idx = np.searchsorted(labels, values)
-        n_cells = len(labels)
-        # imshow centers each cell on its integer index, so a cell spans
-        # index +/- 0.5.
-        extent = (-0.5, n_cells - 0.5)
-        ticks = (np.arange(n_cells), labels)
+        # A whole number, regardless of storage dtype -- Symbulate often
+        # stores discrete outcomes as float64 (e.g. Binomial's 0.0..5.0),
+        # not int.
+        is_whole_number = (
+            np.issubdtype(values.dtype, np.number)
+            and not np.issubdtype(values.dtype, np.complexfloating)
+            and np.all(labels == np.round(labels))
+        )
+        span = int(labels[-1] - labels[0]) + 1 if is_whole_number else None
+        if is_whole_number and span <= TILE_MAX_GAP_FILL_RANGE:
+            lo = int(labels[0])
+            idx = (values - lo).astype(int)
+            n_cells = span
+            extent = (lo - 0.5, lo + span - 0.5)
+            ticks = None  # matplotlib's own numeric locator runs free
+        else:
+            idx = np.searchsorted(labels, values)
+            n_cells = len(labels)
+            # imshow centers each cell on its integer index, so a cell
+            # spans index +/- 0.5.
+            extent = (-0.5, n_cells - 0.5)
+            ticks = (np.arange(n_cells), labels)
     else:
         low, high = values.min(), values.max()
         if low == high:
@@ -246,6 +334,18 @@ def make_tile(
     # bins exactly like make_hist2d.
     x_idx, nx, x_extent, x_ticks = _setup_tile_axis(xs, discrete_x, bins)
     y_idx, ny, y_extent, y_ticks = _setup_tile_axis(ys, discrete_y, bins)
+
+    # A whole-number discrete axis (x_ticks/y_ticks is None even though
+    # discrete_x/discrete_y is True) is laid out in real data units by
+    # _setup_tile_axis, so it's handled with the continuous axis below --
+    # matplotlib's own numeric locator, capped at TILE_MAX_TICKS. A
+    # categorical / non-whole-number discrete axis instead falls back to
+    # compacted rank-index cells, thinned here.
+    if discrete_x and x_ticks is not None:
+        x_ticks = _thin_discrete_ticks(x_ticks[0], x_ticks[1], TILE_MAX_TICKS)
+    if discrete_y and y_ticks is not None:
+        y_ticks = _thin_discrete_ticks(y_ticks[0], y_ticks[1], TILE_MAX_TICKS)
+
     intensity = np.zeros((ny, nx))
     np.add.at(intensity, (y_idx, x_idx), 1)
     if normalize:
@@ -269,13 +369,20 @@ def make_tile(
     # nothing to sit on -- turn it off rather than let fragments show
     # at the edges.
     ax.grid(False)
-    # A discrete axis gets one tick per cell, labeled with the value; a
-    # continuous (binned) axis keeps matplotlib's automatic numeric ticks
-    # over its data range, matching the make_hist2d look.
-    if x_ticks is not None:
+    # A real-valued axis (continuous, or whole-number discrete) keeps
+    # matplotlib's own numeric locator -- capped at TILE_MAX_TICKS and
+    # restricted to whole numbers for a discrete axis, so it picks nice,
+    # evenly spaced tick values instead of crowding. A compacted
+    # rank-index discrete axis (categorical data) instead gets its own
+    # pre-thinned ticks.
+    if discrete_x and x_ticks is None:
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=TILE_MAX_TICKS, integer=True))
+    elif x_ticks is not None:
         ax.set_xticks(x_ticks[0])
         ax.set_xticklabels(x_ticks[1])
-    if y_ticks is not None:
+    if discrete_y and y_ticks is None:
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=TILE_MAX_TICKS, integer=True))
+    elif y_ticks is not None:
         ax.set_yticks(y_ticks[0])
         ax.set_yticklabels(y_ticks[1])
     ax.set_xlabel("X")
@@ -343,5 +450,14 @@ if __name__ == "__main__":
     plt.figure()
     ax = plt.gca()
     make_tile(y, cont_x, ax)
+
+    # Figure 5: a high-cardinality discrete axis (~29 distinct values, like
+    # Poisson(200) in the bug report) on both axes -- demonstrates tick
+    # thinning instead of a dense, overlapping label smear.
+    plt.figure()
+    ax = plt.gca()
+    x_wide = rng.poisson(200, 4000)
+    y_wide = np.clip(x_wide + rng.integers(-5, 6, 4000), 0, None)
+    make_tile(x_wide, y_wide, ax, discrete_x=True, discrete_y=True)
 
     plt.show()
