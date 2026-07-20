@@ -53,8 +53,11 @@ from symbulate.plot import (
     SymbulatePlot,
     B_1D,
     K_2D,
+    N_SMALL_THRESHOLD,
+    DOTPLOT_MAX_STACK,
     classify_values,
     default_plot_type,
+    dotplot_tallest_stack,
     get_next_color,
     suggestion_message,
     should_show_suggestion,
@@ -150,6 +153,86 @@ class TestPlot1DDiscrete(PlotTestCase):
         segs = plt.gca().collections[0].get_segments()
         xs = [seg[0][0] for seg in segs]
         self.assertTrue(all(float(x).is_integer() for x in xs))
+
+
+# ===========================================================================
+# Dot-plot tall-stack fallback
+# ===========================================================================
+
+
+class TestDotplotTallStackFallback(PlotTestCase):
+    """A dot plot whose tallest stack is too tall falls back to a default.
+
+    The dot plot is the small-n default for discrete data, but it stacks
+    one dot per observation, so a single tall stack (e.g. a rare-event
+    indicator) shrinks every dot to a speck. When the tallest stack
+    exceeds ``DOTPLOT_MAX_STACK``, the default is redirected -- to the
+    impulse plot for numeric data and the bar chart for categorical --
+    while an explicit ``type='dotplot'`` is still honored.
+    """
+
+    def test_tallest_stack_helper_counts_most_repeated_value(self):
+        self.assertEqual(dotplot_tallest_stack(np.array([0, 0, 0, 1, 2])), 3)
+        self.assertEqual(dotplot_tallest_stack(np.array(["H", "H", "T"])), 2)
+
+    def test_tallest_stack_helper_empty_is_zero(self):
+        self.assertEqual(dotplot_tallest_stack(np.array([])), 0)
+
+    def test_binomial_indicator_small_n_falls_back_to_impulse(self):
+        """RV(Binomial(1, 0.1)).sim(111): n is small (< 123) so the discrete
+        default would be a dot plot, but ~90% of the mass lands on one value,
+        so the tallest stack blows past DOTPLOT_MAX_STACK and it renders as an
+        impulse plot instead."""
+        np.random.seed(42)
+        sims = RV(Binomial(1, 0.1)).sim(111)
+        self.assertLess(len(sims), N_SMALL_THRESHOLD)  # would be small-n
+        self.assertGreater(
+            dotplot_tallest_stack(np.asarray(sims.results)), DOTPLOT_MAX_STACK
+        )
+        sims.plot(suggest=False)
+        ax = plt.gca()
+        self.assertIn("Impulse", ax.get_title())
+        self.assertNotEqual(ax.get_title(), "Dot Plot")
+
+    def test_fallback_suggestion_still_offers_dotplot(self):
+        """The suggestion note names the impulse default but keeps the dot
+        plot as an alternative students can still ask for."""
+        np.random.seed(42)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            RV(Binomial(1, 0.1)).sim(111).plot(suggest=True)
+        note = buf.getvalue()
+        self.assertIn("Impulse Plot (Default)", note)
+        self.assertIn('Dot Plot (type = "dotplot")', note)
+
+    def test_explicit_dotplot_is_honored_despite_tall_stack(self):
+        """An explicit type='dotplot' request draws a dot plot regardless of
+        stack height -- only the automatic default is redirected."""
+        np.random.seed(42)
+        RV(Binomial(1, 0.1)).sim(111).plot(type="dotplot", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Dot Plot")
+
+    def test_short_stacks_small_n_stays_a_dotplot(self):
+        """A genuine small-n discrete sample with short stacks (a fair die)
+        keeps the dot plot default."""
+        np.random.seed(42)
+        sims = RV(BoxModel([1, 2, 3, 4, 5, 6])).sim(60)
+        self.assertLessEqual(
+            dotplot_tallest_stack(np.asarray(sims.results)), DOTPLOT_MAX_STACK
+        )
+        sims.plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Dot Plot")
+
+    def test_categorical_tall_stack_falls_back_to_bar(self):
+        """Categorical data whose few categories each stack tall redirects to
+        the large-n categorical default (a bar chart)."""
+        np.random.seed(42)
+        sims = RV(BoxModel(["H", "T"])).sim(111)
+        self.assertGreater(
+            dotplot_tallest_stack(np.asarray(sims.results)), DOTPLOT_MAX_STACK
+        )
+        sims.plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Bar Chart")
 
 
 # ===========================================================================
@@ -2688,8 +2771,8 @@ class TestClassifyData(unittest.TestCase):
 
     def test_small_n_boundary(self):
         """small_n is True below N_SMALL_THRESHOLD and False at/above it."""
-        _, small_below = classify_values(np.arange(99))
-        _, small_at = classify_values(np.arange(100))
+        _, small_below = classify_values(np.arange(N_SMALL_THRESHOLD - 1))
+        _, small_at = classify_values(np.arange(N_SMALL_THRESHOLD))
         self.assertTrue(small_below)
         self.assertFalse(small_at)
 

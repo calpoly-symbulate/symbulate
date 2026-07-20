@@ -29,9 +29,11 @@ from .plot import (
     HIST_DEFAULT_BINS,
     B_1D,
     K_2D,
+    DOTPLOT_MAX_STACK,
     auto_jitter_mode,
     classify_values,
     default_plot_type,
+    dotplot_tallest_stack,
     get_next_color,
     jitter_suggestion_message,
     should_show_jitter_suggestion,
@@ -1477,6 +1479,20 @@ class RVResults(Results):
             discrete, small_n = classify_values(_plot_array, n_unique_threshold=B_1D)
             configuration = "1D_discrete" if discrete else "1D_continuous"
             default, alternatives = default_plot_type(configuration, small_n)
+            # A dot plot stacks one dot per observation, so a single tall
+            # stack (e.g. the near-constant Binomial(1, 0.1)) shrinks the
+            # dots to specks no matter how few distinct values there are or
+            # how small the sample is. When a dot plot would be the automatic
+            # default but the tallest stack exceeds DOTPLOT_MAX_STACK, treat
+            # the data like large n and use that configuration's large-n
+            # default (impulse here) instead. Only the default is redirected;
+            # an explicit type='dotplot' is still honored.
+            if (
+                type is None
+                and default == "dotplot"
+                and dotplot_tallest_stack(_plot_array) > DOTPLOT_MAX_STACK
+            ):
+                default, alternatives = default_plot_type(configuration, False)
             if type is None:
                 type = (default,)
             _suggestion = (type[0], default, alternatives)
@@ -1857,6 +1873,17 @@ class RVResults(Results):
             values = np.asarray(list(self.results))
             discrete, small_n = classify_values(values)
             default, alternatives = default_plot_type("1D_categorical", small_n)
+            # Same tall-stack fallback as the numeric 1D branch above: a
+            # dot plot of a few categories at large-ish n stacks each into
+            # an unreadable column, so redirect the default to the
+            # large-n categorical default (a bar chart). Explicit
+            # type='dotplot' is still honored.
+            if (
+                type is None
+                and default == "dotplot"
+                and dotplot_tallest_stack(values) > DOTPLOT_MAX_STACK
+            ):
+                default, alternatives = default_plot_type("1D_categorical", False)
             if type is None:
                 type = (default,)
             _suggestion = (type[0], default, alternatives)
