@@ -7,7 +7,7 @@ from scipy.optimize import brentq, minimize_scalar
 import matplotlib.pyplot as plt
 
 from .probability_space import ProbabilitySpace
-from .plot import get_next_color, SymbulatePlot
+from .plot import get_next_color, SymbulatePlot, ECDF_LINEWIDTH
 from .result import Scalar, Vector, InfiniteVector
 
 rng = np.random.default_rng()
@@ -351,17 +351,30 @@ class Distribution(ProbabilitySpace):
             return _discrete_hdi_xlim(self, int(np.floor(low)), coverage)
         return _continuous_hdi_xlim(self, low, coverage)
 
-    def plot(self, xlim=None, alpha=None, ax=None, prob=None, **kwargs):
-        """Plot the probability density or mass function.
+    def plot(self, xlim=None, alpha=None, ax=None, prob=None, type="pdf", **kwargs):
+        """Plot the probability function or the cumulative distribution function.
 
-        For discrete distributions, dots are drawn at each integer value.
-        For continuous distributions, a smooth curve is drawn.
+        With ``type="pdf"`` (the default), plots the probability density
+        function (continuous distributions, a smooth curve) or probability
+        mass function (discrete distributions, dots at each integer value).
+        With ``type="cdf"``, plots the cumulative distribution function
+        ``P(X <= x)`` instead: a smooth curve for continuous distributions,
+        and a right-continuous step function (no markers) for discrete ones.
+
+        The plot is titled by what it shows: "CDF Plot" for ``type="cdf"``,
+        and for the default view "PDF Plot" (continuous) or "PMF Plot"
+        (discrete).
 
         Parameters
         ----------
         xlim : tuple of float, optional
             x-axis range as ``(min, max)``. Uses distribution defaults
             if not provided. Cannot be combined with ``prob``.
+        type : {"pdf", "cdf"}, default "pdf"
+            Which function to plot. ``"pdf"`` draws the probability
+            density/mass function; ``"cdf"`` draws the cumulative
+            distribution function ``P(X <= x)``. (For discrete
+            distributions ``"pdf"`` draws the probability mass function.)
         prob : bool or float, optional
             Frame the plot on the region holding this much of the
             probability -- a highest-density window -- instead of the
@@ -391,7 +404,16 @@ class Distribution(ProbabilitySpace):
         >>> from symbulate import *
         >>> Normal(0, 1).plot()  # doctest: +SKIP
         >>> Binomial(100, 0.5).plot(prob=True)  # tight window, not (0, 100)  # doctest: +SKIP
+        >>> Poisson(3).plot(type="cdf")  # step function  # doctest: +SKIP
+        >>> Normal(0, 1).plot(type="cdf")  # smooth S-curve  # doctest: +SKIP
         """
+        if type not in ("pdf", "cdf"):
+            raise ValueError(
+                "`type` must be 'pdf' (the default) or 'cdf'. You passed "
+                f"type={type!r}. Use type='pdf' to plot the probability "
+                "density/mass function, or type='cdf' to plot the cumulative "
+                "distribution function P(X <= x)."
+            )
         # Resolve the x-axis range. `xlim` sets it directly; `prob` instead
         # frames the plot on the tightest window holding that share of the
         # probability, overriding even a bounded distribution's full-support
@@ -424,12 +446,14 @@ class Distribution(ProbabilitySpace):
             # use distribution defaults for xlim if none set
             xlim = self.xlim
 
-        # get the x and y values
+        # get the x and y values. The x-window is chosen the same way for
+        # both plot types (it only picks x-values); `type` decides which
+        # function is evaluated there.
         if self.discrete:
             xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
         else:
             xs = np.linspace(xlim[0], xlim[1], 200)
-        ys = self.pdf(xs)
+        ys = self.cdf(xs) if type == "cdf" else self.pdf(xs)
 
         # determine limits for y-axes based on y values
         ymin, ymax = ys[np.isfinite(ys)].min(), ys[np.isfinite(ys)].max()
@@ -462,15 +486,48 @@ class Distribution(ProbabilitySpace):
         # get next color in cycle
         color = get_next_color(ax)
 
-        # plot points for discrete distributions
-        if self.discrete:
-            ax.scatter(xs, ys, s=40, color=color, alpha=alpha, **kwargs)
-
-        # plot curve
-        ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
+        if type == "cdf":
+            # Match make_ecdf's step-function styling so a theoretical CDF
+            # reads as the same kind of curve as its empirical counterpart
+            # (type="ecdf"), which students naturally overlay to compare.
+            # setdefault, not an override, so a user's own linewidth wins.
+            kwargs.setdefault("linewidth", ECDF_LINEWIDTH)
+            if self.discrete:
+                # A discrete CDF is a right-continuous step function: flat
+                # between consecutive integers, jumping at each value. No
+                # markers -- the steps show where the mass lands, exactly
+                # like make_ecdf's where="post".
+                ax.plot(
+                    xs, ys, drawstyle="steps-post", color=color, alpha=alpha, **kwargs
+                )
+            else:
+                # A continuous CDF is a smooth S-curve.
+                ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
+        else:
+            # pdf/pmf: a smooth curve for continuous distributions; dots at
+            # each value with a light connecting line for discrete ones.
+            if self.discrete:
+                ax.scatter(xs, ys, s=40, color=color, alpha=alpha, **kwargs)
+            ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
 
         # adjust the axes, base x-axis at 0
         ax.spines["bottom"].set_position("zero")
+
+        # Title the plot by what it shows: the cumulative distribution
+        # function, or -- for the default view -- the probability density
+        # function (continuous) or probability mass function (discrete).
+        if type == "cdf":
+            ax.set_title("CDF Plot")
+        elif self.discrete:
+            ax.set_title("PMF Plot")
+        else:
+            ax.set_title("PDF Plot")
+
+        # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
+        # y), but these plots read better with both horizontal and vertical
+        # reference lines, matching the ECDF plot -- so override it here for
+        # this plot type specifically.
+        ax.grid(True, axis="both")
 
         return SymbulatePlot(ax)
 
