@@ -261,6 +261,18 @@ def _draw_marginal_panel(
     """
     orientation = "vertical" if axis == "x" else "horizontal"
 
+    # Show gridlines only along this panel's frequency axis (density /
+    # relative frequency), never its value axis. The top (x) marginal is
+    # drawn vertically, so its frequency runs up the y-axis -> horizontal
+    # gridlines; the right (y) marginal is drawn horizontally, so its
+    # frequency runs along the x-axis -> vertical gridlines. (The global
+    # style is horizontal-only, which is right for the x-marginal but wrong
+    # for the y-marginal, so set both explicitly here.)
+    freq_axis = "y" if orientation == "vertical" else "x"
+    ax_marg.set_axisbelow(True)
+    ax_marg.grid(False)
+    ax_marg.grid(True, axis=freq_axis)
+
     if wants_density:
         make_density(
             values, ax_marg, color, bandwidth=bandwidth, orientation=orientation
@@ -1806,7 +1818,11 @@ class RVResults(Results):
 
             if marginal:
                 fig = plt.gcf()
-                gs = GridSpec(4, 4)
+                # Narrow the right margin so a colormap-based main panel's
+                # colorbar has room on the far right (add_colorbar places it
+                # there for the marginal layout); the non-colorbar plot types
+                # simply leave that strip empty.
+                gs = GridSpec(4, 4, right=0.84)
                 ax = fig.add_subplot(gs[1:4, 0:3])
                 ax_marg_x = fig.add_subplot(gs[0, 0:3])
                 ax_marg_y = fig.add_subplot(gs[1:4, 3])
@@ -2069,6 +2085,13 @@ class RVResults(Results):
                 ax_marg_y.sharey(ax)
                 plt.setp(ax_marg_x.get_xticklabels(), visible=False)
                 plt.setp(ax_marg_y.get_yticklabels(), visible=False)
+                # Drop each marginal's own value-axis label ("Value"): the
+                # main panel's X and Y labels already name those axes, and
+                # the shared axes make the marginal's copy redundant clutter
+                # right next to them. The frequency-axis label (Density /
+                # Count) on each marginal is kept.
+                ax_marg_x.set_xlabel("")
+                ax_marg_y.set_ylabel("")
                 # The marginal layout has no room for the center panel's
                 # title -- it would collide with the top marginal panel.
                 ax.set_title("")

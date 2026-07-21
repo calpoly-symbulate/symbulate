@@ -706,6 +706,43 @@ class TestPlot2DContinuous(PlotTestCase):
         self.assertGreater(len(p.ax.collections), 0)
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
+    def test_marginal_main_panel_keeps_xy_labels_no_value_labels(self):
+        """The main panel keeps its "X"/"Y" labels, and neither marginal
+        panel shows a redundant "Value" axis label next to it."""
+        for main_type in ["hist", "tile", "density"]:
+            p = self.sims.plot(type=main_type, marginal=True)
+            self.assertEqual(p.ax.get_xlabel(), "Variable 1")
+            self.assertEqual(p.ax.get_ylabel(), "Variable 2")
+            for a in plt.gcf().axes:
+                self.assertNotEqual(a.get_xlabel(), "Value")
+                self.assertNotEqual(a.get_ylabel(), "Value")
+            plt.close("all")
+
+    def test_marginal_gridlines_follow_frequency_axis(self):
+        """Each marginal panel shows gridlines only along its frequency
+        axis: the top (x) marginal horizontal (y-axis) gridlines, the
+        right (y) marginal vertical (x-axis) gridlines."""
+
+        def xvis(a):
+            return any(gl.get_visible() for gl in a.get_xgridlines())
+
+        def yvis(a):
+            return any(gl.get_visible() for gl in a.get_ygridlines())
+
+        p = self.sims.plot(type="hist", marginal=True)
+        # Panels are the non-main, non-colorbar axes (the colorbar caxes is
+        # a narrow strip); the top marginal sits highest, the right one
+        # sits furthest right.
+        panels = [
+            a for a in plt.gcf().axes if a is not p.ax and a.get_position().width > 0.1
+        ]
+        marg_x = max(panels, key=lambda a: a.get_position().y0)
+        marg_y = max(panels, key=lambda a: a.get_position().x0)
+        self.assertTrue(yvis(marg_x))  # top: horizontal only
+        self.assertFalse(xvis(marg_x))
+        self.assertTrue(xvis(marg_y))  # right: vertical only
+        self.assertFalse(yvis(marg_y))
+
 
 class TestPlot2DDiscrete(PlotTestCase):
     """2D plots involving discrete dimensions."""
@@ -757,8 +794,8 @@ class TestPlot2DViolin(PlotTestCase):
             sims.plot(type="violin")
         ax = plt.gca()
         self.assertEqual(ax.get_title(), "Violin Plot")
-        self.assertEqual(ax.get_xlabel(), "X")
-        self.assertEqual(ax.get_ylabel(), "Y")
+        self.assertEqual(ax.get_xlabel(), "Variable 1")
+        self.assertEqual(ax.get_ylabel(), "Variable 2")
 
     def test_violin_body_uses_okabe_ito_color_not_default(self):
         """Violin bodies should pick up the color cycle, not mpl's own default."""
@@ -1640,6 +1677,36 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         self.assertFalse(any(g.get_visible() for g in p2.ax.get_xgridlines()))
         self.assertTrue(all(g.get_visible() for g in p2.ax.get_ygridlines()))
 
+    def test_segmented_rug_gridline_per_band_when_labels_thinned(self):
+        """With more discrete levels than MAX_DISCRETE_TICKS, the labels
+        thin out but every distinct rug (band) still gets a gridline: the
+        labeled bands via major ticks, the rest via minor ticks, with grid
+        drawn on both."""
+        # DiscreteUniform(1, 25) has 25 levels: > MAX_DISCRETE_TICKS (10),
+        # but <= K_2D (30), so it still classifies as discrete.
+        Xd, Yc = RV(DiscreteUniform(1, 25) * Normal(0, 1))
+        sims = (Xd & Yc).sim(3000)
+        ax = sims.plot(type="rug").ax
+        n_levels = len(np.unique(sims.array[:, 0]))
+
+        major = ax.get_xticks()
+        minor = ax.get_xticks(minor=True)
+        # Labels are thinned onto the major ticks.
+        self.assertLessEqual(len(major), MAX_DISCRETE_TICKS)
+        # Major + minor ticks together cover every band exactly once.
+        self.assertEqual(len(major) + len(minor), n_levels)
+        # Gridlines drawn on both major and minor bands of the discrete
+        # (x) axis, and none on the continuous (y) axis.
+        self.assertTrue(
+            all(t.gridline.get_visible() for t in ax.xaxis.get_major_ticks())
+        )
+        self.assertTrue(
+            all(t.gridline.get_visible() for t in ax.xaxis.get_minor_ticks())
+        )
+        self.assertFalse(
+            any(t.gridline.get_visible() for t in ax.yaxis.get_major_ticks())
+        )
+
     def test_segmented_rug_two_discrete_raises_friendly_error(self):
         with self.assertRaises(ValueError) as cm:
             self.discrete_sims.plot(type="rug")
@@ -1666,9 +1733,9 @@ class TestPlot2DMosaic(PlotTestCase):
         self.discrete_sims.plot(type="mosaic")
         self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
 
-    def test_mosaic_xlabel_is_x(self):
+    def test_mosaic_xlabel_is_variable_1(self):
         self.discrete_sims.plot(type="mosaic")
-        self.assertEqual(plt.gca().get_xlabel(), "X")
+        self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
 
     def test_mosaic_yaxis_shows_zero_to_one_ticks(self):
         """Every column's segments span 0 to 1 the same way, so a shared
@@ -1697,7 +1764,7 @@ class TestPlot2DMosaic(PlotTestCase):
         self.discrete_sims.plot(type="mosaic", marginal_column=False)
         legend = plt.gca().get_legend()
         self.assertIsNotNone(legend)
-        self.assertEqual(legend.get_title().get_text(), "Y")
+        self.assertEqual(legend.get_title().get_text(), "Variable 2")
 
     def test_mosaic_legend_false_shows_no_category_labels(self):
         p = self.discrete_sims.plot(type="mosaic", legend=False, annotate=False)
@@ -1790,11 +1857,11 @@ class TestPlot2DMosaic(PlotTestCase):
 
     def test_mosaic_marginal_column_present_by_default(self):
         """marginal_column defaults to True: an extra column, labeled
-        with y_label (default "Y"), appears after the real x
+        with y_label (default "Variable 2"), appears after the real x
         categories."""
         p = self.discrete_sims.plot(type="mosaic")
         labels = [t.get_text() for t in p.ax.get_xticklabels()]
-        self.assertEqual(labels[-1], "Y")
+        self.assertEqual(labels[-1], "Variable 2")
 
     def test_mosaic_marginal_column_uses_custom_y_label(self):
         p = self.discrete_sims.plot(type="mosaic", y_label="Outcome")
