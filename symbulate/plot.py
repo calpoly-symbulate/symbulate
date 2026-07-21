@@ -142,15 +142,18 @@ HIST_EDGEWIDTH = 0.8
 HIST_DEFAULT_BINS = 30
 HIST_LEGEND_LOC = "upper right"
 # Outlier/skew-aware auto-binning (used only when bins=None -- an explicit
-# bins= still gets the flat equal-width scheme below, unchanged). Provisional,
-# like B_1D/K_2D -- expect to tune after visual inspection. HIST_DEFAULT_BINS
-# above keeps exactly one role now: the flat bin count for the degenerate
-# fallback (near-constant data), not "the" bin count for skewed data -- see
-# DECISIONS.md, "classify_data Thresholds (Budget Model)".
-HIST_OUTLIER_FENCE_MULT = 3.0  # Tukey "far out" IQR fence
+# bins= still gets the flat equal-width scheme below, unchanged). A
+# Freedman-Diaconis bin width computed over the *full* raw range (no
+# clipping, no overflow bin -- just more, still equal-width, bins), so
+# heavy-tailed data resolves the bulk of its shape without misrepresenting
+# the tail or needing a special "everything past here" bar. Provisional,
+# like B_1D/K_2D -- expect to tune after visual inspection.
+# HIST_DEFAULT_BINS above keeps exactly one role now: the flat bin count
+# for the degenerate fallback (near-constant data), not "the" bin count
+# for skewed data -- see DECISIONS.md, "Outlier/Skew-Aware Histogram
+# Binning".
 HIST_MIN_AUTO_BINS = 8
-HIST_MAX_AUTO_BINS = 60
-HIST_OVERFLOW_HATCH = "//"
+HIST_MAX_AUTO_BINS = 2000
 
 # Bar chart (1D categorical / discrete): one bar per distinct value, no
 # binning -- the categorical counterpart of the histogram. Same solid
@@ -2358,15 +2361,17 @@ def make_hist(
     bins : int, array-like, or None, optional
         Number of equal-width bins, or a precomputed array of bin
         edges (passed straight through to ``ax.hist``, which accepts
-        either). If None (default), bins are chosen automatically: a
-        Freedman-Diaconis bin width paired with a Tukey "far out" IQR
-        fence (``HIST_OUTLIER_FENCE_MULT``) clips the visible range so
-        heavy-tailed data (e.g. an F or Gamma distribution) doesn't get
-        its real shape crushed into one or two bins spanning the raw
-        min-max. Values beyond the fence are folded into one hatched
-        overflow bar per affected side rather than dropped, so the
-        histogram still integrates to 1 (or the true total count) over
-        every simulated value, not just the ones inside the fence.
+        either). If None (default), the bin count is chosen
+        automatically: a Freedman-Diaconis bin width computed over the
+        full range of ``values``, so heavy-tailed data (e.g. an F or
+        Gamma distribution) gets enough bins to resolve the bulk of its
+        shape instead of being crushed into 1-2 bins by the flat
+        ``HIST_DEFAULT_BINS`` (30) count -- clamped to
+        ``[HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS]``. Degenerate spread
+        (``IQR == 0`` or fewer than 2 values, where a bin-width estimate
+        isn't meaningful) falls back to ``HIST_DEFAULT_BINS`` equal-width
+        bins over the raw range. The default view always spans every
+        simulated value -- no clipping, no separate zoomed window.
     normalize : bool, default True
         If True, bar areas sum to 1 so the histogram approximates a
         density and can be compared to a pdf curve. If False, bar
@@ -2390,10 +2395,8 @@ def make_hist(
     Returns
     -------
     tuple
-        A ``(counts, bin_edges, patches)`` tuple, matching ``ax.hist``'s
-        shape. ``bin_edges`` covers only the in-fence bins; any overflow
-        bars are separate ``Rectangle`` patches appended to the end of
-        ``patches`` (also included in the axes' own ``ax.patches``).
+        The ``(counts, bin_edges, patches)`` tuple from ``ax.hist``, so
+        the caller can inspect or further style the bars.
 
     Examples
     --------
@@ -2419,24 +2422,18 @@ def make_hist(
     if label is None:
         label = f"Variable {n_prior_hists + 1}"
     ax._hist_count = n_prior_hists + 1
-    if bins is not None:
-        # An explicit bin count or edges array always wins outright --
-        # no outlier clipping, the flat equal-width scheme exactly as
-        # before this function had outlier awareness.
-        histogram = ax.hist(
-            values,
-            bins=bins,
-            density=normalize,
-            color=color,
-            alpha=alpha,
-            label=label,
-            orientation=orientation,
-            **kwargs,
-        )
-    else:
-        histogram = _make_auto_hist(
-            values, ax, color, alpha, label, normalize, orientation, **kwargs
-        )
+    if bins is None:
+        bins = _auto_hist_bin_count(values)
+    histogram = ax.hist(
+        values,
+        bins=bins,
+        density=normalize,
+        color=color,
+        alpha=alpha,
+        label=label,
+        orientation=orientation,
+        **kwargs,
+    )
     value_label, freq_label = "Value", "Density" if normalize else "Count"
     if orientation == "vertical":
         ax.set_xlabel(value_label)
@@ -2452,112 +2449,45 @@ def make_hist(
     return histogram
 
 
-def _make_auto_hist(values, ax, color, alpha, label, normalize, orientation, **kwargs):
-    """Outlier/skew-aware default binning for ``make_hist`` (``bins=None`` only).
+def _auto_hist_bin_count(values):
+    """Freedman-Diaconis bin count for ``make_hist``'s ``bins=None`` default.
 
-    Pairs a Freedman-Diaconis bin width with a Tukey "far out" fence
-    (``[Q1 - HIST_OUTLIER_FENCE_MULT * IQR, Q3 + HIST_OUTLIER_FENCE_MULT *
-    IQR]``, clipped to the data's own range) so a heavy-tailed sample --
-    e.g. ``RV(F(5,4)).sim(10000)``, whose max is roughly 10x its 99th
-    percentile -- doesn't have its real shape crushed into one or two
-    bins spanning the raw min-max. Values beyond the fence are folded
-    into one hatched overflow bar per affected side (drawn with
-    ``ax.bar``, not binned by ``ax.hist``) rather than silently dropped,
-    so a normalized histogram's bars -- regular and overflow together --
-    still integrate to 1 over the *true* sample size, not just the
-    in-fence count. Degenerate spread (``IQR == 0`` or ``n < 2``, where a
-    bin-width estimate isn't meaningful) falls back to the flat
-    ``HIST_DEFAULT_BINS`` equal-width scheme with no clipping.
+    Computed over the *full* range of ``values`` -- no range clipping, no
+    overflow bin, just more (still equal-width) bins than the flat
+    ``HIST_DEFAULT_BINS`` default, so heavy-tailed data (e.g.
+    ``RV(F(5, 4)).sim(10000)``, whose max can be 10x its 99th percentile)
+    resolves the bulk of its shape instead of being crushed into 1-2
+    bins. Clamped to ``[HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS]`` so a
+    single stray outlier can't demand an unreasonable bin count.
+    Degenerate spread (``IQR == 0``, or fewer than 2 values, where a
+    bin-width estimate isn't meaningful) falls back to
+    ``HIST_DEFAULT_BINS`` instead of dividing by (near) zero -- passing
+    that back as a plain int lets ``ax.hist`` handle a zero-width range
+    (all-identical values) safely on its own.
 
-    Scaling is done via ``ax.hist``'s own ``weights=`` parameter, not a
-    post-hoc rescale of the returned bar patches -- ``histtype="step"``/
-    ``"stepfilled"`` return a single ``StepPatch`` per histogram rather
-    than one ``Rectangle`` per bin, so a per-bar ``patch.set_height()``
-    loop isn't available (and wouldn't be, in general, for every
-    ``histtype`` ``ax.hist`` supports). Passing every other argument
-    through to ``ax.hist`` unchanged keeps arbitrary ``**kwargs``
-    (``histtype``, ``edgecolor``, ...) working exactly as they do today.
+    Parameters
+    ----------
+    values : array-like
+        The simulated values to bin.
 
     Returns
     -------
-    tuple
-        ``(counts, bin_edges, patches)`` -- ``counts``/``bin_edges``
-        describe only the in-fence bins; ``patches`` includes any
-        overflow bars appended at the end.
+    int
+        The number of equal-width bins to pass to ``ax.hist``.
     """
     values = np.asarray(values)
     n = len(values)
-    data_min, data_max = values.min(), values.max()
+    if n < 2:
+        return HIST_DEFAULT_BINS
+    data_range = values.max() - values.min()
     q1, q3 = np.percentile(values, [25, 75])
     iqr = q3 - q1
-
-    if iqr == 0 or n < 2:
-        # Degenerate spread: no meaningful bin-width estimate. Widen a
-        # zero-width range (all-identical values) the same way
-        # setup_tile_axis does for its continuous axis, so linspace
-        # doesn't hand back a zero bin_width later.
-        low, high = data_min, data_max
-        if low == high:
-            low, high = low - 0.5, high + 0.5
-        edges = np.linspace(low, high, HIST_DEFAULT_BINS + 1)
-        fence_low, fence_high = data_min, data_max
-    else:
-        fence_low = max(data_min, q1 - HIST_OUTLIER_FENCE_MULT * iqr)
-        fence_high = min(data_max, q3 + HIST_OUTLIER_FENCE_MULT * iqr)
-        if fence_high <= fence_low:
-            # Defensive fallback -- shouldn't occur given iqr > 0 above,
-            # but never hand linspace a zero-or-negative-width range.
-            fence_low, fence_high = data_min, data_max
-        fd_width = 2 * iqr * n ** (-1 / 3)
-        n_bins = int(
-            np.clip(
-                round((fence_high - fence_low) / fd_width),
-                HIST_MIN_AUTO_BINS,
-                HIST_MAX_AUTO_BINS,
-            )
-        )
-        edges = np.linspace(fence_low, fence_high, n_bins + 1)
-
-    bin_width = edges[1] - edges[0]
-    scale = 1 / (n * bin_width) if normalize else 1.0
-    weights = kwargs.pop("weights", np.ones(n)) * scale
-
-    counts, edges, patches = ax.hist(
-        values,
-        bins=edges,
-        weights=weights,
-        density=False,
-        color=color,
-        alpha=alpha,
-        label=label,
-        orientation=orientation,
-        **kwargs,
+    if iqr == 0 or data_range == 0:
+        return HIST_DEFAULT_BINS
+    fd_width = 2 * iqr * n ** (-1 / 3)
+    return int(
+        np.clip(round(data_range / fd_width), HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS)
     )
-
-    overflow_patches = []
-    overflow_bar_fn = ax.bar if orientation == "vertical" else ax.barh
-    for values_outside, edge, side in (
-        (values < fence_low, edges[0], "low"),
-        (values > fence_high, edges[-1], "high"),
-    ):
-        overflow_count = int(values_outside.sum())
-        if overflow_count == 0:
-            continue
-        pos = edge - bin_width if side == "low" else edge
-        overflow_bar = overflow_bar_fn(
-            pos,
-            overflow_count * scale,
-            bin_width,
-            align="edge",
-            color=color,
-            alpha=alpha,
-            hatch=HIST_OVERFLOW_HATCH,
-            edgecolor=kwargs.get("edgecolor", HIST_EDGECOLOR),
-            linewidth=kwargs.get("linewidth", HIST_EDGEWIDTH),
-        )[0]
-        overflow_patches.append(overflow_bar)
-
-    return counts, edges, list(patches) + overflow_patches
 
 
 def _bar_categories(series):
