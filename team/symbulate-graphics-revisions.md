@@ -623,6 +623,16 @@ decided. Concretely, for a `customize_plot()`:
 should be resolved before item 15 (shade) and ideally before the naming pass (item
 19), since it affects the shape of both.
 
+**Resolved:** see `DECISIONS.md`, "Decision: Customization Parameters Deferred to a
+Future `.customize()` Method" — the boundary is split as restyle (`.customize()`:
+`color=`/`alpha=`, applied to marks already drawn) vs. add-new-element (Composition
+API: `title`, `xlabel`, `ylabel`, `vline`, `hline`, `shade`, `curve`, `text`).
+`title`/`xlabel`/`ylabel` belong exclusively to the Composition API now, so
+`.customize()` won't grow a redundant spelling for them. This does not resolve item
+15's `shade` signature question (`shade(lt=, le=, gt=, ge=)` vs. `shade(from_x, to_x,
+label=None)`) — that's a separate, still-open naming conflict within the
+Composition API side.
+
 ---
 
 ## 15. Add `Distribution.shade()` for tail/interval probability regions
