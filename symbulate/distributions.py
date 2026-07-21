@@ -2058,6 +2058,67 @@ class Rayleigh(Distribution):
         super().__init__(params, stats.rayleigh, False)
 
 
+class Weibull(Distribution):
+    """Probability space for a Weibull distribution.
+
+    A continuous distribution on [0, infinity) widely used to model
+    lifetimes and time to failure. The shape parameter controls how the
+    failure rate changes over time: shape < 1 means it decreases, shape
+    = 1 means it is constant (and the Weibull reduces to the exponential),
+    and shape > 1 means it increases.
+
+    Parameters
+    ----------
+    shape : float
+        Shape parameter k. Must be positive.
+    scale : float, optional
+        Scale parameter lambda. Must be positive. Default is 1.0.
+
+    Attributes
+    ----------
+    shape : float
+        Shape parameter k.
+    scale : float
+        Scale parameter lambda.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Weibull(shape=1.5, scale=2)
+    >>> round(float(X.mean()), 4)
+    1.8055
+    >>> X.draw()  # doctest: +SKIP
+    2.02
+    """
+
+    def __init__(self, shape, scale=1.0):
+        """Initialize a Weibull distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape`` or ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.shape = shape
+        self.scale = scale
+        # scipy's Weibull is weibull_min, with c the shape and scale the
+        # scale; loc stays at its 0 default so the support starts at 0.
+        params = {"c": shape, "scale": scale}
+        super().__init__(params, stats.weibull_min, False)
+        # Highest-density window: trims the long right tail, like Gamma.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 ## Multivariate Distributions
 
 
