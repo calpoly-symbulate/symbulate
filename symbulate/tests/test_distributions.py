@@ -1112,6 +1112,55 @@ class TestRayleigh(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
 
+class TestWeibull(unittest.TestCase):
+
+    def test_Weibull_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Weibull(shape=1.5, scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.weibull_min(c=1.5, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Weibull_mean_var_sd(self):
+        X = Weibull(shape=1.5, scale=2)
+        th = stats.weibull_min(c=1.5, scale=2)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_Weibull_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Weibull(shape=1.5, scale=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_Weibull_shape_one_is_exponential(self):
+        # Weibull with shape=1 is Exponential(scale) -- same CDF.
+        X = Weibull(shape=1, scale=2)
+        self.assertAlmostEqual(float(X.cdf(2)), float(stats.expon(scale=2).cdf(2)))
+
+    def test_Weibull_default_scale_is_one(self):
+        X = Weibull(shape=2)
+        self.assertEqual(X.scale, 1.0)
+
+    def test_Weibull_invalid_shape_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Weibull(shape=b))
+
+    def test_Weibull_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Weibull(shape=1.5, scale=b))
+
+    def test_Weibull_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Weibull(1.5, 2).draw()
+        RV(Weibull(1.5, 2)).sim(100).plot()
+        Weibull(1.5, 2).plot()
+        Weibull(1.5, 2).plot(type="cdf")
+        plt.close("all")
+
+
 class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):
@@ -1928,6 +1977,7 @@ class TestDistributionProbWindow(unittest.TestCase):
             LogNormal(0, 1),
             Pareto(2, 1),
             Rayleigh(),
+            Weibull(1.5, 2),
         ]
         for d in dists:
             for prob in (True, 0.9):
@@ -2110,6 +2160,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
             LogNormal(0, 1),
             Pareto(2, 1),
             Rayleigh(),
+            Weibull(1.5, 2),
         ]
         for d in dists:
             plt.figure()
