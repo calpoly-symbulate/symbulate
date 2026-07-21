@@ -365,6 +365,8 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 > Original priority list (replaced by the table above, kept here for history): `vline`, `hline`, `title`, `x_label`, `shade`. One spelling fix: `x_label` became `xlabel`, per "Decision: Plot Naming and API Vocabulary" above. Avoid: `axvline`, `geom_vline`, `set_xlabel`, `annotate` (matplotlib already overloads "annotate" to mean "text + arrow"; `text` says exactly what it does with no baggage), `fill_between`/`shade_region` (ruled out on the same matplotlib-naming grounds as `axvline`).
 >
 > **Still open, and naming alone doesn't settle it:** `curve(distribution)` implies passing a Symbulate distribution object (e.g. `curve(Normal(0, 1))`), which fits the rest of the package's vocabulary better than passing a raw pdf function — worth confirming before anyone builds this (see Open Decisions).
+>
+> **Boundary with `.customize()`:** `title`, `xlabel`, and `ylabel` belong exclusively here, not on a future `.customize()` method — see "Decision: Customization Parameters Deferred to a Future `.customize()` Method" for the full reconciliation. `.customize()` is restricted to restyling marks that are already drawn (`color=`, `alpha=`); everything in the table above is a new visual element, which is this decision's territory.
 
 **Rationale**
 > The audience includes students with minimal programming experience. Naming tied to matplotlib or ggplot2 conventions is a barrier. Designing the vocabulary now — even without implementation — ensures the `SymbulatePlot` wrapper is built with the right interface in mind. Implementation is deferred because static graphics must be stable first.
@@ -391,16 +393,23 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: Customization Parameters Deferred to a Future `.customize()` Method
 
-**Status:** Proposed — directional, not yet fully specified (Design Document Section 4 is still unwritten).
+**Status:** Proposed — directional, not yet fully specified (Design Document Section 4 is still unwritten). Its boundary with the Plot Composition API decision below was ambiguous (both plans included `title`/`xlabel`/`ylabel`) and is now resolved — see below.
 
 **Decision**
 > Individual plot-type functions (and `.plot()` itself) shouldn't expose ad-hoc cosmetic kwargs like `color=` or `label=` to students. Those are reserved for a future chainable `.customize()` method (e.g. `.plot().customize(xlabel=..., color=...)`), which hasn't been designed yet. This doesn't touch internal plumbing like `get_next_color(ax)` — the student never types that in directly. This decision is only about what a student would type into `.plot(...)`, not about internal color-cycle bookkeeping.
+>
+> **Boundary with the Plot Composition API (resolved):** `.customize()` and the `+`-composable geoms (see "Decision: Plot Composition API") read as two competing ways to do the same thing once both plans existed. The scopes are now split so neither duplicates the other:
+> - `.customize()` is for **restyling a mark that's already drawn** — `color=`, `alpha=`, and any other cosmetic property of existing plot elements.
+> - `title`, `xlabel`, and `ylabel` belong **exclusively** to the Composition API (`+ title(...)`, `+ xlabel(...)`, `+ ylabel(...)`) — they read as *adding* a text element, not restyling an existing one, and that vocabulary is already fully specified there. `.customize()` should not grow its own `title=`/`xlabel=`/`ylabel=` kwargs.
+> - Reference lines, shaded regions, and overlaid curves (`vline`, `hline`, `shade`, `curve`, `text`) were never ambiguous — they're new visual elements, so they stay on the Composition API side.
+>
+> When `.customize()` is eventually designed: `color=`/`alpha=` should accept a single value or a list matching the order of `type=[...]` entries (consistent with how `type=` already accepts a list), with explicit validation of list-length mismatches rather than silent cycling/truncation, and it should return `self` (or the `Axes`) so it chains, e.g. `RV(Normal()).sim(10000).plot().customize(color="green")`. It stays strictly cosmetic — no reclassification, no bin/threshold changes.
 
 **Rationale**
-> From the 7/9 meeting: this keeps `.plot()`'s signature stable and simple while we design a proper customization API separately, instead of piling up one-off cosmetic kwargs per plot type.
+> From the 7/9 meeting: this keeps `.plot()`'s signature stable and simple while we design a proper customization API separately, instead of piling up one-off cosmetic kwargs per plot type. The restyle-vs-add split avoids two supported spellings for the same operation (e.g. setting a title), which would otherwise force every student-facing doc and example to arbitrarily pick one.
 
 **Alternatives Considered**
-> Letting each new plot-type function grow its own cosmetic kwargs (`color=`, `label=`, etc.) as needed — rejected, since it's inconsistent and jumps ahead of the `.customize()` design before it even exists.
+> Letting each new plot-type function grow its own cosmetic kwargs (`color=`, `label=`, etc.) as needed — rejected, since it's inconsistent and jumps ahead of the `.customize()` design before it even exists. Giving `.customize()` its own `title=`/`xlabel=`/`ylabel=` kwargs alongside the Composition API's `title(...)`/`xlabel(...)`/`ylabel(...)` — rejected, since it creates two redundant spellings for the same operation with no clear rule for which a student should reach for.
 
 ---
 
