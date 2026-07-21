@@ -1034,15 +1034,22 @@ def _thin_discrete_ticks(positions, labels, max_ticks):
 
 
 def add_colorbar(fig, marginal, mappable, label):
-    # create axis for cbar to place on left
     if not marginal:
+        # No marginals: colorbar on the far left, label on its left.
         caxes = fig.add_axes([0, 0.1, 0.05, 0.8])
-    else:  # adjust height if marginals
-        caxes = fig.add_axes([0, 0.1, 0.05, 0.57])
-    cbar = plt.colorbar(mappable=mappable, cax=caxes)
-    caxes.yaxis.set_ticks_position("left")
-    cbar.set_label(label)
-    caxes.yaxis.set_label_position("left")
+        cbar = plt.colorbar(mappable=mappable, cax=caxes)
+        caxes.yaxis.set_ticks_position("left")
+        cbar.set_label(label)
+        caxes.yaxis.set_label_position("left")
+    else:
+        # Marginal layout: place the colorbar on the far right, past the
+        # y-marginal panel, with its ticks and label on the right (the
+        # matplotlib default). On the left it would sit on top of the main
+        # panel's y-axis label; the caller leaves right-hand room for it by
+        # narrowing the GridSpec (see RVResults.plot()'s marginal branch).
+        caxes = fig.add_axes([0.86, 0.11, 0.03, 0.52])
+        cbar = plt.colorbar(mappable=mappable, cax=caxes)
+        cbar.set_label(label)
     return caxes
 
 
@@ -1391,8 +1398,8 @@ def make_tile(
     elif y_ticks is not None:
         ax.set_yticks(y_ticks[0])
         ax.set_yticklabels(y_ticks[1])
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("Variable 1")
+    ax.set_ylabel("Variable 2")
     ax.set_title("Tile Plot")
     # On mixed data (exactly one discrete axis), draw separator lines on
     # the discrete axis' cell boundaries -- every integer position between
@@ -1507,8 +1514,8 @@ def make_mosaic(
     normalize=True,
     annotate=True,
     legend=True,
-    x_label="X",
-    y_label="Y",
+    x_label="Variable 1",
+    y_label="Variable 2",
     marginal_column=True,
     **kwargs,
 ):
@@ -1551,8 +1558,8 @@ def make_mosaic(
     each of its segments carries its category name just to its right
     (see ``legend`` below), so the marginal column doubles as the
     plot's legend instead of a separate floating legend box. Its
-    x-tick label is ``y_label`` itself (e.g. "Y", the default), since
-    the column represents ``y``'s own distribution.
+    x-tick label is ``y_label`` itself (e.g. "Variable 2", the default),
+    since the column represents ``y``'s own distribution.
 
     A shared proportion scale (0 to 1) is shown on the left of the
     axes: every column's segments, real or marginal, independently span
@@ -1964,8 +1971,8 @@ def make_violin(data, positions, ax, color, axis, alpha):
         for artist in artists:
             artist.set_zorder(3)
 
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("Variable 1")
+    ax.set_ylabel("Variable 2")
     ax.set_title("Violin Plot")
 
     # Count the violin plots drawn on these axes, stored on the axes
@@ -3717,24 +3724,32 @@ def make_segmented_rug(
         tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
         ax.set_yticks(tick_pos)
         ax.set_yticklabels(tick_lab)
+        # Minor ticks at every band, so a gridline can mark each distinct
+        # rug even where the (major) label was thinned away above.
+        ax.set_yticks(positions, minor=True)
         ax.set_ylim(-0.5, len(levels) - 0.5)
     else:
         tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_lab)
+        ax.set_xticks(positions, minor=True)
         ax.set_xlim(-0.5, len(levels) - 0.5)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("Variable 1")
+    ax.set_ylabel("Variable 2")
     ax.set_title("Segmented Rug Plot")
-    # Reference gridlines run along the discrete axis only -- one line
-    # per level, so the bands read as distinct groups -- while the
-    # continuous value axis stays clean like the standalone 1D rug.
-    # Vertical lines when x is the discrete axis, horizontal when y is
-    # (exactly one is discrete here). axisbelow keeps them behind the
-    # rug ticks; the grid's color and width come from symbulate.mplstyle.
+    # Reference gridlines run along the discrete axis only -- one line per
+    # level (band), so every distinct rug reads as its own group, even the
+    # ones whose tick label was thinned out to avoid crowding. which="both"
+    # draws at the labeled (major) bands and the thinned (minor) bands
+    # alike; both pick up the grid style from symbulate.mplstyle. The minor
+    # tick marks themselves are hidden, so only gridlines are added and the
+    # thinned-label look is kept. axisbelow keeps the grid behind the rug
+    # ticks; the continuous value axis stays clean like the standalone rug.
+    discrete_axis = "x" if discrete_x else "y"
     ax.set_axisbelow(True)
     ax.grid(False)
-    ax.grid(True, axis="x" if discrete_x else "y")
+    ax.grid(True, which="both", axis=discrete_axis)
+    ax.tick_params(axis=discrete_axis, which="minor", length=0)
     return ticks
 
 
@@ -4067,8 +4082,8 @@ def make_segmented_density(
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_lab)
         ax.set_xlim(lo, hi)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("Variable 1")
+    ax.set_ylabel("Variable 2")
     ax.set_title("Segmented Density Plot")
     # A light reference grid along the continuous axis only, for reading
     # values off the curves. The discrete axis needs no grid line: each
@@ -4404,8 +4419,8 @@ def make_segmented_hist(
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_lab)
         ax.set_xlim(lo, hi)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("Variable 1")
+    ax.set_ylabel("Variable 2")
     ax.set_title("Segmented Histogram")
     # A light reference grid along the continuous axis only, for reading
     # values off the bars. The discrete axis needs no grid line: each
@@ -4609,8 +4624,8 @@ def make_grouped_boxplot(
         tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_lab)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("Variable 1")
+    ax.set_ylabel("Variable 2")
     ax.set_title("Box Plot")
     return boxes
 
@@ -5536,8 +5551,8 @@ def make_hist2d(
     # nothing to sit on -- turn it off rather than let fragments show
     # at the edges.
     ax.grid(False)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("Variable 1")
+    ax.set_ylabel("Variable 2")
     ax.set_title("Hexbin Plot" if hex else "2-D Histogram")
     if colorbar:
         # Colorbar on the right, sized relative to the axes so it
@@ -5748,8 +5763,8 @@ def make_density2D(x, y, ax, contour=False, levels=None, colorbar=True, **kwargs
 
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
+    ax.set_xlabel("Variable 1")
+    ax.set_ylabel("Variable 2")
     ax.set_title("Contour Plot" if contour else "2D Density Plot")
     # symbulate.mplstyle's global grid is horizontal-only
     # (axes.grid.axis: y); the approved prototypes call for both
