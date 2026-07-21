@@ -25,7 +25,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
 import matplotlib.pyplot as plt
-from matplotlib.collections import PolyCollection
+from matplotlib.collections import PolyCollection, PathCollection
 
 from symbulate import (
     RV,
@@ -176,6 +176,20 @@ class TestPlot1DDiscrete(PlotTestCase):
         segs = plt.gca().collections[0].get_segments()
         xs = [seg[0][0] for seg in segs]
         self.assertTrue(all(float(x).is_integer() for x in xs))
+
+    def test_impulse_has_no_marker_dots(self):
+        """Impulse plots draw bare stems only -- no scatter/marker dots."""
+        self.sims.plot(type="impulse")
+        ax = plt.gca()
+        self.assertFalse(any(isinstance(c, PathCollection) for c in ax.collections))
+
+    def test_impulse_legend_label_survives_dot_removal(self):
+        """The series label (now on the stems, not a marker) still reaches
+        the legend once a second series overlays the first."""
+        self.sims.plot(type="impulse", label="First")
+        RV(Binomial(n=10, p=0.6)).sim(500).plot(type="impulse", label="Second")
+        legend_labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(legend_labels, ["First", "Second"])
 
 
 # ===========================================================================

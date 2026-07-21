@@ -114,10 +114,8 @@ def get_next_color(axes):
 # (see DECISIONS.md, "Decision: .mplstyle Standards"), so these live
 # here instead of symbulate.mplstyle.
 
-# Impulse plot.
+# Impulse plot: bare stems, no marker caps.
 IMPULSE_LINEWIDTH = 2.2
-IMPULSE_MARKER = "o"
-IMPULSE_MARKER_SIZE = 60
 IMPULSE_ALPHA = 1.0
 IMPULSE_LEGEND_LOC = "upper right"
 # Fraction of the smallest gap between values used to separate adjacent
@@ -2051,8 +2049,8 @@ def make_impulse(
 ):
     """Draw a 1D impulse (stem) plot of simulated discrete values.
 
-    Each stem is capped with a filled marker so the plot matches the
-    approved impulse prototype. Impulse plots overlay naturally: a
+    Stems are bare ``vlines`` (``hlines`` when horizontal) -- no marker
+    caps. Impulse plots overlay naturally: a
     second call on the same axes draws on top of the first, and a
     legend appears automatically in the top right once two or more
     series (impulse plots and/or a true-distribution overlay) share
@@ -2077,14 +2075,13 @@ def make_impulse(
     ax : matplotlib.axes.Axes
         The axes to draw on.
     color : color
-        Fill color for the stems and markers, from ``get_next_color(ax)``.
+        Fill color for the stems, from ``get_next_color(ax)``.
     normalize : bool, default True
         If True, stem heights are relative frequencies that sum to 1,
         comparable to a pmf. If False, stem heights are raw counts.
     alpha : float, optional
-        Marker/stem transparency between 0 and 1. Defaults to the
-        package standard for impulse plots (``IMPULSE_ALPHA``, fully
-        opaque).
+        Stem transparency between 0 and 1. Defaults to the package
+        standard for impulse plots (``IMPULSE_ALPHA``, fully opaque).
     label : str, optional
         Name for this series in the legend. Defaults to "Variable k",
         where k counts the impulse plots drawn on these axes so far.
@@ -2095,8 +2092,8 @@ def make_impulse(
         instead, values on the y-axis, frequency/count on the x-axis --
         for drawing sideways in a 2D plot's y-marginal panel.
     **kwargs
-        Additional keyword arguments passed to the markers
-        (``matplotlib.axes.Axes.scatter``).
+        Additional keyword arguments passed to the stems
+        (``matplotlib.axes.Axes.vlines`` / ``hlines``).
 
     Returns
     -------
@@ -2136,40 +2133,35 @@ def make_impulse(
     if label is None:
         label = f"Variable {len(prior_series) + 1}"
 
+    # Label goes on the stems (a LineCollection), the only mark an
+    # impulse series draws now: matplotlib's legend proxy for a
+    # LineCollection is a plain line matching color and width, so the
+    # legend swatch stays a clean line.
     if vertical:
         stems = ax.vlines(
-            xs, 0, freqs, color=color, linewidth=IMPULSE_LINEWIDTH, alpha=alpha
-        )
-        dots = ax.scatter(
             xs,
+            0,
             freqs,
-            s=IMPULSE_MARKER_SIZE,
-            marker=IMPULSE_MARKER,
             color=color,
+            linewidth=IMPULSE_LINEWIDTH,
             alpha=alpha,
             label=label,
-            zorder=3,
             **kwargs,
         )
     else:
         stems = ax.hlines(
-            xs, 0, freqs, color=color, linewidth=IMPULSE_LINEWIDTH, alpha=alpha
-        )
-        dots = ax.scatter(
-            freqs,
             xs,
-            s=IMPULSE_MARKER_SIZE,
-            marker=IMPULSE_MARKER,
+            0,
+            freqs,
             color=color,
+            linewidth=IMPULSE_LINEWIDTH,
             alpha=alpha,
             label=label,
-            zorder=3,
             **kwargs,
         )
     prior_series.append(
         {
             "stems": stems,
-            "dots": dots,
             "xs": np.asarray(xs, dtype=float),
             "freqs": np.asarray(freqs, dtype=float),
         }
@@ -2194,12 +2186,10 @@ def make_impulse(
                 s["stems"].set_segments(
                     [[(x, 0), (x, f)] for x, f in zip(shifted_xs, s["freqs"])]
                 )
-                s["dots"].set_offsets(np.column_stack([shifted_xs, s["freqs"]]))
             else:
                 s["stems"].set_segments(
                     [[(0, x), (f, x)] for x, f in zip(shifted_xs, s["freqs"])]
                 )
-                s["dots"].set_offsets(np.column_stack([s["freqs"], shifted_xs]))
 
     configure_axes(
         ax,
