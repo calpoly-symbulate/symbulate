@@ -206,6 +206,15 @@ ECDF_LINEWIDTH = 1.8
 ECDF_ALPHA = 1.0
 ECDF_LEGEND_LOC = "upper left"
 
+# Shaded probability region under a theoretical curve
+# (Distribution.shade()). This is an annotation drawn on top of an
+# already-plotted pmf/pdf/cdf to highlight a tail or interval, so it uses
+# a fixed neutral grey rather than a color-cycle hue -- it is not a new
+# data series and should not read as one. The translucent fill lets the
+# underlying curve and any overlaid series remain visible through it.
+SHADE_COLOR = "grey"
+SHADE_ALPHA = 0.5
+
 # Segmented density plot (a "ridgeline" plot): one small kernel
 # density curve ("ridge") per level of
 # the discrete variable, stacked along the discrete axis with a gentle

@@ -8,6 +8,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection, PolyCollection
 
 from symbulate import *
 from symbulate import distributions
@@ -2114,3 +2115,152 @@ class TestDistributionCDFPlot(unittest.TestCase):
             plt.figure()
             d.plot(type="cdf")  # must not raise
             plt.close("all")
+
+
+class TestDistributionShade(unittest.TestCase):
+    """``Distribution.shade(lt, le, gt, ge)`` (task 13/15).
+
+    Shades a tail or interval under the most recently plotted curve
+    (pmf/pdf or cdf), auto-plotting the default curve first if the
+    distribution has not been drawn. Bounds read as probability
+    inequalities; the strict (``lt``/``gt``) vs. inclusive (``le``/``ge``)
+    choice matters for discrete distributions. The shaded region honors the
+    displayed x-window (default, ``prob=``, ``xlim=``, or overlay union),
+    not the distribution's static ``self.xlim``.
+    """
+
+    def tearDown(self):
+        plt.close("all")
+
+    @staticmethod
+    def _impulse_xs(ax):
+        """Rounded x-positions of the last impulse (vlines) collection."""
+        lcs = [c for c in ax.collections if isinstance(c, LineCollection)]
+        return sorted(round(seg[0][0]) for seg in lcs[-1].get_segments())
+
+    @staticmethod
+    def _fills(ax):
+        return [c for c in ax.collections if isinstance(c, PolyCollection)]
+
+    # --- shade() on a fresh distribution draws the curve first ---
+
+    def test_shade_auto_plots_when_not_yet_plotted(self):
+        plt.figure()
+        d = Poisson(3)
+        self.assertFalse(d.plotted)
+        d.shade(le=3)
+        self.assertTrue(d.plotted)
+        self.assertEqual(d._last_plot_type, "pdf")
+
+    def test_shade_returns_symbulate_plot(self):
+        plt.figure()
+        result = Normal(0, 1).shade(lt=0)
+        self.assertEqual(type(result).__name__, "SymbulatePlot")
+        self.assertEqual(repr(result), "")
+
+    # --- discrete: strict vs. inclusive bounds change which mass shades ---
+
+    def test_discrete_inclusive_includes_endpoint(self):
+        plt.figure()
+        Poisson(3).shade(le=3)
+        self.assertIn(3, self._impulse_xs(plt.gca()))
+
+    def test_discrete_strict_excludes_endpoint(self):
+        plt.figure()
+        Poisson(3).shade(lt=3)
+        self.assertNotIn(3, self._impulse_xs(plt.gca()))
+
+    def test_discrete_right_tail_inclusive(self):
+        plt.figure()
+        Binomial(20, 0.5).shade(ge=12)
+        xs = self._impulse_xs(plt.gca())
+        self.assertIn(12, xs)
+        self.assertTrue(all(x >= 12 for x in xs))
+
+    def test_discrete_interval_mixed_bounds(self):
+        # gt=3, le=7  ->  4, 5, 6, 7  (3 excluded, 7 included)
+        plt.figure()
+        Binomial(10, 0.5).shade(gt=3, le=7)
+        self.assertEqual(self._impulse_xs(plt.gca()), [4, 5, 6, 7])
+
+    # --- continuous: a filled region with the shade constants ---
+
+    def test_continuous_shade_fills_with_shade_constants(self):
+        from symbulate.plot import SHADE_COLOR, SHADE_ALPHA
+
+        plt.figure()
+        Normal(0, 1).shade(lt=-1.96)
+        fills = self._fills(plt.gca())
+        self.assertEqual(len(fills), 1)
+        self.assertEqual(fills[-1].get_alpha(), SHADE_ALPHA)
+        expected = matplotlib.colors.to_rgba(SHADE_COLOR, SHADE_ALPHA)
+        np.testing.assert_allclose(fills[-1].get_facecolor()[0], expected)
+
+    def test_continuous_fill_stays_within_bounds(self):
+        plt.figure()
+        Normal(0, 1).shade(gt=-1, lt=1)
+        xs = self._fills(plt.gca())[-1].get_paths()[0].vertices[:, 0]
+        self.assertGreaterEqual(xs.min(), -1 - 1e-9)
+        self.assertLessEqual(xs.max(), 1 + 1e-9)
+
+    # --- the shaded region respects the displayed window, not self.xlim ---
+
+    def test_open_tail_uses_displayed_axis_not_self_xlim(self):
+        # On a prob=True window the axis is far tighter than the (0, 100)
+        # default support; an open left tail must start at the visible edge,
+        # which the fork's self.xlim-based version could not do.
+        plt.figure()
+        d = Binomial(100, 0.5)
+        d.plot(prob=True)
+        axlo, _ = plt.gca().get_xlim()
+        self.assertGreater(axlo, 0)  # window is tighter than full support
+        d.shade(le=50)
+        xs = self._impulse_xs(plt.gca())
+        self.assertGreaterEqual(min(xs), int(np.floor(axlo)))
+        self.assertNotIn(0, xs)  # would appear if self.xlim[0]=0 were used
+
+    def test_shade_draws_onto_existing_curve_without_replotting(self):
+        plt.figure()
+        d = Poisson(3)
+        d.plot()
+        n_before = len(plt.gca().collections)
+        d.shade(le=2)
+        # one impulse collection added; the pmf scatter is untouched
+        self.assertEqual(len(plt.gca().collections), n_before + 1)
+
+    # --- shade under a cdf uses the cdf, and fills for the step case ---
+
+    def test_shade_under_continuous_cdf(self):
+        plt.figure()
+        d = Normal(0, 1)
+        d.plot(type="cdf")
+        self.assertEqual(d._last_plot_type, "cdf")
+        d.shade(lt=0)
+        self.assertEqual(len(self._fills(plt.gca())), 1)
+
+    def test_shade_under_discrete_cdf_fills_stepwise(self):
+        plt.figure()
+        d = Poisson(3)
+        d.plot(type="cdf")
+        d.shade(le=2)
+        # a discrete cdf shades as a filled staircase, not impulses
+        self.assertEqual(len(self._fills(plt.gca())), 1)
+
+    # --- friendly errors ---
+
+    def test_both_upper_bounds_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            Poisson(3).shade(lt=3, le=5)
+        self.assertIn("lt", str(cm.exception))
+        self.assertIn("le", str(cm.exception))
+
+    def test_both_lower_bounds_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            Poisson(3).shade(gt=1, ge=2)
+        self.assertIn("gt", str(cm.exception))
+        self.assertIn("ge", str(cm.exception))
+
+    def test_crossed_bounds_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            Normal(0, 1).shade(gt=5, lt=3)
+        self.assertIn("less than", str(cm.exception))
