@@ -14,7 +14,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from matplotlib.gridspec import GridSpec
-from matplotlib.transforms import Affine2D
 
 from .base import (
     Arithmetic,
@@ -26,9 +25,10 @@ from .base import (
     _build_mv_filter,
 )
 from .plot import (
-    HIST_DEFAULT_BINS,
     B_1D,
     K_2D,
+    TILE_DEFAULT_BINS,
+    DISCRETE_INDEX_OFFSET,
     DOTPLOT_MAX_STACK,
     auto_jitter_mode,
     classify_values,
@@ -40,7 +40,6 @@ from .plot import (
     should_show_suggestion,
     suggestion_message,
     count_var,
-    compute_density,
     add_colorbar,
     make_bar,
     make_dotplot,
@@ -50,7 +49,6 @@ from .plot import (
     make_hist,
     make_hist2d,
     make_impulse,
-    make_marginal_impulse,
     make_mosaic,
     make_segmented_density,
     make_segmented_hist,
@@ -58,6 +56,7 @@ from .plot import (
     make_scatter,
     make_segmented_rug,
     make_tile,
+    setup_tile_axis,
     make_violin,
     make_violinplot,
     make_boxplot,
@@ -177,6 +176,127 @@ def _sim_with_progress(draw_func, n, progress_delay=5.0, bar_width=30):
         sys.stderr.flush()
 
     return draws
+
+
+def _draw_marginal_panel(
+    ax_marg,
+    values,
+    discrete,
+    main_type,
+    axis,
+    color,
+    small_n,
+    normalize,
+    bins,
+    wants_density,
+    bandwidth,
+    hist_edges,
+):
+    """Draw one axis's content for RVResults.plot()'s marginal=True layout.
+
+    Renders that axis's own (marginal) distribution, routed through the
+    same classify_values-driven choice a standalone 1D variable would get
+    (dotplot/impulse for a discrete axis, rug/hist for a continuous one),
+    or a density curve when the main panel itself is density/density2d.
+    ``axis="y"`` draws sideways (``orientation="horizontal"``) so the
+    y-marginal panel's value axis lines up with the main panel's y-axis.
+
+    Values on a discrete axis whose main-panel type packs *this specific
+    axis* into integer rank slots instead of real values (violin, box,
+    and the segmented_* types always do; tile only does for a
+    categorical/non-whole-number/pathological-range axis -- a
+    whole-number axis is laid out at real values by tile too, same as
+    hist2d/density2d/scatter -- see ``DISCRETE_INDEX_OFFSET`` and how the
+    caller resolves ``main_type`` independently per axis for tile) are
+    converted to the matching rank codes here, so the marginal's
+    dots/stems land under the correct main-panel column or row -- this
+    is the fix for the tile+marginal coordinate mismatch confirmed in
+    DECISIONS.md. Axis *limits* are synced by the caller afterward, by
+    reading the main panel's actual final limits -- not derived here.
+
+    Parameters
+    ----------
+    ax_marg : matplotlib.axes.Axes
+        The marginal panel to draw on (``ax_marg_x`` or ``ax_marg_y``).
+    values : numpy.ndarray
+        This axis's simulated values (``x`` or ``y``).
+    discrete : bool
+        Whether this axis is discrete-ish, from ``classify_values``.
+    main_type : str or None
+        The exact renderer the main panel used for *this axis*
+        specifically (e.g. ``"tile"``, ``"hist2d"``, ``"violin"``) --
+        not necessarily ``type[0]``, since short names like ``"hist"``
+        resolve to different renderers depending on the data
+        configuration, and not necessarily the same for both axes of a
+        single call, since tile can lay out one axis at real values and
+        the other at rank-index cells. ``None`` means this axis is
+        real-valued (no index-code conversion needed) even though the
+        main panel's overall type might be a member of
+        ``DISCRETE_INDEX_OFFSET``.
+    axis : {"x", "y"}
+        Which marginal panel this is.
+    color : color
+        Color for this panel's marginal plot, from ``get_next_color(ax)``
+        (the main axes' color cycle, matching the rest of this method).
+    small_n : bool
+        Whether the sample is small, from ``classify_values`` -- picks
+        dotplot/rug (small) vs. impulse/hist (large).
+    normalize : bool
+        Passed through to the impulse/hist renderer.
+    bins : int, array-like, or None
+        The user's ``bins=`` argument, used when ``hist_edges`` is None.
+    wants_density : bool
+        If True, draw a density curve regardless of ``discrete``/
+        ``small_n`` (matches the main panel being density/density2d).
+    bandwidth : float, str, or None
+        Passed through to the density curve.
+    hist_edges : numpy.ndarray or None
+        Exact bin edges to reuse from the main panel's own binning
+        (``make_hist2d``'s returned edges, or ``setup_tile_axis``'s, for
+        a continuous axis on ``hist2d``/``tile``), so the marginal
+        histogram's bars align with the mesh's cells instead of
+        independently recomputing (coincidentally similar) bins. None
+        for every other main type, where only the axis range needs to
+        match -- handled by the caller via the main panel's final limits.
+    """
+    orientation = "vertical" if axis == "x" else "horizontal"
+
+    if wants_density:
+        make_density(
+            values, ax_marg, color, bandwidth=bandwidth, orientation=orientation
+        )
+        ax_marg.set_title("")
+        return
+
+    plot_values = values
+    offset = DISCRETE_INDEX_OFFSET.get(main_type)
+    if discrete and offset is not None:
+        plot_values = np.searchsorted(np.unique(values), values) + offset
+
+    if discrete:
+        if small_n:
+            make_dotplot(plot_values, ax_marg, color, orientation=orientation)
+        else:
+            make_impulse(
+                plot_values,
+                ax_marg,
+                color,
+                normalize=normalize,
+                orientation=orientation,
+            )
+    else:
+        if small_n:
+            make_rug(plot_values, ax_marg, color, orientation=orientation)
+        else:
+            make_hist(
+                plot_values,
+                ax_marg,
+                color,
+                bins=hist_edges if hist_edges is not None else bins,
+                normalize=normalize,
+                orientation=orientation,
+            )
+    ax_marg.set_title("")
 
 
 class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transformable):
@@ -1315,6 +1435,7 @@ class RVResults(Results):
         normalize=True,
         jitter=None,
         bins=None,
+        marginal=False,
         suggest=None,
         **kwargs,
     ):
@@ -1326,8 +1447,8 @@ class RVResults(Results):
             Plot type or types to display. Valid values are
             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
             ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
-            ``"tile"``, ``"mosaic"``, ``"violin"``, ``"box"`` (alias
-            ``"boxplot"``), and ``"marginal"``.
+            ``"tile"``, ``"mosaic"``, ``"violin"``, and ``"box"``
+            (alias ``"boxplot"``).
             ``"mosaic"`` is only meaningful for two discrete-ish
             variables -- the same configuration ``"tile"`` targets.
             If None, a default is chosen from the data: whether each
@@ -1373,6 +1494,13 @@ class RVResults(Results):
             Number of bins for histograms (1D, 2D, and segmented), or
             for a continuous axis of a tile plot. Defaults to 30. Dot
             plots are never binned.
+        marginal : bool, default False
+            2D data only. If True, add two extra panels along the top
+            and right edges of the main plot showing each variable's
+            own (marginal) distribution -- a histogram or impulse plot
+            for each axis, matching that axis's discreteness. Combine
+            with ``type=`` to choose the main panel's plot type, e.g.
+            ``.plot(type="tile", marginal=True)``.
         suggest : bool or None, optional
             Whether to print a note under the plot naming the plot
             being shown and the reasonable alternatives for this
@@ -1441,9 +1569,15 @@ class RVResults(Results):
                     f"Unrecognized plot type {type!r}. "
                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
                     "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'mosaic', "
-                    "'violin', 'box' (alias 'boxplot'), 'marginal' (and, "
+                    "'violin', 'box' (alias 'boxplot') (and, "
                     "for 2D data, 'hist2d', 'density2d', 'segmented_rug', "
                     "'segmented_density', 'segmented_hist')."
+                )
+            if "marginal" in type:
+                raise ValueError(
+                    "'marginal' is no longer a type= value -- it's now "
+                    "its own keyword argument. Use marginal=True instead, "
+                    "e.g. .plot(type='hist', marginal=True)."
                 )
 
         # Filled in by the dim == 1 and dim == 2 branches with
@@ -1597,9 +1731,8 @@ class RVResults(Results):
             self._set_array()
             x, y = self.array[:, 0], self.array[:, 1]
 
-            # x_count / y_count feed the marginal impulses and violin
-            # positions below; discreteness itself comes from
-            # classify_values.
+            # x_count / y_count feed the violin positions below;
+            # discreteness itself comes from classify_values.
             x_count = count_var(x)
             y_count = count_var(y)
             # Each 2-D axis is judged independently against the per-axis budget
@@ -1631,64 +1764,53 @@ class RVResults(Results):
             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
             # make_scatter, and the mesh types (hist/density/tile) encode
             # magnitude with a colormap instead of transparency. The
-            # legacy 0.5 default still applies to the violin and marginal
-            # panels, which have no per-type constant yet.
+            # legacy 0.5 default still applies to the violin panel, which
+            # has no per-type constant yet.
             legacy_alpha = 0.5 if alpha is None else alpha
 
-            if "marginal" in type:
+            if marginal and "mosaic" in type:
+                raise ValueError(
+                    "marginal=True isn't supported with type='mosaic' -- a "
+                    "mosaic plot already shows x's marginal distribution "
+                    "through its column widths and y's marginal "
+                    "distribution through its own marginal column. Use "
+                    "type='mosaic', marginal_column=True (the default) "
+                    "instead of marginal=True."
+                )
+            # Peeked (not popped) before the main-panel dispatch below,
+            # since some branches (segmented density) pop "bandwidth" out
+            # of kwargs for their own use -- the marginal density curve
+            # reuses the same bandwidth the user asked for, so it has to
+            # be read before that happens.
+            _marginal_bandwidth = kwargs.get("bandwidth")
+            # Set by whichever main-panel branch below actually renders,
+            # to the exact renderer name it used (not just type[0], which
+            # can be a short name like "hist" that several different
+            # renderers resolve to depending on configuration). Read by
+            # the marginal-panel block after the dispatch to align each
+            # marginal with the *actual* main-panel coordinate system.
+            # Tracked per axis (not one shared value) because tile can
+            # resolve differently per axis: a whole-number discrete axis
+            # is laid out at real values, but a categorical/non-whole-
+            # number/pathological-range one falls back to rank-index
+            # cells -- only the latter needs the marginal's index-code
+            # conversion, and the tile branch below sets each axis's
+            # resolved type independently to capture that.
+            _resolved_main_type_x = None
+            _resolved_main_type_y = None
+            # Set only by the hist2d/tile branches when marginal=True, to
+            # the exact bin edges they used, so a marginal histogram can
+            # share them instead of independently (if coincidentally)
+            # recomputing the same edges.
+            _marginal_hist_edges = (None, None)
+
+            if marginal:
                 fig = plt.gcf()
                 gs = GridSpec(4, 4)
                 ax = fig.add_subplot(gs[1:4, 0:3])
                 ax_marg_x = fig.add_subplot(gs[0, 0:3])
                 ax_marg_y = fig.add_subplot(gs[1:4, 3])
                 color = get_next_color(ax)
-                if "density" in type:
-                    densityX = compute_density(x)
-                    densityY = compute_density(y)
-                    x_lines = np.linspace(min(x), max(x), 1000)
-                    y_lines = np.linspace(min(y), max(y), 1000)
-                    ax_marg_x.plot(
-                        x_lines,
-                        densityX(x_lines),
-                        linewidth=2,
-                        color=get_next_color(ax),
-                    )
-                    ax_marg_y.plot(
-                        y_lines,
-                        densityY(y_lines),
-                        linewidth=2,
-                        color=get_next_color(ax),
-                        transform=Affine2D().rotate_deg(270) + ax_marg_y.transData,
-                    )
-                else:
-                    marg_bins = bins if bins is not None else HIST_DEFAULT_BINS
-                    if discrete_x:
-                        make_marginal_impulse(
-                            x_count, get_next_color(ax), ax_marg_x, legacy_alpha, "x"
-                        )
-                    else:
-                        ax_marg_x.hist(
-                            x,
-                            color=get_next_color(ax),
-                            density=normalize,
-                            alpha=legacy_alpha,
-                            bins=marg_bins,
-                        )
-                    if discrete_y:
-                        make_marginal_impulse(
-                            y_count, get_next_color(ax), ax_marg_y, legacy_alpha, "y"
-                        )
-                    else:
-                        ax_marg_y.hist(
-                            y,
-                            color=get_next_color(ax),
-                            density=normalize,
-                            alpha=legacy_alpha,
-                            bins=marg_bins,
-                            orientation="horizontal",
-                        )
-                plt.setp(ax_marg_x.get_xticklabels(), visible=False)
-                plt.setp(ax_marg_y.get_yticklabels(), visible=False)
             else:
                 fig = plt.gcf()
                 ax = plt.gca()
@@ -1722,6 +1844,7 @@ class RVResults(Results):
                     _jitter_note = (
                         "random" if scatter_jitter is True else scatter_jitter
                     )
+                _resolved_main_type_x = _resolved_main_type_y = "scatter"
             elif "hist" in type or "hist2d" in type:
                 # On mixed data the short name "hist" means the segmented
                 # histogram; "hist2d" always forces the 2D mesh.
@@ -1738,7 +1861,8 @@ class RVResults(Results):
                         discrete_y=discrete_y,
                         **kwargs,
                     )
-                elif "marginal" in type:
+                    _resolved_main_type_x = _resolved_main_type_y = "segmented_hist"
+                elif marginal:
                     histo = make_hist2d(
                         x,
                         y,
@@ -1750,8 +1874,11 @@ class RVResults(Results):
                     )
                     mappable = histo[3] if isinstance(histo, tuple) else histo
                     add_colorbar(
-                        fig, type, mappable, "Density" if normalize else "Count"
+                        fig, marginal, mappable, "Density" if normalize else "Count"
                     )
+                    _resolved_main_type_x = _resolved_main_type_y = "hist2d"
+                    if isinstance(histo, tuple):
+                        _marginal_hist_edges = (histo[1], histo[2])
                 else:
                     make_hist2d(x, y, ax, bins=bins, normalize=normalize, **kwargs)
             elif "density" in type or "density2d" in type:
@@ -1769,9 +1896,11 @@ class RVResults(Results):
                         discrete_y=discrete_y,
                         **kwargs,
                     )
-                elif "marginal" in type:
+                    _resolved_main_type_x = _resolved_main_type_y = "segmented_density"
+                elif marginal:
                     den = make_density2D(x, y, ax, colorbar=False, **kwargs)
-                    add_colorbar(fig, type, den, "Density")
+                    add_colorbar(fig, marginal, den, "Density")
+                    _resolved_main_type_x = _resolved_main_type_y = "density2d"
                 else:
                     make_density2D(x, y, ax, **kwargs)
             elif "rug" in type or "segmented_rug" in type:
@@ -1784,6 +1913,7 @@ class RVResults(Results):
                     discrete_x=discrete_x,
                     discrete_y=discrete_y,
                 )
+                _resolved_main_type_x = _resolved_main_type_y = "segmented_rug"
             elif "segmented_density" in type:
                 make_segmented_density(
                     x,
@@ -1796,6 +1926,7 @@ class RVResults(Results):
                     discrete_y=discrete_y,
                     **kwargs,
                 )
+                _resolved_main_type_x = _resolved_main_type_y = "segmented_density"
             elif "segmented_hist" in type:
                 make_segmented_hist(
                     x,
@@ -1809,6 +1940,7 @@ class RVResults(Results):
                     discrete_y=discrete_y,
                     **kwargs,
                 )
+                _resolved_main_type_x = _resolved_main_type_y = "segmented_hist"
             elif "tile" in type:
                 hm = make_tile(
                     x,
@@ -1818,15 +1950,43 @@ class RVResults(Results):
                     bins=bins,
                     discrete_x=discrete_x,
                     discrete_y=discrete_y,
-                    colorbar="marginal" not in type,
+                    colorbar=not marginal,
                     **kwargs,
                 )
-                if "marginal" in type:
+                # tile lays out a whole-number discrete axis at real
+                # values (matplotlib's own locator), same as a continuous
+                # axis -- only a categorical/non-whole-number/
+                # pathological-range discrete axis falls back to
+                # compacted rank-index cells (see setup_tile_axis). Each
+                # axis is independent, so "tile" is only the resolved
+                # type -- for DISCRETE_INDEX_OFFSET purposes -- on the
+                # axis(es) that actually fell back to rank-index cells;
+                # a real-valued axis gets None (treated like scatter/
+                # hist2d/density2d: real values, no index conversion).
+                _resolved_main_type_x = "tile" if discrete_x else None
+                _resolved_main_type_y = "tile" if discrete_y else None
+                if marginal:
                     add_colorbar(
-                        fig, type, hm, "Relative Frequency" if normalize else "Count"
+                        fig,
+                        marginal,
+                        hm,
+                        "Relative Frequency" if normalize else "Count",
                     )
+                    _tile_bins = bins if bins is not None else TILE_DEFAULT_BINS
+                    _, _, _, tile_x_ticks, tile_x_edges = setup_tile_axis(
+                        x, discrete_x, _tile_bins
+                    )
+                    _, _, _, tile_y_ticks, tile_y_edges = setup_tile_axis(
+                        y, discrete_y, _tile_bins
+                    )
+                    if discrete_x and tile_x_ticks is None:
+                        _resolved_main_type_x = None
+                    if discrete_y and tile_y_ticks is None:
+                        _resolved_main_type_y = None
+                    _marginal_hist_edges = (tile_x_edges, tile_y_edges)
             elif "mosaic" in type:
                 make_mosaic(x, y, ax, normalize=normalize, **kwargs)
+                _resolved_main_type_x = _resolved_main_type_y = "mosaic"
             elif "violin" in type:
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))
@@ -1848,6 +2008,7 @@ class RVResults(Results):
                         "continuous. Try a scatter plot for two continuous "
                         "variables."
                     )
+                _resolved_main_type_x = _resolved_main_type_y = "violin"
             elif "box" in type or "boxplot" in type:
                 make_grouped_boxplot(
                     x,
@@ -1859,8 +2020,55 @@ class RVResults(Results):
                     discrete_y=discrete_y,
                     **kwargs,
                 )
+                _resolved_main_type_x = _resolved_main_type_y = "box"
 
-            if "marginal" in type:
+            if marginal:
+                edges_x, edges_y = _marginal_hist_edges
+                wants_density = "density" in type or "density2d" in type
+                marg_x_color = get_next_color(ax)
+                marg_y_color = get_next_color(ax)
+                _draw_marginal_panel(
+                    ax_marg_x,
+                    x,
+                    discrete_x,
+                    _resolved_main_type_x,
+                    "x",
+                    marg_x_color,
+                    small_n,
+                    normalize,
+                    bins,
+                    wants_density,
+                    _marginal_bandwidth,
+                    edges_x,
+                )
+                _draw_marginal_panel(
+                    ax_marg_y,
+                    y,
+                    discrete_y,
+                    _resolved_main_type_y,
+                    "y",
+                    marg_y_color,
+                    small_n,
+                    normalize,
+                    bins,
+                    wants_density,
+                    _marginal_bandwidth,
+                    edges_y,
+                )
+                # Read the main panel's own actual final limits (after
+                # everything above has drawn) rather than re-deriving each
+                # plot type's extent formula independently -- this is what
+                # correctly aligns a marginal panel with e.g. tile's
+                # (-0.5, n_cells - 0.5) index extent or violin/boxplot's
+                # matplotlib-assigned category positions, without having to
+                # hardcode any of those formulas here. sharex/sharey then
+                # keeps them locked together for any later interaction.
+                ax_marg_x.set_xlim(ax.get_xlim())
+                ax_marg_x.sharex(ax)
+                ax_marg_y.set_ylim(ax.get_ylim())
+                ax_marg_y.sharey(ax)
+                plt.setp(ax_marg_x.get_xticklabels(), visible=False)
+                plt.setp(ax_marg_y.get_yticklabels(), visible=False)
                 # The marginal layout has no room for the center panel's
                 # title -- it would collide with the top marginal panel.
                 ax.set_title("")

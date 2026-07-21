@@ -38,6 +38,8 @@ from symbulate import (
     Gamma,
     Beta,
     Uniform,
+    DiscreteUniform,
+    F,
     MultivariateNormal,
     Multinomial,
     BivariateNormal,
@@ -64,6 +66,7 @@ from symbulate.plot import (
     make_bar,
     BAR_ALPHA,
     make_dotplot,
+    make_hist,
     make_impulse,
     make_violin,
     make_violinplot,
@@ -84,6 +87,9 @@ from symbulate.plot import (
     SAMPLE_PATH_ALPHA,
     SAMPLE_PATH_LINEWIDTH,
     TILE_DEFAULT_BINS,
+    HIST_DEFAULT_BINS,
+    HIST_MIN_AUTO_BINS,
+    HIST_MAX_AUTO_BINS,
 )
 from symbulate.results import RVResults
 
@@ -346,6 +352,99 @@ class TestPlot1DContinuous(PlotTestCase):
 
 
 # ===========================================================================
+# Outlier/skew-aware histogram binning (make_hist, bins=None only)
+# ===========================================================================
+
+
+class TestHistOutlierAwareBinning(PlotTestCase):
+    """RV(F(5,4)).sim(10000) is the motivating case: 99% of mass below ~16,
+    but a max around 100+ from rare heavy-tail draws."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.skewed = RV(F(5, 4)).sim(10000)
+
+    def test_bulk_is_not_crushed_into_one_or_two_bins(self):
+        """The bars covering the bulk (below the 99th percentile) must show
+        real shape -- several bars with non-trivial height -- rather than
+        the old flat-30-bin behavior, which crushed almost everything into
+        1-2 bins next to a long stretch of empty ones."""
+        self.skewed.plot(type="hist")
+        ax = plt.gca()
+        values = self.skewed.array
+        p99 = np.percentile(values, 99)
+        bulk_bars = [
+            p
+            for p in ax.patches
+            if not p.get_hatch() and p.get_x() + p.get_width() <= p99
+        ]
+        nonzero_bulk_bars = [p for p in bulk_bars if p.get_height() > 0]
+        self.assertGreater(
+            len(nonzero_bulk_bars),
+            10,
+            "Expected the bulk of the F(5,4) distribution to span many "
+            "non-empty bars, not be crushed into 1-2 bins",
+        )
+
+    def test_normalized_auto_binned_area_integrates_to_one(self):
+        """Regular bars plus any overflow bar must still integrate to ~1,
+        using the true sample size -- not just the in-fence count."""
+        self.skewed.plot(type="hist", normalize=True)
+        self.assertAlmostEqual(histogram_area(plt.gca()), 1.0, places=5)
+
+    def test_raw_counts_sum_to_true_n(self):
+        """normalize=False: bars plus overflow must sum to the true n."""
+        self.skewed.plot(type="hist", normalize=False)
+        total = sum(p.get_height() for p in plt.gca().patches)
+        self.assertAlmostEqual(total, len(self.skewed), places=5)
+
+    def test_overflow_bar_is_hatched(self):
+        """At least one bar (the tail overflow) should be visually
+        distinguished from the regular bins via a hatch pattern."""
+        self.skewed.plot(type="hist")
+        hatched = [p for p in plt.gca().patches if p.get_hatch()]
+        self.assertGreaterEqual(len(hatched), 1)
+
+    def test_symmetric_data_has_no_overflow_bar(self):
+        """A well-behaved symmetric distribution shouldn't trigger the
+        outlier fence."""
+        RV(Normal(0, 1)).sim(600).plot(type="hist")
+        hatched = [p for p in plt.gca().patches if p.get_hatch()]
+        self.assertEqual(len(hatched), 0)
+
+    def test_bin_count_is_bounded(self):
+        """The auto-chosen in-fence bin count stays within the documented
+        [HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS] range."""
+        values = np.asarray(list(self.skewed.results))
+        _, edges, _ = make_hist(values, plt.gca(), get_next_color(plt.gca()))
+        n_bins = len(edges) - 1
+        self.assertGreaterEqual(n_bins, HIST_MIN_AUTO_BINS)
+        self.assertLessEqual(n_bins, HIST_MAX_AUTO_BINS)
+
+    def test_explicit_bins_bypasses_outlier_clipping(self):
+        """An explicit bins= must still span the full raw range, exactly
+        like before outlier-aware binning existed -- no fence, no
+        overflow bar."""
+        self.skewed.plot(type="hist", bins=HIST_DEFAULT_BINS)
+        ax = plt.gca()
+        hatched = [p for p in ax.patches if p.get_hatch()]
+        self.assertEqual(len(hatched), 0)
+        rightmost_edge = max(p.get_x() + p.get_width() for p in ax.patches)
+        self.assertAlmostEqual(rightmost_edge, self.skewed.array.max(), places=5)
+
+    def test_histtype_step_still_works_on_auto_binned_path(self):
+        """histtype='step' must not crash on the new auto-binning path
+        (StepPatch, not one Rectangle per bin, has no set_height())."""
+        self.skewed.plot(type="hist", histtype="step")
+        self.assertGreater(len(plt.gca().patches) + len(plt.gca().lines), 0)
+
+    def test_user_edgecolor_still_forwards_on_auto_binned_path(self):
+        self.skewed.plot(type="hist", edgecolor="red")
+        edge = plt.gca().patches[0].get_edgecolor()
+        self.assertAlmostEqual(edge[0], 1.0, places=2)
+
+
+# ===========================================================================
 # Numerical precision: near-constant data (e.g. X * cos(pi/2))
 # ===========================================================================
 
@@ -592,11 +691,19 @@ class TestPlot2DContinuous(PlotTestCase):
         Note: add_colorbar() adds a fourth axes in some plot types, so we
         assert >= 3 rather than == 3.
         """
-        self.sims.plot(type="marginal")
+        self.sims.plot(marginal=True)
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
     def test_marginal_density_creates_at_least_three_axes(self):
-        self.sims.plot(type=("marginal", "density"))
+        self.sims.plot(type="density", marginal=True)
+        self.assertGreaterEqual(len(plt.gcf().axes), 3)
+
+    def test_marginal_true_with_default_type_draws_main_panel(self):
+        """marginal=True with no explicit type= must still resolve type
+        to the data's default (2D histogram here) and draw it on the
+        main panel, rather than leaving the center panel blank."""
+        p = self.sims.plot(marginal=True)
+        self.assertGreater(len(p.ax.collections), 0)
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
 
@@ -1539,7 +1646,7 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         self.assertIn("tile", str(cm.exception))
 
     def test_marginal_hist_combo_still_draws(self):
-        self.sims.plot(type=("marginal", "hist"))
+        self.sims.plot(type="hist", marginal=True)
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
 
@@ -2144,6 +2251,197 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         """On two continuous variables, type='hist' is still the 2D mesh."""
         RV(Normal(0, 1) * Normal(0, 1)).sim(500).plot(type="hist", suggest=False)
         self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+
+
+# ===========================================================================
+# Marginal panel rebuild: real helpers, classify_values-routed types,
+# coordinate alignment with the main panel
+# ===========================================================================
+
+
+class TestMarginalPanelRebuild(PlotTestCase):
+    """marginal=True panels now use the redesigned 1D helpers, are routed
+    through classify_values like a standalone 1D variable, and are aligned
+    to the main panel's actual coordinate system instead of drifting to
+    their own scheme."""
+
+    def _marginal_axes(self, p):
+        """Return (ax_marg_x, ax_marg_y) from the current figure, in the
+        order RVResults.plot() creates them (x, then y, then any
+        colorbar axes)."""
+        others = [a for a in plt.gcf().axes if a is not p.ax]
+        return others[0], others[1]
+
+    def test_tile_marginal_coordinate_mismatch_is_fixed(self):
+        """The confirmed regression case: DiscreteUniform(50,60) has
+        support starting at 50, so tile's index-position discrete axis
+        used to disagree completely with a real-valued marginal axis."""
+        np.random.seed(0)
+        X, Y = RV(DiscreteUniform(a=50, b=60) * Poisson(lam=5))
+        p = (X & Y).sim(2000).plot(type="tile", marginal=True, suggest=False)
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        self.assertEqual(p.ax.get_xlim(), ax_marg_x.get_xlim())
+        self.assertEqual(p.ax.get_ylim(), ax_marg_y.get_ylim())
+
+    def _assert_aligned_and_populated(self, p):
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        self.assertEqual(p.ax.get_xlim(), ax_marg_x.get_xlim())
+        self.assertEqual(p.ax.get_ylim(), ax_marg_y.get_ylim())
+        for ax_marg in (ax_marg_x, ax_marg_y):
+            n_artists = (
+                len(ax_marg.patches) + len(ax_marg.collections) + len(ax_marg.lines)
+            )
+            self.assertGreater(n_artists, 0)
+        return ax_marg_x, ax_marg_y
+
+    def test_scatter_continuous_marginal_aligned(self):
+        np.random.seed(1)
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(50).plot(type="scatter", marginal=True, suggest=False)
+        self._assert_aligned_and_populated(p)
+
+    def test_scatter_discrete_marginal_aligned(self):
+        np.random.seed(1)
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        p = (X & Y).sim(50).plot(type="scatter", marginal=True, suggest=False)
+        self._assert_aligned_and_populated(p)
+
+    def test_tile_discrete_discrete_marginal_aligned(self):
+        np.random.seed(1)
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        p = (X & Y).sim(2000).plot(type="tile", marginal=True, suggest=False)
+        self._assert_aligned_and_populated(p)
+
+    def test_hist2d_marginal_aligned(self):
+        np.random.seed(1)
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(2000).plot(type="hist2d", marginal=True, suggest=False)
+        self._assert_aligned_and_populated(p)
+
+    def test_density2d_marginal_aligned(self):
+        np.random.seed(1)
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(2000).plot(type="density2d", marginal=True, suggest=False)
+        self._assert_aligned_and_populated(p)
+
+    def test_segmented_rug_marginal_aligned(self):
+        np.random.seed(1)
+        X, Y = RV(Poisson(lam=3) * Normal(0, 1))
+        p = (X & Y).sim(2000).plot(type="rug", marginal=True, suggest=False)
+        self._assert_aligned_and_populated(p)
+
+    def test_violin_marginal_aligned(self):
+        np.random.seed(1)
+        X, Y = RV(Poisson(lam=3) * Normal(0, 1))
+        p = (X & Y).sim(2000).plot(type="violin", marginal=True, suggest=False)
+        self._assert_aligned_and_populated(p)
+
+    def test_box_marginal_aligned(self):
+        np.random.seed(1)
+        X, Y = RV(Poisson(lam=3) * Normal(0, 1))
+        p = (X & Y).sim(2000).plot(type="box", marginal=True, suggest=False)
+        self._assert_aligned_and_populated(p)
+
+    def test_mosaic_marginal_raises_and_points_to_marginal_column(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(500).plot(type="mosaic", marginal=True)
+        self.assertIn("marginal_column", str(cm.exception))
+
+    def test_small_n_discrete_marginal_is_dotplot(self):
+        """A small-n discrete axis's marginal should be a dot plot,
+        matching what that axis would show standalone -- not always
+        impulse/hist regardless of sample size."""
+        np.random.seed(1)
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        p = (X & Y).sim(50).plot(type="scatter", marginal=True, suggest=False)
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        self.assertTrue(hasattr(ax_marg_x, "_dotplot_state"))
+        self.assertTrue(hasattr(ax_marg_y, "_dotplot_state"))
+
+    def test_large_n_discrete_marginal_is_impulse(self):
+        np.random.seed(1)
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        p = (X & Y).sim(2000).plot(type="tile", marginal=True, suggest=False)
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        self.assertTrue(hasattr(ax_marg_x, "_impulse_series"))
+        self.assertTrue(hasattr(ax_marg_y, "_impulse_series"))
+
+    def test_small_n_continuous_marginal_is_rug(self):
+        np.random.seed(1)
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(50).plot(type="scatter", marginal=True, suggest=False)
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        self.assertGreater(getattr(ax_marg_x, "_rug_count", 0), 0)
+        self.assertGreater(getattr(ax_marg_y, "_rug_count", 0), 0)
+
+    def test_large_n_continuous_marginal_is_hist(self):
+        np.random.seed(1)
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(2000).plot(type="hist2d", marginal=True, suggest=False)
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        self.assertGreater(getattr(ax_marg_x, "_hist_count", 0), 0)
+        self.assertGreater(getattr(ax_marg_y, "_hist_count", 0), 0)
+
+    def test_density_mode_gives_density_curve_marginals(self):
+        np.random.seed(1)
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(2000).plot(type="density2d", marginal=True, suggest=False)
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        self.assertGreater(getattr(ax_marg_x, "_density_count", 0), 0)
+        self.assertGreater(getattr(ax_marg_y, "_density_count", 0), 0)
+
+    def test_hist2d_marginal_bar_edges_match_hist2d_edges(self):
+        """The marginal histogram must reuse hist2d's own bin edges, not
+        an independently (if coincidentally) recomputed set."""
+        np.random.seed(1)
+        X, Y = RV(Normal(0, 1) ** 2)
+        sims = (X & Y).sim(2000)
+        p = sims.plot(type="hist2d", marginal=True, bins=17, suggest=False)
+        ax_marg_x, _ = self._marginal_axes(p)
+
+        plt.close("all")
+        from symbulate.plot import make_hist2d
+
+        fig, ax = plt.subplots()
+        _, xedges, _, _ = make_hist2d(sims.array[:, 0], sims.array[:, 1], ax, bins=17)
+        plt.close(fig)
+
+        marg_edges = sorted(
+            {round(p.get_x(), 6) for p in ax_marg_x.patches if not p.get_hatch()}
+            | {
+                round(p.get_x() + p.get_width(), 6)
+                for p in ax_marg_x.patches
+                if not p.get_hatch()
+            }
+        )
+        expected_edges = sorted({round(e, 6) for e in xedges})
+        self.assertEqual(marg_edges, expected_edges)
+
+    def test_tile_continuous_axis_marginal_bar_edges_match_tile_edges(self):
+        """The marginal histogram for tile's continuous axis (mixed
+        discrete x continuous data) must reuse tile's own bin edges, not
+        an independently (if coincidentally) recomputed set."""
+        np.random.seed(1)
+        X, Y = RV(Poisson(lam=3) * Normal(0, 1))
+        sims = (X & Y).sim(2000)
+        p = sims.plot(type="tile", marginal=True, bins=17, suggest=False)
+        _, ax_marg_y = self._marginal_axes(p)  # y is the continuous axis here
+
+        from symbulate.plot import setup_tile_axis
+
+        _, _, _, _, expected_edges_arr = setup_tile_axis(sims.array[:, 1], False, 17)
+
+        marg_edges = sorted(
+            {round(p.get_y(), 6) for p in ax_marg_y.patches if not p.get_hatch()}
+            | {
+                round(p.get_y() + p.get_height(), 6)
+                for p in ax_marg_y.patches
+                if not p.get_hatch()
+            }
+        )
+        expected_edges = sorted({round(e, 6) for e in expected_edges_arr})
+        self.assertEqual(marg_edges, expected_edges)
 
 
 # ===========================================================================
@@ -2797,6 +3095,25 @@ class TestPlottingErrors(PlotTestCase):
         with self.assertRaises(Exception):
             sims.plot(type=99)
 
+    def test_marginal_as_bare_type_string_raises_helpful_error(self):
+        """type="marginal" is no longer valid -- marginal is now its own
+        keyword argument, not a type= value."""
+        X, Y = RV(Normal(0, 1) ** 2)
+        sims = (X & Y).sim(100)
+        with self.assertRaises(ValueError) as cm:
+            sims.plot(type="marginal")
+        self.assertIn("marginal=True", str(cm.exception))
+
+    def test_marginal_inside_type_list_raises_helpful_error(self):
+        """type=("hist", "marginal") -- the old way of combining a main
+        plot type with marginal panels -- must also raise, not silently
+        ignore the stray "marginal" token."""
+        X, Y = RV(Normal(0, 1) ** 2)
+        sims = (X & Y).sim(100)
+        with self.assertRaises(ValueError) as cm:
+            sims.plot(type=("hist", "marginal"))
+        self.assertIn("marginal=True", str(cm.exception))
+
 
 # ===========================================================================
 # SymbulatePlot wrapper object
@@ -2835,7 +3152,7 @@ class TestSymbulatePlotWrapper(PlotTestCase):
 
     def test_2d_marginal_plot_returns_wrapper(self):
         X, Y = RV(Normal(0, 1) ** 2)
-        p = (X & Y).sim(100).plot(type="marginal")
+        p = (X & Y).sim(100).plot(marginal=True)
         self.assertIsInstance(p, SymbulatePlot)
 
     def test_distribution_plot_returns_wrapper(self):
@@ -2967,7 +3284,9 @@ class TestClassifyData(unittest.TestCase):
             classify_values(np.tile(np.arange(K_2D), 50), n_unique_threshold=K_2D)[0]
         )
         self.assertFalse(
-            classify_values(np.tile(np.arange(K_2D + 1), 50), n_unique_threshold=K_2D)[0]
+            classify_values(np.tile(np.arange(K_2D + 1), 50), n_unique_threshold=K_2D)[
+                0
+            ]
         )
 
     def test_over_budget_discrete_distribution_large_n_is_discrete(self):
