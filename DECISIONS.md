@@ -92,12 +92,105 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 **Rationale**
 > The budget started from the crowding rationale (the thing that gets crowded is the number of distinct marks/cells, and in 2-D that is judged per axis so a busy axis can bin on its own). We first guessed a smaller 2-D cap than the 1-D budget, then found a cleaner anchor: tie both to the resolution of the continuous fallback — the default histogram bin count (30). A discrete plot then stays discrete exactly while it is no finer than the histogram it would become, which happens to make both budgets the same number, `30`, with a reason behind it rather than a guess. Values remain provisional: the original Task 1A sweep varied `n` at a roughly fixed number of distinct values and never separately swept `k`, so the cutoffs still want a dedicated visual check — which is exactly what `team/discrete_continuous_threshold_tests.ipynb` is for (in particular, whether a `30×30` tile is acceptable or `K_2D` should come down).
+>
+> **Update (outlier-aware histogram binning, below): `B_1D`/`K_2D` are now explicitly decoupled from `HIST_DEFAULT_BINS`'s *typical* value, not just from its name.** `make_hist` no longer always renders `HIST_DEFAULT_BINS` (30) bars — for skewed/heavy-tailed data it now computes a Freedman-Diaconis-informed, Tukey-fence-clipped bin count (`HIST_MIN_AUTO_BINS`-`HIST_MAX_AUTO_BINS`, i.e. 8-60) instead. `B_1D`/`K_2D` were never literally computed *from* `HIST_DEFAULT_BINS` in code (they're independent hardcoded constants that happened to share its value), so no code changed here — but the anchor rationale above ("no finer than the histogram it would become") now refers specifically to `HIST_DEFAULT_BINS`'s narrower remaining role: the flat equal-width fallback for degenerate-spread data (`IQR == 0` or `n < 2`), not "the" bin count a typical continuous histogram renders with. This is intentional, not a loose end: "how many distinct values before a variable reads as discrete" and "how many bins does an already-continuous histogram use" are different questions that only coincidentally shared one constant before outlier-aware binning existed. **Confirmed explicitly (checked every use site, not assumed): `HIST2D_DEFAULT_BINS` (`make_hist2d`'s own `bins=None` fallback) and `TILE_DEFAULT_BINS` (`make_tile`'s) are untouched by this change — both remain flat `= 30` constants, independent of `HIST_DEFAULT_BINS`/`HIST_MIN_AUTO_BINS`/`HIST_MAX_AUTO_BINS` in code, not just in name. Only `make_hist`'s own binning changed; the 2-D mesh helpers' binning is unaffected.**
 
 **Alternatives Considered**
 > - **One flat global `N_UNIQUE_THRESHOLD`** (the original plan, shipped as `= 40`) — replaced; it had no principled anchor and applied the same count to 1-D marks and 2-D grids without distinguishing them.
 > - **A per-configuration `k` lookup table** (20 for 1-D, 5-per-axis for 2-D d×d, 10 for mixed) — more knobs than needed; the two-constant budget covers the same cases.
 > - **A smaller 2-D cap than 1-D** (e.g. `K_2D = 20`, `B_1D = 40`) — considered, on the grounds that 2-D grids crowd faster; dropped once we anchored to the bin count, which makes them equal and monotonic across the tile→histogram flip (a `K_2D > 30` tile would be *finer* than the 30-bin histogram it becomes, which is backwards).
 > - **Product rule `kx·ky <= B`, bin both when over** — bounds total cells but has no graceful middle state (jumps straight to a 2-D histogram); the per-axis rule was preferred for the mixed-tile intermediate.
+
+---
+
+## Decision: Outlier/Skew-Aware Histogram Binning
+
+**Status:** Implemented (in `plot.py`'s `make_hist`); threshold constants provisional, same status as `B_1D`/`K_2D`.
+
+**Decision**
+> `make_hist`'s automatic binning (`bins=None` only — an explicit `bins=`, int or edges array, is untouched and keeps the flat equal-width scheme exactly as before) now pairs a Freedman-Diaconis bin width with a Tukey "far out" IQR fence (`[Q1 - HIST_OUTLIER_FENCE_MULT * IQR, Q3 + HIST_OUTLIER_FENCE_MULT * IQR]`, clipped to the data's own range, `HIST_OUTLIER_FENCE_MULT = 3.0`) instead of always spanning the raw min-max in `HIST_DEFAULT_BINS` (30) equal-width bins. Bin count within the fence is clamped to `[HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS]` = `[8, 60]`. Values beyond the fence are folded into one hatched **overflow bar** per affected side (not dropped) — the histogram's bars, regular and overflow together, still integrate to 1 (or the true total count) over every simulated value. Degenerate spread (`IQR == 0` or `n < 2`) falls back to the flat `HIST_DEFAULT_BINS`-bin scheme, unchanged.
+
+**Rationale**
+> `RV(F(5,4)).sim(10000)` has 99% of its mass below ~16 but a max of ~164 (one rare heavy-tail draw) — the old flat 30-bin-over-raw-range histogram crushed the real shape into 1-2 bins. Plain Freedman-Diaconis bin width alone isn't a fix either: computed over the full raw range it implies ~935 bins, outlier-robust in width but not in range (hundreds of empty bins past the bulk). Pairing FD width with a range clip fixes both. An overflow bar (rather than silently dropping out-of-fence data, or extending the last bin) was chosen over an optional log-scale axis: log-scale is a bigger conceptual jump for the package's target audience (general users, minimal stats/programming background, per `CLAUDE.md`'s "User Philosophy") and doesn't match a linear pmf/pdf reading elsewhere in the package. The overflow bar is visually distinguished with a hatch pattern precisely so it doesn't read as "just another equal-width bin."
+
+**Alternatives Considered**
+> Plain Freedman-Diaconis over the raw range — rejected, ~935 bins for the motivating example. Percentile-based range clip (e.g. 1st-99th) instead of a Tukey IQR fence — considered; the IQR fence was preferred for self-adapting to the data's actual spread/skew rather than a fixed percentile, and for matching a convention (Tukey's boxplot outlier fence) students commonly already see elsewhere in an intro stats course. Optional log-scale x-axis mode — rejected for this audience (see Rationale); may be worth revisiting as an opt-in for more advanced use later. Silently dropping/clipping out-of-fence data with no overflow indicator — rejected, would misrepresent the true total probability/count.
+
+---
+
+## Decision: Marginal Panel Rebuild (Coordinate Alignment + Type Routing)
+
+**Status:** Implemented (`results.py`'s 2D `marginal=True` branch, `plot.py`).
+
+**Decision**
+> Marginal panels are rebuilt on the real redesigned 1D helpers
+> (`make_impulse`/`make_hist`/`make_density`/`make_rug`/`make_dotplot`, each now
+> accepting `orientation="vertical"|"horizontal"`) instead of the legacy
+> fork code (`make_marginal_impulse`, `compute_density`, raw `ax.hist`
+> calls), which is now removed. Each marginal panel's plot type is routed
+> through `classify_values`/`default_plot_type` per axis (dotplot/impulse
+> for a discrete axis, rug/hist for a continuous one, by that axis's own
+> small-n/large-n split) instead of a hardcoded impulse-or-hist rule — except
+> when the main panel itself is `density`/`density2d`, in which case both
+> marginals draw density curves regardless of discreteness, matching the
+> main panel's own representation.
+>
+> **Coordinate alignment**, fixing the confirmed tile+marginal mismatch:
+> the main panel is drawn *first*, then each marginal panel is synced to
+> the main panel's actual final `get_xlim()`/`get_ylim()` (via `sharex`/
+> `sharey`), rather than each panel independently deriving its own idea of
+> the axis range. For a discrete axis whose main-panel type packs it into
+> integer rank slots instead of real values (`violin`, `box`/`boxplot`,
+> `segmented_rug`, `segmented_hist`, `segmented_density` always; `tile`
+> only for a categorical/non-whole-number/pathological-range axis, since
+> the discrete-axis tick-crowding fix (see "Discrete-Axis Tick Label
+> Thinning (2D Plots)") upgraded tile to lay out a whole-number discrete
+> axis at real values instead — see `DISCRETE_INDEX_OFFSET` in `plot.py`
+> and how `results.py` resolves each axis's type independently for tile),
+> the marginal's own values are converted to the matching rank codes
+> first, so its dots/stems land under the correct main-panel column/row.
+> For `hist2d` and a real-valued `tile` axis specifically, the marginal
+> histogram reuses the main panel's *exact* bin edges (`make_hist2d`'s
+> return value, or `setup_tile_axis`'s, both called independently a
+> second time with the same inputs — deterministic, not just
+> coincidentally equal) rather than recomputing its own.
+>
+> **`mosaic` is an explicit exception**: `marginal=True` with `type="mosaic"`
+> raises a `ValueError` pointing at mosaic's own `marginal_column=True`
+> instead of building real marginal panels for it. Mosaic already visualizes
+> x's marginal distribution via column width and y's marginal distribution
+> via its own optional marginal column (a different, normalized-`[0,1]`
+> coordinate system from every other 2D type here) — a generic marginal
+> panel would be redundant with a feature it already has, not a missing one.
+
+**Rationale**
+> The legacy marginal code was confirmed byte-for-byte identical to the
+> reference fork and never touched by the graphics redesign. The
+> coordinate mismatch (main panel at tile's compressed index positions,
+> marginal panel at real values, no `sharex`/`sharey` anywhere) was
+> confirmed directly: `RV(DiscreteUniform(50,60) * Poisson(5)).sim(2000).plot(type="tile", marginal=True)`
+> had a main panel x-axis of `(-0.5, 10.5)` against a marginal panel x-axis
+> of `(49.5, 60.5)` — unrelated scales stacked in one figure column. Reading
+> the main panel's *actual* final limits, rather than hand-deriving each
+> plot type's extent formula (tile's `(-0.5, n-0.5)`, violin/boxplot's
+> matplotlib-assigned category positions, ...), was the key simplification
+> that made covering every main-panel type tractable in one pass, and
+> avoids the exact "don't reuse a coincidental value as if guaranteed"
+> trap this file's guiding principles warn about.
+>
+> Mosaic was scoped out deliberately, not skipped for difficulty: it already
+> has an equivalent, differently-styled feature, so a second mechanism
+> showing the same information would be confusing, not additive.
+
+**Alternatives Considered**
+> Building real marginal panels for mosaic too, reusing its normalized
+> column-span math — rejected as redundant with `marginal_column=True`,
+> which already exists and serves the same purpose. Keeping the
+> hardcoded impulse-or-hist marginal rule (not routing through
+> `classify_values`) — rejected once the coordinate-alignment fix was
+> already touching this code; leaving small-n marginals as impulse/hist
+> instead of dot/rug would have been inconsistent with how every other
+> 1D plot decision in the package works.
 
 ---
 

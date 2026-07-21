@@ -78,7 +78,7 @@ REPEAT_FRACTION_THRESHOLD = 0.6
 
 # Discrete-axis tick label crowding for 2D plots (tile, segmented rug/
 # density/hist/box, and violin) -- a separate crowding budget from B_1D /
-# K_2D above. classify_data can let a discrete axis carry up to K_2D (30)
+# K_2D above. classify_values can let a discrete axis carry up to K_2D (30)
 # distinct values, and every one of those functions used to label a
 # discrete axis with one tick per distinct value; past a few dozen, the
 # labels overlapped into an unreadable smear (confirmed with Poisson(200):
@@ -141,6 +141,16 @@ HIST_EDGECOLOR = "white"
 HIST_EDGEWIDTH = 0.8
 HIST_DEFAULT_BINS = 30
 HIST_LEGEND_LOC = "upper right"
+# Outlier/skew-aware auto-binning (used only when bins=None -- an explicit
+# bins= still gets the flat equal-width scheme below, unchanged). Provisional,
+# like B_1D/K_2D -- expect to tune after visual inspection. HIST_DEFAULT_BINS
+# above keeps exactly one role now: the flat bin count for the degenerate
+# fallback (near-constant data), not "the" bin count for skewed data -- see
+# DECISIONS.md, "classify_data Thresholds (Budget Model)".
+HIST_OUTLIER_FENCE_MULT = 3.0  # Tukey "far out" IQR fence
+HIST_MIN_AUTO_BINS = 8
+HIST_MAX_AUTO_BINS = 60
+HIST_OVERFLOW_HATCH = "//"
 
 # Bar chart (1D categorical / discrete): one bar per distinct value, no
 # binning -- the categorical counterpart of the histogram. Same solid
@@ -512,27 +522,52 @@ class SymbulatePlot:
         return ""
 
 
-def configure_axes(axes, xdata, ydata, xlabel=None, ylabel=None):
+def configure_axes(
+    axes, xdata, ydata, xlabel=None, ylabel=None, orientation="vertical"
+):
+    """Set axis limits/labels for a value-vs-frequency plot (make_impulse).
+
+    ``orientation="vertical"`` (default) puts ``xdata`` (the values) on
+    the x-axis and ``ydata`` (frequency/count) on the y-axis, starting
+    at 0 -- today's behavior, unchanged. ``orientation="horizontal"``
+    swaps the two, for drawing sideways in a marginal panel: ``xdata``
+    goes on the y-axis, ``ydata`` starts at 0 on the x-axis.
+
+    Uses ``axes.set_xlim``/``set_ylim``/``set_xlabel``/``set_ylabel``
+    directly rather than the ``plt.xlim``/``plt.ylabel``-style pyplot
+    globals, so this works correctly even when ``axes`` isn't the
+    current axes (e.g. a marginal panel drawn after the main panel).
+    """
     # Create 5% buffer on either end of plot so that leftmost and rightmost
     # lines are visible. However, if current axes are already bigger,
     # keep current axes.
     data_range = max(xdata) - min(xdata)
     buff = 0.05 * data_range if data_range > 0 else 1.0
-    xmin, xmax = axes.get_xlim()
-    xmin = min(xmin, min(xdata) - buff)
-    xmax = max(xmax, max(xdata) + buff)
-    if xmin == xmax:
-        xmin, xmax = xmin - 1.0, xmax + 1.0
-    plt.xlim(xmin, xmax)
 
-    _, ymax = axes.get_ylim()
-    ymax = max(ymax, 1.05 * max(ydata))
-    plt.ylim(0, ymax)
+    if orientation == "vertical":
+        value_lim, freq_lim = axes.get_xlim(), axes.get_ylim()
+        set_value_lim, set_freq_lim = axes.set_xlim, axes.set_ylim
+        set_value_label, set_freq_label = axes.set_xlabel, axes.set_ylabel
+    else:
+        value_lim, freq_lim = axes.get_ylim(), axes.get_xlim()
+        set_value_lim, set_freq_lim = axes.set_ylim, axes.set_xlim
+        set_value_label, set_freq_label = axes.set_ylabel, axes.set_xlabel
+
+    vmin, vmax = value_lim
+    vmin = min(vmin, min(xdata) - buff)
+    vmax = max(vmax, max(xdata) + buff)
+    if vmin == vmax:
+        vmin, vmax = vmin - 1.0, vmax + 1.0
+    set_value_lim(vmin, vmax)
+
+    _, fmax = freq_lim
+    fmax = max(fmax, 1.05 * max(ydata))
+    set_freq_lim(0, fmax)
 
     if xlabel is not None:
-        plt.xlabel(xlabel)
+        set_value_label(xlabel)
     if ylabel is not None:
-        plt.ylabel(ylabel)
+        set_freq_label(ylabel)
 
 
 def plot(*args, **kwargs):
@@ -565,7 +600,9 @@ def plot(*args, **kwargs):
         return SymbulatePlot(plt.gca())
 
 
-def classify_values(values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THRESHOLD):
+def classify_values(
+    values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THRESHOLD
+):
     """Classify simulated values for choosing a default plot type.
 
     Makes two independent determinations that together drive the default
@@ -775,7 +812,6 @@ PLOT_DISPLAY_NAME = {
     "segmented_rug": "Segmented Rug Plot",
     "segmented_density": "Segmented Density Plot",
     "segmented_hist": "Segmented Histogram",
-    "marginal": "Marginal Plot",
 }
 
 
@@ -988,9 +1024,9 @@ def _thin_discrete_ticks(positions, labels, max_ticks):
     return positions[keep], labels[keep]
 
 
-def add_colorbar(fig, type, mappable, label):
+def add_colorbar(fig, marginal, mappable, label):
     # create axis for cbar to place on left
-    if "marginal" not in type:
+    if not marginal:
         caxes = fig.add_axes([0, 0.1, 0.05, 0.8])
     else:  # adjust height if marginals
         caxes = fig.add_axes([0, 0.1, 0.05, 0.57])
@@ -1001,8 +1037,8 @@ def add_colorbar(fig, type, mappable, label):
     return caxes
 
 
-def _setup_tile_axis(values, discrete, bins):
-    """Cell indices, count, extent, and (untrimmed) ticks for one tile-plot axis.
+def setup_tile_axis(values, discrete, bins):
+    """Cell indices, count, extent, ticks, and edges for one tile-plot axis.
 
     A continuous axis is split into ``bins`` equal-width bins the same
     way ``make_hist2d`` does (``np.histogram``-style edges, with the
@@ -1028,6 +1064,15 @@ def _setup_tile_axis(values, discrete, bins):
     fill, so they fall back to compacted rank-index cells instead, with
     tick labels thinned by the caller (see ``_thin_discrete_ticks``).
 
+    Not tile-private: also called from ``RVResults.plot()``'s marginal-panel
+    code (``results.py``) to compute the exact same per-axis index codes and
+    bin edges tile itself uses, so a marginal panel can align with tile's
+    coordinate system -- real values for a continuous or whole-number
+    discrete axis, compacted rank-index cells for a categorical/
+    non-whole-number/pathological-range discrete one (``ticks is not
+    None`` signals the latter case) -- instead of drifting to its own
+    scheme. See DECISIONS.md's tile/marginal coordinate-mismatch note.
+
     Parameters
     ----------
     values : numpy.ndarray
@@ -1041,12 +1086,17 @@ def _setup_tile_axis(values, discrete, bins):
     Returns
     -------
     tuple
-        ``(idx, n_cells, extent, ticks)`` -- the cell index of every
-        value, the number of cells along the axis, the ``(low, high)``
-        imshow extent for the axis, and either the full, untrimmed
-        ``(positions, labels)`` for a compacted rank-index discrete axis,
+        ``(idx, n_cells, extent, ticks, edges)`` -- the cell index of
+        every value, the number of cells along the axis, the ``(low,
+        high)`` imshow extent for the axis, either the full, untrimmed
+        ``(positions, labels)`` for a compacted rank-index discrete axis
         or ``None`` for a real-valued axis (whole-number discrete or
-        continuous) whose ticks are left to matplotlib's numeric locator.
+        continuous) whose ticks are left to matplotlib's numeric locator,
+        and either ``None`` for a discrete axis (rank-index or
+        whole-number real-valued -- there's no single "bin width" for a
+        one-value-per-cell axis) or the full array of bin edges for a
+        continuous one (for threading the exact same edges into a
+        marginal histogram).
     """
     if discrete:
         labels = np.unique(values)
@@ -1072,6 +1122,7 @@ def _setup_tile_axis(values, discrete, bins):
             # spans index +/- 0.5.
             extent = (-0.5, n_cells - 0.5)
             ticks = (np.arange(n_cells), labels)
+        edges = None
     else:
         low, high = values.min(), values.max()
         if low == high:
@@ -1089,7 +1140,35 @@ def _setup_tile_axis(values, discrete, bins):
         # exactly with the equal-width bins.
         extent = (edges[0], edges[-1])
         ticks = None
-    return idx, n_cells, extent, ticks
+    return idx, n_cells, extent, ticks, edges
+
+
+# Discrete-axis index-position family for each main plot type that packs
+# a discrete axis into integer rank slots instead of real values (see
+# setup_tile_axis and DECISIONS.md's tile/marginal coordinate-mismatch
+# note). Used only by RVResults.plot()'s marginal-panel rebuild
+# (results.py) to compute index codes matching that axis's discrete-axis
+# convention for its marginal dot/impulse plot -- main types not listed
+# here (scatter, hist2d, density2d) keep the axis's real values, so no
+# index code is needed for them.
+#
+# violin is 1-indexed (make_violin never passes its own positions= to
+# ax.violinplot, so matplotlib's implicit 1..n default applies); every
+# other type here is 0-indexed, matching setup_tile_axis's
+# np.searchsorted(np.unique(values), values) rank (confirmed for
+# segmented_rug's np.arange(len(levels)) axis limits, segmented_hist's
+# and segmented_density's positions[level] = len(positions) growing
+# dict on a fresh axes, and make_grouped_boxplot's
+# positions = np.arange(len(levels))).
+DISCRETE_INDEX_OFFSET = {
+    "tile": 0,
+    "segmented_rug": 0,
+    "segmented_hist": 0,
+    "segmented_density": 0,
+    "box": 0,
+    "boxplot": 0,
+    "violin": 1,
+}
 
 
 def make_tile(
@@ -1251,12 +1330,12 @@ def make_tile(
     # Build each axis independently: a discrete axis gets one labeled
     # cell per distinct value; a continuous axis is binned into
     # equal-width bins exactly like make_hist2d.
-    x_idx, nx, x_extent, x_ticks = _setup_tile_axis(xs, discrete_x, bins)
-    y_idx, ny, y_extent, y_ticks = _setup_tile_axis(ys, discrete_y, bins)
+    x_idx, nx, x_extent, x_ticks, _ = setup_tile_axis(xs, discrete_x, bins)
+    y_idx, ny, y_extent, y_ticks, _ = setup_tile_axis(ys, discrete_y, bins)
 
     # A whole-number discrete axis (x_ticks/y_ticks is None even though
     # discrete_x/discrete_y is True) is laid out in real data units by
-    # _setup_tile_axis, so it's handled with the continuous axis below --
+    # setup_tile_axis, so it's handled with the continuous axis below --
     # matplotlib's own numeric locator, capped at MAX_DISCRETE_TICKS. A
     # categorical / non-whole-number / pathologically wide-range discrete
     # axis instead falls back to compacted rank-index cells, thinned here.
@@ -1264,7 +1343,6 @@ def make_tile(
         x_ticks = _thin_discrete_ticks(x_ticks[0], x_ticks[1], MAX_DISCRETE_TICKS)
     if discrete_y and y_ticks is not None:
         y_ticks = _thin_discrete_ticks(y_ticks[0], y_ticks[1], MAX_DISCRETE_TICKS)
-
     intensity = np.zeros((ny, nx))
     np.add.at(intensity, (y_idx, x_idx), 1)
     if normalize:
@@ -1945,7 +2023,16 @@ def _encode_categories(values):
     return np.array([code[v] for v in arr.tolist()], dtype=float), categories
 
 
-def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kwargs):
+def make_impulse(
+    values,
+    ax,
+    color,
+    normalize=True,
+    alpha=None,
+    label=None,
+    orientation="vertical",
+    **kwargs,
+):
     """Draw a 1D impulse (stem) plot of simulated discrete values.
 
     Each stem is capped with a filled marker so the plot matches the
@@ -1985,6 +2072,12 @@ def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kw
     label : str, optional
         Name for this series in the legend. Defaults to "Variable k",
         where k counts the impulse plots drawn on these axes so far.
+    orientation : {"vertical", "horizontal"}, default "vertical"
+        "vertical" (default) draws stems rising from the x-axis, values
+        on the x-axis, frequency/count on the y-axis -- today's
+        behavior. "horizontal" draws stems extending from the y-axis
+        instead, values on the y-axis, frequency/count on the x-axis --
+        for drawing sideways in a 2D plot's y-marginal panel.
     **kwargs
         Additional keyword arguments passed to the markers
         (``matplotlib.axes.Axes.scatter``).
@@ -2005,6 +2098,7 @@ def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kw
     """
     if alpha is None:
         alpha = IMPULSE_ALPHA
+    vertical = orientation == "vertical"
 
     # Categorical values have no numeric position, so map them to evenly
     # spaced integer codes and remember the labels for the ticks; numeric
@@ -2026,20 +2120,36 @@ def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kw
     if label is None:
         label = f"Variable {len(prior_series) + 1}"
 
-    stems = ax.vlines(
-        xs, 0, freqs, color=color, linewidth=IMPULSE_LINEWIDTH, alpha=alpha
-    )
-    dots = ax.scatter(
-        xs,
-        freqs,
-        s=IMPULSE_MARKER_SIZE,
-        marker=IMPULSE_MARKER,
-        color=color,
-        alpha=alpha,
-        label=label,
-        zorder=3,
-        **kwargs,
-    )
+    if vertical:
+        stems = ax.vlines(
+            xs, 0, freqs, color=color, linewidth=IMPULSE_LINEWIDTH, alpha=alpha
+        )
+        dots = ax.scatter(
+            xs,
+            freqs,
+            s=IMPULSE_MARKER_SIZE,
+            marker=IMPULSE_MARKER,
+            color=color,
+            alpha=alpha,
+            label=label,
+            zorder=3,
+            **kwargs,
+        )
+    else:
+        stems = ax.hlines(
+            xs, 0, freqs, color=color, linewidth=IMPULSE_LINEWIDTH, alpha=alpha
+        )
+        dots = ax.scatter(
+            freqs,
+            xs,
+            s=IMPULSE_MARKER_SIZE,
+            marker=IMPULSE_MARKER,
+            color=color,
+            alpha=alpha,
+            label=label,
+            zorder=3,
+            **kwargs,
+        )
     prior_series.append(
         {
             "stems": stems,
@@ -2064,10 +2174,16 @@ def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kw
         for i, s in enumerate(prior_series):
             offset = (i - (len(prior_series) - 1) / 2) * IMPULSE_SERIES_OFFSET * gap
             shifted_xs = s["xs"] + offset
-            s["stems"].set_segments(
-                [[(x, 0), (x, f)] for x, f in zip(shifted_xs, s["freqs"])]
-            )
-            s["dots"].set_offsets(np.column_stack([shifted_xs, s["freqs"]]))
+            if vertical:
+                s["stems"].set_segments(
+                    [[(x, 0), (x, f)] for x, f in zip(shifted_xs, s["freqs"])]
+                )
+                s["dots"].set_offsets(np.column_stack([shifted_xs, s["freqs"]]))
+            else:
+                s["stems"].set_segments(
+                    [[(0, x), (f, x)] for x, f in zip(shifted_xs, s["freqs"])]
+                )
+                s["dots"].set_offsets(np.column_stack([s["freqs"], shifted_xs]))
 
     configure_axes(
         ax,
@@ -2075,13 +2191,18 @@ def make_impulse(values, ax, color, normalize=True, alpha=None, label=None, **kw
         freqs,
         xlabel="Value",
         ylabel="Relative Frequency" if normalize else "Count",
+        orientation=orientation,
     )
 
     # Label the integer code positions with the category names, so a
     # categorical impulse plot reads as one stem per category.
     if categories is not None:
-        ax.set_xticks(range(len(categories)))
-        ax.set_xticklabels([str(c) for c in categories])
+        if vertical:
+            ax.set_xticks(range(len(categories)))
+            ax.set_xticklabels([str(c) for c in categories])
+        else:
+            ax.set_yticks(range(len(categories)))
+            ax.set_yticklabels([str(c) for c in categories])
 
     ax.set_title(
         "Relative Frequency Impulse Plot" if normalize else "Count Impulse Plot"
@@ -2180,7 +2301,15 @@ def overlay_true_distribution(pmf, ax, xlim=None, color=None, label=None, **kwar
 
 
 def make_hist(
-    values, ax, color, bins=None, normalize=True, alpha=None, label=None, **kwargs
+    values,
+    ax,
+    color,
+    bins=None,
+    normalize=True,
+    alpha=None,
+    label=None,
+    orientation="vertical",
+    **kwargs,
 ):
     """Draw a 1D histogram of simulated values on the given axes.
 
@@ -2210,8 +2339,18 @@ def make_hist(
         The axes to draw on.
     color : color
         Fill color for the bars, from ``get_next_color(ax)``.
-    bins : int, optional
-        Number of equal-width bins. Defaults to 30.
+    bins : int, array-like, or None, optional
+        Number of equal-width bins, or a precomputed array of bin
+        edges (passed straight through to ``ax.hist``, which accepts
+        either). If None (default), bins are chosen automatically: a
+        Freedman-Diaconis bin width paired with a Tukey "far out" IQR
+        fence (``HIST_OUTLIER_FENCE_MULT``) clips the visible range so
+        heavy-tailed data (e.g. an F or Gamma distribution) doesn't get
+        its real shape crushed into one or two bins spanning the raw
+        min-max. Values beyond the fence are folded into one hatched
+        overflow bar per affected side rather than dropped, so the
+        histogram still integrates to 1 (or the true total count) over
+        every simulated value, not just the ones inside the fence.
     normalize : bool, default True
         If True, bar areas sum to 1 so the histogram approximates a
         density and can be compared to a pdf curve. If False, bar
@@ -2223,6 +2362,11 @@ def make_hist(
         Name for this histogram in the legend. Defaults to
         "Variable k", where k counts the histograms drawn on these
         axes so far.
+    orientation : {"vertical", "horizontal"}, default "vertical"
+        "vertical" (default) draws bars rising from the x-axis, values
+        on the x-axis -- today's behavior. "horizontal" draws bars
+        extending from the y-axis instead, values on the y-axis -- for
+        drawing sideways in a 2D plot's y-marginal panel.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.hist``.
@@ -2230,8 +2374,10 @@ def make_hist(
     Returns
     -------
     tuple
-        The ``(counts, bin_edges, patches)`` tuple from ``ax.hist``,
-        so the caller can inspect or further style the bars.
+        A ``(counts, bin_edges, patches)`` tuple, matching ``ax.hist``'s
+        shape. ``bin_edges`` covers only the in-fence bins; any overflow
+        bars are separate ``Rectangle`` patches appended to the end of
+        ``patches`` (also included in the axes' own ``ax.patches``).
 
     Examples
     --------
@@ -2241,8 +2387,6 @@ def make_hist(
     >>> ax = plt.gca()
     >>> make_hist(values, ax, get_next_color(ax))  # doctest: +SKIP
     """
-    if bins is None:
-        bins = HIST_DEFAULT_BINS
     if alpha is None:
         alpha = HIST_ALPHA
     # The white bar edges are defaults, not overrides, so a user's own
@@ -2259,23 +2403,145 @@ def make_hist(
     if label is None:
         label = f"Variable {n_prior_hists + 1}"
     ax._hist_count = n_prior_hists + 1
-    histogram = ax.hist(
-        values,
-        bins=bins,
-        density=normalize,
-        color=color,
-        alpha=alpha,
-        label=label,
-        **kwargs,
-    )
-    ax.set_xlabel("Value")
-    ax.set_ylabel("Density" if normalize else "Count")
+    if bins is not None:
+        # An explicit bin count or edges array always wins outright --
+        # no outlier clipping, the flat equal-width scheme exactly as
+        # before this function had outlier awareness.
+        histogram = ax.hist(
+            values,
+            bins=bins,
+            density=normalize,
+            color=color,
+            alpha=alpha,
+            label=label,
+            orientation=orientation,
+            **kwargs,
+        )
+    else:
+        histogram = _make_auto_hist(
+            values, ax, color, alpha, label, normalize, orientation, **kwargs
+        )
+    value_label, freq_label = "Value", "Density" if normalize else "Count"
+    if orientation == "vertical":
+        ax.set_xlabel(value_label)
+        ax.set_ylabel(freq_label)
+    else:
+        ax.set_ylabel(value_label)
+        ax.set_xlabel(freq_label)
     ax.set_title("Density Histogram" if normalize else "Count Histogram")
     # A legend only helps once there is more than one histogram to
     # tell apart; a lone histogram stays legend-free.
     if ax._hist_count > 1:
         ax.legend(loc=HIST_LEGEND_LOC)
     return histogram
+
+
+def _make_auto_hist(values, ax, color, alpha, label, normalize, orientation, **kwargs):
+    """Outlier/skew-aware default binning for ``make_hist`` (``bins=None`` only).
+
+    Pairs a Freedman-Diaconis bin width with a Tukey "far out" fence
+    (``[Q1 - HIST_OUTLIER_FENCE_MULT * IQR, Q3 + HIST_OUTLIER_FENCE_MULT *
+    IQR]``, clipped to the data's own range) so a heavy-tailed sample --
+    e.g. ``RV(F(5,4)).sim(10000)``, whose max is roughly 10x its 99th
+    percentile -- doesn't have its real shape crushed into one or two
+    bins spanning the raw min-max. Values beyond the fence are folded
+    into one hatched overflow bar per affected side (drawn with
+    ``ax.bar``, not binned by ``ax.hist``) rather than silently dropped,
+    so a normalized histogram's bars -- regular and overflow together --
+    still integrate to 1 over the *true* sample size, not just the
+    in-fence count. Degenerate spread (``IQR == 0`` or ``n < 2``, where a
+    bin-width estimate isn't meaningful) falls back to the flat
+    ``HIST_DEFAULT_BINS`` equal-width scheme with no clipping.
+
+    Scaling is done via ``ax.hist``'s own ``weights=`` parameter, not a
+    post-hoc rescale of the returned bar patches -- ``histtype="step"``/
+    ``"stepfilled"`` return a single ``StepPatch`` per histogram rather
+    than one ``Rectangle`` per bin, so a per-bar ``patch.set_height()``
+    loop isn't available (and wouldn't be, in general, for every
+    ``histtype`` ``ax.hist`` supports). Passing every other argument
+    through to ``ax.hist`` unchanged keeps arbitrary ``**kwargs``
+    (``histtype``, ``edgecolor``, ...) working exactly as they do today.
+
+    Returns
+    -------
+    tuple
+        ``(counts, bin_edges, patches)`` -- ``counts``/``bin_edges``
+        describe only the in-fence bins; ``patches`` includes any
+        overflow bars appended at the end.
+    """
+    values = np.asarray(values)
+    n = len(values)
+    data_min, data_max = values.min(), values.max()
+    q1, q3 = np.percentile(values, [25, 75])
+    iqr = q3 - q1
+
+    if iqr == 0 or n < 2:
+        # Degenerate spread: no meaningful bin-width estimate. Widen a
+        # zero-width range (all-identical values) the same way
+        # setup_tile_axis does for its continuous axis, so linspace
+        # doesn't hand back a zero bin_width later.
+        low, high = data_min, data_max
+        if low == high:
+            low, high = low - 0.5, high + 0.5
+        edges = np.linspace(low, high, HIST_DEFAULT_BINS + 1)
+        fence_low, fence_high = data_min, data_max
+    else:
+        fence_low = max(data_min, q1 - HIST_OUTLIER_FENCE_MULT * iqr)
+        fence_high = min(data_max, q3 + HIST_OUTLIER_FENCE_MULT * iqr)
+        if fence_high <= fence_low:
+            # Defensive fallback -- shouldn't occur given iqr > 0 above,
+            # but never hand linspace a zero-or-negative-width range.
+            fence_low, fence_high = data_min, data_max
+        fd_width = 2 * iqr * n ** (-1 / 3)
+        n_bins = int(
+            np.clip(
+                round((fence_high - fence_low) / fd_width),
+                HIST_MIN_AUTO_BINS,
+                HIST_MAX_AUTO_BINS,
+            )
+        )
+        edges = np.linspace(fence_low, fence_high, n_bins + 1)
+
+    bin_width = edges[1] - edges[0]
+    scale = 1 / (n * bin_width) if normalize else 1.0
+    weights = kwargs.pop("weights", np.ones(n)) * scale
+
+    counts, edges, patches = ax.hist(
+        values,
+        bins=edges,
+        weights=weights,
+        density=False,
+        color=color,
+        alpha=alpha,
+        label=label,
+        orientation=orientation,
+        **kwargs,
+    )
+
+    overflow_patches = []
+    overflow_bar_fn = ax.bar if orientation == "vertical" else ax.barh
+    for values_outside, edge, side in (
+        (values < fence_low, edges[0], "low"),
+        (values > fence_high, edges[-1], "high"),
+    ):
+        overflow_count = int(values_outside.sum())
+        if overflow_count == 0:
+            continue
+        pos = edge - bin_width if side == "low" else edge
+        overflow_bar = overflow_bar_fn(
+            pos,
+            overflow_count * scale,
+            bin_width,
+            align="edge",
+            color=color,
+            alpha=alpha,
+            hatch=HIST_OVERFLOW_HATCH,
+            edgecolor=kwargs.get("edgecolor", HIST_EDGECOLOR),
+            linewidth=kwargs.get("linewidth", HIST_EDGEWIDTH),
+        )[0]
+        overflow_patches.append(overflow_bar)
+
+    return counts, edges, list(patches) + overflow_patches
 
 
 def _bar_categories(series):
@@ -2773,7 +3039,16 @@ def _density_xrange(values):
     return qlow - padding, qhigh + padding
 
 
-def make_density(values, ax, color, bandwidth=None, alpha=None, label=None, **kwargs):
+def make_density(
+    values,
+    ax,
+    color,
+    bandwidth=None,
+    alpha=None,
+    label=None,
+    orientation="vertical",
+    **kwargs,
+):
     """Draw a 1D kernel density curve of simulated values on the given axes.
 
     Draws in the style of the approved density prototype: a single
@@ -2815,6 +3090,11 @@ def make_density(values, ax, color, bandwidth=None, alpha=None, label=None, **kw
     label : str, optional
         Name for this curve in the legend. Defaults to "Variable k",
         where k counts the density curves drawn on these axes so far.
+    orientation : {"vertical", "horizontal"}, default "vertical"
+        "vertical" (default) plots density against value on the
+        x-axis -- today's behavior. "horizontal" swaps them (value on
+        the y-axis) -- for drawing sideways in a 2D plot's y-marginal
+        panel.
     **kwargs
         Additional keyword arguments passed to ``ax.plot``.
 
@@ -2851,18 +3131,24 @@ def make_density(values, ax, color, bandwidth=None, alpha=None, label=None, **kw
         label = f"Variable {n_prior_curves + 1}"
     ax._density_count = n_prior_curves + 1
 
+    vertical = orientation == "vertical"
     line = ax.plot(
-        grid,
-        density,
+        grid if vertical else density,
+        density if vertical else grid,
         color=color,
         alpha=alpha,
         label=label,
         **kwargs,
     )
-    ax.set_xlabel("Value")
-    ax.set_ylabel("Density")
+    if vertical:
+        ax.set_xlabel("Value")
+        ax.set_ylabel("Density")
+        ax.set_ylim(bottom=0)
+    else:
+        ax.set_ylabel("Value")
+        ax.set_xlabel("Density")
+        ax.set_xlim(left=0)
     ax.set_title("Density Curve")
-    ax.set_ylim(bottom=0)
     # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
     # y), but the approved density prototype shows both horizontal and
     # vertical reference lines, so this overrides it for this plot type
@@ -2876,7 +3162,9 @@ def make_density(values, ax, color, bandwidth=None, alpha=None, label=None, **kw
     return line
 
 
-def make_rug(values, ax, color, alpha=None, label=None, **kwargs):
+def make_rug(
+    values, ax, color, alpha=None, label=None, orientation="vertical", **kwargs
+):
     """Draw a rug plot of simulated values on the given axes.
 
     Draws one thin vertical tick per simulated value along the bottom
@@ -2919,9 +3207,16 @@ def make_rug(values, ax, color, alpha=None, label=None, **kwargs):
     label : str, optional
         Name for this rug in the legend. Defaults to "Variable k",
         where k counts the rugs drawn on these axes so far.
+    orientation : {"vertical", "horizontal"}, default "vertical"
+        "vertical" (default) draws ticks rising from the bottom of the
+        axes, values on the x-axis -- today's behavior. "horizontal"
+        draws ticks extending from the left edge instead, values on
+        the y-axis -- for drawing sideways in a 2D plot's y-marginal
+        panel.
     **kwargs
         Additional keyword arguments passed to
-        ``matplotlib.axes.Axes.vlines``.
+        ``matplotlib.axes.Axes.vlines`` (or ``.hlines`` when
+        ``orientation="horizontal"``).
 
     Returns
     -------
@@ -2940,6 +3235,7 @@ def make_rug(values, ax, color, alpha=None, label=None, **kwargs):
     if alpha is None:
         alpha = RUG_ALPHA
     kwargs.setdefault("linewidth", RUG_LINEWIDTH)
+    vertical = orientation == "vertical"
     # Count the rugs drawn on these axes, stored on the axes object
     # itself (the same pattern get_next_color uses for the color
     # cycle) so overlays from separate .plot() calls see it.
@@ -2954,30 +3250,52 @@ def make_rug(values, ax, color, alpha=None, label=None, **kwargs):
         len(ax.patches) == 0 and len(ax.lines) == 0 and len(ax.collections) == 0
     )
 
-    rug = ax.vlines(
-        np.asarray(values),
-        0,
-        RUG_TICK_HEIGHT,
-        # Axes-fraction y coordinates: ticks rise from the bottom of
-        # the axes regardless of the y data limits.
-        transform=ax.get_xaxis_transform(),
-        color=color,
-        alpha=alpha,
-        label=label,
-        **kwargs,
-    )
+    if vertical:
+        rug = ax.vlines(
+            np.asarray(values),
+            0,
+            RUG_TICK_HEIGHT,
+            # Axes-fraction y coordinates: ticks rise from the bottom of
+            # the axes regardless of the y data limits.
+            transform=ax.get_xaxis_transform(),
+            color=color,
+            alpha=alpha,
+            label=label,
+            **kwargs,
+        )
+    else:
+        rug = ax.hlines(
+            np.asarray(values),
+            0,
+            RUG_TICK_HEIGHT,
+            # Axes-fraction x coordinates: ticks extend from the left
+            # edge of the axes regardless of the x data limits.
+            transform=ax.get_yaxis_transform(),
+            color=color,
+            alpha=alpha,
+            label=label,
+            **kwargs,
+        )
 
     if is_standalone:
-        # Standalone rug plot: the vertical direction carries no
-        # information, so hide the y-axis, the left spine, and the
-        # gridlines for a clean number-line look. When the rug is
-        # overlaid on another plot, none of this runs -- the companion
-        # plot owns the axes styling and the rug inherits it untouched.
-        ax.yaxis.set_visible(False)
-        ax.spines["left"].set_visible(False)
+        # Standalone rug plot: the direction with no information (y for
+        # a vertical rug, x for a horizontal one) gets hidden -- axis,
+        # matching spine, and gridlines -- for a clean number-line look.
+        # When the rug is overlaid on another plot, none of this runs --
+        # the companion plot owns the axes styling and the rug inherits
+        # it untouched.
+        if vertical:
+            ax.yaxis.set_visible(False)
+            ax.spines["left"].set_visible(False)
+        else:
+            ax.xaxis.set_visible(False)
+            ax.spines["bottom"].set_visible(False)
         ax.grid(False)
 
-    ax.set_xlabel("Value")
+    if vertical:
+        ax.set_xlabel("Value")
+    else:
+        ax.set_ylabel("Value")
     # A legend only helps once there is more than one rug to tell
     # apart; a lone rug stays legend-free.
     if ax._rug_count > 1:
@@ -4300,6 +4618,12 @@ def _x_span_px(ax, dx):
     return x1 - x0
 
 
+def _y_span_px(ax, dy):
+    """Return how many pixels tall dy data units are."""
+    (_, y0), (_, y1) = ax.transData.transform([(0.0, 0.0), (0.0, dy)])
+    return y1 - y0
+
+
 def _dotplot_clean_values(values):
     """Validate the values and return them as a 1D float array."""
     arr = np.asarray(list(values))
@@ -4339,7 +4663,7 @@ def _dotplot_restack(state):
         s["counts"] = np.array([np.sum(s["values"] == p) for p in positions], dtype=int)
 
 
-def _dotplot_init_state(ax):
+def _dotplot_init_state(ax, orientation="vertical"):
     """Set up per-axes dot plot state, styling, and resize handling."""
     state = {
         "series": [],
@@ -4347,15 +4671,21 @@ def _dotplot_init_state(ax):
         "last_size_px": None,
         "relayout_running": False,
         "categories": None,
+        "orientation": orientation,
     }
     ax._dotplot_state = state
-    # Horizontal reference gridlines help students read a count off
-    # the y-axis. Keep them below the dots and drop the vertical
-    # lines, which would clutter the stacks.
+    # Reference gridlines along the count axis help students read a
+    # count off it. Keep them below the dots and drop the lines along
+    # the value axis, which would clutter the stacks.
     ax.set_axisbelow(True)
-    ax.grid(True, axis="y")
-    ax.grid(False, axis="x")
-    ax.set_xlabel(DOTPLOT_XLABEL)
+    if orientation == "vertical":
+        ax.grid(True, axis="y")
+        ax.grid(False, axis="x")
+        ax.set_xlabel(DOTPLOT_XLABEL)
+    else:
+        ax.grid(True, axis="x")
+        ax.grid(False, axis="y")
+        ax.set_ylabel(DOTPLOT_XLABEL)
     ax.tick_params(labelsize=DOTPLOT_TICK_LABEL_SIZE)
     # Dot sizes depend on the rendered size of the axes, so redo the
     # geometry whenever something changes it (figure resize,
@@ -4374,68 +4704,84 @@ def _dotplot_relayout(ax):
     state = getattr(ax, "_dotplot_state", None)
     if state is None or not state["series"]:
         return
+    vertical = state["orientation"] == "vertical"
     positions = state["positions"]
     spacing = state["spacing"]
     n_series = len(state["series"])
     # Each batch gets its own lane inside the slot around each value.
     lane_width = spacing / n_series
 
-    # x padding: one slot of air beyond the outermost stacks.
-    ax.set_xlim(positions[0] - spacing, positions[-1] + spacing)
+    # Value-axis padding: one slot of air beyond the outermost stacks.
+    value_lim = (positions[0] - spacing, positions[-1] + spacing)
+    set_value_lim = ax.set_xlim if vertical else ax.set_ylim
+    set_value_lim(*value_lim)
 
     # Every dot is one count, so a stack unit is always 1.
 
     # Pixel measurements via the axes transforms (valid before any
     # draw). The 1-px floor guards against two nearly-identical values
     # driving the lane width -- and with it the dot size -- to zero.
-    lane_width_px = max(_x_span_px(ax, lane_width), 1.0)
-    height_px = _axes_size_px(ax)[1]
+    # "cross_px" is the rendered size of the axes along the count axis
+    # (the axis the stacks grow along) -- height for a vertical plot,
+    # width for a horizontal one.
+    span_px = _x_span_px if vertical else _y_span_px
+    lane_width_px = max(span_px(ax, lane_width), 1.0)
+    cross_px = _axes_size_px(ax)[1 if vertical else 0]
 
-    # Choose the y range so one count on screen is never taller than
-    # one lane is wide, nor than the DOTPLOT_MAX_DOT_SIZE cap. That
-    # pixel height becomes the dot diameter, so dots stack touching and
-    # never spill into the next lane, short stacks cannot inflate the
-    # dots past the cap, and taller stacks shrink the dots instead of
+    # Choose the count-axis range so one count on screen is never wider
+    # than one lane, nor than the DOTPLOT_MAX_DOT_SIZE cap. That pixel
+    # size becomes the dot diameter, so dots stack touching and never
+    # spill into the next lane, short stacks cannot inflate the dots
+    # past the cap, and taller stacks shrink the dots instead of
     # overflowing the axes.
     max_dot_px = DOTPLOT_MAX_DOT_SIZE * ax.figure.dpi / 72.0
     tallest = max(s["counts"].max() for s in state["series"])
-    y_max = max(
+    count_max = max(
         tallest * DOTPLOT_STACK_HEADROOM,
-        height_px / lane_width_px,
-        height_px / max_dot_px,
+        cross_px / lane_width_px,
+        cross_px / max_dot_px,
     )
-    ax.set_ylim(0, y_max)
+    set_count_lim = ax.set_ylim if vertical else ax.set_xlim
+    set_count_lim(0, count_max)
 
     points_per_px = 72.0 / ax.figure.dpi
     # Dodge overlaid batches by exactly one dot diameter so their
     # stacks sit side by side and touch, rather than by the full lane
     # width -- which would leave a gap between the columns once the
     # dot-size cap shrinks the dots below the lane width. The dot
-    # diameter is what the y range above was calibrated to; it never
-    # exceeds one lane width, so a dodged group still fits inside its
-    # slot without colliding with the neighboring value's stacks.
-    diameter_px = height_px / y_max
-    x_px_per_data = max(_x_span_px(ax, 1.0), 1e-9)
-    dodge_step = diameter_px / x_px_per_data
+    # diameter is what the count range above was calibrated to; it
+    # never exceeds one lane width, so a dodged group still fits inside
+    # its slot without colliding with the neighboring value's stacks.
+    diameter_px = cross_px / count_max
+    value_px_per_data = max(span_px(ax, 1.0), 1e-9)
+    dodge_step = diameter_px / value_px_per_data
     # scatter sizes are marker areas in points^2 (diameter squared).
     size = (diameter_px * points_per_px) ** 2
     for i, series in enumerate(state["series"]):
         offset = (i - (n_series - 1) / 2.0) * dodge_step
-        xs = []
-        ys = []
+        value_coords = []
+        count_coords = []
         for position, count in zip(positions, series["counts"]):
-            xs.extend(np.full(count, position + offset))
-            ys.extend(np.arange(1, count + 1) - 0.5)
-        series["dots"].set_offsets(np.column_stack([xs, ys]))
-        series["dots"].set_sizes(np.full(len(xs), size))
+            value_coords.extend(np.full(count, position + offset))
+            count_coords.extend(np.arange(1, count + 1) - 0.5)
+        offsets = (
+            np.column_stack([value_coords, count_coords])
+            if vertical
+            else np.column_stack([count_coords, value_coords])
+        )
+        series["dots"].set_offsets(offsets)
+        series["dots"].set_sizes(np.full(len(value_coords), size))
 
     # Categorical data: label each integer code position with its category
     # name. Numeric data: keep the integer locator so whole-number values
-    # get whole-number ticks.
+    # get whole-number ticks. Both apply to the value axis.
+    value_axis = ax.xaxis if vertical else ax.yaxis
+    set_value_ticks = ax.set_xticks if vertical else ax.set_yticks
+    set_value_ticklabels = ax.set_xticklabels if vertical else ax.set_yticklabels
     categories = state.get("categories")
     if categories is not None:
-        ax.set_xticks(positions)
-        ax.set_xticklabels(
+        set_value_ticks(positions)
+        set_value_ticklabels(
             [
                 (
                     str(categories[int(round(p))])
@@ -4446,9 +4792,10 @@ def _dotplot_relayout(ax):
             ]
         )
     elif np.all(positions == np.round(positions)):
-        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-    # The y-axis is always integer counts.
-    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        value_axis.set_major_locator(MaxNLocator(integer=True))
+    # The count axis is always integer counts.
+    count_axis = ax.yaxis if vertical else ax.xaxis
+    count_axis.set_major_locator(MaxNLocator(integer=True))
     _dotplot_boundary_lines(ax, state)
     state["last_size_px"] = _axes_size_px(ax)
 
@@ -4471,9 +4818,10 @@ def _dotplot_boundary_lines(ax, state):
     half = state["spacing"] / 2.0
     midpoints = (positions[:-1] + positions[1:]) / 2.0
     edges = np.concatenate([[positions[0] - half], midpoints, [positions[-1] + half]])
+    draw_line = ax.axvline if state["orientation"] == "vertical" else ax.axhline
     for edge in edges:
         state["boundary_lines"].append(
-            ax.axvline(
+            draw_line(
                 edge,
                 color=DOTPLOT_BOUNDARY_LINE_COLOR,
                 linewidth=DOTPLOT_BOUNDARY_LINE_WIDTH,
@@ -4486,7 +4834,10 @@ def _dotplot_boundary_lines(ax, state):
 def _dotplot_decorate(ax, state):
     """Apply the title, labels, fonts, and (for overlays) the legend."""
     ax.set_title(DOTPLOT_TITLE)
-    ax.set_ylabel("Count")
+    if state["orientation"] == "vertical":
+        ax.set_ylabel("Count")
+    else:
+        ax.set_xlabel("Count")
     ax.xaxis.label.set_size(DOTPLOT_AXIS_LABEL_SIZE)
     ax.yaxis.label.set_size(DOTPLOT_AXIS_LABEL_SIZE)
     # A legend only helps once there is more than one batch to tell
@@ -4569,7 +4920,9 @@ def dotplot_tallest_stack(values):
     return int(counts.max())
 
 
-def make_dotplot(values, ax, color, alpha=None, label=None, **kwargs):
+def make_dotplot(
+    values, ax, color, alpha=None, label=None, orientation="vertical", **kwargs
+):
     """Draw a stacked dot plot of simulated values on the given axes.
 
     Every observation is one dot, drawn at its exact value on the
@@ -4611,6 +4964,14 @@ def make_dotplot(values, ax, color, alpha=None, label=None, **kwargs):
         Name for this batch of values in the legend. Defaults to
         "Variable k", where k counts the dot plots drawn on these axes
         so far.
+    orientation : {"vertical", "horizontal"}, default "vertical"
+        "vertical" (default) stacks dots upward from the x-axis, values
+        on the x-axis -- today's behavior. "horizontal" stacks dots
+        rightward from the y-axis instead, values on the y-axis -- for
+        drawing sideways in a 2D plot's y-marginal panel. Fixed by the
+        first dot plot drawn on a given axes; later overlaid calls on
+        the same axes keep that axes' orientation regardless of what
+        they pass.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.scatter``. Dot positions and sizes are
@@ -4646,7 +5007,7 @@ def make_dotplot(values, ax, color, alpha=None, label=None, **kwargs):
         alpha = DOTPLOT_ALPHA
     state = getattr(ax, "_dotplot_state", None)
     if state is None:
-        state = _dotplot_init_state(ax)
+        state = _dotplot_init_state(ax, orientation)
     if categories is not None:
         state["categories"] = categories
     if label is None:
