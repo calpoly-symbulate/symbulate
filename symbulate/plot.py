@@ -205,7 +205,7 @@ ECDF_ALPHA = 1.0
 ECDF_LEGEND_LOC = "upper left"
 
 # Shaded probability region under a theoretical curve
-# (Distribution.shade()). This is an annotation drawn on top of an
+# (DistributionPlot.shade()). This is an annotation drawn on top of an
 # already-plotted pmf/pdf/cdf to highlight a tail or interval, so it uses
 # a fixed neutral grey rather than a color-cycle hue -- it is not a new
 # data series and should not read as one. The translucent fill lets the
@@ -527,6 +527,178 @@ class SymbulatePlot:
     def __repr__(self):
         """Return an empty string so Jupyter prints nothing."""
         return ""
+
+
+class DistributionPlot(SymbulatePlot):
+    """Plot object returned by ``Distribution.plot()``.
+
+    Extends :class:`SymbulatePlot` with :meth:`shade`, so a region under a
+    theoretical curve is filled by chaining off the plot that drew it::
+
+        Normal(0, 1).plot().shade(lt=-1.96)
+
+    Shading is reachable only through a ``.plot()`` call -- there is no
+    standalone ``shade`` on a distribution -- so a curve always exists
+    before a region is shaded.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes the curve was drawn on.
+    dist : Distribution
+        The distribution whose curve was drawn; read for its ``pdf``,
+        ``cdf``, and ``discrete`` flag.
+    plot_type : {"pdf", "cdf"}
+        Which function was drawn, so :meth:`shade` fills under the
+        matching one.
+    """
+
+    def __init__(self, ax, dist, plot_type):
+        super().__init__(ax)
+        self.dist = dist
+        self.plot_type = plot_type
+
+    def shade(self, lt=None, le=None, gt=None, ge=None):
+        """Shade a tail or interval region under the plotted curve.
+
+        Fills the region of the distribution that satisfies the given
+        inequalities, under the curve this plot drew -- the probability
+        mass/density function (``type="pdf"``) or the cumulative
+        distribution function (``type="cdf"``). Chain it onto ``plot``::
+
+            Normal(0, 1).plot().shade(lt=-1.96)
+
+        The bounds read as probability inequalities, mirroring the
+        mathematical notation students already use:
+
+        - ``lt`` / ``le`` -- the region ``X < lt`` / ``X <= le`` (an upper
+          bound; a left tail when used alone).
+        - ``gt`` / ``ge`` -- the region ``X > gt`` / ``X >= ge`` (a lower
+          bound; a right tail when used alone).
+
+        Combine a lower and an upper bound for an interval, e.g.
+        ``gt=3, le=7`` shades ``3 < X <= 7``. With no bounds, the whole
+        visible curve is shaded. For discrete distributions the strict
+        (``lt``/``gt``) versus inclusive (``le``/``ge``) choice genuinely
+        matters -- ``lt=3`` excludes the mass at ``3`` while ``le=3``
+        includes it.
+
+        The shaded region spans the currently displayed x-axis, so it
+        honors whatever window :meth:`Distribution.plot` produced -- the
+        full default range, an ``xlim="zoom"`` window, an explicit
+        ``xlim=(low, high)``, or the union created by overlaying onto
+        existing axes.
+
+        Parameters
+        ----------
+        lt : float, optional
+            Shade where ``X < lt`` (strict upper bound). Cannot be combined
+            with ``le``.
+        le : float, optional
+            Shade where ``X <= le`` (inclusive upper bound). Cannot be
+            combined with ``lt``.
+        gt : float, optional
+            Shade where ``X > gt`` (strict lower bound). Cannot be combined
+            with ``ge``.
+        ge : float, optional
+            Shade where ``X >= ge`` (inclusive lower bound). Cannot be
+            combined with ``gt``.
+
+        Returns
+        -------
+        DistributionPlot
+            This plot, so further regions can be shaded by chaining.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Normal(0, 1).plot().shade(lt=-1.96)  # left tail  # doctest: +SKIP
+        >>> Poisson(3).plot().shade(ge=5)  # right tail  # doctest: +SKIP
+        >>> Binomial(10, 0.5).plot().shade(gt=3, le=7)  # interval  # doctest: +SKIP
+        """
+        if lt is not None and le is not None:
+            raise ValueError(
+                "Pass either `lt` or `le`, not both -- they are two ways to "
+                "set the same upper bound. Use `lt` for a strict bound "
+                "(X < value) or `le` for an inclusive one (X <= value)."
+            )
+        if gt is not None and ge is not None:
+            raise ValueError(
+                "Pass either `gt` or `ge`, not both -- they are two ways to "
+                "set the same lower bound. Use `gt` for a strict bound "
+                "(X > value) or `ge` for an inclusive one (X >= value)."
+            )
+
+        ax = self.ax
+        dist = self.dist
+        # Bound the region by the *displayed* window, so an open tail extends
+        # to the visible edge of whatever plot() drew (xlim="zoom", a custom
+        # xlim, or an overlay union), not the distribution's static self.xlim.
+        axlo, axhi = ax.get_xlim()
+
+        lo, hi = axlo, axhi
+        lo_user = hi_user = False
+        lo_incl = hi_incl = False
+        if lt is not None:
+            hi, hi_user, hi_incl = lt, True, False
+        elif le is not None:
+            hi, hi_user, hi_incl = le, True, True
+        if gt is not None:
+            lo, lo_user, lo_incl = gt, True, False
+        elif ge is not None:
+            lo, lo_user, lo_incl = ge, True, True
+
+        if hi <= lo:
+            raise ValueError(
+                "The lower bound (`gt`/`ge`) must be strictly less than the "
+                f"upper bound (`lt`/`le`). You asked to shade between {lo} and "
+                f"{hi}, which is empty. Check the order of your bounds."
+            )
+
+        # Keep the drawing inside the visible window so the shading lines up
+        # with the plotted curve even if a bound sits past the axis edge.
+        lo_draw, hi_draw = max(lo, axlo), min(hi, axhi)
+
+        # Evaluate the same function that is on screen: the cdf if a cdf was
+        # plotted, otherwise the pmf/pdf.
+        plotted_cdf = self.plot_type == "cdf"
+        curve = dist.cdf if plotted_cdf else dist.pdf
+
+        if not dist.discrete:
+            # Continuous pdf or cdf: a smooth filled region under the curve.
+            x_shaded = np.linspace(lo_draw, hi_draw, 200)
+            ax.fill_between(
+                x_shaded, curve(x_shaded), alpha=SHADE_ALPHA, color=SHADE_COLOR
+            )
+            # Draw a vertical edge at an inclusive, in-view user bound so the
+            # closed end of the interval reads as a hard boundary.
+            if hi_incl and axlo <= hi <= axhi:
+                ax.vlines(hi, 0, curve(hi), color=SHADE_COLOR, alpha=SHADE_ALPHA)
+            if lo_incl and axlo <= lo <= axhi:
+                ax.vlines(lo, 0, curve(lo), color=SHADE_COLOR, alpha=SHADE_ALPHA)
+        elif not plotted_cdf:
+            # Discrete pmf: an impulse at each integer value in the region,
+            # matching how plot() draws the mass function itself.
+            values = np.arange(int(np.floor(axlo)), int(np.floor(axhi)) + 1)
+            values = values[(values >= axlo) & (values <= axhi)]
+            if hi_user:
+                values = values[values <= hi] if hi_incl else values[values < hi]
+            if lo_user:
+                values = values[values >= lo] if lo_incl else values[values > lo]
+            ax.vlines(values, 0, curve(values), color=SHADE_COLOR, alpha=SHADE_ALPHA)
+        else:
+            # Discrete cdf: fill under the right-continuous step function,
+            # matching plot()'s "steps-post" rendering of a discrete cdf.
+            x_shaded = np.linspace(lo_draw, hi_draw, 200)
+            ax.fill_between(
+                x_shaded,
+                dist.cdf(x_shaded),
+                step="post",
+                alpha=SHADE_ALPHA,
+                color=SHADE_COLOR,
+            )
+
+        return self
 
 
 def configure_axes(
