@@ -455,9 +455,13 @@ class Distribution(ProbabilitySpace):
             xs = np.linspace(xlim[0], xlim[1], 200)
         ys = self.cdf(xs) if type == "cdf" else self.pdf(xs)
 
-        # determine limits for y-axes based on y values
-        ymin, ymax = ys[np.isfinite(ys)].min(), ys[np.isfinite(ys)].max()
-        ylim = min(0, ymin - 0.05 * (ymax - ymin)), 1.05 * ymax
+        # determine limits for y-axes based on y values. Anchor the baseline
+        # at exactly 0 so the curve sits right on the x-axis: a pdf/pmf height
+        # is never negative and only reads correctly against a zero baseline,
+        # and a CDF likewise runs from 0 upward. Padding below 0 would float
+        # the curve off the axis and misrepresent it.
+        ymax = ys[np.isfinite(ys)].max()
+        ylim = 0, 1.05 * ymax
 
         # get the current axis if they exist and no axis is specified
         fig = plt.gcf()
@@ -532,6 +536,23 @@ class Distribution(ProbabilitySpace):
             ax.set_title("PMF Plot")
         else:
             ax.set_title("PDF Plot")
+
+        # Label the axes for context: the x-axis shows the possible values of
+        # the variable, and the y-axis names what its height means for this
+        # plot type. "Value" and "Density" match the value plots in plot.py,
+        # so a theoretical curve reads the same way as its simulated companion.
+        # Only fill labels that aren't already set, so overlaying a curve onto
+        # an existing simulated plot keeps that plot's labels (e.g. a
+        # count-scale histogram's "Count") instead of clobbering them.
+        if not ax.get_xlabel():
+            ax.set_xlabel("Value")
+        if not ax.get_ylabel():
+            if type == "cdf":
+                ax.set_ylabel("Cumulative Probability")
+            elif self.discrete:
+                ax.set_ylabel("Probability")
+            else:
+                ax.set_ylabel("Density")
 
         # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
         # y), but these plots read better with both horizontal and vertical
