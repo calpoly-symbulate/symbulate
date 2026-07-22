@@ -43,6 +43,7 @@ from .distributions import (
     Gompertz,
     Makeham,
     Laplace,
+    DeMoivre,
     MultivariateNormal,
     BivariateNormal,
     Multinomial,

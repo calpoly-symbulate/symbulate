@@ -2310,6 +2310,60 @@ class Laplace(Distribution):
         super().__init__(params, stats.laplace, False)
 
 
+class DeMoivre(Distribution):
+    """Probability space for a De Moivre survival distribution.
+
+    The simplest survival law in actuarial science: age at death is
+    uniformly distributed between 0 and a limiting age ``omega``, so
+    every remaining year of life is equally likely and no one survives
+    past ``omega``. It is a reparameterized ``Uniform(0, omega)``, named
+    for its use as the earliest mortality model.
+
+    Parameters
+    ----------
+    omega : float
+        Limiting age -- the oldest attainable age, beyond which survival
+        is impossible. Must be positive.
+
+    Attributes
+    ----------
+    omega : float
+        Limiting age.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = DeMoivre(omega=100)
+    >>> float(X.mean())
+    50.0
+    >>> float(X.pdf(40))
+    0.01
+    >>> X.draw()  # doctest: +SKIP
+    37.4
+    """
+
+    def __init__(self, omega):
+        """Initialize a De Moivre survival distribution.
+
+        Raises
+        ------
+        Exception
+            If ``omega`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(omega, numbers.Real) or omega <= 0,
+                "omega must be a positive number",
+            ),
+        )
+        self.omega = omega
+        # De Moivre's law is Uniform(0, omega): loc 0, scale omega. Bounded
+        # on both ends, so xlim shows the full support (no probability trim).
+        params = {"loc": 0, "scale": omega}
+        super().__init__(params, stats.uniform, False)
+        self.xlim = (0, omega)
+
+
 ## Multivariate Distributions
 
 

@@ -1384,6 +1384,50 @@ class TestLaplace(unittest.TestCase):
         plt.close("all")
 
 
+class TestDeMoivre(unittest.TestCase):
+
+    def test_DeMoivre_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(DeMoivre(omega=100))
+        sims = X.sim(Nsim)
+        cdf = stats.uniform(loc=0, scale=100).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_DeMoivre_mean_var_sd(self):
+        X = DeMoivre(omega=100)
+        th = stats.uniform(loc=0, scale=100)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_DeMoivre_is_reparameterized_uniform(self):
+        # Age at death is Uniform(0, omega): constant density 1/omega on
+        # [0, omega], and P(X <= x) = x / omega.
+        X = DeMoivre(omega=80)
+        self.assertAlmostEqual(float(X.pdf(50)), 1 / 80, places=9)
+        self.assertAlmostEqual(float(X.cdf(20)), 20 / 80, places=9)
+
+    def test_DeMoivre_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = DeMoivre(omega=100).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+        self.assertLessEqual(float(value), 100.0)
+
+    def test_DeMoivre_invalid_omega_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: DeMoivre(omega=b))
+
+    def test_DeMoivre_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        DeMoivre(100).draw()
+        RV(DeMoivre(100)).sim(100).plot()
+        DeMoivre(100).plot()
+        DeMoivre(100).plot(cdf=True)
+        plt.close("all")
+
+
 class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):
