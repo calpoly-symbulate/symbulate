@@ -139,19 +139,6 @@ HIST_EDGECOLOR = "white"
 HIST_EDGEWIDTH = 0.8
 HIST_DEFAULT_BINS = 30
 HIST_LEGEND_LOC = "upper right"
-# Outlier/skew-aware auto-binning (used only when bins=None -- an explicit
-# bins= still gets the flat equal-width scheme below, unchanged). A
-# Freedman-Diaconis bin width computed over the *full* raw range (no
-# clipping, no overflow bin -- just more, still equal-width, bins), so
-# heavy-tailed data resolves the bulk of its shape without misrepresenting
-# the tail or needing a special "everything past here" bar. Provisional,
-# like B_1D/K_2D -- expect to tune after visual inspection.
-# HIST_DEFAULT_BINS above keeps exactly one role now: the flat bin count
-# for the degenerate fallback (near-constant data), not "the" bin count
-# for skewed data -- see DECISIONS.md, "Outlier/Skew-Aware Histogram
-# Binning".
-HIST_MIN_AUTO_BINS = 8
-HIST_MAX_AUTO_BINS = 2000
 
 # Bar chart (1D categorical / discrete): one bar per distinct value, no
 # binning -- the categorical counterpart of the histogram. Same solid
@@ -2351,17 +2338,8 @@ def make_hist(
     bins : int, array-like, or None, optional
         Number of equal-width bins, or a precomputed array of bin
         edges (passed straight through to ``ax.hist``, which accepts
-        either). If None (default), the bin count is chosen
-        automatically: a Freedman-Diaconis bin width computed over the
-        full range of ``values``, so heavy-tailed data (e.g. an F or
-        Gamma distribution) gets enough bins to resolve the bulk of its
-        shape instead of being crushed into 1-2 bins by the flat
-        ``HIST_DEFAULT_BINS`` (30) count -- clamped to
-        ``[HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS]``. Degenerate spread
-        (``IQR == 0`` or fewer than 2 values, where a bin-width estimate
-        isn't meaningful) falls back to ``HIST_DEFAULT_BINS`` equal-width
-        bins over the raw range. The default view always spans every
-        simulated value -- no clipping, no separate zoomed window.
+        either). Defaults to ``HIST_DEFAULT_BINS`` (30) equal-width
+        bins spanning the full range of ``values``.
     normalize : bool, default True
         If True, bar areas sum to 1 so the histogram approximates a
         density and can be compared to a pdf curve. If False, bar
@@ -2413,7 +2391,7 @@ def make_hist(
         label = f"Variable {n_prior_hists + 1}"
     ax._hist_count = n_prior_hists + 1
     if bins is None:
-        bins = _auto_hist_bin_count(values)
+        bins = HIST_DEFAULT_BINS
     histogram = ax.hist(
         values,
         bins=bins,
@@ -2437,47 +2415,6 @@ def make_hist(
     if ax._hist_count > 1:
         ax.legend(loc=HIST_LEGEND_LOC)
     return histogram
-
-
-def _auto_hist_bin_count(values):
-    """Freedman-Diaconis bin count for ``make_hist``'s ``bins=None`` default.
-
-    Computed over the *full* range of ``values`` -- no range clipping, no
-    overflow bin, just more (still equal-width) bins than the flat
-    ``HIST_DEFAULT_BINS`` default, so heavy-tailed data (e.g.
-    ``RV(F(5, 4)).sim(10000)``, whose max can be 10x its 99th percentile)
-    resolves the bulk of its shape instead of being crushed into 1-2
-    bins. Clamped to ``[HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS]`` so a
-    single stray outlier can't demand an unreasonable bin count.
-    Degenerate spread (``IQR == 0``, or fewer than 2 values, where a
-    bin-width estimate isn't meaningful) falls back to
-    ``HIST_DEFAULT_BINS`` instead of dividing by (near) zero -- passing
-    that back as a plain int lets ``ax.hist`` handle a zero-width range
-    (all-identical values) safely on its own.
-
-    Parameters
-    ----------
-    values : array-like
-        The simulated values to bin.
-
-    Returns
-    -------
-    int
-        The number of equal-width bins to pass to ``ax.hist``.
-    """
-    values = np.asarray(values)
-    n = len(values)
-    if n < 2:
-        return HIST_DEFAULT_BINS
-    data_range = values.max() - values.min()
-    q1, q3 = np.percentile(values, [25, 75])
-    iqr = q3 - q1
-    if iqr == 0 or data_range == 0:
-        return HIST_DEFAULT_BINS
-    fd_width = 2 * iqr * n ** (-1 / 3)
-    return int(
-        np.clip(round(data_range / fd_width), HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS)
-    )
 
 
 def _bar_categories(series):

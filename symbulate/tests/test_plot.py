@@ -39,7 +39,6 @@ from symbulate import (
     Beta,
     Uniform,
     DiscreteUniform,
-    F,
     MultivariateNormal,
     Multinomial,
     BivariateNormal,
@@ -66,7 +65,6 @@ from symbulate.plot import (
     make_bar,
     BAR_ALPHA,
     make_dotplot,
-    make_hist,
     make_impulse,
     make_violin,
     make_violinplot,
@@ -88,8 +86,6 @@ from symbulate.plot import (
     SAMPLE_PATH_LINEWIDTH,
     TILE_DEFAULT_BINS,
     HIST_DEFAULT_BINS,
-    HIST_MIN_AUTO_BINS,
-    HIST_MAX_AUTO_BINS,
 )
 from symbulate.results import RVResults
 
@@ -363,99 +359,6 @@ class TestPlot1DContinuous(PlotTestCase):
         n_first = len(plt.gca().patches)
         RV(Normal(0, 1)).sim(600).plot()
         self.assertGreater(len(plt.gca().patches), n_first)
-
-
-# ===========================================================================
-# Outlier/skew-aware histogram binning (make_hist, bins=None only)
-# ===========================================================================
-
-
-class TestHistOutlierAwareBinning(PlotTestCase):
-    """RV(F(5,4)).sim(10000) is the motivating case: 99% of mass below ~16,
-    but a max around 100+ from rare heavy-tail draws."""
-
-    def setUp(self):
-        np.random.seed(42)
-        self.skewed = RV(F(5, 4)).sim(10000)
-
-    def test_bulk_is_not_crushed_into_one_or_two_bins(self):
-        """The bars covering the bulk (below the 99th percentile) must show
-        real shape -- several bars with non-trivial height -- rather than
-        the old flat-30-bin behavior, which crushed almost everything into
-        1-2 bins next to a long stretch of empty ones."""
-        self.skewed.plot(type="hist")
-        ax = plt.gca()
-        values = self.skewed.array
-        p99 = np.percentile(values, 99)
-        bulk_bars = [p for p in ax.patches if p.get_x() + p.get_width() <= p99]
-        nonzero_bulk_bars = [p for p in bulk_bars if p.get_height() > 0]
-        self.assertGreater(
-            len(nonzero_bulk_bars),
-            10,
-            "Expected the bulk of the F(5,4) distribution to span many "
-            "non-empty bars, not be crushed into 1-2 bins",
-        )
-
-    def test_full_raw_range_is_shown_not_clipped(self):
-        """The auto-binned histogram spans the true min-to-max range --
-        no fence, no clipping, no overflow bin. Just more (still
-        equal-width) bins than the flat default."""
-        self.skewed.plot(type="hist")
-        ax = plt.gca()
-        values = self.skewed.array
-        rightmost_edge = max(p.get_x() + p.get_width() for p in ax.patches)
-        leftmost_edge = min(p.get_x() for p in ax.patches)
-        self.assertAlmostEqual(rightmost_edge, values.max(), places=5)
-        self.assertAlmostEqual(leftmost_edge, values.min(), places=5)
-
-    def test_normalized_auto_binned_area_integrates_to_one(self):
-        """Bar areas must still integrate to ~1."""
-        self.skewed.plot(type="hist", normalize=True)
-        self.assertAlmostEqual(histogram_area(plt.gca()), 1.0, places=5)
-
-    def test_raw_counts_sum_to_true_n(self):
-        """normalize=False: bars must sum to the true n."""
-        self.skewed.plot(type="hist", normalize=False)
-        total = sum(p.get_height() for p in plt.gca().patches)
-        self.assertAlmostEqual(total, len(self.skewed), places=5)
-
-    def test_bin_count_is_bounded(self):
-        """The auto-chosen bin count stays within the documented
-        [HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS] range."""
-        values = np.asarray(list(self.skewed.results))
-        _, edges, _ = make_hist(values, plt.gca(), get_next_color(plt.gca()))
-        n_bins = len(edges) - 1
-        self.assertGreaterEqual(n_bins, HIST_MIN_AUTO_BINS)
-        self.assertLessEqual(n_bins, HIST_MAX_AUTO_BINS)
-
-    def test_symmetric_data_gets_a_modest_bin_count(self):
-        """Well-behaved (low-IQR-relative-to-range) data doesn't need
-        anywhere near the max bin count -- the auto path should stay
-        close to the flat default for data that never needed adapting."""
-        RV(Normal(0, 1)).sim(2000).plot(type="hist")
-        n_bins = len(plt.gca().patches)
-        self.assertLess(n_bins, 100)
-
-    def test_explicit_bins_gives_exactly_the_requested_count(self):
-        """An explicit bins= always wins outright, giving exactly that
-        many bars -- not the (much larger) auto-adapted count -- over
-        the full raw range, exactly like before outlier-aware binning
-        existed."""
-        self.skewed.plot(type="hist", bins=HIST_DEFAULT_BINS)
-        ax = plt.gca()
-        self.assertEqual(len(ax.patches), HIST_DEFAULT_BINS)
-        rightmost_edge = max(p.get_x() + p.get_width() for p in ax.patches)
-        self.assertAlmostEqual(rightmost_edge, self.skewed.array.max(), places=5)
-
-    def test_histtype_step_still_works_on_auto_binned_path(self):
-        """histtype='step' must not crash on the new auto-binning path."""
-        self.skewed.plot(type="hist", histtype="step")
-        self.assertGreater(len(plt.gca().patches) + len(plt.gca().lines), 0)
-
-    def test_user_edgecolor_still_forwards_on_auto_binned_path(self):
-        self.skewed.plot(type="hist", edgecolor="red")
-        edge = plt.gca().patches[0].get_edgecolor()
-        self.assertAlmostEqual(edge[0], 1.0, places=2)
 
 
 # ===========================================================================
