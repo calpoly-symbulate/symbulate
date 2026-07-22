@@ -9,10 +9,8 @@ import matplotlib.pyplot as plt
 from .probability_space import ProbabilitySpace
 from .plot import (
     get_next_color,
-    SymbulatePlot,
+    DistributionPlot,
     ECDF_LINEWIDTH,
-    SHADE_COLOR,
-    SHADE_ALPHA,
     overlay_true_distribution,
 )
 from .result import Scalar, Vector, InfiniteVector
@@ -246,14 +244,6 @@ class Distribution(ProbabilitySpace):
 
         self.xlim = (scipy.ppf(0.001, **self.params), scipy.ppf(0.999, **self.params))
 
-        # Track the most recent plot() so shade() can draw under whatever
-        # curve is currently on screen (pmf/pdf or cdf) and auto-plot first
-        # if nothing has been drawn yet. `plotted` is the flag ported from
-        # the reference fork; `_last_plot_type` remembers which function was
-        # drawn so shade() evaluates the matching one.
-        self.plotted = False
-        self._last_plot_type = None
-
     def draw(self):
         """Draw a single random sample from the distribution.
 
@@ -414,10 +404,11 @@ class Distribution(ProbabilitySpace):
 
         Returns
         -------
-        SymbulatePlot
-            A wrapper around the matplotlib axes the plot was drawn
-            on. Its printed representation is empty, so Jupyter shows
-            only the plot.
+        DistributionPlot
+            A wrapper around the matplotlib axes the plot was drawn on.
+            Its printed representation is empty, so Jupyter shows only the
+            plot. Chain ``.shade(...)`` onto it to fill a region under the
+            curve.
 
         Examples
         --------
@@ -559,7 +550,7 @@ class Distribution(ProbabilitySpace):
         if not ax.get_xlabel():
             ax.set_xlabel("Value")
         if not ax.get_ylabel():
-            if type == "cdf":
+            if cdf:
                 ax.set_ylabel("Cumulative Probability")
             elif self.discrete:
                 ax.set_ylabel("Probability")
@@ -572,161 +563,7 @@ class Distribution(ProbabilitySpace):
         # this plot type specifically.
         ax.grid(True, axis="both")
 
-        # Record what was drawn so a following shade() knows which curve it
-        # is shading under (and that a curve exists at all).
-        self.plotted = True
-        self._last_plot_type = "cdf" if cdf else "pdf"
-
-        return SymbulatePlot(ax)
-
-    def shade(self, lt=None, le=None, gt=None, ge=None):
-        """Shade a tail or interval region under the plotted curve.
-
-        Fills the region of the distribution that satisfies the given
-        inequalities, drawn under whatever curve was most recently plotted
-        -- the probability mass/density function (the default) or the
-        cumulative distribution function (``cdf=True``). If the
-        distribution has not been plotted yet, its default curve is drawn
-        first, so ``Normal(0, 1).shade(lt=-1.96)`` works on its own.
-
-        The bounds read as probability inequalities, mirroring the
-        mathematical notation students already use:
-
-        - ``lt`` / ``le`` -- the region ``X < lt`` / ``X <= le`` (an upper
-          bound; a left tail when used alone).
-        - ``gt`` / ``ge`` -- the region ``X > gt`` / ``X >= ge`` (a lower
-          bound; a right tail when used alone).
-
-        Combine a lower and an upper bound for an interval, e.g.
-        ``gt=3, le=7`` shades ``3 < X <= 7``. With no bounds, the whole
-        visible curve is shaded. For discrete distributions the strict
-        (``lt``/``gt``) versus inclusive (``le``/``ge``) choice genuinely
-        matters -- ``lt=3`` excludes the mass at ``3`` while ``le=3``
-        includes it.
-
-        The shaded region spans the currently displayed x-axis, so it
-        honors whatever window :meth:`plot` produced -- the full default
-        range, an ``xlim="zoom"`` high-probability window, an explicit
-        ``xlim=(low, high)``, or the union created by overlaying onto
-        existing axes.
-
-        Parameters
-        ----------
-        lt : float, optional
-            Shade where ``X < lt`` (strict upper bound). Cannot be combined
-            with ``le``.
-        le : float, optional
-            Shade where ``X <= le`` (inclusive upper bound). Cannot be
-            combined with ``lt``.
-        gt : float, optional
-            Shade where ``X > gt`` (strict lower bound). Cannot be combined
-            with ``ge``.
-        ge : float, optional
-            Shade where ``X >= ge`` (inclusive lower bound). Cannot be
-            combined with ``gt``.
-
-        Returns
-        -------
-        SymbulatePlot
-            A wrapper around the matplotlib axes the region was drawn on.
-            Its printed representation is empty, so Jupyter shows only the
-            plot.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> Normal(0, 1).shade(lt=-1.96)  # left tail  # doctest: +SKIP
-        >>> Poisson(3).shade(ge=5)  # right tail  # doctest: +SKIP
-        >>> Binomial(10, 0.5).shade(gt=3, le=7)  # an interval  # doctest: +SKIP
-        """
-        if lt is not None and le is not None:
-            raise ValueError(
-                "Pass either `lt` or `le`, not both -- they are two ways to "
-                "set the same upper bound. Use `lt` for a strict bound "
-                "(X < value) or `le` for an inclusive one (X <= value)."
-            )
-        if gt is not None and ge is not None:
-            raise ValueError(
-                "Pass either `gt` or `ge`, not both -- they are two ways to "
-                "set the same lower bound. Use `gt` for a strict bound "
-                "(X > value) or `ge` for an inclusive one (X >= value)."
-            )
-
-        # Draw the default curve first if nothing has been plotted yet, so
-        # shade() works as a one-liner on a fresh distribution.
-        if not self.plotted:
-            self.plot()
-
-        ax = plt.gca()
-        # Bound the region by the *displayed* window, not the distribution's
-        # default self.xlim -- so an open tail extends to the visible edge
-        # of whatever plot() actually drew (xlim="zoom", custom xlim, or
-        # overlay union), which the fork's original version could not do.
-        axlo, axhi = ax.get_xlim()
-
-        lo, hi = axlo, axhi
-        lo_user = hi_user = False
-        lo_incl = hi_incl = False
-        if lt is not None:
-            hi, hi_user, hi_incl = lt, True, False
-        elif le is not None:
-            hi, hi_user, hi_incl = le, True, True
-        if gt is not None:
-            lo, lo_user, lo_incl = gt, True, False
-        elif ge is not None:
-            lo, lo_user, lo_incl = ge, True, True
-
-        if hi <= lo:
-            raise ValueError(
-                "The lower bound (`gt`/`ge`) must be strictly less than the "
-                f"upper bound (`lt`/`le`). You asked to shade between {lo} and "
-                f"{hi}, which is empty. Check the order of your bounds."
-            )
-
-        # Keep the drawing inside the visible window so the shading lines up
-        # with the plotted curve even if a bound sits past the axis edge.
-        lo_draw, hi_draw = max(lo, axlo), min(hi, axhi)
-
-        # Evaluate the same function that is currently on screen: the cdf if
-        # a cdf was the last thing plotted, otherwise the pmf/pdf.
-        plotted_cdf = self._last_plot_type == "cdf"
-        curve = self.cdf if plotted_cdf else self.pdf
-
-        if not self.discrete:
-            # Continuous pdf or cdf: a smooth filled region under the curve.
-            x_shaded = np.linspace(lo_draw, hi_draw, 200)
-            ax.fill_between(
-                x_shaded, curve(x_shaded), alpha=SHADE_ALPHA, color=SHADE_COLOR
-            )
-            # Draw a vertical edge at an inclusive, in-view user bound so the
-            # closed end of the interval reads as a hard boundary.
-            if hi_incl and axlo <= hi <= axhi:
-                ax.vlines(hi, 0, curve(hi), color=SHADE_COLOR, alpha=SHADE_ALPHA)
-            if lo_incl and axlo <= lo <= axhi:
-                ax.vlines(lo, 0, curve(lo), color=SHADE_COLOR, alpha=SHADE_ALPHA)
-        elif not plotted_cdf:
-            # Discrete pmf: an impulse at each integer value in the region,
-            # matching how plot() draws the mass function itself.
-            values = np.arange(int(np.floor(axlo)), int(np.floor(axhi)) + 1)
-            values = values[(values >= axlo) & (values <= axhi)]
-            if hi_user:
-                values = values[values <= hi] if hi_incl else values[values < hi]
-            if lo_user:
-                values = values[values >= lo] if lo_incl else values[values > lo]
-            ax.vlines(values, 0, curve(values), color=SHADE_COLOR, alpha=SHADE_ALPHA)
-        else:
-            # Discrete cdf: fill under the right-continuous step function,
-            # matching plot()'s "steps-post" rendering of a discrete cdf.
-            x_shaded = np.linspace(lo_draw, hi_draw, 200)
-            ax.fill_between(
-                x_shaded,
-                self.cdf(x_shaded),
-                step="post",
-                alpha=SHADE_ALPHA,
-                color=SHADE_COLOR,
-            )
-
-        return SymbulatePlot(ax)
+        return DistributionPlot(ax, self, "cdf" if cdf else "pdf")
 
 
 ## Discrete Distributions
