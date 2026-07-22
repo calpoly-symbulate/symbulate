@@ -1269,6 +1269,60 @@ class TestGompertz(unittest.TestCase):
         plt.close("all")
 
 
+class TestLaplace(unittest.TestCase):
+
+    def test_Laplace_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Laplace(loc=2, scale=3))
+        sims = X.sim(Nsim)
+        cdf = stats.laplace(loc=2, scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Laplace_mean_var_sd(self):
+        X = Laplace(loc=2, scale=3)
+        th = stats.laplace(loc=2, scale=3)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_Laplace_peak_density(self):
+        # The defining feature: a sharp peak at loc with density
+        # 1 / (2 * scale), twice as tall (relative to spread) as it looks.
+        X = Laplace(loc=1, scale=2)
+        self.assertAlmostEqual(float(X.pdf(1)), 1 / (2 * 2), places=9)
+
+    def test_Laplace_cdf_at_loc_is_half(self):
+        # Symmetric about loc, so P(X <= loc) = 1/2.
+        self.assertAlmostEqual(float(Laplace(loc=5, scale=2).cdf(5)), 0.5)
+
+    def test_Laplace_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Laplace(loc=0, scale=1).draw()
+        self.assertIsInstance(value, Scalar)
+
+    def test_Laplace_default_params(self):
+        X = Laplace()
+        self.assertEqual(X.loc, 0)
+        self.assertEqual(X.scale, 1)
+
+    def test_Laplace_invalid_loc_raises(self):
+        for bad in ["a", None]:
+            self.assertRaises(Exception, lambda b=bad: Laplace(loc=b))
+
+    def test_Laplace_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Laplace(scale=b))
+
+    def test_Laplace_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Laplace(0, 1).draw()
+        RV(Laplace(0, 1)).sim(100).plot()
+        Laplace(0, 1).plot()
+        Laplace(0, 1).plot(cdf=True)
+        plt.close("all")
+
+
 class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):
@@ -2088,6 +2142,7 @@ class TestDistributionXlimZoom(unittest.TestCase):
             Pareto(2, 1),
             Rayleigh(),
             Weibull(1.5, 2),
+            Laplace(0, 1),
         ]
         for d in dists:
             lo, hi = d._hdi_window()
@@ -2295,6 +2350,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
             Pareto(2, 1),
             Rayleigh(),
             Weibull(1.5, 2),
+            Laplace(0, 1),
         ]
         for d in dists:
             plt.figure()

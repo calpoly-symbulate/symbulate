@@ -2125,6 +2125,71 @@ class Gompertz(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class Laplace(Distribution):
+    """Probability space for a Laplace (double exponential) distribution.
+
+    A continuous, symmetric distribution on all real numbers, centered at
+    ``loc``. It looks like two exponential distributions placed back to
+    back: a sharp peak at the center and heavier tails than the normal.
+    Widely used as a robust error model and as the prior behind
+    L1/LASSO-style Bayesian regularization.
+
+    Parameters
+    ----------
+    loc : float, optional
+        Location parameter (the center, which is also the mean and
+        median). Default is 0.
+    scale : float, optional
+        Scale parameter (controls the spread). Must be a positive number.
+        Default is 1.
+
+    Attributes
+    ----------
+    loc : float
+        Location parameter (the center of the distribution).
+    scale : float
+        Scale parameter (controls the spread).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Laplace(loc=0, scale=1)
+    >>> float(X.mean())
+    0.0
+    >>> float(X.cdf(0))
+    0.5
+    >>> float(X.pdf(0))
+    0.5
+    >>> X.draw()  # doctest: +SKIP
+    -0.37
+    """
+
+    def __init__(self, loc=0, scale=1):
+        """Initialize a Laplace distribution.
+
+        Raises
+        ------
+        Exception
+            If ``loc`` is not a number, or ``scale`` is not a positive
+            number.
+        """
+        _validate(
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.loc = loc
+        self.scale = scale
+
+        params = {"loc": loc, "scale": scale}
+        # Symmetric and unbounded on both sides, so the base equal-tailed
+        # ppf(.001, .999) window is already centered and appropriate -- no
+        # HDI trim (that is for one-sided skew like Gamma/Weibull).
+        super().__init__(params, stats.laplace, False)
+
+
 ## Multivariate Distributions
 
 
