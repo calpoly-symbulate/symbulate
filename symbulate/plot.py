@@ -1019,6 +1019,7 @@ PLOT_DISPLAY_NAME = {
     "scatter": "Scatter Plot",
     "tile": "Tile Plot",
     "mosaic": "Mosaic Plot",
+    "mosaic_equal_width": "Stacked Plot",
     "hist2d": "2D Histogram",
     "density2d": "2D Density Plot",
     "violin": "Violin Plot",
@@ -1723,21 +1724,28 @@ def make_mosaic(
     x_label="Variable 1",
     y_label="Variable 2",
     marginal_column=True,
+    equal_width=False,
     **kwargs,
 ):
     """Draw a mosaic plot of simulated (x, y) pairs on the given axes.
 
     Divides the axes into one column per distinct ``x`` value, with
     column widths proportional to how often that value occurred (its
-    marginal frequency). Within each column, the column is further
+    marginal frequency) -- or, with ``equal_width=True``, every column
+    the same width regardless of marginal frequency (a 100%-stacked bar
+    chart per ``x`` value). Within each column, the column is further
     divided into one segment per distinct ``y`` value, with segment
     heights proportional to ``y``'s *conditional* frequency within that
-    column. Every rectangle's area is therefore proportional to the
-    joint frequency of that ``(x, y)`` pair -- reading the segment
-    heights across columns shows whether ``y``'s distribution changes
-    with ``x`` (an association) or stays the same shape in every column
-    (independence), which a same-color-scale plot like ``tile`` cannot
-    show directly.
+    column. With the default proportional widths, every rectangle's area
+    is therefore proportional to the joint frequency of that ``(x, y)``
+    pair -- reading the segment heights across columns shows whether
+    ``y``'s distribution changes with ``x`` (an association) or stays
+    the same shape in every column (independence), which a
+    same-color-scale plot like ``tile`` cannot show directly.
+    ``equal_width=True`` trades that area-equals-joint-frequency
+    property for a clean, evenly-spaced comparison across ``x``
+    categories regardless of how often each one occurs -- segment
+    heights (the conditional distributions) are unaffected either way.
 
     Segments are colored by ``y`` category, one color per distinct
     value from the package's categorical palette (Okabe-Ito, from
@@ -1834,6 +1842,16 @@ def make_mosaic(
         showing ``y``'s overall distribution with ``x`` ignored, so it
         can be compared by eye against each real column's conditional
         distribution. If False, only the real ``x`` columns are drawn.
+    equal_width : bool, default False
+        If False (default), column widths are proportional to each
+        ``x`` value's marginal count, the standard mosaic-plot
+        convention. If True, every real column is drawn the same
+        width, regardless of marginal frequency -- a 100%-stacked bar
+        chart per ``x`` value instead of a mosaic plot. Only the column
+        *widths* change; segment heights (conditional frequencies),
+        in-cell labels, and the marginal column (if any) are computed
+        from the true counts either way, so a labeled proportion is
+        never misrepresented by the width scheme.
     **kwargs
         Additional keyword arguments passed to every ``ax.bar`` call
         (one per ``y`` category). For example ``linewidth=`` to
@@ -1882,17 +1900,26 @@ def make_mosaic(
     joint = np.zeros((len(x_labels), len(y_labels)))
     np.add.at(joint, (x_idx, y_idx), 1)
 
-    # Columns: width proportional to each x value's marginal count. When
-    # marginal_column is on, the real columns only fill the space left
-    # after reserving a narrower column (plus a wider gap) for the y
-    # marginal reference column added below.
+    # Columns: width proportional to each x value's marginal count, or
+    # (equal_width=True) every column the same width regardless of
+    # marginal count -- a separate weights array feeds _mosaic_spans,
+    # which is itself agnostic to which scheme the caller wants. x_counts
+    # itself is kept around unconditionally: the in-cell labels below
+    # always report the true conditional proportion/count, never
+    # something distorted by the width scheme. When marginal_column is
+    # on, the real columns only fill the space left after reserving a
+    # narrower column (plus a wider gap) for the y marginal reference
+    # column added below.
     x_counts = joint.sum(axis=1)
+    width_weights = np.ones(len(x_labels)) if equal_width else x_counts
     real_width = (
         1.0 - MOSAIC_MARGINAL_WIDTH_FRAC - MOSAIC_MARGINAL_GAP
         if marginal_column
         else 1.0
     )
-    x_starts, x_widths = _mosaic_spans(x_counts, MOSAIC_COLUMN_GAP, total=real_width)
+    x_starts, x_widths = _mosaic_spans(
+        width_weights, MOSAIC_COLUMN_GAP, total=real_width
+    )
     x_positions = x_starts + x_widths / 2
     x_tick_labels = [str(v) for v in x_labels]
 
@@ -2024,7 +2051,7 @@ def make_mosaic(
     ax.yaxis.set_visible(True)
     ax.set_yticks(MOSAIC_YAXIS_TICKS)
     ax.set_yticklabels([f"{t:.2f}" for t in MOSAIC_YAXIS_TICKS])
-    ax.set_title("Mosaic Plot")
+    ax.set_title("Stacked Plot" if equal_width else "Mosaic Plot")
     # A filled plot covers the whole axes, so the reference grid has
     # nothing to sit on -- turn it off rather than let fragments show
     # at the edges (the same reasoning make_tile / make_hist2d use).

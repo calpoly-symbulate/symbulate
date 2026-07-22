@@ -671,6 +671,25 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: Equal-Width Mosaic Columns (`equal_width=` on `make_mosaic`) — "100%-Stacked Bar Chart"
+
+**Status:** Implemented (`plot.py`'s `make_mosaic`; dispatched automatically via `RVResults.plot(type="mosaic", ...)`'s existing `**kwargs` passthrough — no `results.py` dispatch changes needed).
+
+**Decision**
+> `make_mosaic` gains an `equal_width=False` (default) parameter. With the default, column widths stay proportional to each `x` value's marginal count (the standard mosaic convention). With `equal_width=True`, every real column is drawn the same width regardless of marginal frequency — a 100%-stacked bar chart per `x` value. Only the column-width computation and the plot's own title change: segment stacking (heights = conditional frequency of `y` within that column, still summing to 1), per-segment color/hatch, in-cell annotation (still divides by the *true* per-column count, `x_counts`, never the equal-width weights), the marginal reference column, and the legend behavior are all unchanged and shared with the proportional-width path. The axes title reads `"Stacked Plot"` when `equal_width=True`, instead of `"Mosaic Plot"` — a clear visual signal that the columns are equal-width, not proportional, since the two modes are otherwise visually similar. The printed suggestion note (`"Currently Showing: ..."`) is kept consistent with this: a new `PLOT_DISPLAY_NAME["mosaic_equal_width"] = "Stacked Plot"` entry, and `results.py`'s existing short-name-to-display-token remap (the same mechanism that turns `"hist"` into `"2D Histogram"` for 2D continuous data) maps `"mosaic"` to `"mosaic_equal_width"` specifically when `kwargs.get("equal_width")` is truthy.
+>
+> Exposed exactly like `marginal_column` already is: a plain kwarg on `type="mosaic"`, threaded through `RVResults.plot()`'s existing `**kwargs` catch-all. `results.py`'s *dispatch* (which function gets called) needed zero changes; only the suggestion-note display-name remap (already described above) touches `results.py`. `DEFAULT_PLOT_TYPE` is untouched (mosaic, in either mode, remains opt-in-only, never an automatic default). No new `type=` string was added.
+
+**Rationale**
+> `make_mosaic`'s column-width computation was already isolated to one line (`x_counts = joint.sum(axis=1)`, fed into the width-scheme-agnostic `_mosaic_spans` helper), so the entire feature is a single conditional weights array (`np.ones(len(x_labels))` instead of `x_counts`) rather than a new plot type. `team/symbulate-graphics-revisions.md` (item 10) had already scoped this exact feature and recommended the modifier-kwarg route over a new `type=` name; this decision follows that precedent and the same reasoning behind `marginal=True` (task 9: a real keyword, not a `type=` string, since it's a modifier of an existing plot rather than a distinct rendering). A new `type="stacked_bar"` name was considered and explicitly not chosen (see below) — it would mean two names dispatching to what is internally the same renderer, which the codebase avoids elsewhere. The in-cell label math was deliberately left reading from the true `x_counts`, not the equal-width weights, so a labeled conditional proportion is never misrepresented by the width scheme — the whole point of `equal_width` is a layout change, not a data change. The title change (and matching suggestion-note remap) was added after the fact, once it was clear "Mosaic Plot" over equal-width columns could otherwise look like a plain mosaic plot that merely happened to have similar-sized columns, rather than a deliberately different layout mode.
+
+**Alternatives Considered**
+> - **New `type="stacked_bar"` value** — considered and asked about explicitly; rejected in favor of the kwarg route to avoid duplicating "which type name maps to which renderer" for the same underlying function, and because it would require touching `results.py`'s dispatch chain, `PLOT_DISPLAY_NAME`, and `DEFAULT_PLOT_TYPE` for no functional gain over a kwarg.
+> - **Both**: `equal_width=True` kwarg plus a `type="stacked_bar"` alias in the dispatch that's sugar for `type="mosaic", equal_width=True` — considered as a middle ground (friendlier name for students while keeping the mechanism lean); not chosen for this pass, but the kwarg-only implementation doesn't preclude adding the alias later if the team decides the bare kwarg isn't discoverable enough.
+> - **Real-valued/time-axis column positioning** (mentioned in `symbulate-graphics-revisions.md` as the motivating use case for a `RandomProcess`/`MarkovChain` time-step visualization with irregular spacing) — out of scope for this pass; `make_mosaic` still treats `x` purely as an ordered categorical label (equal slots among distinct values), not real numeric coordinates. Left as a follow-up if a literal numeric time axis is needed later.
+
+---
+
 ## Open Decisions
 
 The following questions must be resolved before or during Phase 2.
