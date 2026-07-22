@@ -1217,6 +1217,58 @@ class TestLogistic(unittest.TestCase):
         plt.close("all")
 
 
+class TestGompertz(unittest.TestCase):
+
+    def test_Gompertz_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Gompertz(shape=1.5, scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.gompertz(c=1.5, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Gompertz_mean_var_sd(self):
+        X = Gompertz(shape=1.5, scale=2)
+        th = stats.gompertz(c=1.5, scale=2)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_Gompertz_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Gompertz(shape=1.5, scale=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_Gompertz_hazard_increases(self):
+        # The defining actuarial feature: the hazard (force of mortality)
+        # rises with age, so h(x) = pdf/(1 - cdf) is strictly increasing.
+        X = Gompertz(shape=1.5, scale=2)
+        xs = [0.0, 0.5, 1.0, 2.0]
+        hazards = [float(X.pdf(x)) / (1 - float(X.cdf(x))) for x in xs]
+        self.assertTrue(all(b > a for a, b in zip(hazards, hazards[1:])))
+
+    def test_Gompertz_default_scale_is_one(self):
+        X = Gompertz(shape=2)
+        self.assertEqual(X.scale, 1.0)
+
+    def test_Gompertz_invalid_shape_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Gompertz(shape=b))
+
+    def test_Gompertz_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Gompertz(shape=1.5, scale=b))
+
+    def test_Gompertz_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Gompertz(1.5, 2).draw()
+        RV(Gompertz(1.5, 2)).sim(100).plot()
+        Gompertz(1.5, 2).plot()
+        Gompertz(1.5, 2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):

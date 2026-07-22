@@ -2062,6 +2062,69 @@ class Logistic(Distribution):
         super().__init__(params, stats.logistic, False)
 
 
+class Gompertz(Distribution):
+    """Probability space for a Gompertz distribution.
+
+    A continuous distribution on [0, infinity) whose hazard rate (in
+    actuarial terms, the force of mortality) rises exponentially -- the
+    Gompertz mortality law. It is a foundational model in actuarial
+    science for how the risk of death climbs with age.
+
+    Parameters
+    ----------
+    shape : float
+        Shape parameter. Must be positive. Larger values shift the
+        distribution toward smaller values (death comes sooner).
+    scale : float, optional
+        Scale parameter. Must be positive. Default is 1.0.
+
+    Attributes
+    ----------
+    shape : float
+        Shape parameter.
+    scale : float
+        Scale parameter.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Gompertz(shape=1.5, scale=2)
+    >>> round(float(X.mean()), 4)
+    0.8965
+    >>> float(X.pdf(0))
+    0.75
+    >>> X.draw()  # doctest: +SKIP
+    0.83
+    """
+
+    def __init__(self, shape, scale=1.0):
+        """Initialize a Gompertz distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape`` or ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.shape = shape
+        self.scale = scale
+        # scipy's gompertz takes c as the shape and scale the scale; loc
+        # stays at its 0 default so the support starts at 0.
+        params = {"c": shape, "scale": scale}
+        super().__init__(params, stats.gompertz, False)
+        # Highest-density window: trims the right tail, like Weibull/Gamma.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 ## Multivariate Distributions
 
 

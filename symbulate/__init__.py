@@ -40,6 +40,7 @@ from .distributions import (
     Rayleigh,
     Weibull,
     Logistic,
+    Gompertz,
     MultivariateNormal,
     BivariateNormal,
     Multinomial,
