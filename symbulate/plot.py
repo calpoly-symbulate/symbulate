@@ -43,23 +43,36 @@ K_2D = 30
 N_SMALL_THRESHOLD = 123
 
 # Large-n secondary discreteness rule (see classify_values). A genuinely
-# discrete distribution whose support just overruns the crowding budget -- e.g.
-# Binomial(70, 0.5) or Poisson(15), which land around 30-33 distinct values at
-# n=10000, a hair past B_1D=30 -- should still read as discrete. At large n its
-# values recur reliably, so the fraction of distinct values seen more than once
-# is a good signal, the same repeat-density idea as main's old is_discrete.
+# discrete distribution whose support overruns the crowding budget -- e.g.
+# Binomial(70, 0.5) or Poisson(15) (~30-33 distinct values at n=10000, a hair
+# past B_1D=30), but also Binomial(1000, 0.5) or Poisson(200) (~100-115 distinct
+# values) -- should still read as discrete and draw an impulse plot. Impulse is
+# the strict default for discrete data; it should give way to a histogram only
+# when the support is genuinely too wide to draw one stem per value. At large n
+# a discrete distribution's values recur reliably, so the fraction of distinct
+# values seen more than once is a good signal -- the same repeat-density idea as
+# main's old is_discrete.
 #
 # The reason is_discrete was replaced is that this signal, applied
 # unconditionally, also fires on wide-support rounded-float or genuinely
-# continuous data (rounding makes values repeat too). So the clause is bounded
-# on three sides and only ever flips continuous -> discrete, never the reverse:
-#   - REPEAT_CEILING_FACTOR: only distinct-value counts up to this many times
-#     the budget are eligible. A wide support (rounded floats spread over
-#     hundreds of values, Poisson(1000), ...) stays continuous no matter how
-#     much it repeats -- this is the guard that fixes the is_discrete failure.
+# continuous data (rounding makes values repeat too). The clean discriminator is
+# dtype: Symbulate stores genuinely discrete distributions as integers, while
+# the rounded-float case is_discrete misclassified is float-dtype. So the ceiling
+# on eligible distinct-value counts is split by dtype, and the clause only ever
+# flips continuous -> discrete, never the reverse:
+#   - INT_REPEAT_CEILING: for integer data (genuine counts), the generous cap.
+#     Textbook discrete distributions stay discrete well past the budget; only a
+#     truly huge support (Binomial(10000, 0.5), ~300+ distinct values) exceeds
+#     it and bins into a histogram -- "histogram only when necessary."
+#   - REPEAT_CEILING_FACTOR: for float data, the strict cap (this many times the
+#     budget). A wide-support rounded float spread over dozens-to-hundreds of
+#     values stays continuous no matter how much it repeats -- this is the guard
+#     that fixes the is_discrete failure mode, left tight on purpose.
 #   - REPEAT_MIN_OCCUPANCY: only when there are at least this many observations
 #     per distinct value, so repeats are a reliable large-n signal rather than
-#     sampling noise (n well into the thousands for a 30-60 value support).
+#     sampling noise. Low enough that a wide-support discrete distribution near
+#     its integer ceiling still qualifies at typical n (e.g. Binomial(1000, 0.5)
+#     at ~90 samples/value).
 #   - REPEAT_FRACTION_THRESHOLD: then discrete-ish only if more than this
 #     fraction of the distinct values appear more than once (the is_discrete
 #     criterion). Deliberately well below is_discrete's 0.8: a moderate-support
@@ -71,8 +84,12 @@ N_SMALL_THRESHOLD = 123
 #     continuous data is turned away by the ceiling and occupancy bounds above,
 #     not by this fraction (any variable that passes those with few enough
 #     distinct values already repeats nearly all of them).
+#
+# All provisional -- expect to tune alongside the budgets after inspecting
+# team/discrete_continuous_threshold_tests.ipynb.
+INT_REPEAT_CEILING = 200
 REPEAT_CEILING_FACTOR = 2
-REPEAT_MIN_OCCUPANCY = 100
+REPEAT_MIN_OCCUPANCY = 20
 REPEAT_FRACTION_THRESHOLD = 0.6
 
 # Discrete-axis tick label crowding for 2D plots (tile, segmented rug/
@@ -768,7 +785,10 @@ def plot(*args, **kwargs):
 
 
 def classify_values(
-    values, n_unique_threshold=B_1D, n_small_threshold=N_SMALL_THRESHOLD
+    values,
+    n_unique_threshold=B_1D,
+    n_small_threshold=N_SMALL_THRESHOLD,
+    large_n_rescue=True,
 ):
     """Classify simulated values for choosing a default plot type.
 
@@ -798,18 +818,24 @@ def classify_values(
     axis for a 2-D plot. It defaults to ``B_1D``.
 
     A large-n secondary rule catches numeric distributions that are
-    genuinely discrete but whose support just overruns that budget -- e.g.
-    ``Binomial(70, 0.5)`` or ``Poisson(15)``, around 30-33 distinct values
-    at ``n = 10000``. When a sample has more than ``n_unique_threshold``
-    distinct values but still no more than ``REPEAT_CEILING_FACTOR`` times
-    that many, has at least ``REPEAT_MIN_OCCUPANCY`` observations per
-    distinct value, and repeats more than ``REPEAT_FRACTION_THRESHOLD`` of
-    its distinct values, it is treated as discrete-ish after all. This is
-    the repeat-density idea of the old ``is_discrete``, but bounded by the
-    unique-value ceiling and the occupancy requirement so that wide-support
-    rounded-float or genuinely continuous data -- the case ``is_discrete``
-    misclassified -- stays continuous. The clause only ever turns a
-    continuous verdict into a discrete one, never the reverse.
+    genuinely discrete but whose support overruns that budget -- e.g.
+    ``Binomial(70, 0.5)`` or ``Poisson(15)`` (~30-33 distinct values at
+    ``n = 10000``), and also wider ones like ``Binomial(1000, 0.5)`` or
+    ``Poisson(200)`` (~100-115 distinct values). Impulse is the strict
+    default for discrete data; it gives way to a histogram only when the
+    support is genuinely too wide to draw one stem per value. When a sample
+    has more than ``n_unique_threshold`` distinct values but still no more
+    than its dtype's ceiling, has at least ``REPEAT_MIN_OCCUPANCY``
+    observations per distinct value, and repeats more than
+    ``REPEAT_FRACTION_THRESHOLD`` of its distinct values, it is treated as
+    discrete-ish after all. This is the repeat-density idea of the old
+    ``is_discrete``, but bounded so the case ``is_discrete`` misclassified
+    stays continuous: the ceiling is generous for integer data
+    (``INT_REPEAT_CEILING`` -- genuine counts, which Symbulate stores as
+    integers) and strict for float data (``REPEAT_CEILING_FACTOR`` times the
+    budget), so a wide-support rounded float stays continuous. The clause
+    only ever turns a continuous verdict into a discrete one, never the
+    reverse.
 
     Parameters
     ----------
@@ -822,6 +848,13 @@ def classify_values(
     n_small_threshold : int, optional
         A sample with fewer than this many values counts as small. Defaults
         to the module constant ``N_SMALL_THRESHOLD``.
+    large_n_rescue : bool, optional
+        Whether to apply the large-n repeat-density rescue described above
+        (default ``True``). The 2-D dispatch passes ``False`` for its
+        per-axis calls: there the budget model deliberately bins
+        both-axes-over-``K_2D`` into a 2-D histogram rather than a huge,
+        sparse tile, so the rescue -- which keeps a 1-D impulse default --
+        does not apply.
 
     Returns
     -------
@@ -854,17 +887,32 @@ def classify_values(
         discrete_ish = n_unique <= n_unique_threshold
 
     # Large-n secondary rule: rescue a genuinely discrete distribution whose
-    # support just overran the budget. Only when there are repeats to reason
-    # about (n_unique < n excludes all-distinct data), the support stays under
-    # its own ceiling (so wide-support continuous/rounded-float data can't be
-    # pulled in -- the is_discrete failure mode), and there are enough samples
-    # per distinct value that repeats are a reliable signal. Then it is
+    # support overran the budget, so impulse stays the default for discrete data
+    # and only a genuinely too-wide support bins into a histogram. Applies only
+    # when there are repeats to reason about (n_unique < n excludes all-distinct
+    # data), the support stays under its dtype's ceiling, and there are enough
+    # samples per distinct value that repeats are a reliable signal. Then it is
     # discrete-ish if a clear majority of its distinct values recur. This can
     # only flip a continuous verdict to discrete, never the reverse.
+    #
+    # The ceiling is generous for integer data (genuine counts -- e.g. Binomial,
+    # Poisson -- which Symbulate stores as integers) and strict for float data,
+    # where a wide-support rounded float must stay continuous. That dtype split
+    # is exactly what keeps this from reintroducing the is_discrete failure mode.
+    #
+    # The rescue is a 1-D concern (keep the impulse default): callers pass
+    # large_n_rescue=False for 2-D per-axis classification, where the budget
+    # model deliberately bins both-axes-over-K_2D into a 2-D histogram rather
+    # than drawing a huge, sparse tile (see DECISIONS.md).
+    if data.dtype.kind in ("i", "u"):
+        repeat_ceiling = INT_REPEAT_CEILING
+    else:
+        repeat_ceiling = REPEAT_CEILING_FACTOR * n_unique_threshold
     if (
-        not discrete_ish
+        large_n_rescue
+        and not discrete_ish
         and n_unique < n
-        and n_unique <= REPEAT_CEILING_FACTOR * n_unique_threshold
+        and n_unique <= repeat_ceiling
         and n >= REPEAT_MIN_OCCUPANCY * n_unique
     ):
         _, counts = np.unique(data, return_counts=True)

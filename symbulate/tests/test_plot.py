@@ -3278,20 +3278,19 @@ class TestClassifyData(unittest.TestCase):
 
     def test_1d_budget_boundary_at_B_1D(self):
         """Default threshold is the 1-D budget B_1D: a numeric variable flips
-        discrete -> continuous just above B_1D distinct values."""
-        self.assertTrue(classify_values(np.tile(np.arange(B_1D), 50))[0])
-        self.assertFalse(classify_values(np.tile(np.arange(B_1D + 1), 50))[0])
+        discrete -> continuous just above B_1D distinct values. Tested with
+        all-distinct data so the large-n repeat-density rescue (which requires
+        repeats) cannot fire and the base budget rule is isolated."""
+        self.assertTrue(classify_values(np.arange(B_1D))[0])
+        self.assertFalse(classify_values(np.arange(B_1D + 1))[0])
 
     def test_2d_per_axis_budget_at_K_2D(self):
         """With the per-axis 2-D cap K_2D passed in, an axis flips discrete ->
-        continuous just above K_2D distinct values."""
-        self.assertTrue(
-            classify_values(np.tile(np.arange(K_2D), 50), n_unique_threshold=K_2D)[0]
-        )
+        continuous just above K_2D distinct values. All-distinct data isolates
+        the base budget rule from the large-n repeat-density rescue."""
+        self.assertTrue(classify_values(np.arange(K_2D), n_unique_threshold=K_2D)[0])
         self.assertFalse(
-            classify_values(np.tile(np.arange(K_2D + 1), 50), n_unique_threshold=K_2D)[
-                0
-            ]
+            classify_values(np.arange(K_2D + 1), n_unique_threshold=K_2D)[0]
         )
 
     def test_over_budget_discrete_distribution_large_n_is_discrete(self):
@@ -3345,6 +3344,57 @@ class TestClassifyData(unittest.TestCase):
         an unconditional repeat check -- old is_discrete -- got wrong."""
         wide_support = np.repeat(np.arange(500), 100)  # every value repeats x100
         self.assertFalse(classify_values(wide_support)[0])
+
+    def test_wide_support_integer_distribution_stays_discrete(self):
+        """Impulse is the strict default for discrete data: a genuinely discrete
+        integer distribution stays discrete well past the budget, up to the
+        integer ceiling. Binomial(1000, 0.5) and Poisson(200) land around
+        100-115 distinct integer values at n=10000 -- far past B_1D=30 -- and
+        must still read as discrete, reliably across seeds."""
+        for seed in range(15):
+            rng = np.random.default_rng(seed)
+            self.assertTrue(
+                classify_values(rng.binomial(1000, 0.5, 10000))[0],
+                msg=f"Binomial(1000, 0.5) seed {seed} should classify as discrete",
+            )
+            self.assertTrue(
+                classify_values(rng.poisson(200, 10000))[0],
+                msg=f"Poisson(200) seed {seed} should classify as discrete",
+            )
+
+    def test_integer_support_past_ceiling_bins_to_histogram(self):
+        """ "Histogram only when necessary": an integer support genuinely too
+        wide to draw one stem per value (past INT_REPEAT_CEILING) reads as
+        continuous even with heavy repeats. Binomial(10000, 0.5) realizes
+        ~300+ distinct values at n=10000."""
+        for seed in range(10):
+            rng = np.random.default_rng(seed)
+            self.assertFalse(
+                classify_values(rng.binomial(10000, 0.5, 10000))[0],
+                msg=f"Binomial(10000, 0.5) seed {seed} should classify as continuous",
+            )
+
+    def test_repeat_rule_ceiling_is_dtype_split(self):
+        """The rescue ceiling is split by dtype. A support of 100 distinct
+        values with heavy repeats is rescued to discrete when the values are
+        integers (genuine counts), but stays continuous when they are floats --
+        the guard against is_discrete's rounded-float failure mode, kept tight
+        for floats while integers are treated generously."""
+        integer_support = np.repeat(np.arange(100), 200)  # 100 distinct ints
+        float_support = np.repeat(np.arange(100) + 0.5, 200)  # 100 distinct floats
+        self.assertTrue(classify_values(integer_support)[0])
+        self.assertFalse(classify_values(float_support)[0])
+
+    def test_large_n_rescue_can_be_disabled(self):
+        """The large-n rescue is 1-D only: with large_n_rescue=False (how the
+        2-D per-axis dispatch calls it) an over-budget integer support stays
+        continuous, so both-axes-over-K_2D still bins to a 2-D histogram
+        instead of a huge, sparse tile."""
+        over_budget = np.repeat(np.arange(45), 300)  # 45 distinct ints, heavy repeats
+        self.assertTrue(classify_values(over_budget)[0])  # rescued in 1-D
+        self.assertFalse(
+            classify_values(over_budget, large_n_rescue=False)[0]
+        )  # not in 2-D
 
 
 # ===========================================================================

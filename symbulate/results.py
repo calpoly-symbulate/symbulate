@@ -1750,8 +1750,12 @@ class RVResults(Results):
             # Each 2-D axis is judged independently against the per-axis budget
             # K_2D, so one axis over budget bins only that axis (-> a mixed
             # tile) and both over budget bin both (-> a 2-D histogram).
-            discrete_x, small_n = classify_values(x, n_unique_threshold=K_2D)
-            discrete_y, _ = classify_values(y, n_unique_threshold=K_2D)
+            discrete_x, small_n = classify_values(
+                x, n_unique_threshold=K_2D, large_n_rescue=False
+            )
+            discrete_y, _ = classify_values(
+                y, n_unique_threshold=K_2D, large_n_rescue=False
+            )
 
             if discrete_x and discrete_y:
                 configuration = "2D_dd"
