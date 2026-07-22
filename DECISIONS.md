@@ -565,6 +565,70 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: `Distribution.plot()` Discrete Rendering (True-Distribution Curve)
+
+**Status:** Implemented (in `distributions.py`)
+
+**Decision**
+> A discrete distribution's `.plot()` (its pmf) is now drawn as a **smooth, marker-free curve** — no dots at all — by wiring up the previously-unused `overlay_true_distribution()` helper in `plot.py` as the discrete rendering path. `Distribution.plot()`'s discrete branch calls `overlay_true_distribution(self.pmf, ax, xlim=(int(xs[0]), int(xs[-1])), color=color, alpha=alpha, **kwargs)`, so the pmf reads as a rounded reference curve (cubic spline through the pmf values, clipped at zero) the way a density curve reads over a histogram — styled from the named `TRUE_DIST_LINEWIDTH` / `TRUE_DIST_LINESTYLE` (solid) constants rather than the old hardcoded `ax.scatter(..., s=40)` plus a bare solid polyline.
+>
+> Three coupled sub-decisions (from the finding #16 task prompt), as resolved:
+> - **Line style — smooth spline, not dashed dot-to-dot.** Chosen deliberately by the team over the dashed-straight-segment alternative. (Caveat accepted: a smooth discrete pmf reads similarly to a continuous pdf; that was weighed and accepted.)
+> - **Markers — none, in every case.** The prompt allowed "unfilled/open markers (or no markers)"; we took *no markers*. Because there are zero dots standalone *and* overlaid, the "filled vs. unfilled" question and its "tie it to an explicit flag vs. auto-detect overlay context" sub-question are **moot** — there is nothing to fill and no context to detect. No new `.plot()` kwarg was added (consistent with cosmetic controls being reserved for a future `.customize()`).
+> - **`ax.spines["bottom"].set_position("zero")` removed.** It was unique to `Distribution.plot()` among the value-plots and could visibly misplace the axis spine for a distribution centered far from 0 (e.g. `Binomial(200, 0.5)`); removed so the spine matches every other plot type.
+>
+> `overlay_true_distribution()` is **kept** (not retired) and is now actually called — the literal "wire it up" reading of the prompt. It continues to auto-label its curve `"True Distribution"` and refresh the legend, so overlaying `Poisson(5).plot()` on a simulated impulse plot yields a clean two-entry legend ("Variable 1" + "True Distribution").
+
+**Rationale**
+> Finding #16 flagged that the discrete rendering used hardcoded values disconnected from the named per-plot-type constants, drew a solid straight dot-to-dot polyline that could be mistaken for something continuous, and carried a unique spine tweak — while a better-styled `overlay_true_distribution()` sat unused. Wiring that function up as the discrete path resolves all of it at once with a single implementation (no duplicated pmf-drawing logic). The "no dots at all" and "smooth curve" choices were made by the team during implementation.
+
+**Alternatives Considered**
+> Dashed straight dot-to-dot segments (keeps a discreteness cue now that there are no dots) — considered and explicitly rejected in favor of the smooth curve. Filled-standalone / unfilled-overlay markers toggled by an explicit flag or `prob=` (the prompt's default suggestion) — moot once "no markers at all" was chosen. Auto-detecting overlay context to switch marker fill — also moot for the same reason. Extracting the spline into a shared helper and deleting `overlay_true_distribution()` (cleaner, avoids a second copy) — rejected in favor of literally wiring up the existing function per the prompt.
+
+---
+
+## Decision: `Distribution.plot()` CDF Selection — `cdf=True` Boolean (not `type=`)
+
+**Status:** Finalized (implemented in `distributions.py`)
+
+**Decision**
+> `Distribution.plot()` selects between the two curves a theoretical distribution can show with a boolean **`cdf=`** (default `cdf=False` → pdf/pmf; `cdf=True` → cumulative distribution function). It does **not** use a `type=` argument. An old `type=` call (e.g. the former `type="cdf"`) raises a student-friendly `ValueError` pointing at `cdf=True`, rather than slipping through `**kwargs` into an opaque matplotlib error.
+
+**Rationale**
+> A `type=` vocabulary fits simulated *data*, which can be drawn many ways (dots, rug, impulse, histogram, density, ecdf, ...) — that is why `RVResults.plot()` keeps `type=`. A theoretical distribution has only two curves to show (pdf/pmf vs. cdf), so a single boolean is the honest fit; overloading a many-way selector onto a two-way choice would misrepresent the API. This reverses an earlier draft recommendation (in `team/symbulate-graphics-revisions.md`) that preferred `type="cdf"` for naming symmetry with `RVResults.plot(type="ecdf")`; that symmetry was judged not worth the mismatch. (The earlier recommendation was Claude's, not the team's — corrected here.)
+
+**Alternatives Considered**
+> `type="cdf"`/`type="pdf"` string selection (for symmetry with `RVResults.plot(type="ecdf")`) — rejected; overloads a data-plot vocabulary onto a binary choice. The fork's plain `cdf=True` boolean — adopted.
+
+---
+
+## Decision: `Distribution.plot()` Tight Window — `xlim="zoom"` (not `prob=`/`hdi=`)
+
+**Status:** Finalized (implemented in `distributions.py`)
+
+**Decision**
+> The tight / high-probability plotting window is exposed as a third accepted value on the existing `xlim` parameter — **`xlim="zoom"`** — not as a separate `prob=` (or `hdi=`) parameter. `xlim` accepts `None` (default window: full support when bounded, a probability cut where unbounded), `(lo, hi)` (exact range), or `"zoom"` (tightest window holding most of the probability, applied even to a bounded distribution). Coverage is a **fixed internal default** (`_PLOT_COVERAGE`); there is no custom-coverage float form.
+
+**Rationale**
+> Folding the tight window into `xlim` keeps a single parameter in charge of the x-window instead of two parameters that both affect it. `"zoom"` reads sensibly regardless of whether the curve is a pdf, pmf, or cdf (unlike `hdi=`, whose "highest density interval" is a pdf/pmf-specific notion). It directly solves the overlay-wastes-space problem — a theoretical curve forcing the shared axis out to full support (`Binomial(100, 0.5).plot()` → 0–100) when the simulated data occupies only the high-probability region — via an explicit opt-in rather than silently guessing overlay context.
+
+**Alternatives Considered**
+> A tri-state `prob=None/True/float` parameter (matching the `suggest=None/True/False` pattern), with a float for custom coverage — proposed in earlier drafts, rejected in favor of `xlim="zoom"`; the custom-coverage float was dropped with it. `hdi=` — rejected as semantically pdf/pmf-specific once CDF plotting existed.
+
+---
+
+## Decision: `Distribution.plot()` Axis Baseline and Labels
+
+**Status:** Finalized (implemented in `distributions.py`)
+
+**Decision**
+> Every `Distribution.plot()` curve (pdf, pmf, and cdf) anchors its y-axis baseline at exactly **0**, so the curve sits on the x-axis rather than floating above a padded baseline. Axes are labeled by context: x-axis `"Value"` (matching the simulated value plots in `plot.py`); y-axis `"Density"` (pdf), `"Probability"` (pmf), or `"Cumulative Probability"` (cdf). Labels are only set when the axis is not already labeled, so overlaying a theoretical curve onto a simulated plot preserves that plot's own labels (e.g. a count-scale histogram's `"Count"`).
+
+**Rationale**
+> A density/mass height reads correctly only against a zero baseline; padding below 0 floated the curve off the axis. `"Probability"` (pmf) is deliberately distinct from `"Density"` (pdf): a pmf height *is* a probability in [0, 1], whereas a pdf height is a density (can exceed 1, probability is the area). `"Density"` (not "Probability Density") matches `make_density`'s label in `plot.py` so an overlay of theoretical-on-simulated shows one consistent axis name.
+
+---
+
 ## Open Decisions
 
 The following questions must be resolved before or during Phase 2.
@@ -588,3 +652,4 @@ The following questions must be resolved before or during Phase 2.
 - [ ] Overlay "+color" stacking: discrete groups use the categorical (Okabe-Ito) palette — should continuous groupings use a gradient instead, and if so how does that interact with the sequential (viridis) palette already reserved for magnitude encodings?
 - [x] Discrete-axis tick label crowding: `make_tile` upgraded to Option B (real-value cell positions for whole-number data, matplotlib's own locator) — see "Discrete-Axis Tick Label Thinning (2D Plots)". `make_segmented_rug/density/hist/box` and `make_violin` remain on the original Option A (rank-index + thinning); extending real-value positioning to them is still open
 - [ ] Marginal-panel axis mismatch: a tile main panel and its marginal panel don't share a coordinate system — `make_tile`'s discrete axis is now real-valued for whole-number data, which should make this easier to resolve (matplotlib's `sharex`/`sharey` could line the panels up), but the marginal-panel wiring in `results.py` hasn't been touched, so this is not yet fixed
+- [x] `Distribution.plot()` discrete rendering (finding #16): resolved — discrete pmf now drawn as a smooth, marker-free curve by wiring up `overlay_true_distribution()`; named `TRUE_DIST_*` constants replace the hardcoded `s=40`; the unique `set_position("zero")` spine tweak removed. See "Decision: `Distribution.plot()` Discrete Rendering (True-Distribution Curve)"

@@ -1112,6 +1112,55 @@ class TestRayleigh(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
 
+class TestWeibull(unittest.TestCase):
+
+    def test_Weibull_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Weibull(shape=1.5, scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.weibull_min(c=1.5, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Weibull_mean_var_sd(self):
+        X = Weibull(shape=1.5, scale=2)
+        th = stats.weibull_min(c=1.5, scale=2)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_Weibull_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Weibull(shape=1.5, scale=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_Weibull_shape_one_is_exponential(self):
+        # Weibull with shape=1 is Exponential(scale) -- same CDF.
+        X = Weibull(shape=1, scale=2)
+        self.assertAlmostEqual(float(X.cdf(2)), float(stats.expon(scale=2).cdf(2)))
+
+    def test_Weibull_default_scale_is_one(self):
+        X = Weibull(shape=2)
+        self.assertEqual(X.scale, 1.0)
+
+    def test_Weibull_invalid_shape_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Weibull(shape=b))
+
+    def test_Weibull_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Weibull(shape=1.5, scale=b))
+
+    def test_Weibull_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Weibull(1.5, 2).draw()
+        RV(Weibull(1.5, 2)).sim(100).plot()
+        Weibull(1.5, 2).plot()
+        Weibull(1.5, 2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):
@@ -1813,15 +1862,17 @@ class TestDistributionXlim(unittest.TestCase):
             self.assertLess(hi - lo, equal_tailed_width)
 
 
-class TestDistributionProbWindow(unittest.TestCase):
-    """The ``prob=`` parameter of ``Distribution.plot()`` (task 11).
+class TestDistributionXlimZoom(unittest.TestCase):
+    """The ``xlim`` parameter of ``Distribution.plot()``.
 
-    ``prob`` frames a plot on the highest-density window holding a given
-    share of the probability, reusing task 10's HDI helpers. ``None``
-    (the default) keeps the usual full window; ``True`` uses the standard
-    default coverage; a float in ``(0, 1)`` sets the coverage directly.
-    Most checks read the deterministic ``_prob_window`` helper; the
-    overlay and regression checks render on a non-interactive backend.
+    ``xlim=None`` (default) uses the distribution's own window: full
+    support when both ends are bounded, and a highest-density probability
+    cut where a side is unbounded. ``xlim="zoom"`` frames the plot on the
+    tightest window holding ``_PLOT_COVERAGE`` of the probability -- the
+    same window, applied even to a bounded distribution whose default
+    shows full support. ``xlim=(a, b)`` sets exact limits. Most checks
+    read the deterministic ``_hdi_window`` helper; the overlay and
+    rendering checks use a non-interactive backend.
     """
 
     COVERAGE = distributions._PLOT_COVERAGE
@@ -1829,84 +1880,84 @@ class TestDistributionProbWindow(unittest.TestCase):
     def tearDown(self):
         plt.close("all")
 
-    # --- the window covers the requested share of the probability ---
+    # --- the zoom window covers the standard share of the probability ---
 
-    def test_prob_window_covers_target_discrete(self):
+    def test_zoom_window_covers_target_discrete(self):
         for d in [Binomial(100, 0.5), Poisson(20), Geometric(0.2)]:
-            lo, hi = d._prob_window(0.95)
+            lo, hi = d._hdi_window()
             cover = float(d.cdf(hi) - d.cdf(lo - 1))
-            self.assertGreaterEqual(cover, 0.95 - 1e-9)
+            self.assertGreaterEqual(cover, self.COVERAGE - 1e-9)
 
-    def test_prob_window_covers_target_continuous(self):
+    def test_zoom_window_covers_target_continuous(self):
         for d in [Gamma(2), LogNormal(0, 1), Normal(0, 1)]:
-            lo, hi = d._prob_window(0.95)
-            self.assertAlmostEqual(float(d.cdf(hi) - d.cdf(lo)), 0.95, places=3)
+            lo, hi = d._hdi_window()
+            self.assertAlmostEqual(
+                float(d.cdf(hi) - d.cdf(lo)), self.COVERAGE, places=3
+            )
 
-    # --- prob overrides a bounded distribution's full-support default ---
+    # --- xlim="zoom" trims a bounded distribution's full-support default ---
 
-    def test_prob_true_trims_bounded_binomial(self):
+    def test_zoom_trims_bounded_binomial(self):
         d = Binomial(100, 0.5)
         self.assertEqual(d.xlim, (0, 100))  # default window unchanged
-        lo, hi = d._prob_window(self.COVERAGE)  # the prob=True window
+        lo, hi = d._hdi_window()
         self.assertGreater(lo, 0)
         self.assertLess(hi, 100)
 
-    # --- prob=True reuses the default coverage, so it is a no-op for a
-    #     distribution already framed on its highest-density window ---
+    # --- xlim="zoom" == default for a distribution already framed on its
+    #     highest-density window (only bounded ones differ) ---
 
-    def test_prob_true_matches_default_for_unbounded(self):
+    def test_zoom_matches_default_for_unbounded(self):
         for d in [Poisson(50), Geometric(0.3), NegativeBinomial(3, 0.5)]:
-            self.assertEqual(d._prob_window(self.COVERAGE), d.xlim)
-        for d in [Gamma(2), LogNormal(0, 1), Normal(0, 1), Cauchy(0, 1)]:
-            lo, hi = d._prob_window(self.COVERAGE)
+            self.assertEqual(d._hdi_window(), d.xlim)
+        for d in [
+            Gamma(2),
+            LogNormal(0, 1),
+            Normal(0, 1),
+            Cauchy(0, 1),
+            Exponential(1),
+            Rayleigh(),
+        ]:
+            lo, hi = d._hdi_window()
             self.assertAlmostEqual(lo, float(d.xlim[0]), places=6)
             self.assertAlmostEqual(hi, float(d.xlim[1]), places=6)
-
-    # --- a smaller coverage gives a strictly tighter window ---
-
-    def test_smaller_coverage_is_tighter(self):
-        d = Normal(0, 1)
-        lo_50, hi_50 = d._prob_window(0.50)
-        lo_99, hi_99 = d._prob_window(0.99)
-        self.assertGreater(lo_50, lo_99)
-        self.assertLess(hi_50, hi_99)
 
     # --- overlay: the theoretical curve no longer stretches the shared axis ---
 
     def test_overlay_does_not_stretch_to_full_support(self):
-        # The motivating case: 10000 draws of Binomial(100, 0.5) realize only a
-        # narrow band, but the theoretical curve's full (0, 100) support used to
-        # widen the shared axis to the whole range. prob=True keeps it tight.
+        # 10000 draws of Binomial(100, 0.5) realize only a narrow band, but the
+        # theoretical curve's full (0, 100) support used to widen the shared
+        # axis to the whole range. xlim="zoom" keeps it tight.
         plt.figure()
         RV(Binomial(100, 0.5)).sim(10000).plot()
-        Binomial(100, 0.5).plot(prob=True)
+        Binomial(100, 0.5).plot(xlim="zoom")
         lo, hi = plt.gca().get_xlim()
         self.assertGreater(lo, 5)
         self.assertLess(hi, 95)
 
-    # --- prob=None leaves the default window untouched (regression) ---
+    # --- xlim=None / an explicit (a, b) behave as documented ---
 
-    def test_prob_none_keeps_default_window(self):
+    def test_default_keeps_full_support_for_binomial(self):
         plt.figure()
-        Binomial(100, 0.5).plot()  # prob defaults to None
+        Binomial(100, 0.5).plot()  # xlim defaults to None
         self.assertEqual(tuple(plt.gca().get_xlim()), (0.0, 100.0))
 
-    # --- friendly errors ---
+    def test_explicit_xlim_used_as_given(self):
+        plt.figure()
+        Binomial(100, 0.5).plot(xlim=(10, 90))
+        self.assertEqual(tuple(plt.gca().get_xlim()), (10.0, 90.0))
 
-    def test_prob_and_xlim_together_raises(self):
-        with self.assertRaises(ValueError) as cm:
-            Binomial(100, 0.5).plot(xlim=(0, 50), prob=True)
-        self.assertIn("either", str(cm.exception))
+    # --- friendly error for an unrecognized xlim string ---
 
-    def test_invalid_prob_value_raises(self):
-        for bad in [1.5, 0.0, 1.0, -0.2, "high"]:
+    def test_invalid_xlim_string_raises(self):
+        for bad in ["trim", "tight", "hdi", "auto"]:
             with self.assertRaises(ValueError) as cm:
-                Normal(0, 1).plot(prob=bad)
-            self.assertIn("prob", str(cm.exception))
+                Normal(0, 1).plot(xlim=bad)
+            self.assertIn("zoom", str(cm.exception))
 
-    # --- every base-plot distribution accepts prob= and renders cleanly ---
+    # --- every base-plot distribution accepts xlim="zoom" and renders ---
 
-    def test_prob_renders_for_every_distribution(self):
+    def test_zoom_renders_for_every_distribution(self):
         dists = [
             Bernoulli(0.3),
             Binomial(20, 0.4),
@@ -1928,15 +1979,15 @@ class TestDistributionProbWindow(unittest.TestCase):
             LogNormal(0, 1),
             Pareto(2, 1),
             Rayleigh(),
+            Weibull(1.5, 2),
         ]
         for d in dists:
-            for prob in (True, 0.9):
-                coverage = self.COVERAGE if prob is True else prob
-                lo, hi = d._prob_window(coverage)
-                self.assertTrue(np.isfinite(lo) and np.isfinite(hi), type(d).__name__)
-                self.assertLessEqual(lo, hi, type(d).__name__)
+            lo, hi = d._hdi_window()
+            self.assertTrue(np.isfinite(lo) and np.isfinite(hi), type(d).__name__)
+            self.assertLessEqual(lo, hi, type(d).__name__)
+            for xlim in (None, "zoom"):
                 plt.figure()
-                d.plot(prob=prob)  # must not raise
+                d.plot(xlim=xlim)  # must not raise
                 plt.close("all")
 
     # --- a window that collapses to one value still yields a usable axis ---
@@ -1946,8 +1997,8 @@ class TestDistributionProbWindow(unittest.TestCase):
         # collapses to a point; the axis must not be set to a singular
         # (equal) range, and no raw matplotlib warning should reach the user.
         for call in [
-            lambda: Bernoulli(0.999).plot(prob=True),  # prob= path
-            lambda: Geometric(0.999).plot(),  # default path (pre-existing)
+            lambda: Bernoulli(0.999).plot(xlim="zoom"),  # zoom path
+            lambda: Geometric(0.999).plot(),  # default path
         ]:
             plt.figure()
             with warnings.catch_warnings(record=True) as caught:
@@ -1961,14 +2012,32 @@ class TestDistributionProbWindow(unittest.TestCase):
                 "set_xlim received identical limits",
             )
 
+    # --- fixed defaults: the two one-sided outliers now match the rest ---
+
+    def test_exponential_default_covers_standard_share(self):
+        # Was 0.999 (equal-tailed upper); now matches the other one-sided
+        # distributions at _PLOT_COVERAGE, still pinned at the lower bound 0.
+        d = Exponential(1)
+        lo, hi = d.xlim
+        self.assertEqual(lo, 0)
+        self.assertAlmostEqual(float(d.cdf(hi) - d.cdf(lo)), self.COVERAGE, places=3)
+
+    def test_rayleigh_default_starts_near_lower_bound(self):
+        # Was the equal-tailed 0.1st percentile (~0.045); now a highest-density
+        # window whose lower edge sits at the true bound 0.
+        d = Rayleigh()
+        lo, hi = d.xlim
+        self.assertLess(lo, 0.02)
+        self.assertAlmostEqual(float(d.cdf(hi) - d.cdf(lo)), self.COVERAGE, places=3)
+
 
 class TestDistributionCDFPlot(unittest.TestCase):
-    """The ``type=`` parameter of ``Distribution.plot()`` (task 12).
+    """The ``cdf=`` parameter of ``Distribution.plot()`` (task 12).
 
-    ``type="pdf"`` (default) plots the density/mass function; ``type="cdf"``
+    ``cdf=False`` (default) plots the density/mass function; ``cdf=True``
     plots the cumulative distribution function. Discrete CDFs render as a
     right-continuous step function with no markers; continuous CDFs render
-    as a smooth curve. The ``prob=`` x-window logic is reused unchanged.
+    as a smooth curve. The ``xlim`` x-window logic is reused unchanged.
     """
 
     def tearDown(self):
@@ -1978,7 +2047,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
     def test_discrete_cdf_is_stepped_without_markers(self):
         plt.figure()
-        p = Poisson(3).plot(type="cdf")
+        p = Poisson(3).plot(cdf=True)
         (line,) = p.ax.get_lines()
         self.assertEqual(line.get_drawstyle(), "steps-post")
         self.assertEqual(line.get_marker(), "None")
@@ -1990,7 +2059,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_cdf_title(self):
         for d in [Poisson(3), Normal(0, 1)]:
             plt.figure()
-            self.assertEqual(d.plot(type="cdf").ax.get_title(), "CDF Plot")
+            self.assertEqual(d.plot(cdf=True).ax.get_title(), "CDF Plot")
             plt.close("all")
 
     def test_default_pmf_title_for_discrete(self):
@@ -2005,8 +2074,8 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
     def test_both_gridlines_shown(self):
         for call in [
-            lambda: Poisson(3).plot(type="cdf"),  # cdf, discrete
-            lambda: Normal(0, 1).plot(type="cdf"),  # cdf, continuous
+            lambda: Poisson(3).plot(cdf=True),  # cdf, discrete
+            lambda: Normal(0, 1).plot(cdf=True),  # cdf, continuous
             lambda: Binomial(10, 0.5).plot(),  # pmf
             lambda: Normal(0, 1).plot(),  # pdf
         ]:
@@ -2023,7 +2092,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
         for d in [Poisson(3), Normal(0, 1)]:
             plt.figure()
-            (line,) = d.plot(type="cdf").ax.get_lines()
+            (line,) = d.plot(cdf=True).ax.get_lines()
             self.assertEqual(line.get_linewidth(), ECDF_LINEWIDTH)
             plt.close("all")
 
@@ -2031,7 +2100,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
     def test_continuous_cdf_is_smooth_curve(self):
         plt.figure()
-        p = Normal(0, 1).plot(type="cdf")
+        p = Normal(0, 1).plot(cdf=True)
         (line,) = p.ax.get_lines()
         self.assertEqual(line.get_drawstyle(), "default")
         self.assertGreater(len(line.get_xdata()), 100)
@@ -2041,7 +2110,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_cdf_values_match_distribution(self):
         for d in [Poisson(4), Normal(0, 1), Gamma(2)]:
             plt.figure()
-            (line,) = d.plot(type="cdf").ax.get_lines()
+            (line,) = d.plot(cdf=True).ax.get_lines()
             xs, ys = line.get_xdata(), line.get_ydata()
             np.testing.assert_allclose(ys, d.cdf(np.asarray(xs)), atol=1e-9)
             plt.close("all")
@@ -2051,7 +2120,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_cdf_is_monotone_in_unit_interval(self):
         for d in [Binomial(20, 0.4), Geometric(0.3), Exponential(1)]:
             plt.figure()
-            (line,) = d.plot(type="cdf").ax.get_lines()
+            (line,) = d.plot(cdf=True).ax.get_lines()
             ys = np.asarray(line.get_ydata())
             self.assertTrue(np.all(np.diff(ys) >= -1e-12), type(d).__name__)
             self.assertGreaterEqual(ys.min(), -1e-9)
@@ -2062,29 +2131,36 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
     def test_default_type_is_pdf(self):
         plt.figure()
-        p = Binomial(10, 0.5).plot()  # type defaults to "pdf"
-        self.assertEqual(len(p.ax.collections), 1)  # pmf draws scatter dots
+        p = Binomial(10, 0.5).plot()  # cdf defaults to False (pmf)
+        # The pmf is a smooth, marker-free curve (a single Line2D), not
+        # scatter dots -- so no collections, exactly one line.
+        self.assertEqual(len(p.ax.collections), 0)
+        self.assertEqual(len(p.ax.get_lines()), 1)
 
-    # --- prob= x-window is reused unchanged for the CDF ---
+    # --- xlim="zoom" x-window is reused unchanged for the CDF ---
 
-    def test_cdf_reuses_prob_window(self):
+    def test_cdf_reuses_zoom_window(self):
         plt.figure()
-        pdf_win = Binomial(100, 0.5).plot(prob=True).ax.get_xlim()
+        pdf_win = Binomial(100, 0.5).plot(xlim="zoom").ax.get_xlim()
         plt.close("all")
         plt.figure()
-        cdf_win = Binomial(100, 0.5).plot(type="cdf", prob=True).ax.get_xlim()
+        cdf_win = Binomial(100, 0.5).plot(cdf=True, xlim="zoom").ax.get_xlim()
         self.assertEqual(pdf_win, cdf_win)
         self.assertGreater(cdf_win[0], 0)  # not the full (0, 100) support
         self.assertLess(cdf_win[1], 100)
 
-    # --- friendly error on an unknown type ---
+    # --- the old type= spelling raises a friendly pointer to cdf= ---
 
-    def test_invalid_type_raises(self):
-        with self.assertRaises(ValueError) as cm:
-            Normal(0, 1).plot(type="histogram")
-        msg = str(cm.exception)
-        self.assertIn("type", msg)
-        self.assertIn("cdf", msg)
+    def test_old_type_kwarg_raises_helpful_error(self):
+        for old_call in [
+            lambda: Normal(0, 1).plot(type="cdf"),  # the former CDF syntax
+            lambda: Normal(0, 1).plot(type="histogram"),  # any type= at all
+        ]:
+            with self.assertRaises(ValueError) as cm:
+                old_call()
+            msg = str(cm.exception)
+            self.assertIn("type", msg)
+            self.assertIn("cdf", msg)
 
     # --- every base-plot distribution renders a CDF cleanly ---
 
@@ -2110,10 +2186,11 @@ class TestDistributionCDFPlot(unittest.TestCase):
             LogNormal(0, 1),
             Pareto(2, 1),
             Rayleigh(),
+            Weibull(1.5, 2),
         ]
         for d in dists:
             plt.figure()
-            d.plot(type="cdf")  # must not raise
+            d.plot(cdf=True)  # must not raise
             plt.close("all")
 
 
@@ -2125,8 +2202,8 @@ class TestDistributionShade(unittest.TestCase):
     distribution has not been drawn. Bounds read as probability
     inequalities; the strict (``lt``/``gt``) vs. inclusive (``le``/``ge``)
     choice matters for discrete distributions. The shaded region honors the
-    displayed x-window (default, ``prob=``, ``xlim=``, or overlay union),
-    not the distribution's static ``self.xlim``.
+    displayed x-window (default, ``xlim="zoom"``, an explicit ``xlim``, or
+    overlay union), not the distribution's static ``self.xlim``.
     """
 
     def tearDown(self):
@@ -2206,12 +2283,12 @@ class TestDistributionShade(unittest.TestCase):
     # --- the shaded region respects the displayed window, not self.xlim ---
 
     def test_open_tail_uses_displayed_axis_not_self_xlim(self):
-        # On a prob=True window the axis is far tighter than the (0, 100)
+        # On an xlim="zoom" window the axis is far tighter than the (0, 100)
         # default support; an open left tail must start at the visible edge,
         # which the fork's self.xlim-based version could not do.
         plt.figure()
         d = Binomial(100, 0.5)
-        d.plot(prob=True)
+        d.plot(xlim="zoom")
         axlo, _ = plt.gca().get_xlim()
         self.assertGreater(axlo, 0)  # window is tighter than full support
         d.shade(le=50)
@@ -2225,7 +2302,8 @@ class TestDistributionShade(unittest.TestCase):
         d.plot()
         n_before = len(plt.gca().collections)
         d.shade(le=2)
-        # one impulse collection added; the pmf scatter is untouched
+        # shade adds exactly one impulse collection; the already-drawn pmf
+        # curve (a Line2D, not a collection) is left untouched
         self.assertEqual(len(plt.gca().collections), n_before + 1)
 
     # --- shade under a cdf uses the cdf, and fills for the step case ---
@@ -2233,7 +2311,7 @@ class TestDistributionShade(unittest.TestCase):
     def test_shade_under_continuous_cdf(self):
         plt.figure()
         d = Normal(0, 1)
-        d.plot(type="cdf")
+        d.plot(cdf=True)
         self.assertEqual(d._last_plot_type, "cdf")
         d.shade(lt=0)
         self.assertEqual(len(self._fills(plt.gca())), 1)
@@ -2241,7 +2319,7 @@ class TestDistributionShade(unittest.TestCase):
     def test_shade_under_discrete_cdf_fills_stepwise(self):
         plt.figure()
         d = Poisson(3)
-        d.plot(type="cdf")
+        d.plot(cdf=True)
         d.shade(le=2)
         # a discrete cdf shades as a filled staircase, not impulses
         self.assertEqual(len(self._fills(plt.gca())), 1)

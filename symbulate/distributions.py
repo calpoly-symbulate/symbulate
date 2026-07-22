@@ -13,6 +13,7 @@ from .plot import (
     ECDF_LINEWIDTH,
     SHADE_COLOR,
     SHADE_ALPHA,
+    overlay_true_distribution,
 )
 from .result import Scalar, Vector, InfiniteVector
 
@@ -330,23 +331,22 @@ class Distribution(ProbabilitySpace):
 
         return ProbabilitySpace(draw)
 
-    def _prob_window(self, coverage):
-        """Compute the x-range framing a given share of the probability.
+    def _hdi_window(self, coverage=_PLOT_COVERAGE):
+        """Compute the highest-density x-range covering a share of the probability.
 
-        Returns the highest-density plotting window -- the tightest range
-        of x-values that together hold ``coverage`` of the probability --
-        by reusing the same helpers that set the default window for
-        unbounded distributions (:func:`_discrete_hdi_xlim` and
-        :func:`_continuous_hdi_xlim`). Used by :meth:`plot` when ``prob``
-        is set, so a curve can be framed on the region where the
-        probability actually lives -- even for a bounded distribution
-        whose default window spans its full support.
+        Returns the tightest range of x-values that together hold
+        ``coverage`` of the probability, reusing the same helpers that set
+        the default window for unbounded distributions
+        (:func:`_discrete_hdi_xlim` and :func:`_continuous_hdi_xlim`). Used
+        by :meth:`plot` for ``xlim="zoom"``, so a curve can be framed on
+        the region where the probability actually lives -- even for a
+        bounded distribution whose default window spans its full support.
 
         Parameters
         ----------
-        coverage : float
-            Share of the total probability to enclose, strictly between
-            0 and 1.
+        coverage : float, optional
+            Share of the total probability to enclose, strictly between 0
+            and 1. Defaults to ``_PLOT_COVERAGE``.
 
         Returns
         -------
@@ -365,39 +365,45 @@ class Distribution(ProbabilitySpace):
             return _discrete_hdi_xlim(self, int(np.floor(low)), coverage)
         return _continuous_hdi_xlim(self, low, coverage)
 
-    def plot(self, xlim=None, alpha=None, ax=None, prob=None, type="pdf", **kwargs):
+    def plot(self, xlim=None, alpha=None, ax=None, cdf=False, **kwargs):
         """Plot the probability function or the cumulative distribution function.
 
-        With ``type="pdf"`` (the default), plots the probability density
-        function (continuous distributions, a smooth curve) or probability
-        mass function (discrete distributions, dots at each integer value).
-        With ``type="cdf"``, plots the cumulative distribution function
-        ``P(X <= x)`` instead: a smooth curve for continuous distributions,
-        and a right-continuous step function (no markers) for discrete ones.
+        By default (``cdf=False``), plots the probability density function
+        (continuous distributions, a smooth curve) or probability mass
+        function (discrete distributions, a smooth curve through the
+        masses). With ``cdf=True``, plots the cumulative distribution
+        function ``P(X <= x)`` instead: a smooth curve for continuous
+        distributions, and a right-continuous step function (no markers)
+        for discrete ones.
 
-        The plot is titled by what it shows: "CDF Plot" for ``type="cdf"``,
+        Unlike a plot of simulated *data* -- which can be drawn many ways
+        (dots, rug, impulse, histogram, density, ecdf, ...) and so takes a
+        ``type=`` argument -- a theoretical distribution has only these two
+        curves to show, so the choice is the single boolean ``cdf``.
+
+        The plot is titled by what it shows: "CDF Plot" for ``cdf=True``,
         and for the default view "PDF Plot" (continuous) or "PMF Plot"
         (discrete).
 
         Parameters
         ----------
-        xlim : tuple of float, optional
-            x-axis range as ``(min, max)``. Uses distribution defaults
-            if not provided. Cannot be combined with ``prob``.
-        type : {"pdf", "cdf"}, default "pdf"
-            Which function to plot. ``"pdf"`` draws the probability
-            density/mass function; ``"cdf"`` draws the cumulative
-            distribution function ``P(X <= x)``. (For discrete
-            distributions ``"pdf"`` draws the probability mass function.)
-        prob : bool or float, optional
-            Frame the plot on the region holding this much of the
-            probability -- a highest-density window -- instead of the
-            full default range. ``None`` (default) keeps the usual range;
-            ``True`` uses the standard default coverage; a float in
-            ``(0, 1)`` sets the coverage directly (e.g. ``prob=0.95``).
-            Handy for lining a theoretical curve up against simulated
-            data, which occupies only the high-probability part of the
-            support. Cannot be combined with ``xlim``.
+        xlim : tuple of float or "zoom", optional
+            x-axis range. ``None`` (default) uses the distribution's own
+            window: the full support when both ends are bounded (e.g.
+            ``Binomial``, ``Uniform``), and a window holding most of the
+            probability where a side is unbounded (e.g. ``Poisson``,
+            ``Normal``). A ``(min, max)`` tuple sets an exact range.
+            ``"zoom"`` frames the plot on the tightest window holding most
+            of the probability -- the same high-density window, applied
+            even to a bounded distribution whose default shows full
+            support. Handy for lining a theoretical curve up against
+            simulated data, which occupies only the high-probability part
+            of the support.
+        cdf : bool, default False
+            Which function to plot. ``False`` (the default) draws the
+            probability density/mass function; ``True`` draws the
+            cumulative distribution function ``P(X <= x)``. (For discrete
+            distributions the default draws the probability mass function.)
         alpha : float, optional
             Transparency of the plot, from 0 (invisible) to 1 (opaque).
         ax : matplotlib.axes.Axes, optional
@@ -417,61 +423,57 @@ class Distribution(ProbabilitySpace):
         --------
         >>> from symbulate import *
         >>> Normal(0, 1).plot()  # doctest: +SKIP
-        >>> Binomial(100, 0.5).plot(prob=True)  # tight window, not (0, 100)  # doctest: +SKIP
-        >>> Poisson(3).plot(type="cdf")  # step function  # doctest: +SKIP
-        >>> Normal(0, 1).plot(type="cdf")  # smooth S-curve  # doctest: +SKIP
+        >>> Binomial(100, 0.5).plot(xlim="zoom")  # tight window, not (0, 100)  # doctest: +SKIP
+        >>> Poisson(3).plot(cdf=True)  # step function  # doctest: +SKIP
+        >>> Normal(0, 1).plot(cdf=True)  # smooth S-curve  # doctest: +SKIP
         """
-        if type not in ("pdf", "cdf"):
+        # A theoretical distribution has only two curves (pdf/pmf vs. cdf),
+        # so it takes a boolean `cdf=`, not the `type=` that selects among the
+        # many ways of drawing simulated data. Catch the old `type=` spelling
+        # (and stray text) so it gives a clear pointer instead of an opaque
+        # matplotlib error after slipping through **kwargs.
+        if "type" in kwargs:
             raise ValueError(
-                "`type` must be 'pdf' (the default) or 'cdf'. You passed "
-                f"type={type!r}. Use type='pdf' to plot the probability "
-                "density/mass function, or type='cdf' to plot the cumulative "
-                "distribution function P(X <= x)."
+                "`Distribution.plot()` does not take a `type=` argument. To "
+                "plot the cumulative distribution function, use `cdf=True`; "
+                "the default (`cdf=False`) plots the pdf/pmf. (`type=` selects "
+                "among the many ways of drawing simulated data; a theoretical "
+                "distribution has only these two curves to show.)"
             )
-        # Resolve the x-axis range. `xlim` sets it directly; `prob` instead
-        # frames the plot on the tightest window holding that share of the
-        # probability, overriding even a bounded distribution's full-support
-        # default. The two options are mutually exclusive.
-        if prob is not None and prob is not False:
-            if xlim is not None:
-                raise ValueError(
-                    "Pass either `xlim` or `prob`, not both. `xlim` sets the "
-                    "x-axis range directly, while `prob` computes the range "
-                    "holding that much of the probability. Use "
-                    "`xlim=(low, high)` for an exact range, or `prob=0.99` to "
-                    "frame the region holding 99% of the probability."
-                )
-            if prob is True:
-                coverage = _PLOT_COVERAGE
-            elif (
-                isinstance(prob, numbers.Real)
-                and not isinstance(prob, bool)
-                and 0 < prob < 1
-            ):
-                coverage = float(prob)
-            else:
-                raise ValueError(
-                    "`prob` must be True or a number strictly between 0 and 1 "
-                    "(for example, prob=0.99 to frame the region holding 99% "
-                    f"of the probability). You passed prob={prob!r}."
-                )
-            xlim = self._prob_window(coverage)
-        elif xlim is None:
-            # use distribution defaults for xlim if none set
+        # Resolve the x-axis range:
+        #   None        -> the distribution's default window (full support
+        #                  when bounded, a probability cut where unbounded);
+        #   "zoom"      -> the tightest window holding _PLOT_COVERAGE of the
+        #                  probability, zooming in even on a bounded default;
+        #   (low, high) -> those exact limits, used as given.
+        if xlim is None:
             xlim = self.xlim
+        elif isinstance(xlim, str):
+            if xlim != "zoom":
+                raise ValueError(
+                    'The only text value `xlim` accepts is "zoom" (frame the '
+                    "region holding most of the probability). You passed "
+                    f"xlim={xlim!r}. Otherwise pass xlim=(low, high) for an "
+                    "exact range, or leave it out for the default range."
+                )
+            xlim = self._hdi_window()
 
         # get the x and y values. The x-window is chosen the same way for
-        # both plot types (it only picks x-values); `type` decides which
+        # both plot types (it only picks x-values); `cdf` decides which
         # function is evaluated there.
         if self.discrete:
             xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
         else:
             xs = np.linspace(xlim[0], xlim[1], 200)
-        ys = self.cdf(xs) if type == "cdf" else self.pdf(xs)
+        ys = self.cdf(xs) if cdf else self.pdf(xs)
 
-        # determine limits for y-axes based on y values
-        ymin, ymax = ys[np.isfinite(ys)].min(), ys[np.isfinite(ys)].max()
-        ylim = min(0, ymin - 0.05 * (ymax - ymin)), 1.05 * ymax
+        # determine limits for y-axes based on y values. Anchor the baseline
+        # at exactly 0 so the curve sits right on the x-axis: a pdf/pmf height
+        # is never negative and only reads correctly against a zero baseline,
+        # and a CDF likewise runs from 0 upward. Padding below 0 would float
+        # the curve off the axis and misrepresent it.
+        ymax = ys[np.isfinite(ys)].max()
+        ylim = 0, 1.05 * ymax
 
         # get the current axis if they exist and no axis is specified
         fig = plt.gcf()
@@ -491,7 +493,7 @@ class Distribution(ProbabilitySpace):
         if xlim[0] == xlim[1]:
             # A window can collapse onto a single value when one outcome
             # carries essentially all the probability (e.g. Geometric(0.99),
-            # or a bounded distribution under prob=True). Give the lone point
+            # or a bounded distribution under xlim="zoom"). Give the lone point
             # room so the axis stays well-formed instead of singular.
             xlim = (xlim[0] - 0.5, xlim[1] + 0.5)
         ax.set_xlim(*xlim)
@@ -500,7 +502,7 @@ class Distribution(ProbabilitySpace):
         # get next color in cycle
         color = get_next_color(ax)
 
-        if type == "cdf":
+        if cdf:
             # Match make_ecdf's step-function styling so a theoretical CDF
             # reads as the same kind of curve as its empirical counterpart
             # (type="ecdf"), which students naturally overlay to compare.
@@ -518,24 +520,51 @@ class Distribution(ProbabilitySpace):
                 # A continuous CDF is a smooth S-curve.
                 ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
         else:
-            # pdf/pmf: a smooth curve for continuous distributions; dots at
-            # each value with a light connecting line for discrete ones.
+            # pdf/pmf: a smooth curve for continuous distributions. For a
+            # discrete distribution, wire up overlay_true_distribution: a
+            # smooth, marker-free spline through the pmf values (no dots),
+            # styled by the TRUE_DIST_* constants -- so a discrete pmf reads
+            # as a rounded reference curve rather than dots on a straight
+            # polyline. Its own support (xs) frames the curve, not the
+            # possibly-widened shared axis.
             if self.discrete:
-                ax.scatter(xs, ys, s=40, color=color, alpha=alpha, **kwargs)
-            ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
-
-        # adjust the axes, base x-axis at 0
-        ax.spines["bottom"].set_position("zero")
+                overlay_true_distribution(
+                    self.pmf,
+                    ax,
+                    xlim=(int(xs[0]), int(xs[-1])),
+                    color=color,
+                    alpha=alpha,
+                    **kwargs,
+                )
+            else:
+                ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
 
         # Title the plot by what it shows: the cumulative distribution
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
-        if type == "cdf":
+        if cdf:
             ax.set_title("CDF Plot")
         elif self.discrete:
             ax.set_title("PMF Plot")
         else:
             ax.set_title("PDF Plot")
+
+        # Label the axes for context: the x-axis shows the possible values of
+        # the variable, and the y-axis names what its height means for this
+        # plot type. "Value" and "Density" match the value plots in plot.py,
+        # so a theoretical curve reads the same way as its simulated companion.
+        # Only fill labels that aren't already set, so overlaying a curve onto
+        # an existing simulated plot keeps that plot's labels (e.g. a
+        # count-scale histogram's "Count") instead of clobbering them.
+        if not ax.get_xlabel():
+            ax.set_xlabel("Value")
+        if not ax.get_ylabel():
+            if type == "cdf":
+                ax.set_ylabel("Cumulative Probability")
+            elif self.discrete:
+                ax.set_ylabel("Probability")
+            else:
+                ax.set_ylabel("Density")
 
         # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
         # y), but these plots read better with both horizontal and vertical
@@ -546,7 +575,7 @@ class Distribution(ProbabilitySpace):
         # Record what was drawn so a following shade() knows which curve it
         # is shading under (and that a curve exists at all).
         self.plotted = True
-        self._last_plot_type = type
+        self._last_plot_type = "cdf" if cdf else "pdf"
 
         return SymbulatePlot(ax)
 
@@ -555,8 +584,8 @@ class Distribution(ProbabilitySpace):
 
         Fills the region of the distribution that satisfies the given
         inequalities, drawn under whatever curve was most recently plotted
-        -- the probability mass/density function (``type="pdf"``) or the
-        cumulative distribution function (``type="cdf"``). If the
+        -- the probability mass/density function (the default) or the
+        cumulative distribution function (``cdf=True``). If the
         distribution has not been plotted yet, its default curve is drawn
         first, so ``Normal(0, 1).shade(lt=-1.96)`` works on its own.
 
@@ -577,8 +606,9 @@ class Distribution(ProbabilitySpace):
 
         The shaded region spans the currently displayed x-axis, so it
         honors whatever window :meth:`plot` produced -- the full default
-        range, a ``prob=`` highest-probability window, an explicit
-        ``xlim``, or the union created by overlaying onto existing axes.
+        range, an ``xlim="zoom"`` high-probability window, an explicit
+        ``xlim=(low, high)``, or the union created by overlaying onto
+        existing axes.
 
         Parameters
         ----------
@@ -630,8 +660,8 @@ class Distribution(ProbabilitySpace):
         ax = plt.gca()
         # Bound the region by the *displayed* window, not the distribution's
         # default self.xlim -- so an open tail extends to the visible edge
-        # of whatever plot() actually drew (prob=, custom xlim, or overlay
-        # union), which the fork's pre-`prob=` version could not do.
+        # of whatever plot() actually drew (xlim="zoom", custom xlim, or
+        # overlay union), which the fork's original version could not do.
         axlo, axhi = ax.get_xlim()
 
         lo, hi = axlo, axhi
@@ -1458,10 +1488,10 @@ class Exponential(Distribution):
             params = {"scale": scale}
 
         super().__init__(params, stats.expon, False)
-        self.xlim = (
-            0,
-            self.xlim[1],
-        )  # Exponential distributions are not defined for x < 0
+        # Highest-density window over the support [0, inf); trims the long
+        # upper tail and covers the same probability as the other one-sided
+        # distributions, instead of the wider equal-tailed default.
+        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Gamma(Distribution):
@@ -2056,6 +2086,71 @@ class Rayleigh(Distribution):
         """Initialize a Rayleigh distribution."""
         params = {}
         super().__init__(params, stats.rayleigh, False)
+        # Highest-density window over the support [0, inf); keeps the lower
+        # edge at the true bound rather than the equal-tailed 0.1st-percentile
+        # start the base default would use.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
+class Weibull(Distribution):
+    """Probability space for a Weibull distribution.
+
+    A continuous distribution on [0, infinity) widely used to model
+    lifetimes and time to failure. The shape parameter controls how the
+    failure rate changes over time: shape < 1 means it decreases, shape
+    = 1 means it is constant (and the Weibull reduces to the exponential),
+    and shape > 1 means it increases.
+
+    Parameters
+    ----------
+    shape : float
+        Shape parameter k. Must be positive.
+    scale : float, optional
+        Scale parameter lambda. Must be positive. Default is 1.0.
+
+    Attributes
+    ----------
+    shape : float
+        Shape parameter k.
+    scale : float
+        Scale parameter lambda.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Weibull(shape=1.5, scale=2)
+    >>> round(float(X.mean()), 4)
+    1.8055
+    >>> X.draw()  # doctest: +SKIP
+    2.02
+    """
+
+    def __init__(self, shape, scale=1.0):
+        """Initialize a Weibull distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape`` or ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.shape = shape
+        self.scale = scale
+        # scipy's Weibull is weibull_min, with c the shape and scale the
+        # scale; loc stays at its 0 default so the support starts at 0.
+        params = {"c": shape, "scale": scale}
+        super().__init__(params, stats.weibull_min, False)
+        # Highest-density window: trims the long right tail, like Gamma.
+        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 ## Multivariate Distributions

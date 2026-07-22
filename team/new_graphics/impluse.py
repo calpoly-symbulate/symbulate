@@ -18,13 +18,12 @@ rng = np.random.default_rng()
 #
 # Stem line width: DECISIONS.md, "Decision: Visual Style Guide" sets
 # impulse lines at 1.5 -> 2.2 specifically for visibility (no
-# overplotting risk, unlike histograms/scatter/density).
+# overplotting risk, unlike histograms/scatter/density). Bare stems,
+# no marker caps.
 IMPULSE_LINEWIDTH = 2.2
-IMPULSE_MARKER = "o"
-IMPULSE_MARKER_SIZE = 60
 # DECISIONS.md tunes alpha for hist/scatter/density but does not call
-# out impulse; the approved prototype image shows fully opaque stems
-# and markers, so impulse defaults to alpha=1.0 unless overridden.
+# out impulse; the approved prototype image shows fully opaque stems,
+# so impulse defaults to alpha=1.0 unless overridden.
 IMPULSE_ALPHA = 1.0
 IMPULSE_LEGEND_LOC = "upper right"
 # When several impulse plots share the axes, adjacent series' stems are
@@ -65,9 +64,9 @@ def make_impulse(
 
     This is the existing impulse block from ``RVResults.plot()`` in
     ``symbulate/results.py`` (counting via ``count_var``, jitter, and
-    axis limits via ``configure_axes`` are unchanged) extended with a
-    marker cap on each stem and per-series labeling so the plot matches
-    the approved impulse prototype and overlays legibly.
+    axis limits via ``configure_axes`` are unchanged) extended with
+    per-series labeling so the plot overlays legibly. Stems are bare
+    ``vlines`` -- no marker caps.
 
     Impulse plots overlay naturally: a second call on the same axes
     draws on top of the first, and a legend appears automatically in
@@ -94,13 +93,13 @@ def make_impulse(
     ax : matplotlib.axes.Axes
         The axes to draw on.
     color : color
-        Fill color for the stems and markers, from ``get_next_color(ax)``.
+        Fill color for the stems, from ``get_next_color(ax)``.
     normalize : bool, default True
         If True, stem heights are relative frequencies that sum to 1,
         comparable to a pmf. If False, stem heights are raw counts.
     alpha : float, optional
-        Marker/stem transparency between 0 and 1. Defaults to the
-        package standard for impulse plots (1.0, fully opaque).
+        Stem transparency between 0 and 1. Defaults to the package
+        standard for impulse plots (1.0, fully opaque).
     jitter : bool, default False
         If True, add small random noise to discrete x-values to reduce
         overplotting, matching the ``jitter`` option already on
@@ -109,7 +108,8 @@ def make_impulse(
         Name for this series in the legend. Defaults to "Variable k",
         where k counts the impulse plots drawn on these axes so far.
     **kwargs
-        Additional keyword arguments passed to ``matplotlib``.
+        Additional keyword arguments passed to the stems
+        (``matplotlib.axes.Axes.vlines``).
 
     Returns
     -------
@@ -145,11 +145,10 @@ def make_impulse(
     if label is None:
         label = f"Variable {len(prior_series) + 1}"
 
-    # Labeled on the stems (a LineCollection), not the dots: matplotlib's
-    # legend proxy for a LineCollection is a plain line matching color and
-    # width, with no marker glyph -- so the legend swatch stays a clean
-    # line, consistent with every other plot type, instead of showing the
-    # scatter marker as a "point" in the legend.
+    # Label goes on the stems (a LineCollection), the only mark an
+    # impulse series draws now: matplotlib's legend proxy for a
+    # LineCollection is a plain line matching color and width, so the
+    # legend swatch stays a clean line.
     stems = ax.vlines(
         xs,
         0,
@@ -158,21 +157,11 @@ def make_impulse(
         linewidth=IMPULSE_LINEWIDTH,
         alpha=alpha,
         label=label,
-    )
-    dots = ax.scatter(
-        xs,
-        freqs,
-        s=IMPULSE_MARKER_SIZE,
-        marker=IMPULSE_MARKER,
-        color=color,
-        alpha=alpha,
-        zorder=3,
         **kwargs,
     )
     prior_series.append(
         {
             "stems": stems,
-            "dots": dots,
             "xs": np.asarray(xs, dtype=float),
             "freqs": np.asarray(freqs, dtype=float),
         }
@@ -197,7 +186,6 @@ def make_impulse(
             s["stems"].set_segments(
                 [[(x, 0), (x, f)] for x, f in zip(shifted_xs, s["freqs"])]
             )
-            s["dots"].set_offsets(np.column_stack([shifted_xs, s["freqs"]]))
 
     # Unchanged from RVResults.plot(): reuses the shared axis-limit
     # buffering / label logic every other plot type goes through.
