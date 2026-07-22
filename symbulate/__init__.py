@@ -41,6 +41,7 @@ from .distributions import (
     Weibull,
     Logistic,
     Gompertz,
+    Makeham,
     Laplace,
     MultivariateNormal,
     BivariateNormal,

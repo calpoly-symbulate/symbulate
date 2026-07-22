@@ -1269,6 +1269,67 @@ class TestGompertz(unittest.TestCase):
         plt.close("all")
 
 
+class TestMakeham(unittest.TestCase):
+
+    def test_Makeham_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Makeham(shape=1.5, makeham=0.3, scale=2)
+        sims = RV(X).sim(Nsim)
+        pval = stats.kstest(sims, X.cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Makeham_zero_reduces_to_gompertz(self):
+        # makeham=0 is the plain Gompertz law -- same CDF at every point.
+        X = Makeham(shape=1.5, makeham=0, scale=2)
+        gompertz_cdf = stats.gompertz(c=1.5, scale=2).cdf
+        for x in [0.1, 0.5, 1.0, 2.5]:
+            self.assertAlmostEqual(float(X.cdf(x)), float(gompertz_cdf(x)), places=9)
+
+    def test_Makeham_higher_hazard_than_gompertz(self):
+        # Adding the constant term raises the hazard, so Makeham survival is
+        # below the matching Gompertz survival everywhere past 0.
+        X = Makeham(shape=1.5, makeham=0.3, scale=2)
+        gompertz_sf = stats.gompertz(c=1.5, scale=2).sf
+        for x in [0.5, 1.0, 2.0]:
+            self.assertLess(1 - float(X.cdf(x)), float(gompertz_sf(x)))
+
+    def test_Makeham_cdf_sf_endpoints(self):
+        X = Makeham(shape=1.5, makeham=0.3, scale=2)
+        self.assertAlmostEqual(float(X.cdf(0)), 0.0, places=9)
+
+    def test_Makeham_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Makeham(shape=1.5, makeham=0.3, scale=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_Makeham_default_scale_is_one(self):
+        X = Makeham(shape=2, makeham=0.5)
+        self.assertEqual(X.scale, 1.0)
+
+    def test_Makeham_invalid_shape_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Makeham(shape=b, makeham=0.3))
+
+    def test_Makeham_invalid_makeham_raises(self):
+        for bad in [-1, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Makeham(shape=1.5, makeham=b))
+
+    def test_Makeham_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(
+                Exception, lambda b=bad: Makeham(shape=1.5, makeham=0.3, scale=b)
+            )
+
+    def test_Makeham_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Makeham(1.5, 0.3, 2).draw()
+        RV(Makeham(1.5, 0.3, 2)).sim(100).plot()
+        Makeham(1.5, 0.3, 2).plot()
+        Makeham(1.5, 0.3, 2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestLaplace(unittest.TestCase):
 
     def test_Laplace_distributional(self):
@@ -2143,6 +2204,7 @@ class TestDistributionXlimZoom(unittest.TestCase):
             Rayleigh(),
             Weibull(1.5, 2),
             Laplace(0, 1),
+            Makeham(1.5, 0.3, 2),
         ]
         for d in dists:
             lo, hi = d._hdi_window()
@@ -2351,6 +2413,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
             Rayleigh(),
             Weibull(1.5, 2),
             Laplace(0, 1),
+            Makeham(1.5, 0.3, 2),
         ]
         for d in dists:
             plt.figure()
