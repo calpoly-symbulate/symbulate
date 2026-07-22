@@ -661,6 +661,48 @@ class TestPlot2DContinuous(PlotTestCase):
         self.assertFalse(yvis(marg_y))
 
 
+class TestMarginalOverlayHardError(PlotTestCase):
+    """A marginal=True layout is the 'hard error' tier of the overlay
+    policy: it builds three panels a second plot can't share."""
+
+    def setUp(self):
+        np.random.seed(42)
+        X, Y = RV(Normal(0, 1) ** 2)
+        self.sims = (X & Y).sim(300)
+
+    def test_second_plot_after_marginal_raises(self):
+        self.sims.plot(marginal=True, suggest=False)
+        with self.assertRaises(ValueError) as cm:
+            self.sims.plot(suggest=False)
+        self.assertIn("marginal=True", str(cm.exception))
+
+    def test_second_marginal_after_marginal_raises(self):
+        self.sims.plot(marginal=True, suggest=False)
+        with self.assertRaises(ValueError):
+            self.sims.plot(marginal=True, suggest=False)
+
+    def test_marginal_after_plain_plot_raises(self):
+        """A marginal layout can't be retrofitted onto a figure that
+        already has a plot on it either."""
+        self.sims.plot(suggest=False)
+        with self.assertRaises(ValueError) as cm:
+            self.sims.plot(marginal=True, suggest=False)
+        self.assertIn("marginal=True", str(cm.exception))
+
+    def test_fresh_marginal_still_works(self):
+        """The guard must not block a marginal plot on a fresh figure."""
+        p = self.sims.plot(marginal=True, suggest=False)
+        self.assertGreaterEqual(len(plt.gcf().axes), 3)
+        self.assertGreater(len(p.ax.collections), 0)
+
+    def test_marginal_in_new_figure_after_close_works(self):
+        """Closing the figure (a fresh Jupyter cell) clears the guard."""
+        self.sims.plot(marginal=True, suggest=False)
+        plt.close("all")
+        self.sims.plot(marginal=True, suggest=False)
+        self.assertGreaterEqual(len(plt.gcf().axes), 3)
+
+
 class TestPlot2DDiscrete(PlotTestCase):
     """2D plots involving discrete dimensions."""
 
