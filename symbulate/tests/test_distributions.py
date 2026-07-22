@@ -1157,7 +1157,7 @@ class TestWeibull(unittest.TestCase):
         Weibull(1.5, 2).draw()
         RV(Weibull(1.5, 2)).sim(100).plot()
         Weibull(1.5, 2).plot()
-        Weibull(1.5, 2).plot(type="cdf")
+        Weibull(1.5, 2).plot(cdf=True)
         plt.close("all")
 
 
@@ -2032,9 +2032,9 @@ class TestDistributionXlimZoom(unittest.TestCase):
 
 
 class TestDistributionCDFPlot(unittest.TestCase):
-    """The ``type=`` parameter of ``Distribution.plot()`` (task 12).
+    """The ``cdf=`` parameter of ``Distribution.plot()`` (task 12).
 
-    ``type="pdf"`` (default) plots the density/mass function; ``type="cdf"``
+    ``cdf=False`` (default) plots the density/mass function; ``cdf=True``
     plots the cumulative distribution function. Discrete CDFs render as a
     right-continuous step function with no markers; continuous CDFs render
     as a smooth curve. The ``xlim`` x-window logic is reused unchanged.
@@ -2047,7 +2047,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
     def test_discrete_cdf_is_stepped_without_markers(self):
         plt.figure()
-        p = Poisson(3).plot(type="cdf")
+        p = Poisson(3).plot(cdf=True)
         (line,) = p.ax.get_lines()
         self.assertEqual(line.get_drawstyle(), "steps-post")
         self.assertEqual(line.get_marker(), "None")
@@ -2059,7 +2059,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_cdf_title(self):
         for d in [Poisson(3), Normal(0, 1)]:
             plt.figure()
-            self.assertEqual(d.plot(type="cdf").ax.get_title(), "CDF Plot")
+            self.assertEqual(d.plot(cdf=True).ax.get_title(), "CDF Plot")
             plt.close("all")
 
     def test_default_pmf_title_for_discrete(self):
@@ -2074,8 +2074,8 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
     def test_both_gridlines_shown(self):
         for call in [
-            lambda: Poisson(3).plot(type="cdf"),  # cdf, discrete
-            lambda: Normal(0, 1).plot(type="cdf"),  # cdf, continuous
+            lambda: Poisson(3).plot(cdf=True),  # cdf, discrete
+            lambda: Normal(0, 1).plot(cdf=True),  # cdf, continuous
             lambda: Binomial(10, 0.5).plot(),  # pmf
             lambda: Normal(0, 1).plot(),  # pdf
         ]:
@@ -2092,7 +2092,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
         for d in [Poisson(3), Normal(0, 1)]:
             plt.figure()
-            (line,) = d.plot(type="cdf").ax.get_lines()
+            (line,) = d.plot(cdf=True).ax.get_lines()
             self.assertEqual(line.get_linewidth(), ECDF_LINEWIDTH)
             plt.close("all")
 
@@ -2100,7 +2100,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
     def test_continuous_cdf_is_smooth_curve(self):
         plt.figure()
-        p = Normal(0, 1).plot(type="cdf")
+        p = Normal(0, 1).plot(cdf=True)
         (line,) = p.ax.get_lines()
         self.assertEqual(line.get_drawstyle(), "default")
         self.assertGreater(len(line.get_xdata()), 100)
@@ -2110,7 +2110,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_cdf_values_match_distribution(self):
         for d in [Poisson(4), Normal(0, 1), Gamma(2)]:
             plt.figure()
-            (line,) = d.plot(type="cdf").ax.get_lines()
+            (line,) = d.plot(cdf=True).ax.get_lines()
             xs, ys = line.get_xdata(), line.get_ydata()
             np.testing.assert_allclose(ys, d.cdf(np.asarray(xs)), atol=1e-9)
             plt.close("all")
@@ -2120,7 +2120,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_cdf_is_monotone_in_unit_interval(self):
         for d in [Binomial(20, 0.4), Geometric(0.3), Exponential(1)]:
             plt.figure()
-            (line,) = d.plot(type="cdf").ax.get_lines()
+            (line,) = d.plot(cdf=True).ax.get_lines()
             ys = np.asarray(line.get_ydata())
             self.assertTrue(np.all(np.diff(ys) >= -1e-12), type(d).__name__)
             self.assertGreaterEqual(ys.min(), -1e-9)
@@ -2131,7 +2131,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
     def test_default_type_is_pdf(self):
         plt.figure()
-        p = Binomial(10, 0.5).plot()  # type defaults to "pdf"
+        p = Binomial(10, 0.5).plot()  # cdf defaults to False (pmf)
         # The pmf is a smooth, marker-free curve (a single Line2D), not
         # scatter dots -- so no collections, exactly one line.
         self.assertEqual(len(p.ax.collections), 0)
@@ -2144,19 +2144,23 @@ class TestDistributionCDFPlot(unittest.TestCase):
         pdf_win = Binomial(100, 0.5).plot(xlim="zoom").ax.get_xlim()
         plt.close("all")
         plt.figure()
-        cdf_win = Binomial(100, 0.5).plot(type="cdf", xlim="zoom").ax.get_xlim()
+        cdf_win = Binomial(100, 0.5).plot(cdf=True, xlim="zoom").ax.get_xlim()
         self.assertEqual(pdf_win, cdf_win)
         self.assertGreater(cdf_win[0], 0)  # not the full (0, 100) support
         self.assertLess(cdf_win[1], 100)
 
-    # --- friendly error on an unknown type ---
+    # --- the old type= spelling raises a friendly pointer to cdf= ---
 
-    def test_invalid_type_raises(self):
-        with self.assertRaises(ValueError) as cm:
-            Normal(0, 1).plot(type="histogram")
-        msg = str(cm.exception)
-        self.assertIn("type", msg)
-        self.assertIn("cdf", msg)
+    def test_old_type_kwarg_raises_helpful_error(self):
+        for old_call in [
+            lambda: Normal(0, 1).plot(type="cdf"),  # the former CDF syntax
+            lambda: Normal(0, 1).plot(type="histogram"),  # any type= at all
+        ]:
+            with self.assertRaises(ValueError) as cm:
+                old_call()
+            msg = str(cm.exception)
+            self.assertIn("type", msg)
+            self.assertIn("cdf", msg)
 
     # --- every base-plot distribution renders a CDF cleanly ---
 
@@ -2186,7 +2190,7 @@ class TestDistributionCDFPlot(unittest.TestCase):
         ]
         for d in dists:
             plt.figure()
-            d.plot(type="cdf")  # must not raise
+            d.plot(cdf=True)  # must not raise
             plt.close("all")
 
 
@@ -2307,7 +2311,7 @@ class TestDistributionShade(unittest.TestCase):
     def test_shade_under_continuous_cdf(self):
         plt.figure()
         d = Normal(0, 1)
-        d.plot(type="cdf")
+        d.plot(cdf=True)
         self.assertEqual(d._last_plot_type, "cdf")
         d.shade(lt=0)
         self.assertEqual(len(self._fills(plt.gca())), 1)
@@ -2315,7 +2319,7 @@ class TestDistributionShade(unittest.TestCase):
     def test_shade_under_discrete_cdf_fills_stepwise(self):
         plt.figure()
         d = Poisson(3)
-        d.plot(type="cdf")
+        d.plot(cdf=True)
         d.shade(le=2)
         # a discrete cdf shades as a filled staircase, not impulses
         self.assertEqual(len(self._fills(plt.gca())), 1)
