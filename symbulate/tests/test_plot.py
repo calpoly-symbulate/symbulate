@@ -1897,6 +1897,119 @@ class TestPlot2DMosaic(PlotTestCase):
         self.assertIn("black", label_colors)
         self.assertIn("white", label_colors)
 
+    # -----------------------------------------------------------------
+    # equal_width: 100%-stacked bar chart (equal-width columns)
+    # -----------------------------------------------------------------
+
+    def setup_unequal_marginal_sims(self, seed=7):
+        """x has a heavily skewed marginal (Bernoulli(0.9)), so the two
+        real columns' default proportional widths are visibly unequal --
+        the case the prompt asks equal_width to be tested against."""
+        np.random.seed(seed)
+        Xd, Yd = RV(Bernoulli(p=0.9) * Bernoulli(p=0.5))
+        return (Xd & Yd).sim(500)
+
+    def test_mosaic_default_widths_vary_with_unequal_marginal_counts(self):
+        """Without equal_width, visibly-unequal marginal counts must
+        produce columns of visibly different widths -- the standard
+        mosaic behavior, confirmed here so the next test's uniformity
+        can be attributed to equal_width and not incidental equal counts
+        in this data."""
+        sims = self.setup_unequal_marginal_sims()
+        p = sims.plot(type="mosaic", marginal_column=False, suggest=False)
+        widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
+        self.assertGreater(len(widths), 1)
+
+    def test_mosaic_equal_width_produces_uniform_column_widths(self):
+        """equal_width=True must give every real column the same width,
+        even though the same data's marginal counts are visibly unequal
+        (see the previous test)."""
+        sims = self.setup_unequal_marginal_sims()
+        p = sims.plot(
+            type="mosaic", equal_width=True, marginal_column=False, suggest=False
+        )
+        widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
+        self.assertEqual(len(widths), 1)
+
+    def test_mosaic_equal_width_does_not_change_segment_heights(self):
+        """equal_width changes column width only -- each column's segment
+        heights (conditional frequencies) must match the default
+        proportional-width mode exactly."""
+        sims = self.setup_unequal_marginal_sims()
+        p_default = sims.plot(type="mosaic", marginal_column=False, suggest=False)
+        heights_default = sorted(
+            round(patch.get_height(), 6) for patch in p_default.ax.patches
+        )
+        plt.close("all")
+        p_equal = sims.plot(
+            type="mosaic", equal_width=True, marginal_column=False, suggest=False
+        )
+        heights_equal = sorted(
+            round(patch.get_height(), 6) for patch in p_equal.ax.patches
+        )
+        self.assertEqual(heights_default, heights_equal)
+
+    def test_mosaic_equal_width_labels_show_true_conditional_proportion(self):
+        """In-cell labels must still report the true conditional
+        proportion (division by the real per-column count), not something
+        distorted by equal-width columns."""
+        sims = self.setup_unequal_marginal_sims()
+        arr = np.asarray(sims.results)
+        x, y = arr[:, 0], arr[:, 1]
+        p = sims.plot(type="mosaic", equal_width=True, marginal_column=False)
+        x_labels = np.unique(x)
+        y_labels = np.unique(y)
+        # Every printed decimal label, across every column, must be a valid
+        # conditional proportion somewhere in the joint table -- a loose but
+        # simple correctness check that doesn't depend on matching each
+        # label back to its exact cell position.
+        all_possible = set()
+        for x_val in x_labels:
+            mask = x == x_val
+            counts = np.array(
+                [(y[mask] == y_val).sum() for y_val in y_labels], dtype=float
+            )
+            for frac in counts / counts.sum():
+                all_possible.add(round(frac, 2))
+        printed = {round(float(t.get_text()), 2) for t in p.ax.texts}
+        self.assertTrue(printed.issubset(all_possible))
+
+    def test_mosaic_equal_width_still_respects_marginal_column(self):
+        """equal_width and marginal_column are independent switches --
+        equal_width=True must still draw the marginal reference column
+        (skinnier than the equal-width real columns) when
+        marginal_column=True (the default)."""
+        sims = self.setup_unequal_marginal_sims()
+        p = sims.plot(type="mosaic", equal_width=True, suggest=False)
+        widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
+        # Exactly two distinct widths: the (uniform) real columns, and the
+        # narrower marginal column.
+        self.assertEqual(len(widths), 2)
+
+    def test_mosaic_equal_width_title_is_stacked_plot(self):
+        """equal_width=True changes the title to "Stacked Plot" -- a clear
+        visual signal that column widths are equal, not proportional."""
+        sims = self.setup_unequal_marginal_sims()
+        p = sims.plot(type="mosaic", equal_width=True, suggest=False)
+        self.assertEqual(p.ax.get_title(), "Stacked Plot")
+
+    def test_mosaic_default_title_is_unaffected(self):
+        """Without equal_width, the title stays "Mosaic Plot"."""
+        sims = self.setup_unequal_marginal_sims()
+        p = sims.plot(type="mosaic", suggest=False)
+        self.assertEqual(p.ax.get_title(), "Mosaic Plot")
+
+    def test_mosaic_equal_width_display_name(self):
+        self.assertEqual(PLOT_DISPLAY_NAME["mosaic_equal_width"], "Stacked Plot")
+
+    def test_mosaic_equal_width_is_opt_in_only(self):
+        """equal_width must not become a new automatic default for 2D
+        discrete data -- mosaic (in either mode) stays explicit-opt-in-only."""
+        for small_n in (True, False):
+            _, alternatives = default_plot_type("2D_dd", small_n)
+            self.assertNotIn("mosaic_equal_width", alternatives)
+            self.assertNotIn("stacked_bar", alternatives)
+
 
 class TestPlot2DBox(PlotTestCase):
     """The new type='box' (grouped box plot) for mixed discrete/continuous data."""
@@ -2753,6 +2866,28 @@ class TestSuggestionNote(PlotTestCase):
         with contextlib.redirect_stdout(buf):
             (X & Y).sim(500).plot(type="hist", suggest=True)
         self.assertIn("Currently Showing: 2D Histogram (Default)", buf.getvalue())
+
+    def test_mosaic_equal_width_note_says_stacked_plot(self):
+        """equal_width=True's suggestion note must match its axes title
+        ("Stacked Plot"), not still read "Mosaic Plot"."""
+        import io
+        import contextlib
+
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            (X & Y).sim(500).plot(type="mosaic", equal_width=True, suggest=True)
+        self.assertIn("Currently Showing: Stacked Plot", buf.getvalue())
+
+    def test_mosaic_without_equal_width_note_still_says_mosaic_plot(self):
+        import io
+        import contextlib
+
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            (X & Y).sim(500).plot(type="mosaic", suggest=True)
+        self.assertIn("Currently Showing: Mosaic Plot", buf.getvalue())
 
 
 class TestJitterNote(PlotTestCase):

@@ -1531,9 +1531,14 @@ class RVResults(Results):
             plots: ``True``, the default, stops the whiskers at 1.5
             times the interquartile range and draws more extreme
             points individually as outliers; ``False`` extends the
-            whiskers to the minimum and maximum values instead), and
+            whiskers to the minimum and maximum values instead),
             ``label`` (legend name for hist, impulse, dot, scatter,
-            segmented density, and segmented histogram plots).
+            segmented density, and segmented histogram plots), and
+            ``equal_width`` (mosaic plots: ``True`` draws every column
+            the same width instead of proportional to its marginal
+            frequency -- a 100%-stacked bar chart per ``x`` value;
+            default ``False`` keeps mosaic's standard proportional
+            widths).
 
         Returns
         -------
@@ -1776,6 +1781,11 @@ class RVResults(Results):
                 _2d_token = {}
             else:
                 _2d_token = {"hist": "hist2d", "density": "density2d"}
+            # equal_width draws mosaic's title as "Stacked Plot" instead of
+            # "Mosaic Plot" (see make_mosaic) -- remap the suggestion note's
+            # display name to match, the same way hist/density remap above.
+            if "mosaic" in type and kwargs.get("equal_width"):
+                _2d_token["mosaic"] = "mosaic_equal_width"
             _suggestion = (_2d_token.get(type[0], type[0]), default, alternatives)
             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
             # make_scatter, and the mesh types (hist/density/tile) encode
