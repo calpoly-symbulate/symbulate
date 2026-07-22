@@ -13,6 +13,7 @@ from .plot import (
     ECDF_LINEWIDTH,
     SHADE_COLOR,
     SHADE_ALPHA,
+    overlay_true_distribution,
 )
 from .result import Scalar, Vector, InfiniteVector
 
@@ -518,14 +519,24 @@ class Distribution(ProbabilitySpace):
                 # A continuous CDF is a smooth S-curve.
                 ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
         else:
-            # pdf/pmf: a smooth curve for continuous distributions; dots at
-            # each value with a light connecting line for discrete ones.
+            # pdf/pmf: a smooth curve for continuous distributions. For a
+            # discrete distribution, wire up overlay_true_distribution: a
+            # smooth, marker-free spline through the pmf values (no dots),
+            # styled by the TRUE_DIST_* constants -- so a discrete pmf reads
+            # as a rounded reference curve rather than dots on a straight
+            # polyline. Its own support (xs) frames the curve, not the
+            # possibly-widened shared axis.
             if self.discrete:
-                ax.scatter(xs, ys, s=40, color=color, alpha=alpha, **kwargs)
-            ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
-
-        # adjust the axes, base x-axis at 0
-        ax.spines["bottom"].set_position("zero")
+                overlay_true_distribution(
+                    self.pmf,
+                    ax,
+                    xlim=(int(xs[0]), int(xs[-1])),
+                    color=color,
+                    alpha=alpha,
+                    **kwargs,
+                )
+            else:
+                ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
 
         # Title the plot by what it shows: the cumulative distribution
         # function, or -- for the default view -- the probability density
