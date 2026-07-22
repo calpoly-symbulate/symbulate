@@ -365,17 +365,23 @@ class Distribution(ProbabilitySpace):
             return _discrete_hdi_xlim(self, int(np.floor(low)), coverage)
         return _continuous_hdi_xlim(self, low, coverage)
 
-    def plot(self, xlim=None, alpha=None, ax=None, type="pdf", **kwargs):
+    def plot(self, xlim=None, alpha=None, ax=None, cdf=False, **kwargs):
         """Plot the probability function or the cumulative distribution function.
 
-        With ``type="pdf"`` (the default), plots the probability density
-        function (continuous distributions, a smooth curve) or probability
-        mass function (discrete distributions, dots at each integer value).
-        With ``type="cdf"``, plots the cumulative distribution function
-        ``P(X <= x)`` instead: a smooth curve for continuous distributions,
-        and a right-continuous step function (no markers) for discrete ones.
+        By default (``cdf=False``), plots the probability density function
+        (continuous distributions, a smooth curve) or probability mass
+        function (discrete distributions, a smooth curve through the
+        masses). With ``cdf=True``, plots the cumulative distribution
+        function ``P(X <= x)`` instead: a smooth curve for continuous
+        distributions, and a right-continuous step function (no markers)
+        for discrete ones.
 
-        The plot is titled by what it shows: "CDF Plot" for ``type="cdf"``,
+        Unlike a plot of simulated *data* -- which can be drawn many ways
+        (dots, rug, impulse, histogram, density, ecdf, ...) and so takes a
+        ``type=`` argument -- a theoretical distribution has only these two
+        curves to show, so the choice is the single boolean ``cdf``.
+
+        The plot is titled by what it shows: "CDF Plot" for ``cdf=True``,
         and for the default view "PDF Plot" (continuous) or "PMF Plot"
         (discrete).
 
@@ -393,11 +399,11 @@ class Distribution(ProbabilitySpace):
             support. Handy for lining a theoretical curve up against
             simulated data, which occupies only the high-probability part
             of the support.
-        type : {"pdf", "cdf"}, default "pdf"
-            Which function to plot. ``"pdf"`` draws the probability
-            density/mass function; ``"cdf"`` draws the cumulative
-            distribution function ``P(X <= x)``. (For discrete
-            distributions ``"pdf"`` draws the probability mass function.)
+        cdf : bool, default False
+            Which function to plot. ``False`` (the default) draws the
+            probability density/mass function; ``True`` draws the
+            cumulative distribution function ``P(X <= x)``. (For discrete
+            distributions the default draws the probability mass function.)
         alpha : float, optional
             Transparency of the plot, from 0 (invisible) to 1 (opaque).
         ax : matplotlib.axes.Axes, optional
@@ -418,15 +424,21 @@ class Distribution(ProbabilitySpace):
         >>> from symbulate import *
         >>> Normal(0, 1).plot()  # doctest: +SKIP
         >>> Binomial(100, 0.5).plot(xlim="zoom")  # tight window, not (0, 100)  # doctest: +SKIP
-        >>> Poisson(3).plot(type="cdf")  # step function  # doctest: +SKIP
-        >>> Normal(0, 1).plot(type="cdf")  # smooth S-curve  # doctest: +SKIP
+        >>> Poisson(3).plot(cdf=True)  # step function  # doctest: +SKIP
+        >>> Normal(0, 1).plot(cdf=True)  # smooth S-curve  # doctest: +SKIP
         """
-        if type not in ("pdf", "cdf"):
+        # A theoretical distribution has only two curves (pdf/pmf vs. cdf),
+        # so it takes a boolean `cdf=`, not the `type=` that selects among the
+        # many ways of drawing simulated data. Catch the old `type=` spelling
+        # (and stray text) so it gives a clear pointer instead of an opaque
+        # matplotlib error after slipping through **kwargs.
+        if "type" in kwargs:
             raise ValueError(
-                "`type` must be 'pdf' (the default) or 'cdf'. You passed "
-                f"type={type!r}. Use type='pdf' to plot the probability "
-                "density/mass function, or type='cdf' to plot the cumulative "
-                "distribution function P(X <= x)."
+                "`Distribution.plot()` does not take a `type=` argument. To "
+                "plot the cumulative distribution function, use `cdf=True`; "
+                "the default (`cdf=False`) plots the pdf/pmf. (`type=` selects "
+                "among the many ways of drawing simulated data; a theoretical "
+                "distribution has only these two curves to show.)"
             )
         # Resolve the x-axis range:
         #   None        -> the distribution's default window (full support
@@ -447,13 +459,13 @@ class Distribution(ProbabilitySpace):
             xlim = self._hdi_window()
 
         # get the x and y values. The x-window is chosen the same way for
-        # both plot types (it only picks x-values); `type` decides which
+        # both plot types (it only picks x-values); `cdf` decides which
         # function is evaluated there.
         if self.discrete:
             xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
         else:
             xs = np.linspace(xlim[0], xlim[1], 200)
-        ys = self.cdf(xs) if type == "cdf" else self.pdf(xs)
+        ys = self.cdf(xs) if cdf else self.pdf(xs)
 
         # determine limits for y-axes based on y values
         ymin, ymax = ys[np.isfinite(ys)].min(), ys[np.isfinite(ys)].max()
@@ -486,7 +498,7 @@ class Distribution(ProbabilitySpace):
         # get next color in cycle
         color = get_next_color(ax)
 
-        if type == "cdf":
+        if cdf:
             # Match make_ecdf's step-function styling so a theoretical CDF
             # reads as the same kind of curve as its empirical counterpart
             # (type="ecdf"), which students naturally overlay to compare.
@@ -526,7 +538,7 @@ class Distribution(ProbabilitySpace):
         # Title the plot by what it shows: the cumulative distribution
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
-        if type == "cdf":
+        if cdf:
             ax.set_title("CDF Plot")
         elif self.discrete:
             ax.set_title("PMF Plot")
@@ -542,7 +554,7 @@ class Distribution(ProbabilitySpace):
         # Record what was drawn so a following shade() knows which curve it
         # is shading under (and that a curve exists at all).
         self.plotted = True
-        self._last_plot_type = type
+        self._last_plot_type = "cdf" if cdf else "pdf"
 
         return SymbulatePlot(ax)
 
@@ -551,8 +563,8 @@ class Distribution(ProbabilitySpace):
 
         Fills the region of the distribution that satisfies the given
         inequalities, drawn under whatever curve was most recently plotted
-        -- the probability mass/density function (``type="pdf"``) or the
-        cumulative distribution function (``type="cdf"``). If the
+        -- the probability mass/density function (the default) or the
+        cumulative distribution function (``cdf=True``). If the
         distribution has not been plotted yet, its default curve is drawn
         first, so ``Normal(0, 1).shade(lt=-1.96)`` works on its own.
 
