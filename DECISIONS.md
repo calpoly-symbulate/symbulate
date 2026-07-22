@@ -103,6 +103,33 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: Large-n Discreteness Rescue — Repeat-Density Rule with a dtype-Split Ceiling
+
+**Status:** Implemented (in `plot.py`'s `classify_values`); constant *values* provisional, same status as `B_1D`/`K_2D` (tune via `team/discrete_continuous_threshold_tests.ipynb`).
+
+**Decision**
+> Impulse is a **strict default for 1-D discrete data**: a genuinely discrete distribution should stay discrete (impulse plot) even when its support runs well past the `B_1D` crowding budget, and give way to a histogram **only when the support is genuinely too wide to draw one stem per value**. On top of the base budget (`n_unique <= B_1D`/`K_2D`), `classify_values` applies a **large-n secondary rule** that only ever flips a *continuous* verdict to *discrete*, never the reverse. A sample is rescued to discrete-ish when all of:
+> - it has repeats to reason about (`n_unique < n`);
+> - `n_unique` is within its **dtype's ceiling** (see below);
+> - it has at least `REPEAT_MIN_OCCUPANCY` (= 20, provisional) observations per distinct value, so repeats are a reliable large-n signal, not sampling noise;
+> - more than `REPEAT_FRACTION_THRESHOLD` (= 0.6, provisional) of its distinct values recur (the old `is_discrete` repeat-density criterion; 0.6 is deliberately below `is_discrete`'s 0.8, since a moderate-support discrete distribution always has a few once-seen tail values).
+>
+> **The ceiling is split by dtype — the key refinement.** Symbulate stores genuinely discrete distributions (Binomial, Poisson, Geometric, ...) as **integers**, while the rounded-float case `is_discrete` misclassified is **float**-dtype. So:
+> - **integer data** gets a generous cap, `INT_REPEAT_CEILING` (= 200, provisional) — textbook discrete distributions stay discrete far past the budget (`Binomial(1000, 0.5)` ≈ 110 distinct, `Poisson(200)` ≈ 100 distinct → impulse); only a truly huge support (`Binomial(10000, 0.5)`, ~300+ distinct) exceeds it and bins into a histogram.
+> - **float data** keeps the strict cap, `REPEAT_CEILING_FACTOR` (= 2) × the budget (so 60 for `B_1D = 30`) — a wide-support rounded float stays continuous no matter how much it repeats. This tight float cap is the guard that keeps the rule from reintroducing the `is_discrete` failure mode.
+>
+> **The rescue is 1-D only.** `classify_values` takes `large_n_rescue` (default `True`); the 2-D per-axis dispatch passes `large_n_rescue=False`. In 2-D the budget model deliberately bins both-axes-over-`K_2D` into a 2-D histogram (a 40×40 discrete tile is genuinely too crowded), and Task 3 fixes 2-D crowding by rendering, not reclassification — so keeping the impulse-strict rescue out of the 2-D verdict is intentional, and leaves every existing 2-D dispatch verdict unchanged.
+
+**Rationale**
+> Task 2 flagged that the bare `n_unique <= B_1D` cutoff makes textbook distributions sitting near 30 distinct values (`Poisson(15)`, `Binomial(70, 0.5)`) flip discrete/continuous by random seed. A repeat-density signal (main's old `is_discrete`) is robust at large n but, applied unconditionally, mis-labels wide-support rounded floats as discrete — the exact reason `is_discrete` was replaced. The earlier fix bounded the rescue with a single ceiling (`REPEAT_CEILING_FACTOR × budget` = 60) and a strict `REPEAT_MIN_OCCUPANCY` = 100, which held the line against floats but also capped genuinely discrete integers at ~60 distinct and blocked wide ones (`Binomial(1000, 0.5)` at ~90 samples/value). This decision makes impulse the strict discrete default by splitting the ceiling on dtype: integers (genuine counts) get a generous cap and floats stay tightly bounded. dtype is the clean discriminator — it distinguishes "genuinely discrete count" from "rounded continuous" without a heuristic. `REPEAT_MIN_OCCUPANCY` was lowered 100 → 20 so wide discrete integer supports actually reach the test; it stays non-binding for floats (whose ceiling of 60 already implies high occupancy).
+
+**Alternatives Considered**
+> - **A single dtype-agnostic ceiling** (the earlier implementation, `REPEAT_CEILING_FACTOR × budget` = 60 for both) — replaced; it couldn't keep genuinely discrete integers past ~60 distinct without also loosening the float guard that prevents the `is_discrete` rounded-float failure.
+> - **Unbounded repeat-density (literal old `is_discrete`)** — rejected; reintroduces the rounded-float failure mode and would draw hundreds of unreadable impulse stems for a huge-support integer distribution (no "histogram when necessary" cutoff).
+> - **Raising `B_1D` itself** — rejected; the base budget is a crowding anchor tied to the histogram bin count (see budget-model decision), and widening it would also loosen the 2-D tile verdict. The rescue is a separate large-n-only signal, correctly decoupled from the base budget.
+
+---
+
 ## Decision: Outlier/Skew-Aware Histogram Binning
 
 **Status:** Implemented (in `plot.py`'s `make_hist`); threshold constants provisional, same status as `B_1D`/`K_2D`.
