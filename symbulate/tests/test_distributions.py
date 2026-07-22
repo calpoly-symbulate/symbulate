@@ -2195,15 +2195,16 @@ class TestDistributionCDFPlot(unittest.TestCase):
 
 
 class TestDistributionShade(unittest.TestCase):
-    """``Distribution.shade(lt, le, gt, ge)`` (task 13/15).
+    """``DistributionPlot.shade(lt, le, gt, ge)`` -- chained off ``.plot()``.
 
-    Shades a tail or interval under the most recently plotted curve
-    (pmf/pdf or cdf), auto-plotting the default curve first if the
-    distribution has not been drawn. Bounds read as probability
-    inequalities; the strict (``lt``/``gt``) vs. inclusive (``le``/``ge``)
-    choice matters for discrete distributions. The shaded region honors the
-    displayed x-window (default, ``xlim="zoom"``, an explicit ``xlim``, or
-    overlay union), not the distribution's static ``self.xlim``.
+    ``Distribution.plot()`` returns a ``DistributionPlot``, and ``.shade()``
+    fills a tail or interval under the curve it drew (pmf/pdf or cdf).
+    There is no standalone ``shade`` on a distribution, so a curve always
+    exists first. Bounds read as probability inequalities; the strict
+    (``lt``/``gt``) vs. inclusive (``le``/``ge``) choice matters for
+    discrete distributions. The shaded region honors the displayed x-window
+    (default, ``xlim="zoom"``, an explicit ``xlim``, or overlay union), not
+    the distribution's static ``self.xlim``.
     """
 
     def tearDown(self):
@@ -2219,46 +2220,45 @@ class TestDistributionShade(unittest.TestCase):
     def _fills(ax):
         return [c for c in ax.collections if isinstance(c, PolyCollection)]
 
-    # --- shade() on a fresh distribution draws the curve first ---
+    # --- shade is reachable only by chaining off plot() ---
 
-    def test_shade_auto_plots_when_not_yet_plotted(self):
-        plt.figure()
-        d = Poisson(3)
-        self.assertFalse(d.plotted)
-        d.shade(le=3)
-        self.assertTrue(d.plotted)
-        self.assertEqual(d._last_plot_type, "pdf")
+    def test_shade_not_on_distribution(self):
+        # No standalone shade: it lives on the plot object, not the
+        # distribution, so a curve must be plotted first.
+        self.assertFalse(hasattr(Poisson(3), "shade"))
+        with self.assertRaises(AttributeError):
+            Poisson(3).shade(le=3)
 
-    def test_shade_returns_symbulate_plot(self):
+    def test_shade_returns_plot_for_chaining(self):
         plt.figure()
-        result = Normal(0, 1).shade(lt=0)
-        self.assertEqual(type(result).__name__, "SymbulatePlot")
+        result = Normal(0, 1).plot().shade(lt=0)
+        self.assertEqual(type(result).__name__, "DistributionPlot")
         self.assertEqual(repr(result), "")
 
     # --- discrete: strict vs. inclusive bounds change which mass shades ---
 
     def test_discrete_inclusive_includes_endpoint(self):
         plt.figure()
-        Poisson(3).shade(le=3)
-        self.assertIn(3, self._impulse_xs(plt.gca()))
+        p = Poisson(3).plot().shade(le=3)
+        self.assertIn(3, self._impulse_xs(p.ax))
 
     def test_discrete_strict_excludes_endpoint(self):
         plt.figure()
-        Poisson(3).shade(lt=3)
-        self.assertNotIn(3, self._impulse_xs(plt.gca()))
+        p = Poisson(3).plot().shade(lt=3)
+        self.assertNotIn(3, self._impulse_xs(p.ax))
 
     def test_discrete_right_tail_inclusive(self):
         plt.figure()
-        Binomial(20, 0.5).shade(ge=12)
-        xs = self._impulse_xs(plt.gca())
+        p = Binomial(20, 0.5).plot().shade(ge=12)
+        xs = self._impulse_xs(p.ax)
         self.assertIn(12, xs)
         self.assertTrue(all(x >= 12 for x in xs))
 
     def test_discrete_interval_mixed_bounds(self):
         # gt=3, le=7  ->  4, 5, 6, 7  (3 excluded, 7 included)
         plt.figure()
-        Binomial(10, 0.5).shade(gt=3, le=7)
-        self.assertEqual(self._impulse_xs(plt.gca()), [4, 5, 6, 7])
+        p = Binomial(10, 0.5).plot().shade(gt=3, le=7)
+        self.assertEqual(self._impulse_xs(p.ax), [4, 5, 6, 7])
 
     # --- continuous: a filled region with the shade constants ---
 
@@ -2266,8 +2266,8 @@ class TestDistributionShade(unittest.TestCase):
         from symbulate.plot import SHADE_COLOR, SHADE_ALPHA
 
         plt.figure()
-        Normal(0, 1).shade(lt=-1.96)
-        fills = self._fills(plt.gca())
+        p = Normal(0, 1).plot().shade(lt=-1.96)
+        fills = self._fills(p.ax)
         self.assertEqual(len(fills), 1)
         self.assertEqual(fills[-1].get_alpha(), SHADE_ALPHA)
         expected = matplotlib.colors.to_rgba(SHADE_COLOR, SHADE_ALPHA)
@@ -2275,8 +2275,8 @@ class TestDistributionShade(unittest.TestCase):
 
     def test_continuous_fill_stays_within_bounds(self):
         plt.figure()
-        Normal(0, 1).shade(gt=-1, lt=1)
-        xs = self._fills(plt.gca())[-1].get_paths()[0].vertices[:, 0]
+        p = Normal(0, 1).plot().shade(gt=-1, lt=1)
+        xs = self._fills(p.ax)[-1].get_paths()[0].vertices[:, 0]
         self.assertGreaterEqual(xs.min(), -1 - 1e-9)
         self.assertLessEqual(xs.max(), 1 + 1e-9)
 
@@ -2287,58 +2287,57 @@ class TestDistributionShade(unittest.TestCase):
         # default support; an open left tail must start at the visible edge,
         # which the fork's self.xlim-based version could not do.
         plt.figure()
-        d = Binomial(100, 0.5)
-        d.plot(xlim="zoom")
-        axlo, _ = plt.gca().get_xlim()
+        p = Binomial(100, 0.5).plot(xlim="zoom")
+        axlo, _ = p.ax.get_xlim()
         self.assertGreater(axlo, 0)  # window is tighter than full support
-        d.shade(le=50)
-        xs = self._impulse_xs(plt.gca())
+        p.shade(le=50)
+        xs = self._impulse_xs(p.ax)
         self.assertGreaterEqual(min(xs), int(np.floor(axlo)))
         self.assertNotIn(0, xs)  # would appear if self.xlim[0]=0 were used
 
     def test_shade_draws_onto_existing_curve_without_replotting(self):
         plt.figure()
-        d = Poisson(3)
-        d.plot()
-        n_before = len(plt.gca().collections)
-        d.shade(le=2)
+        p = Poisson(3).plot()
+        n_before = len(p.ax.collections)
+        p.shade(le=2)
         # shade adds exactly one impulse collection on top of the already
         # drawn pmf (its dots + dashed line are left untouched)
-        self.assertEqual(len(plt.gca().collections), n_before + 1)
+        self.assertEqual(len(p.ax.collections), n_before + 1)
 
     # --- shade under a cdf uses the cdf, and fills for the step case ---
 
     def test_shade_under_continuous_cdf(self):
         plt.figure()
-        d = Normal(0, 1)
-        d.plot(cdf=True)
-        self.assertEqual(d._last_plot_type, "cdf")
-        d.shade(lt=0)
-        self.assertEqual(len(self._fills(plt.gca())), 1)
+        p = Normal(0, 1).plot(cdf=True)
+        self.assertEqual(p.plot_type, "cdf")
+        p.shade(lt=0)
+        self.assertEqual(len(self._fills(p.ax)), 1)
 
     def test_shade_under_discrete_cdf_fills_stepwise(self):
         plt.figure()
-        d = Poisson(3)
-        d.plot(cdf=True)
-        d.shade(le=2)
+        p = Poisson(3).plot(cdf=True)
+        p.shade(le=2)
         # a discrete cdf shades as a filled staircase, not impulses
-        self.assertEqual(len(self._fills(plt.gca())), 1)
+        self.assertEqual(len(self._fills(p.ax)), 1)
 
     # --- friendly errors ---
 
     def test_both_upper_bounds_raises(self):
+        plt.figure()
         with self.assertRaises(ValueError) as cm:
-            Poisson(3).shade(lt=3, le=5)
+            Poisson(3).plot().shade(lt=3, le=5)
         self.assertIn("lt", str(cm.exception))
         self.assertIn("le", str(cm.exception))
 
     def test_both_lower_bounds_raises(self):
+        plt.figure()
         with self.assertRaises(ValueError) as cm:
-            Poisson(3).shade(gt=1, ge=2)
+            Poisson(3).plot().shade(gt=1, ge=2)
         self.assertIn("gt", str(cm.exception))
         self.assertIn("ge", str(cm.exception))
 
     def test_crossed_bounds_raises(self):
+        plt.figure()
         with self.assertRaises(ValueError) as cm:
-            Normal(0, 1).shade(gt=5, lt=3)
+            Normal(0, 1).plot().shade(gt=5, lt=3)
         self.assertIn("less than", str(cm.exception))
