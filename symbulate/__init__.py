@@ -42,6 +42,7 @@ from .distributions import (
     Logistic,
     Gompertz,
     Laplace,
+    DeMoivre,
     MultivariateNormal,
     BivariateNormal,
     Multinomial,
