@@ -13,7 +13,9 @@ from .plot import (
     ECDF_LINEWIDTH,
     SHADE_COLOR,
     SHADE_ALPHA,
-    overlay_true_distribution,
+    TRUE_DIST_MARKER_SIZE,
+    TRUE_DIST_LINEWIDTH,
+    TRUE_DIST_LINESTYLE,
 )
 from .result import Scalar, Vector, InfiniteVector
 
@@ -521,20 +523,22 @@ class Distribution(ProbabilitySpace):
                 ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
         else:
             # pdf/pmf: a smooth curve for continuous distributions. For a
-            # discrete distribution, wire up overlay_true_distribution: a
-            # smooth, marker-free spline through the pmf values (no dots),
-            # styled by the TRUE_DIST_* constants -- so a discrete pmf reads
-            # as a rounded reference curve rather than dots on a straight
-            # polyline. Its own support (xs) frames the curve, not the
-            # possibly-widened shared axis.
+            # discrete distribution, a filled dot at each pmf value plus a
+            # dashed dot-to-dot connecting line -- dashed so the connector
+            # can't be mistaken for a continuous curve (a pmf has no value
+            # between integers). Both are styled from the named TRUE_DIST_*
+            # constants instead of a hardcoded marker size / default line.
             if self.discrete:
-                overlay_true_distribution(
-                    self.pmf,
-                    ax,
-                    xlim=(int(xs[0]), int(xs[-1])),
+                ax.scatter(
+                    xs, ys, s=TRUE_DIST_MARKER_SIZE, color=color, alpha=alpha, **kwargs
+                )
+                ax.plot(
+                    xs,
+                    ys,
                     color=color,
                     alpha=alpha,
-                    **kwargs,
+                    linestyle=TRUE_DIST_LINESTYLE,
+                    linewidth=TRUE_DIST_LINEWIDTH,
                 )
             else:
                 ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
