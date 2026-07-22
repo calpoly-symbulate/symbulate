@@ -2125,6 +2125,126 @@ class Gompertz(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class _makeham_gen(stats.rv_continuous):
+    """scipy generator for the Gompertz-Makeham mortality law.
+
+    Standardized (``scale`` applied by the framework) with Gompertz shape
+    ``c`` and constant (Makeham) hazard term ``lam`` on ``[0, inf)``. The
+    hazard is ``lam + c * e**x`` -- a Gompertz hazard that rises
+    exponentially, plus a flat age-independent term -- so the cumulative
+    hazard is ``lam * x + c * (e**x - 1)`` and the survival function is
+    ``exp(-(lam * x + c * (e**x - 1)))``. scipy has no Makeham built in,
+    so it is defined here; every other case in this module wraps an
+    existing scipy distribution directly.
+    """
+
+    def _argcheck(self, c, lam):
+        return (c > 0) & (lam >= 0)
+
+    def _get_support(self, c, lam):
+        return 0.0, np.inf
+
+    def _pdf(self, x, c, lam):
+        # pdf = hazard * survival.
+        return (lam + c * np.exp(x)) * np.exp(-(lam * x + c * np.expm1(x)))
+
+    def _cdf(self, x, c, lam):
+        return -np.expm1(-(lam * x + c * np.expm1(x)))
+
+    def _sf(self, x, c, lam):
+        return np.exp(-(lam * x + c * np.expm1(x)))
+
+    def _rvs(self, c, lam, size=None, random_state=None):
+        # Competing risks: the Makeham lifetime is the earlier of a
+        # Gompertz lifetime (accelerating hazard c * e**x) and an
+        # exponential one (constant hazard lam). Independent risks whose
+        # hazards add and whose survival functions multiply -- exactly the
+        # Makeham law -- so the minimum is an exact, vectorized sampler.
+        g = stats.gompertz.rvs(c, size=size, random_state=random_state)
+        if np.all(lam == 0):
+            return g
+        e = random_state.exponential(scale=1.0 / lam, size=size)
+        return np.minimum(g, e)
+
+
+_makeham = _makeham_gen(name="makeham", a=0.0)
+
+
+class Makeham(Distribution):
+    """Probability space for a Makeham (Gompertz-Makeham) distribution.
+
+    A continuous distribution on [0, infinity) used in actuarial science
+    to model human mortality. It is the Gompertz law plus a constant,
+    age-independent hazard term (the "accident" term): the force of
+    mortality is ``makeham + shape * e**(x / scale) / scale``. Setting
+    ``makeham = 0`` recovers the plain :class:`Gompertz` distribution.
+
+    Parameters
+    ----------
+    shape : float
+        Gompertz shape parameter. Must be positive. Controls how fast the
+        force of mortality accelerates with age.
+    makeham : float
+        Constant (age-independent) hazard term -- the accident term. Must
+        be non-negative. ``0`` reduces the distribution to a Gompertz.
+    scale : float, optional
+        Scale parameter. Must be positive. Stretches the age axis (larger
+        values mean longer lifetimes), as in :class:`Gompertz`. Default is
+        1.0.
+
+    Attributes
+    ----------
+    shape : float
+        Gompertz shape parameter.
+    makeham : float
+        Constant (age-independent) hazard term.
+    scale : float
+        Scale parameter.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Makeham(shape=1.5, makeham=0.3, scale=2)
+    >>> round(float(X.mean()), 4)
+    0.8099
+    >>> X.draw()  # doctest: +SKIP
+    0.71
+    """
+
+    def __init__(self, shape, makeham, scale=1.0):
+        """Initialize a Makeham distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape`` or ``scale`` is not a positive number, or
+            ``makeham`` is not a non-negative number.
+        """
+        _validate(
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+            (
+                not isinstance(makeham, numbers.Real) or makeham < 0,
+                "makeham must be a non-negative number",
+            ),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.shape = shape
+        self.makeham = makeham
+        self.scale = scale
+        # The custom generator's shapes are c (Gompertz shape) and lam (the
+        # constant term); scale is applied by the framework as for Gompertz.
+        params = {"c": shape, "lam": makeham, "scale": scale}
+        super().__init__(params, _makeham, False)
+        # Highest-density window: trims the right tail, like Gompertz.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 class Laplace(Distribution):
     """Probability space for a Laplace (double exponential) distribution.
 
