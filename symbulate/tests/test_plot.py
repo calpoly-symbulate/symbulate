@@ -2971,12 +2971,39 @@ class TestDistributionPlotContinuous(PlotTestCase):
 class TestDistributionPlotDiscrete(PlotTestCase):
     """Distribution.plot() for discrete named distributions."""
 
-    def test_binomial_has_both_scatter_and_line(self):
-        """Discrete distributions are drawn as scatter points + connecting line."""
+    def test_binomial_pmf_is_smooth_markerless_line(self):
+        """Discrete distributions draw a smooth, marker-free curve through
+        the pmf values -- one Line2D, no scatter/marker collections."""
         Binomial(n=10, p=0.4).plot()
         ax = plt.gca()
-        self.assertGreater(len(ax.lines), 0)
-        self.assertGreater(len(ax.collections), 0)
+        self.assertEqual(len(ax.lines), 1)
+        self.assertEqual(len(ax.collections), 0)
+
+    def test_pmf_curve_is_smoothly_interpolated(self):
+        """The pmf line is a fine-grained spline, not a dot-to-dot polyline:
+        far more points than the handful of integer support values."""
+        Poisson(lam=4).plot()
+        (line,) = plt.gca().get_lines()
+        self.assertGreater(len(line.get_xdata()), 100)
+        self.assertEqual(line.get_marker(), "None")
+
+    def test_discrete_plot_does_not_force_spine_to_zero(self):
+        """Distribution.plot() no longer pins the bottom spine at y=0, so a
+        distribution centered far from zero keeps a normal axis spine."""
+        Binomial(n=200, p=0.5).plot()  # centered ~100, far from 0
+        self.assertNotEqual(plt.gca().spines["bottom"].get_position(), "zero")
+
+    def test_true_pmf_overlays_impulse_as_markerless_reference_curve(self):
+        """Overlaying a discrete distribution on an impulse plot adds a
+        marker-free reference line labeled 'True Distribution', no dots."""
+        from matplotlib.collections import PathCollection
+
+        RV(Poisson(5)).sim(500).plot(type="impulse")
+        Poisson(5).plot()
+        ax = plt.gca()
+        self.assertFalse(any(isinstance(c, PathCollection) for c in ax.collections))
+        labels = [t.get_text() for t in ax.get_legend().get_texts()]
+        self.assertIn("True Distribution", labels)
 
     def test_binomial_xlim_covers_full_support(self):
         """Support of Binomial(10, p) is {0, …, 10}."""
@@ -2997,12 +3024,12 @@ class TestDistributionPlotDiscrete(PlotTestCase):
         self.assertLessEqual(plt.gca().get_xlim()[0], 1.0)
 
     def test_pmf_values_are_non_negative(self):
-        """All scatter point y-values (PMF) must be >= 0."""
+        """The pmf curve's y-values must all be >= 0 (the spline is clipped
+        at zero so the tails can't dip negative)."""
         Poisson(lam=4).plot()
-        for coll in plt.gca().collections:
-            offsets = coll.get_offsets()
-            if len(offsets):
-                self.assertTrue(np.all(offsets[:, 1] >= 0))
+        (line,) = plt.gca().get_lines()
+        ys = np.asarray(line.get_ydata())
+        self.assertTrue(np.all(ys >= 0))
 
     def test_multivariate_normal_plot_raises(self):
         """MultivariateNormal.plot() raises (not yet implemented)."""

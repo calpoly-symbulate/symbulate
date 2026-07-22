@@ -2132,7 +2132,10 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_default_type_is_pdf(self):
         plt.figure()
         p = Binomial(10, 0.5).plot()  # type defaults to "pdf"
-        self.assertEqual(len(p.ax.collections), 1)  # pmf draws scatter dots
+        # The pmf is a smooth, marker-free curve (a single Line2D), not
+        # scatter dots -- so no collections, exactly one line.
+        self.assertEqual(len(p.ax.collections), 0)
+        self.assertEqual(len(p.ax.get_lines()), 1)
 
     # --- xlim="zoom" x-window is reused unchanged for the CDF ---
 
@@ -2295,7 +2298,8 @@ class TestDistributionShade(unittest.TestCase):
         d.plot()
         n_before = len(plt.gca().collections)
         d.shade(le=2)
-        # one impulse collection added; the pmf scatter is untouched
+        # shade adds exactly one impulse collection; the already-drawn pmf
+        # curve (a Line2D, not a collection) is left untouched
         self.assertEqual(len(plt.gca().collections), n_before + 1)
 
     # --- shade under a cdf uses the cdf, and fills for the step case ---

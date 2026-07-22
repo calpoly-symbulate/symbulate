@@ -550,6 +550,28 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: `Distribution.plot()` Discrete Rendering (True-Distribution Curve)
+
+**Status:** Implemented (in `distributions.py`)
+
+**Decision**
+> A discrete distribution's `.plot()` (its pmf) is now drawn as a **smooth, marker-free curve** — no dots at all — by wiring up the previously-unused `overlay_true_distribution()` helper in `plot.py` as the discrete rendering path. `Distribution.plot()`'s discrete branch calls `overlay_true_distribution(self.pmf, ax, xlim=(int(xs[0]), int(xs[-1])), color=color, alpha=alpha, **kwargs)`, so the pmf reads as a rounded reference curve (cubic spline through the pmf values, clipped at zero) the way a density curve reads over a histogram — styled from the named `TRUE_DIST_LINEWIDTH` / `TRUE_DIST_LINESTYLE` (solid) constants rather than the old hardcoded `ax.scatter(..., s=40)` plus a bare solid polyline.
+>
+> Three coupled sub-decisions (from the finding #16 task prompt), as resolved:
+> - **Line style — smooth spline, not dashed dot-to-dot.** Chosen deliberately by the team over the dashed-straight-segment alternative. (Caveat accepted: a smooth discrete pmf reads similarly to a continuous pdf; that was weighed and accepted.)
+> - **Markers — none, in every case.** The prompt allowed "unfilled/open markers (or no markers)"; we took *no markers*. Because there are zero dots standalone *and* overlaid, the "filled vs. unfilled" question and its "tie it to an explicit flag vs. auto-detect overlay context" sub-question are **moot** — there is nothing to fill and no context to detect. No new `.plot()` kwarg was added (consistent with cosmetic controls being reserved for a future `.customize()`).
+> - **`ax.spines["bottom"].set_position("zero")` removed.** It was unique to `Distribution.plot()` among the value-plots and could visibly misplace the axis spine for a distribution centered far from 0 (e.g. `Binomial(200, 0.5)`); removed so the spine matches every other plot type.
+>
+> `overlay_true_distribution()` is **kept** (not retired) and is now actually called — the literal "wire it up" reading of the prompt. It continues to auto-label its curve `"True Distribution"` and refresh the legend, so overlaying `Poisson(5).plot()` on a simulated impulse plot yields a clean two-entry legend ("Variable 1" + "True Distribution").
+
+**Rationale**
+> Finding #16 flagged that the discrete rendering used hardcoded values disconnected from the named per-plot-type constants, drew a solid straight dot-to-dot polyline that could be mistaken for something continuous, and carried a unique spine tweak — while a better-styled `overlay_true_distribution()` sat unused. Wiring that function up as the discrete path resolves all of it at once with a single implementation (no duplicated pmf-drawing logic). The "no dots at all" and "smooth curve" choices were made by the team during implementation.
+
+**Alternatives Considered**
+> Dashed straight dot-to-dot segments (keeps a discreteness cue now that there are no dots) — considered and explicitly rejected in favor of the smooth curve. Filled-standalone / unfilled-overlay markers toggled by an explicit flag or `prob=` (the prompt's default suggestion) — moot once "no markers at all" was chosen. Auto-detecting overlay context to switch marker fill — also moot for the same reason. Extracting the spline into a shared helper and deleting `overlay_true_distribution()` (cleaner, avoids a second copy) — rejected in favor of literally wiring up the existing function per the prompt.
+
+---
+
 ## Open Decisions
 
 The following questions must be resolved before or during Phase 2.
@@ -573,3 +595,4 @@ The following questions must be resolved before or during Phase 2.
 - [ ] Overlay "+color" stacking: discrete groups use the categorical (Okabe-Ito) palette — should continuous groupings use a gradient instead, and if so how does that interact with the sequential (viridis) palette already reserved for magnitude encodings?
 - [x] Discrete-axis tick label crowding: `make_tile` upgraded to Option B (real-value cell positions for whole-number data, matplotlib's own locator) — see "Discrete-Axis Tick Label Thinning (2D Plots)". `make_segmented_rug/density/hist/box` and `make_violin` remain on the original Option A (rank-index + thinning); extending real-value positioning to them is still open
 - [ ] Marginal-panel axis mismatch: a tile main panel and its marginal panel don't share a coordinate system — `make_tile`'s discrete axis is now real-valued for whole-number data, which should make this easier to resolve (matplotlib's `sharex`/`sharey` could line the panels up), but the marginal-panel wiring in `results.py` hasn't been touched, so this is not yet fixed
+- [x] `Distribution.plot()` discrete rendering (finding #16): resolved — discrete pmf now drawn as a smooth, marker-free curve by wiring up `overlay_true_distribution()`; named `TRUE_DIST_*` constants replace the hardcoded `s=40`; the unique `set_position("zero")` spine tweak removed. See "Decision: `Distribution.plot()` Discrete Rendering (True-Distribution Curve)"
