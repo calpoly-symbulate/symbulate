@@ -1996,6 +1996,72 @@ class Weibull(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class Logistic(Distribution):
+    """Probability space for a logistic distribution.
+
+    A continuous distribution on all real numbers, symmetric and
+    bell-shaped like the normal but with heavier tails. Its cumulative
+    distribution function is the logistic (S-shaped) function
+    ``1 / (1 + exp(-(x - loc) / scale))`` -- the same curve used as the
+    link function in logistic regression, which is why this distribution
+    underlies that model.
+
+    Parameters
+    ----------
+    loc : float, optional
+        Location parameter (the center, which is also the mean and
+        median). Default is 0.
+    scale : float, optional
+        Scale parameter (controls the spread). Must be a positive number.
+        Default is 1.
+
+    Attributes
+    ----------
+    loc : float
+        Location parameter (the center of the distribution).
+    scale : float
+        Scale parameter (controls the spread).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Logistic(loc=0, scale=1)
+    >>> float(X.mean())
+    0.0
+    >>> float(X.cdf(0))
+    0.5
+    >>> float(X.pdf(0))
+    0.25
+    >>> X.draw()  # doctest: +SKIP
+    -0.83
+    """
+
+    def __init__(self, loc=0, scale=1):
+        """Initialize a logistic distribution.
+
+        Raises
+        ------
+        Exception
+            If ``loc`` is not a number, or ``scale`` is not a positive
+            number.
+        """
+        _validate(
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.loc = loc
+        self.scale = scale
+
+        params = {"loc": loc, "scale": scale}
+        # Symmetric and unbounded on both sides, so the base equal-tailed
+        # ppf(.001, .999) window is already centered and appropriate -- no
+        # HDI trim (that is for one-sided skew like Gamma/Weibull).
+        super().__init__(params, stats.logistic, False)
+
+
 ## Multivariate Distributions
 
 

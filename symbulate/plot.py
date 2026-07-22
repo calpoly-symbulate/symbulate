@@ -568,8 +568,8 @@ class DistributionPlot(SymbulatePlot):
 
         Fills the region of the distribution that satisfies the given
         inequalities, under the curve this plot drew -- the probability
-        mass/density function (``type="pdf"``) or the cumulative
-        distribution function (``type="cdf"``). Chain it onto ``plot``::
+        mass/density function (``cdf=False``) or the cumulative
+        distribution function (``cdf=True``). Chain it onto ``plot``::
 
             Normal(0, 1).plot().shade(lt=-1.96)
 
