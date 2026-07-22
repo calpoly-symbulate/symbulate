@@ -9,7 +9,6 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.stats import gaussian_kde
-from scipy.interpolate import make_interp_spline
 
 # Apply the package style: Okabe-Ito categorical palette (sky blue
 # first), viridis sequential colormap, and the shared figure/spine/grid
@@ -123,13 +122,12 @@ IMPULSE_LEGEND_LOC = "upper right"
 # straddles each value symmetrically instead of overlapping.
 IMPULSE_SERIES_OFFSET = 0.35
 
-# True-distribution overlay: a smooth curve through the exact pmf/pdf
-# values with no markers, so it reads as a reference curve (like a
-# density curve over a histogram) rather than another simulated series.
+# Discrete Distribution.plot() (pmf) rendering: a filled dot at each pmf
+# value plus a dashed dot-to-dot connecting line -- dashed so it can't be
+# mistaken for a continuous curve (a pmf has no value between integers).
+TRUE_DIST_MARKER_SIZE = 40
 TRUE_DIST_LINEWIDTH = 1.8
-TRUE_DIST_LINESTYLE = "-"
-TRUE_DIST_CURVE_POINTS = 600
-TRUE_DIST_LABEL_DEFAULT = "True Distribution"
+TRUE_DIST_LINESTYLE = "--"
 
 # Histogram (1D): solid bars with thin white edges so adjacent bars
 # stay visually distinct. Alpha per DECISIONS.md Visual Style Guide
@@ -2377,95 +2375,6 @@ def make_impulse(
     )
     _refresh_legend(ax)
     return xs, freqs
-
-
-def overlay_true_distribution(pmf, ax, xlim=None, color=None, label=None, **kwargs):
-    """Overlay a discrete distribution's true pmf on an impulse plot.
-
-    Draws a smooth, marker-free curve through the exact pmf values
-    (cubic spline interpolation, clipped at zero so the tails can't
-    dip negative), so the true answer reads as a reference curve over
-    the simulated stems, the way a density curve reads over a
-    histogram.
-
-    Meant to be called after ``make_impulse()`` on the same axes --
-    e.g. ``overlay_true_distribution(Poisson(5).pmf, ax)`` layered on
-    top of ``RV(Poisson(5)).sim(1000).plot(type="impulse")``. ``pmf``
-    accepts the ``.pdf`` / ``.pmf`` callable already exposed on
-    distribution objects in ``symbulate/distributions.py`` (the two
-    are aliases of each other for discrete distributions).
-
-    Parameters
-    ----------
-    pmf : callable
-        Vectorized function mapping an array of integers to
-        probabilities, e.g. a ``Distribution`` object's ``.pmf``.
-    ax : matplotlib.axes.Axes
-        The axes to draw on -- typically the axes an impulse plot was
-        already drawn on, so the two layers share a scale.
-    xlim : tuple of int, optional
-        Inclusive ``(min, max)`` range of integer values to evaluate
-        the pmf at. Defaults to the current axes' x-limits, rounded
-        outward to the nearest integers.
-    color : color, optional
-        Color for the curve, from ``get_next_color(ax)``. Defaults to
-        the next color in the cycle if not given, matching the other
-        plot helpers.
-    label : str, optional
-        Name for this series in the legend. Defaults to
-        "True Distribution".
-    **kwargs
-        Additional keyword arguments passed to
-        ``matplotlib.axes.Axes.plot``.
-
-    Returns
-    -------
-    tuple
-        The ``(xs, ys)`` integer values and exact pmf heights the
-        smooth curve passes through.
-
-    Examples
-    --------
-    >>> import matplotlib.pyplot as plt
-    >>> from scipy.stats import poisson
-    >>> ax = plt.gca()
-    >>> overlay_true_distribution(lambda xs: poisson.pmf(xs, 5), ax)  # doctest: +SKIP
-    """
-    if xlim is None:
-        xlower, xupper = ax.get_xlim()
-        xlim = (int(np.floor(xlower)), int(np.ceil(xupper)))
-    if color is None:
-        color = get_next_color(ax)
-    if label is None:
-        label = TRUE_DIST_LABEL_DEFAULT
-
-    xs = np.arange(xlim[0], xlim[1] + 1)
-    ys = np.asarray(pmf(xs), dtype=float)
-
-    # Smooth curve through the pmf values instead of dot-to-dot
-    # segments. A cubic spline gives the roundest curve through the
-    # peaks; any small dips below zero it introduces in the tails are
-    # clipped away, since probabilities can't be negative.
-    if len(xs) >= 2:
-        curve_xs = np.linspace(xs[0], xs[-1], TRUE_DIST_CURVE_POINTS)
-        spline_degree = min(3, len(xs) - 1)
-        curve_ys = make_interp_spline(xs, ys, k=spline_degree)(curve_xs)
-        curve_ys = np.clip(curve_ys, 0, None)
-    else:
-        curve_xs, curve_ys = xs, ys
-
-    ax.plot(
-        curve_xs,
-        curve_ys,
-        linestyle=TRUE_DIST_LINESTYLE,
-        linewidth=TRUE_DIST_LINEWIDTH,
-        color=color,
-        label=label,
-        zorder=4,
-        **kwargs,
-    )
-    _refresh_legend(ax)
-    return xs, ys
 
 
 def make_hist(

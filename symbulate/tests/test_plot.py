@@ -2866,21 +2866,25 @@ class TestDistributionPlotContinuous(PlotTestCase):
 class TestDistributionPlotDiscrete(PlotTestCase):
     """Distribution.plot() for discrete named distributions."""
 
-    def test_binomial_pmf_is_smooth_markerless_line(self):
-        """Discrete distributions draw a smooth, marker-free curve through
-        the pmf values -- one Line2D, no scatter/marker collections."""
+    def test_binomial_pmf_is_dots_plus_dashed_line(self):
+        """Discrete distributions draw a filled dot at each pmf value plus a
+        dashed connecting line -- one Line2D (dashed) and one scatter
+        collection (the dots)."""
         Binomial(n=10, p=0.4).plot()
         ax = plt.gca()
         self.assertEqual(len(ax.lines), 1)
-        self.assertEqual(len(ax.collections), 0)
+        self.assertEqual(len(ax.collections), 1)
+        self.assertIn(ax.lines[-1].get_linestyle(), ("--", "dashed"))
 
-    def test_pmf_curve_is_smoothly_interpolated(self):
-        """The pmf line is a fine-grained spline, not a dot-to-dot polyline:
-        far more points than the handful of integer support values."""
+    def test_pmf_line_is_dashed_dot_to_dot(self):
+        """The pmf connecting line is a straight dot-to-dot polyline (one
+        point per integer value), dashed -- not a fine-grained spline."""
         Poisson(lam=4).plot()
-        (line,) = plt.gca().get_lines()
-        self.assertGreater(len(line.get_xdata()), 100)
-        self.assertEqual(line.get_marker(), "None")
+        ax = plt.gca()
+        (line,) = ax.get_lines()
+        # one point per integer in the support, not a 100+-point spline
+        self.assertLess(len(line.get_xdata()), 40)
+        self.assertIn(line.get_linestyle(), ("--", "dashed"))
 
     def test_discrete_plot_does_not_force_spine_to_zero(self):
         """Distribution.plot() no longer pins the bottom spine at y=0, so a
@@ -2888,17 +2892,16 @@ class TestDistributionPlotDiscrete(PlotTestCase):
         Binomial(n=200, p=0.5).plot()  # centered ~100, far from 0
         self.assertNotEqual(plt.gca().spines["bottom"].get_position(), "zero")
 
-    def test_true_pmf_overlays_impulse_as_markerless_reference_curve(self):
-        """Overlaying a discrete distribution on an impulse plot adds a
-        marker-free reference line labeled 'True Distribution', no dots."""
+    def test_true_pmf_overlays_impulse_with_dots_and_dashed_line(self):
+        """Overlaying a discrete distribution on an impulse plot adds its
+        pmf dots (a scatter collection) and a dashed connecting line."""
         from matplotlib.collections import PathCollection
 
         RV(Poisson(5)).sim(500).plot(type="impulse")
         Poisson(5).plot()
         ax = plt.gca()
-        self.assertFalse(any(isinstance(c, PathCollection) for c in ax.collections))
-        labels = [t.get_text() for t in ax.get_legend().get_texts()]
-        self.assertIn("True Distribution", labels)
+        self.assertTrue(any(isinstance(c, PathCollection) for c in ax.collections))
+        self.assertIn(ax.lines[-1].get_linestyle(), ("--", "dashed"))
 
     def test_binomial_xlim_covers_full_support(self):
         """Support of Binomial(10, p) is {0, …, 10}."""
@@ -2919,8 +2922,7 @@ class TestDistributionPlotDiscrete(PlotTestCase):
         self.assertLessEqual(plt.gca().get_xlim()[0], 1.0)
 
     def test_pmf_values_are_non_negative(self):
-        """The pmf curve's y-values must all be >= 0 (the spline is clipped
-        at zero so the tails can't dip negative)."""
+        """The pmf line's y-values (the probabilities) must all be >= 0."""
         Poisson(lam=4).plot()
         (line,) = plt.gca().get_lines()
         ys = np.asarray(line.get_ydata())
