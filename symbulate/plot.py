@@ -9,7 +9,6 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.stats import gaussian_kde
-from scipy.interpolate import make_interp_spline
 
 # Apply the package style: Okabe-Ito categorical palette (sky blue
 # first), viridis sequential colormap, and the shared figure/spine/grid
@@ -140,13 +139,12 @@ IMPULSE_LEGEND_LOC = "upper right"
 # straddles each value symmetrically instead of overlapping.
 IMPULSE_SERIES_OFFSET = 0.35
 
-# True-distribution overlay: a smooth curve through the exact pmf/pdf
-# values with no markers, so it reads as a reference curve (like a
-# density curve over a histogram) rather than another simulated series.
+# Discrete Distribution.plot() (pmf) rendering: a filled dot at each pmf
+# value plus a dashed dot-to-dot connecting line -- dashed so it can't be
+# mistaken for a continuous curve (a pmf has no value between integers).
+TRUE_DIST_MARKER_SIZE = 40
 TRUE_DIST_LINEWIDTH = 1.8
-TRUE_DIST_LINESTYLE = "-"
-TRUE_DIST_CURVE_POINTS = 600
-TRUE_DIST_LABEL_DEFAULT = "True Distribution"
+TRUE_DIST_LINESTYLE = "--"
 
 # Histogram (1D): solid bars with thin white edges so adjacent bars
 # stay visually distinct. Alpha per DECISIONS.md Visual Style Guide
@@ -156,16 +154,6 @@ HIST_EDGECOLOR = "white"
 HIST_EDGEWIDTH = 0.8
 HIST_DEFAULT_BINS = 30
 HIST_LEGEND_LOC = "upper right"
-# Outlier/skew-aware auto-binning (used only when bins=None -- an explicit
-# bins= still gets the flat equal-width scheme below, unchanged). Provisional,
-# like B_1D/K_2D -- expect to tune after visual inspection. HIST_DEFAULT_BINS
-# above keeps exactly one role now: the flat bin count for the degenerate
-# fallback (near-constant data), not "the" bin count for skewed data -- see
-# DECISIONS.md, "classify_data Thresholds (Budget Model)".
-HIST_OUTLIER_FENCE_MULT = 3.0  # Tukey "far out" IQR fence
-HIST_MIN_AUTO_BINS = 8
-HIST_MAX_AUTO_BINS = 60
-HIST_OVERFLOW_HATCH = "//"
 
 # Bar chart (1D categorical / discrete): one bar per distinct value, no
 # binning -- the categorical counterpart of the histogram. Same solid
@@ -222,7 +210,7 @@ ECDF_ALPHA = 1.0
 ECDF_LEGEND_LOC = "upper left"
 
 # Shaded probability region under a theoretical curve
-# (Distribution.shade()). This is an annotation drawn on top of an
+# (DistributionPlot.shade()). This is an annotation drawn on top of an
 # already-plotted pmf/pdf/cdf to highlight a tail or interval, so it uses
 # a fixed neutral grey rather than a color-cycle hue -- it is not a new
 # data series and should not read as one. The translucent fill lets the
@@ -544,6 +532,178 @@ class SymbulatePlot:
     def __repr__(self):
         """Return an empty string so Jupyter prints nothing."""
         return ""
+
+
+class DistributionPlot(SymbulatePlot):
+    """Plot object returned by ``Distribution.plot()``.
+
+    Extends :class:`SymbulatePlot` with :meth:`shade`, so a region under a
+    theoretical curve is filled by chaining off the plot that drew it::
+
+        Normal(0, 1).plot().shade(lt=-1.96)
+
+    Shading is reachable only through a ``.plot()`` call -- there is no
+    standalone ``shade`` on a distribution -- so a curve always exists
+    before a region is shaded.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes the curve was drawn on.
+    dist : Distribution
+        The distribution whose curve was drawn; read for its ``pdf``,
+        ``cdf``, and ``discrete`` flag.
+    plot_type : {"pdf", "cdf"}
+        Which function was drawn, so :meth:`shade` fills under the
+        matching one.
+    """
+
+    def __init__(self, ax, dist, plot_type):
+        super().__init__(ax)
+        self.dist = dist
+        self.plot_type = plot_type
+
+    def shade(self, lt=None, le=None, gt=None, ge=None):
+        """Shade a tail or interval region under the plotted curve.
+
+        Fills the region of the distribution that satisfies the given
+        inequalities, under the curve this plot drew -- the probability
+        mass/density function (``type="pdf"``) or the cumulative
+        distribution function (``type="cdf"``). Chain it onto ``plot``::
+
+            Normal(0, 1).plot().shade(lt=-1.96)
+
+        The bounds read as probability inequalities, mirroring the
+        mathematical notation students already use:
+
+        - ``lt`` / ``le`` -- the region ``X < lt`` / ``X <= le`` (an upper
+          bound; a left tail when used alone).
+        - ``gt`` / ``ge`` -- the region ``X > gt`` / ``X >= ge`` (a lower
+          bound; a right tail when used alone).
+
+        Combine a lower and an upper bound for an interval, e.g.
+        ``gt=3, le=7`` shades ``3 < X <= 7``. With no bounds, the whole
+        visible curve is shaded. For discrete distributions the strict
+        (``lt``/``gt``) versus inclusive (``le``/``ge``) choice genuinely
+        matters -- ``lt=3`` excludes the mass at ``3`` while ``le=3``
+        includes it.
+
+        The shaded region spans the currently displayed x-axis, so it
+        honors whatever window :meth:`Distribution.plot` produced -- the
+        full default range, an ``xlim="zoom"`` window, an explicit
+        ``xlim=(low, high)``, or the union created by overlaying onto
+        existing axes.
+
+        Parameters
+        ----------
+        lt : float, optional
+            Shade where ``X < lt`` (strict upper bound). Cannot be combined
+            with ``le``.
+        le : float, optional
+            Shade where ``X <= le`` (inclusive upper bound). Cannot be
+            combined with ``lt``.
+        gt : float, optional
+            Shade where ``X > gt`` (strict lower bound). Cannot be combined
+            with ``ge``.
+        ge : float, optional
+            Shade where ``X >= ge`` (inclusive lower bound). Cannot be
+            combined with ``gt``.
+
+        Returns
+        -------
+        DistributionPlot
+            This plot, so further regions can be shaded by chaining.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Normal(0, 1).plot().shade(lt=-1.96)  # left tail  # doctest: +SKIP
+        >>> Poisson(3).plot().shade(ge=5)  # right tail  # doctest: +SKIP
+        >>> Binomial(10, 0.5).plot().shade(gt=3, le=7)  # interval  # doctest: +SKIP
+        """
+        if lt is not None and le is not None:
+            raise ValueError(
+                "Pass either `lt` or `le`, not both -- they are two ways to "
+                "set the same upper bound. Use `lt` for a strict bound "
+                "(X < value) or `le` for an inclusive one (X <= value)."
+            )
+        if gt is not None and ge is not None:
+            raise ValueError(
+                "Pass either `gt` or `ge`, not both -- they are two ways to "
+                "set the same lower bound. Use `gt` for a strict bound "
+                "(X > value) or `ge` for an inclusive one (X >= value)."
+            )
+
+        ax = self.ax
+        dist = self.dist
+        # Bound the region by the *displayed* window, so an open tail extends
+        # to the visible edge of whatever plot() drew (xlim="zoom", a custom
+        # xlim, or an overlay union), not the distribution's static self.xlim.
+        axlo, axhi = ax.get_xlim()
+
+        lo, hi = axlo, axhi
+        lo_user = hi_user = False
+        lo_incl = hi_incl = False
+        if lt is not None:
+            hi, hi_user, hi_incl = lt, True, False
+        elif le is not None:
+            hi, hi_user, hi_incl = le, True, True
+        if gt is not None:
+            lo, lo_user, lo_incl = gt, True, False
+        elif ge is not None:
+            lo, lo_user, lo_incl = ge, True, True
+
+        if hi <= lo:
+            raise ValueError(
+                "The lower bound (`gt`/`ge`) must be strictly less than the "
+                f"upper bound (`lt`/`le`). You asked to shade between {lo} and "
+                f"{hi}, which is empty. Check the order of your bounds."
+            )
+
+        # Keep the drawing inside the visible window so the shading lines up
+        # with the plotted curve even if a bound sits past the axis edge.
+        lo_draw, hi_draw = max(lo, axlo), min(hi, axhi)
+
+        # Evaluate the same function that is on screen: the cdf if a cdf was
+        # plotted, otherwise the pmf/pdf.
+        plotted_cdf = self.plot_type == "cdf"
+        curve = dist.cdf if plotted_cdf else dist.pdf
+
+        if not dist.discrete:
+            # Continuous pdf or cdf: a smooth filled region under the curve.
+            x_shaded = np.linspace(lo_draw, hi_draw, 200)
+            ax.fill_between(
+                x_shaded, curve(x_shaded), alpha=SHADE_ALPHA, color=SHADE_COLOR
+            )
+            # Draw a vertical edge at an inclusive, in-view user bound so the
+            # closed end of the interval reads as a hard boundary.
+            if hi_incl and axlo <= hi <= axhi:
+                ax.vlines(hi, 0, curve(hi), color=SHADE_COLOR, alpha=SHADE_ALPHA)
+            if lo_incl and axlo <= lo <= axhi:
+                ax.vlines(lo, 0, curve(lo), color=SHADE_COLOR, alpha=SHADE_ALPHA)
+        elif not plotted_cdf:
+            # Discrete pmf: an impulse at each integer value in the region,
+            # matching how plot() draws the mass function itself.
+            values = np.arange(int(np.floor(axlo)), int(np.floor(axhi)) + 1)
+            values = values[(values >= axlo) & (values <= axhi)]
+            if hi_user:
+                values = values[values <= hi] if hi_incl else values[values < hi]
+            if lo_user:
+                values = values[values >= lo] if lo_incl else values[values > lo]
+            ax.vlines(values, 0, curve(values), color=SHADE_COLOR, alpha=SHADE_ALPHA)
+        else:
+            # Discrete cdf: fill under the right-continuous step function,
+            # matching plot()'s "steps-post" rendering of a discrete cdf.
+            x_shaded = np.linspace(lo_draw, hi_draw, 200)
+            ax.fill_between(
+                x_shaded,
+                dist.cdf(x_shaded),
+                step="post",
+                alpha=SHADE_ALPHA,
+                color=SHADE_COLOR,
+            )
+
+        return self
 
 
 def configure_axes(
@@ -2265,95 +2425,6 @@ def make_impulse(
     return xs, freqs
 
 
-def overlay_true_distribution(pmf, ax, xlim=None, color=None, label=None, **kwargs):
-    """Overlay a discrete distribution's true pmf on an impulse plot.
-
-    Draws a smooth, marker-free curve through the exact pmf values
-    (cubic spline interpolation, clipped at zero so the tails can't
-    dip negative), so the true answer reads as a reference curve over
-    the simulated stems, the way a density curve reads over a
-    histogram.
-
-    Meant to be called after ``make_impulse()`` on the same axes --
-    e.g. ``overlay_true_distribution(Poisson(5).pmf, ax)`` layered on
-    top of ``RV(Poisson(5)).sim(1000).plot(type="impulse")``. ``pmf``
-    accepts the ``.pdf`` / ``.pmf`` callable already exposed on
-    distribution objects in ``symbulate/distributions.py`` (the two
-    are aliases of each other for discrete distributions).
-
-    Parameters
-    ----------
-    pmf : callable
-        Vectorized function mapping an array of integers to
-        probabilities, e.g. a ``Distribution`` object's ``.pmf``.
-    ax : matplotlib.axes.Axes
-        The axes to draw on -- typically the axes an impulse plot was
-        already drawn on, so the two layers share a scale.
-    xlim : tuple of int, optional
-        Inclusive ``(min, max)`` range of integer values to evaluate
-        the pmf at. Defaults to the current axes' x-limits, rounded
-        outward to the nearest integers.
-    color : color, optional
-        Color for the curve, from ``get_next_color(ax)``. Defaults to
-        the next color in the cycle if not given, matching the other
-        plot helpers.
-    label : str, optional
-        Name for this series in the legend. Defaults to
-        "True Distribution".
-    **kwargs
-        Additional keyword arguments passed to
-        ``matplotlib.axes.Axes.plot``.
-
-    Returns
-    -------
-    tuple
-        The ``(xs, ys)`` integer values and exact pmf heights the
-        smooth curve passes through.
-
-    Examples
-    --------
-    >>> import matplotlib.pyplot as plt
-    >>> from scipy.stats import poisson
-    >>> ax = plt.gca()
-    >>> overlay_true_distribution(lambda xs: poisson.pmf(xs, 5), ax)  # doctest: +SKIP
-    """
-    if xlim is None:
-        xlower, xupper = ax.get_xlim()
-        xlim = (int(np.floor(xlower)), int(np.ceil(xupper)))
-    if color is None:
-        color = get_next_color(ax)
-    if label is None:
-        label = TRUE_DIST_LABEL_DEFAULT
-
-    xs = np.arange(xlim[0], xlim[1] + 1)
-    ys = np.asarray(pmf(xs), dtype=float)
-
-    # Smooth curve through the pmf values instead of dot-to-dot
-    # segments. A cubic spline gives the roundest curve through the
-    # peaks; any small dips below zero it introduces in the tails are
-    # clipped away, since probabilities can't be negative.
-    if len(xs) >= 2:
-        curve_xs = np.linspace(xs[0], xs[-1], TRUE_DIST_CURVE_POINTS)
-        spline_degree = min(3, len(xs) - 1)
-        curve_ys = make_interp_spline(xs, ys, k=spline_degree)(curve_xs)
-        curve_ys = np.clip(curve_ys, 0, None)
-    else:
-        curve_xs, curve_ys = xs, ys
-
-    ax.plot(
-        curve_xs,
-        curve_ys,
-        linestyle=TRUE_DIST_LINESTYLE,
-        linewidth=TRUE_DIST_LINEWIDTH,
-        color=color,
-        label=label,
-        zorder=4,
-        **kwargs,
-    )
-    _refresh_legend(ax)
-    return xs, ys
-
-
 def make_hist(
     values,
     ax,
@@ -2396,15 +2467,8 @@ def make_hist(
     bins : int, array-like, or None, optional
         Number of equal-width bins, or a precomputed array of bin
         edges (passed straight through to ``ax.hist``, which accepts
-        either). If None (default), bins are chosen automatically: a
-        Freedman-Diaconis bin width paired with a Tukey "far out" IQR
-        fence (``HIST_OUTLIER_FENCE_MULT``) clips the visible range so
-        heavy-tailed data (e.g. an F or Gamma distribution) doesn't get
-        its real shape crushed into one or two bins spanning the raw
-        min-max. Values beyond the fence are folded into one hatched
-        overflow bar per affected side rather than dropped, so the
-        histogram still integrates to 1 (or the true total count) over
-        every simulated value, not just the ones inside the fence.
+        either). Defaults to ``HIST_DEFAULT_BINS`` (30) equal-width
+        bins spanning the full range of ``values``.
     normalize : bool, default True
         If True, bar areas sum to 1 so the histogram approximates a
         density and can be compared to a pdf curve. If False, bar
@@ -2428,10 +2492,8 @@ def make_hist(
     Returns
     -------
     tuple
-        A ``(counts, bin_edges, patches)`` tuple, matching ``ax.hist``'s
-        shape. ``bin_edges`` covers only the in-fence bins; any overflow
-        bars are separate ``Rectangle`` patches appended to the end of
-        ``patches`` (also included in the axes' own ``ax.patches``).
+        The ``(counts, bin_edges, patches)`` tuple from ``ax.hist``, so
+        the caller can inspect or further style the bars.
 
     Examples
     --------
@@ -2457,24 +2519,18 @@ def make_hist(
     if label is None:
         label = f"Variable {n_prior_hists + 1}"
     ax._hist_count = n_prior_hists + 1
-    if bins is not None:
-        # An explicit bin count or edges array always wins outright --
-        # no outlier clipping, the flat equal-width scheme exactly as
-        # before this function had outlier awareness.
-        histogram = ax.hist(
-            values,
-            bins=bins,
-            density=normalize,
-            color=color,
-            alpha=alpha,
-            label=label,
-            orientation=orientation,
-            **kwargs,
-        )
-    else:
-        histogram = _make_auto_hist(
-            values, ax, color, alpha, label, normalize, orientation, **kwargs
-        )
+    if bins is None:
+        bins = HIST_DEFAULT_BINS
+    histogram = ax.hist(
+        values,
+        bins=bins,
+        density=normalize,
+        color=color,
+        alpha=alpha,
+        label=label,
+        orientation=orientation,
+        **kwargs,
+    )
     value_label, freq_label = "Value", "Density" if normalize else "Count"
     if orientation == "vertical":
         ax.set_xlabel(value_label)
@@ -2488,114 +2544,6 @@ def make_hist(
     if ax._hist_count > 1:
         ax.legend(loc=HIST_LEGEND_LOC)
     return histogram
-
-
-def _make_auto_hist(values, ax, color, alpha, label, normalize, orientation, **kwargs):
-    """Outlier/skew-aware default binning for ``make_hist`` (``bins=None`` only).
-
-    Pairs a Freedman-Diaconis bin width with a Tukey "far out" fence
-    (``[Q1 - HIST_OUTLIER_FENCE_MULT * IQR, Q3 + HIST_OUTLIER_FENCE_MULT *
-    IQR]``, clipped to the data's own range) so a heavy-tailed sample --
-    e.g. ``RV(F(5,4)).sim(10000)``, whose max is roughly 10x its 99th
-    percentile -- doesn't have its real shape crushed into one or two
-    bins spanning the raw min-max. Values beyond the fence are folded
-    into one hatched overflow bar per affected side (drawn with
-    ``ax.bar``, not binned by ``ax.hist``) rather than silently dropped,
-    so a normalized histogram's bars -- regular and overflow together --
-    still integrate to 1 over the *true* sample size, not just the
-    in-fence count. Degenerate spread (``IQR == 0`` or ``n < 2``, where a
-    bin-width estimate isn't meaningful) falls back to the flat
-    ``HIST_DEFAULT_BINS`` equal-width scheme with no clipping.
-
-    Scaling is done via ``ax.hist``'s own ``weights=`` parameter, not a
-    post-hoc rescale of the returned bar patches -- ``histtype="step"``/
-    ``"stepfilled"`` return a single ``StepPatch`` per histogram rather
-    than one ``Rectangle`` per bin, so a per-bar ``patch.set_height()``
-    loop isn't available (and wouldn't be, in general, for every
-    ``histtype`` ``ax.hist`` supports). Passing every other argument
-    through to ``ax.hist`` unchanged keeps arbitrary ``**kwargs``
-    (``histtype``, ``edgecolor``, ...) working exactly as they do today.
-
-    Returns
-    -------
-    tuple
-        ``(counts, bin_edges, patches)`` -- ``counts``/``bin_edges``
-        describe only the in-fence bins; ``patches`` includes any
-        overflow bars appended at the end.
-    """
-    values = np.asarray(values)
-    n = len(values)
-    data_min, data_max = values.min(), values.max()
-    q1, q3 = np.percentile(values, [25, 75])
-    iqr = q3 - q1
-
-    if iqr == 0 or n < 2:
-        # Degenerate spread: no meaningful bin-width estimate. Widen a
-        # zero-width range (all-identical values) the same way
-        # setup_tile_axis does for its continuous axis, so linspace
-        # doesn't hand back a zero bin_width later.
-        low, high = data_min, data_max
-        if low == high:
-            low, high = low - 0.5, high + 0.5
-        edges = np.linspace(low, high, HIST_DEFAULT_BINS + 1)
-        fence_low, fence_high = data_min, data_max
-    else:
-        fence_low = max(data_min, q1 - HIST_OUTLIER_FENCE_MULT * iqr)
-        fence_high = min(data_max, q3 + HIST_OUTLIER_FENCE_MULT * iqr)
-        if fence_high <= fence_low:
-            # Defensive fallback -- shouldn't occur given iqr > 0 above,
-            # but never hand linspace a zero-or-negative-width range.
-            fence_low, fence_high = data_min, data_max
-        fd_width = 2 * iqr * n ** (-1 / 3)
-        n_bins = int(
-            np.clip(
-                round((fence_high - fence_low) / fd_width),
-                HIST_MIN_AUTO_BINS,
-                HIST_MAX_AUTO_BINS,
-            )
-        )
-        edges = np.linspace(fence_low, fence_high, n_bins + 1)
-
-    bin_width = edges[1] - edges[0]
-    scale = 1 / (n * bin_width) if normalize else 1.0
-    weights = kwargs.pop("weights", np.ones(n)) * scale
-
-    counts, edges, patches = ax.hist(
-        values,
-        bins=edges,
-        weights=weights,
-        density=False,
-        color=color,
-        alpha=alpha,
-        label=label,
-        orientation=orientation,
-        **kwargs,
-    )
-
-    overflow_patches = []
-    overflow_bar_fn = ax.bar if orientation == "vertical" else ax.barh
-    for values_outside, edge, side in (
-        (values < fence_low, edges[0], "low"),
-        (values > fence_high, edges[-1], "high"),
-    ):
-        overflow_count = int(values_outside.sum())
-        if overflow_count == 0:
-            continue
-        pos = edge - bin_width if side == "low" else edge
-        overflow_bar = overflow_bar_fn(
-            pos,
-            overflow_count * scale,
-            bin_width,
-            align="edge",
-            color=color,
-            alpha=alpha,
-            hatch=HIST_OVERFLOW_HATCH,
-            edgecolor=kwargs.get("edgecolor", HIST_EDGECOLOR),
-            linewidth=kwargs.get("linewidth", HIST_EDGEWIDTH),
-        )[0]
-        overflow_patches.append(overflow_bar)
-
-    return counts, edges, list(patches) + overflow_patches
 
 
 def _bar_categories(series):

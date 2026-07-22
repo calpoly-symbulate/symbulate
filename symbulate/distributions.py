@@ -9,11 +9,13 @@ import matplotlib.pyplot as plt
 from .probability_space import ProbabilitySpace
 from .plot import (
     get_next_color,
-    SymbulatePlot,
+    DistributionPlot,
     ECDF_LINEWIDTH,
     SHADE_COLOR,
     SHADE_ALPHA,
-    overlay_true_distribution,
+    TRUE_DIST_MARKER_SIZE,
+    TRUE_DIST_LINEWIDTH,
+    TRUE_DIST_LINESTYLE,
 )
 from .result import Scalar, Vector, InfiniteVector
 
@@ -246,14 +248,6 @@ class Distribution(ProbabilitySpace):
 
         self.xlim = (scipy.ppf(0.001, **self.params), scipy.ppf(0.999, **self.params))
 
-        # Track the most recent plot() so shade() can draw under whatever
-        # curve is currently on screen (pmf/pdf or cdf) and auto-plot first
-        # if nothing has been drawn yet. `plotted` is the flag ported from
-        # the reference fork; `_last_plot_type` remembers which function was
-        # drawn so shade() evaluates the matching one.
-        self.plotted = False
-        self._last_plot_type = None
-
     def draw(self):
         """Draw a single random sample from the distribution.
 
@@ -365,17 +359,23 @@ class Distribution(ProbabilitySpace):
             return _discrete_hdi_xlim(self, int(np.floor(low)), coverage)
         return _continuous_hdi_xlim(self, low, coverage)
 
-    def plot(self, xlim=None, alpha=None, ax=None, type="pdf", **kwargs):
+    def plot(self, xlim=None, alpha=None, ax=None, cdf=False, **kwargs):
         """Plot the probability function or the cumulative distribution function.
 
-        With ``type="pdf"`` (the default), plots the probability density
-        function (continuous distributions, a smooth curve) or probability
-        mass function (discrete distributions, dots at each integer value).
-        With ``type="cdf"``, plots the cumulative distribution function
-        ``P(X <= x)`` instead: a smooth curve for continuous distributions,
-        and a right-continuous step function (no markers) for discrete ones.
+        By default (``cdf=False``), plots the probability density function
+        (continuous distributions, a smooth curve) or probability mass
+        function (discrete distributions, a smooth curve through the
+        masses). With ``cdf=True``, plots the cumulative distribution
+        function ``P(X <= x)`` instead: a smooth curve for continuous
+        distributions, and a right-continuous step function (no markers)
+        for discrete ones.
 
-        The plot is titled by what it shows: "CDF Plot" for ``type="cdf"``,
+        Unlike a plot of simulated *data* -- which can be drawn many ways
+        (dots, rug, impulse, histogram, density, ecdf, ...) and so takes a
+        ``type=`` argument -- a theoretical distribution has only these two
+        curves to show, so the choice is the single boolean ``cdf``.
+
+        The plot is titled by what it shows: "CDF Plot" for ``cdf=True``,
         and for the default view "PDF Plot" (continuous) or "PMF Plot"
         (discrete).
 
@@ -393,11 +393,11 @@ class Distribution(ProbabilitySpace):
             support. Handy for lining a theoretical curve up against
             simulated data, which occupies only the high-probability part
             of the support.
-        type : {"pdf", "cdf"}, default "pdf"
-            Which function to plot. ``"pdf"`` draws the probability
-            density/mass function; ``"cdf"`` draws the cumulative
-            distribution function ``P(X <= x)``. (For discrete
-            distributions ``"pdf"`` draws the probability mass function.)
+        cdf : bool, default False
+            Which function to plot. ``False`` (the default) draws the
+            probability density/mass function; ``True`` draws the
+            cumulative distribution function ``P(X <= x)``. (For discrete
+            distributions the default draws the probability mass function.)
         alpha : float, optional
             Transparency of the plot, from 0 (invisible) to 1 (opaque).
         ax : matplotlib.axes.Axes, optional
@@ -408,25 +408,32 @@ class Distribution(ProbabilitySpace):
 
         Returns
         -------
-        SymbulatePlot
-            A wrapper around the matplotlib axes the plot was drawn
-            on. Its printed representation is empty, so Jupyter shows
-            only the plot.
+        DistributionPlot
+            A wrapper around the matplotlib axes the plot was drawn on.
+            Its printed representation is empty, so Jupyter shows only the
+            plot. Chain ``.shade(...)`` onto it to fill a region under the
+            curve.
 
         Examples
         --------
         >>> from symbulate import *
         >>> Normal(0, 1).plot()  # doctest: +SKIP
         >>> Binomial(100, 0.5).plot(xlim="zoom")  # tight window, not (0, 100)  # doctest: +SKIP
-        >>> Poisson(3).plot(type="cdf")  # step function  # doctest: +SKIP
-        >>> Normal(0, 1).plot(type="cdf")  # smooth S-curve  # doctest: +SKIP
+        >>> Poisson(3).plot(cdf=True)  # step function  # doctest: +SKIP
+        >>> Normal(0, 1).plot(cdf=True)  # smooth S-curve  # doctest: +SKIP
         """
-        if type not in ("pdf", "cdf"):
+        # A theoretical distribution has only two curves (pdf/pmf vs. cdf),
+        # so it takes a boolean `cdf=`, not the `type=` that selects among the
+        # many ways of drawing simulated data. Catch the old `type=` spelling
+        # (and stray text) so it gives a clear pointer instead of an opaque
+        # matplotlib error after slipping through **kwargs.
+        if "type" in kwargs:
             raise ValueError(
-                "`type` must be 'pdf' (the default) or 'cdf'. You passed "
-                f"type={type!r}. Use type='pdf' to plot the probability "
-                "density/mass function, or type='cdf' to plot the cumulative "
-                "distribution function P(X <= x)."
+                "`Distribution.plot()` does not take a `type=` argument. To "
+                "plot the cumulative distribution function, use `cdf=True`; "
+                "the default (`cdf=False`) plots the pdf/pmf. (`type=` selects "
+                "among the many ways of drawing simulated data; a theoretical "
+                "distribution has only these two curves to show.)"
             )
         # Resolve the x-axis range:
         #   None        -> the distribution's default window (full support
@@ -447,17 +454,21 @@ class Distribution(ProbabilitySpace):
             xlim = self._hdi_window()
 
         # get the x and y values. The x-window is chosen the same way for
-        # both plot types (it only picks x-values); `type` decides which
+        # both plot types (it only picks x-values); `cdf` decides which
         # function is evaluated there.
         if self.discrete:
             xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
         else:
             xs = np.linspace(xlim[0], xlim[1], 200)
-        ys = self.cdf(xs) if type == "cdf" else self.pdf(xs)
+        ys = self.cdf(xs) if cdf else self.pdf(xs)
 
-        # determine limits for y-axes based on y values
-        ymin, ymax = ys[np.isfinite(ys)].min(), ys[np.isfinite(ys)].max()
-        ylim = min(0, ymin - 0.05 * (ymax - ymin)), 1.05 * ymax
+        # determine limits for y-axes based on y values. Anchor the baseline
+        # at exactly 0 so the curve sits right on the x-axis: a pdf/pmf height
+        # is never negative and only reads correctly against a zero baseline,
+        # and a CDF likewise runs from 0 upward. Padding below 0 would float
+        # the curve off the axis and misrepresent it.
+        ymax = ys[np.isfinite(ys)].max()
+        ylim = 0, 1.05 * ymax
 
         # get the current axis if they exist and no axis is specified
         fig = plt.gcf()
@@ -486,7 +497,7 @@ class Distribution(ProbabilitySpace):
         # get next color in cycle
         color = get_next_color(ax)
 
-        if type == "cdf":
+        if cdf:
             # Match make_ecdf's step-function styling so a theoretical CDF
             # reads as the same kind of curve as its empirical counterpart
             # (type="ecdf"), which students naturally overlay to compare.
@@ -505,20 +516,22 @@ class Distribution(ProbabilitySpace):
                 ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
         else:
             # pdf/pmf: a smooth curve for continuous distributions. For a
-            # discrete distribution, wire up overlay_true_distribution: a
-            # smooth, marker-free spline through the pmf values (no dots),
-            # styled by the TRUE_DIST_* constants -- so a discrete pmf reads
-            # as a rounded reference curve rather than dots on a straight
-            # polyline. Its own support (xs) frames the curve, not the
-            # possibly-widened shared axis.
+            # discrete distribution, a filled dot at each pmf value plus a
+            # dashed dot-to-dot connecting line -- dashed so the connector
+            # can't be mistaken for a continuous curve (a pmf has no value
+            # between integers). Both are styled from the named TRUE_DIST_*
+            # constants instead of a hardcoded marker size / default line.
             if self.discrete:
-                overlay_true_distribution(
-                    self.pmf,
-                    ax,
-                    xlim=(int(xs[0]), int(xs[-1])),
+                ax.scatter(
+                    xs, ys, s=TRUE_DIST_MARKER_SIZE, color=color, alpha=alpha, **kwargs
+                )
+                ax.plot(
+                    xs,
+                    ys,
                     color=color,
                     alpha=alpha,
-                    **kwargs,
+                    linestyle=TRUE_DIST_LINESTYLE,
+                    linewidth=TRUE_DIST_LINEWIDTH,
                 )
             else:
                 ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
@@ -526,12 +539,29 @@ class Distribution(ProbabilitySpace):
         # Title the plot by what it shows: the cumulative distribution
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
-        if type == "cdf":
+        if cdf:
             ax.set_title("CDF Plot")
         elif self.discrete:
             ax.set_title("PMF Plot")
         else:
             ax.set_title("PDF Plot")
+
+        # Label the axes for context: the x-axis shows the possible values of
+        # the variable, and the y-axis names what its height means for this
+        # plot type. "Value" and "Density" match the value plots in plot.py,
+        # so a theoretical curve reads the same way as its simulated companion.
+        # Only fill labels that aren't already set, so overlaying a curve onto
+        # an existing simulated plot keeps that plot's labels (e.g. a
+        # count-scale histogram's "Count") instead of clobbering them.
+        if not ax.get_xlabel():
+            ax.set_xlabel("Value")
+        if not ax.get_ylabel():
+            if cdf:
+                ax.set_ylabel("Cumulative Probability")
+            elif self.discrete:
+                ax.set_ylabel("Probability")
+            else:
+                ax.set_ylabel("Density")
 
         # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
         # y), but these plots read better with both horizontal and vertical
@@ -539,161 +569,7 @@ class Distribution(ProbabilitySpace):
         # this plot type specifically.
         ax.grid(True, axis="both")
 
-        # Record what was drawn so a following shade() knows which curve it
-        # is shading under (and that a curve exists at all).
-        self.plotted = True
-        self._last_plot_type = type
-
-        return SymbulatePlot(ax)
-
-    def shade(self, lt=None, le=None, gt=None, ge=None):
-        """Shade a tail or interval region under the plotted curve.
-
-        Fills the region of the distribution that satisfies the given
-        inequalities, drawn under whatever curve was most recently plotted
-        -- the probability mass/density function (``type="pdf"``) or the
-        cumulative distribution function (``type="cdf"``). If the
-        distribution has not been plotted yet, its default curve is drawn
-        first, so ``Normal(0, 1).shade(lt=-1.96)`` works on its own.
-
-        The bounds read as probability inequalities, mirroring the
-        mathematical notation students already use:
-
-        - ``lt`` / ``le`` -- the region ``X < lt`` / ``X <= le`` (an upper
-          bound; a left tail when used alone).
-        - ``gt`` / ``ge`` -- the region ``X > gt`` / ``X >= ge`` (a lower
-          bound; a right tail when used alone).
-
-        Combine a lower and an upper bound for an interval, e.g.
-        ``gt=3, le=7`` shades ``3 < X <= 7``. With no bounds, the whole
-        visible curve is shaded. For discrete distributions the strict
-        (``lt``/``gt``) versus inclusive (``le``/``ge``) choice genuinely
-        matters -- ``lt=3`` excludes the mass at ``3`` while ``le=3``
-        includes it.
-
-        The shaded region spans the currently displayed x-axis, so it
-        honors whatever window :meth:`plot` produced -- the full default
-        range, an ``xlim="zoom"`` high-probability window, an explicit
-        ``xlim=(low, high)``, or the union created by overlaying onto
-        existing axes.
-
-        Parameters
-        ----------
-        lt : float, optional
-            Shade where ``X < lt`` (strict upper bound). Cannot be combined
-            with ``le``.
-        le : float, optional
-            Shade where ``X <= le`` (inclusive upper bound). Cannot be
-            combined with ``lt``.
-        gt : float, optional
-            Shade where ``X > gt`` (strict lower bound). Cannot be combined
-            with ``ge``.
-        ge : float, optional
-            Shade where ``X >= ge`` (inclusive lower bound). Cannot be
-            combined with ``gt``.
-
-        Returns
-        -------
-        SymbulatePlot
-            A wrapper around the matplotlib axes the region was drawn on.
-            Its printed representation is empty, so Jupyter shows only the
-            plot.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> Normal(0, 1).shade(lt=-1.96)  # left tail  # doctest: +SKIP
-        >>> Poisson(3).shade(ge=5)  # right tail  # doctest: +SKIP
-        >>> Binomial(10, 0.5).shade(gt=3, le=7)  # an interval  # doctest: +SKIP
-        """
-        if lt is not None and le is not None:
-            raise ValueError(
-                "Pass either `lt` or `le`, not both -- they are two ways to "
-                "set the same upper bound. Use `lt` for a strict bound "
-                "(X < value) or `le` for an inclusive one (X <= value)."
-            )
-        if gt is not None and ge is not None:
-            raise ValueError(
-                "Pass either `gt` or `ge`, not both -- they are two ways to "
-                "set the same lower bound. Use `gt` for a strict bound "
-                "(X > value) or `ge` for an inclusive one (X >= value)."
-            )
-
-        # Draw the default curve first if nothing has been plotted yet, so
-        # shade() works as a one-liner on a fresh distribution.
-        if not self.plotted:
-            self.plot()
-
-        ax = plt.gca()
-        # Bound the region by the *displayed* window, not the distribution's
-        # default self.xlim -- so an open tail extends to the visible edge
-        # of whatever plot() actually drew (xlim="zoom", custom xlim, or
-        # overlay union), which the fork's original version could not do.
-        axlo, axhi = ax.get_xlim()
-
-        lo, hi = axlo, axhi
-        lo_user = hi_user = False
-        lo_incl = hi_incl = False
-        if lt is not None:
-            hi, hi_user, hi_incl = lt, True, False
-        elif le is not None:
-            hi, hi_user, hi_incl = le, True, True
-        if gt is not None:
-            lo, lo_user, lo_incl = gt, True, False
-        elif ge is not None:
-            lo, lo_user, lo_incl = ge, True, True
-
-        if hi <= lo:
-            raise ValueError(
-                "The lower bound (`gt`/`ge`) must be strictly less than the "
-                f"upper bound (`lt`/`le`). You asked to shade between {lo} and "
-                f"{hi}, which is empty. Check the order of your bounds."
-            )
-
-        # Keep the drawing inside the visible window so the shading lines up
-        # with the plotted curve even if a bound sits past the axis edge.
-        lo_draw, hi_draw = max(lo, axlo), min(hi, axhi)
-
-        # Evaluate the same function that is currently on screen: the cdf if
-        # a cdf was the last thing plotted, otherwise the pmf/pdf.
-        plotted_cdf = self._last_plot_type == "cdf"
-        curve = self.cdf if plotted_cdf else self.pdf
-
-        if not self.discrete:
-            # Continuous pdf or cdf: a smooth filled region under the curve.
-            x_shaded = np.linspace(lo_draw, hi_draw, 200)
-            ax.fill_between(
-                x_shaded, curve(x_shaded), alpha=SHADE_ALPHA, color=SHADE_COLOR
-            )
-            # Draw a vertical edge at an inclusive, in-view user bound so the
-            # closed end of the interval reads as a hard boundary.
-            if hi_incl and axlo <= hi <= axhi:
-                ax.vlines(hi, 0, curve(hi), color=SHADE_COLOR, alpha=SHADE_ALPHA)
-            if lo_incl and axlo <= lo <= axhi:
-                ax.vlines(lo, 0, curve(lo), color=SHADE_COLOR, alpha=SHADE_ALPHA)
-        elif not plotted_cdf:
-            # Discrete pmf: an impulse at each integer value in the region,
-            # matching how plot() draws the mass function itself.
-            values = np.arange(int(np.floor(axlo)), int(np.floor(axhi)) + 1)
-            values = values[(values >= axlo) & (values <= axhi)]
-            if hi_user:
-                values = values[values <= hi] if hi_incl else values[values < hi]
-            if lo_user:
-                values = values[values >= lo] if lo_incl else values[values > lo]
-            ax.vlines(values, 0, curve(values), color=SHADE_COLOR, alpha=SHADE_ALPHA)
-        else:
-            # Discrete cdf: fill under the right-continuous step function,
-            # matching plot()'s "steps-post" rendering of a discrete cdf.
-            x_shaded = np.linspace(lo_draw, hi_draw, 200)
-            ax.fill_between(
-                x_shaded,
-                self.cdf(x_shaded),
-                step="post",
-                alpha=SHADE_ALPHA,
-                color=SHADE_COLOR,
-            )
-
-        return SymbulatePlot(ax)
+        return DistributionPlot(ax, self, "cdf" if cdf else "pdf")
 
 
 ## Discrete Distributions

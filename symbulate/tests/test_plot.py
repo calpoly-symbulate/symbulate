@@ -39,7 +39,6 @@ from symbulate import (
     Beta,
     Uniform,
     DiscreteUniform,
-    F,
     MultivariateNormal,
     Multinomial,
     BivariateNormal,
@@ -66,7 +65,6 @@ from symbulate.plot import (
     make_bar,
     BAR_ALPHA,
     make_dotplot,
-    make_hist,
     make_impulse,
     make_violin,
     make_violinplot,
@@ -88,8 +86,6 @@ from symbulate.plot import (
     SAMPLE_PATH_LINEWIDTH,
     TILE_DEFAULT_BINS,
     HIST_DEFAULT_BINS,
-    HIST_MIN_AUTO_BINS,
-    HIST_MAX_AUTO_BINS,
 )
 from symbulate.results import RVResults
 
@@ -363,99 +359,6 @@ class TestPlot1DContinuous(PlotTestCase):
         n_first = len(plt.gca().patches)
         RV(Normal(0, 1)).sim(600).plot()
         self.assertGreater(len(plt.gca().patches), n_first)
-
-
-# ===========================================================================
-# Outlier/skew-aware histogram binning (make_hist, bins=None only)
-# ===========================================================================
-
-
-class TestHistOutlierAwareBinning(PlotTestCase):
-    """RV(F(5,4)).sim(10000) is the motivating case: 99% of mass below ~16,
-    but a max around 100+ from rare heavy-tail draws."""
-
-    def setUp(self):
-        np.random.seed(42)
-        self.skewed = RV(F(5, 4)).sim(10000)
-
-    def test_bulk_is_not_crushed_into_one_or_two_bins(self):
-        """The bars covering the bulk (below the 99th percentile) must show
-        real shape -- several bars with non-trivial height -- rather than
-        the old flat-30-bin behavior, which crushed almost everything into
-        1-2 bins next to a long stretch of empty ones."""
-        self.skewed.plot(type="hist")
-        ax = plt.gca()
-        values = self.skewed.array
-        p99 = np.percentile(values, 99)
-        bulk_bars = [
-            p
-            for p in ax.patches
-            if not p.get_hatch() and p.get_x() + p.get_width() <= p99
-        ]
-        nonzero_bulk_bars = [p for p in bulk_bars if p.get_height() > 0]
-        self.assertGreater(
-            len(nonzero_bulk_bars),
-            10,
-            "Expected the bulk of the F(5,4) distribution to span many "
-            "non-empty bars, not be crushed into 1-2 bins",
-        )
-
-    def test_normalized_auto_binned_area_integrates_to_one(self):
-        """Regular bars plus any overflow bar must still integrate to ~1,
-        using the true sample size -- not just the in-fence count."""
-        self.skewed.plot(type="hist", normalize=True)
-        self.assertAlmostEqual(histogram_area(plt.gca()), 1.0, places=5)
-
-    def test_raw_counts_sum_to_true_n(self):
-        """normalize=False: bars plus overflow must sum to the true n."""
-        self.skewed.plot(type="hist", normalize=False)
-        total = sum(p.get_height() for p in plt.gca().patches)
-        self.assertAlmostEqual(total, len(self.skewed), places=5)
-
-    def test_overflow_bar_is_hatched(self):
-        """At least one bar (the tail overflow) should be visually
-        distinguished from the regular bins via a hatch pattern."""
-        self.skewed.plot(type="hist")
-        hatched = [p for p in plt.gca().patches if p.get_hatch()]
-        self.assertGreaterEqual(len(hatched), 1)
-
-    def test_symmetric_data_has_no_overflow_bar(self):
-        """A well-behaved symmetric distribution shouldn't trigger the
-        outlier fence."""
-        RV(Normal(0, 1)).sim(600).plot(type="hist")
-        hatched = [p for p in plt.gca().patches if p.get_hatch()]
-        self.assertEqual(len(hatched), 0)
-
-    def test_bin_count_is_bounded(self):
-        """The auto-chosen in-fence bin count stays within the documented
-        [HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS] range."""
-        values = np.asarray(list(self.skewed.results))
-        _, edges, _ = make_hist(values, plt.gca(), get_next_color(plt.gca()))
-        n_bins = len(edges) - 1
-        self.assertGreaterEqual(n_bins, HIST_MIN_AUTO_BINS)
-        self.assertLessEqual(n_bins, HIST_MAX_AUTO_BINS)
-
-    def test_explicit_bins_bypasses_outlier_clipping(self):
-        """An explicit bins= must still span the full raw range, exactly
-        like before outlier-aware binning existed -- no fence, no
-        overflow bar."""
-        self.skewed.plot(type="hist", bins=HIST_DEFAULT_BINS)
-        ax = plt.gca()
-        hatched = [p for p in ax.patches if p.get_hatch()]
-        self.assertEqual(len(hatched), 0)
-        rightmost_edge = max(p.get_x() + p.get_width() for p in ax.patches)
-        self.assertAlmostEqual(rightmost_edge, self.skewed.array.max(), places=5)
-
-    def test_histtype_step_still_works_on_auto_binned_path(self):
-        """histtype='step' must not crash on the new auto-binning path
-        (StepPatch, not one Rectangle per bin, has no set_height())."""
-        self.skewed.plot(type="hist", histtype="step")
-        self.assertGreater(len(plt.gca().patches) + len(plt.gca().lines), 0)
-
-    def test_user_edgecolor_still_forwards_on_auto_binned_path(self):
-        self.skewed.plot(type="hist", edgecolor="red")
-        edge = plt.gca().patches[0].get_edgecolor()
-        self.assertAlmostEqual(edge[0], 1.0, places=2)
 
 
 # ===========================================================================
@@ -2489,12 +2392,8 @@ class TestMarginalPanelRebuild(PlotTestCase):
         plt.close(fig)
 
         marg_edges = sorted(
-            {round(p.get_x(), 6) for p in ax_marg_x.patches if not p.get_hatch()}
-            | {
-                round(p.get_x() + p.get_width(), 6)
-                for p in ax_marg_x.patches
-                if not p.get_hatch()
-            }
+            {round(p.get_x(), 6) for p in ax_marg_x.patches}
+            | {round(p.get_x() + p.get_width(), 6) for p in ax_marg_x.patches}
         )
         expected_edges = sorted({round(e, 6) for e in xedges})
         self.assertEqual(marg_edges, expected_edges)
@@ -2514,12 +2413,8 @@ class TestMarginalPanelRebuild(PlotTestCase):
         _, _, _, _, expected_edges_arr = setup_tile_axis(sims.array[:, 1], False, 17)
 
         marg_edges = sorted(
-            {round(p.get_y(), 6) for p in ax_marg_y.patches if not p.get_hatch()}
-            | {
-                round(p.get_y() + p.get_height(), 6)
-                for p in ax_marg_y.patches
-                if not p.get_hatch()
-            }
+            {round(p.get_y(), 6) for p in ax_marg_y.patches}
+            | {round(p.get_y() + p.get_height(), 6) for p in ax_marg_y.patches}
         )
         expected_edges = sorted({round(e, 6) for e in expected_edges_arr})
         self.assertEqual(marg_edges, expected_edges)
@@ -2971,21 +2866,25 @@ class TestDistributionPlotContinuous(PlotTestCase):
 class TestDistributionPlotDiscrete(PlotTestCase):
     """Distribution.plot() for discrete named distributions."""
 
-    def test_binomial_pmf_is_smooth_markerless_line(self):
-        """Discrete distributions draw a smooth, marker-free curve through
-        the pmf values -- one Line2D, no scatter/marker collections."""
+    def test_binomial_pmf_is_dots_plus_dashed_line(self):
+        """Discrete distributions draw a filled dot at each pmf value plus a
+        dashed connecting line -- one Line2D (dashed) and one scatter
+        collection (the dots)."""
         Binomial(n=10, p=0.4).plot()
         ax = plt.gca()
         self.assertEqual(len(ax.lines), 1)
-        self.assertEqual(len(ax.collections), 0)
+        self.assertEqual(len(ax.collections), 1)
+        self.assertIn(ax.lines[-1].get_linestyle(), ("--", "dashed"))
 
-    def test_pmf_curve_is_smoothly_interpolated(self):
-        """The pmf line is a fine-grained spline, not a dot-to-dot polyline:
-        far more points than the handful of integer support values."""
+    def test_pmf_line_is_dashed_dot_to_dot(self):
+        """The pmf connecting line is a straight dot-to-dot polyline (one
+        point per integer value), dashed -- not a fine-grained spline."""
         Poisson(lam=4).plot()
-        (line,) = plt.gca().get_lines()
-        self.assertGreater(len(line.get_xdata()), 100)
-        self.assertEqual(line.get_marker(), "None")
+        ax = plt.gca()
+        (line,) = ax.get_lines()
+        # one point per integer in the support, not a 100+-point spline
+        self.assertLess(len(line.get_xdata()), 40)
+        self.assertIn(line.get_linestyle(), ("--", "dashed"))
 
     def test_discrete_plot_does_not_force_spine_to_zero(self):
         """Distribution.plot() no longer pins the bottom spine at y=0, so a
@@ -2993,17 +2892,16 @@ class TestDistributionPlotDiscrete(PlotTestCase):
         Binomial(n=200, p=0.5).plot()  # centered ~100, far from 0
         self.assertNotEqual(plt.gca().spines["bottom"].get_position(), "zero")
 
-    def test_true_pmf_overlays_impulse_as_markerless_reference_curve(self):
-        """Overlaying a discrete distribution on an impulse plot adds a
-        marker-free reference line labeled 'True Distribution', no dots."""
+    def test_true_pmf_overlays_impulse_with_dots_and_dashed_line(self):
+        """Overlaying a discrete distribution on an impulse plot adds its
+        pmf dots (a scatter collection) and a dashed connecting line."""
         from matplotlib.collections import PathCollection
 
         RV(Poisson(5)).sim(500).plot(type="impulse")
         Poisson(5).plot()
         ax = plt.gca()
-        self.assertFalse(any(isinstance(c, PathCollection) for c in ax.collections))
-        labels = [t.get_text() for t in ax.get_legend().get_texts()]
-        self.assertIn("True Distribution", labels)
+        self.assertTrue(any(isinstance(c, PathCollection) for c in ax.collections))
+        self.assertIn(ax.lines[-1].get_linestyle(), ("--", "dashed"))
 
     def test_binomial_xlim_covers_full_support(self):
         """Support of Binomial(10, p) is {0, …, 10}."""
@@ -3024,8 +2922,7 @@ class TestDistributionPlotDiscrete(PlotTestCase):
         self.assertLessEqual(plt.gca().get_xlim()[0], 1.0)
 
     def test_pmf_values_are_non_negative(self):
-        """The pmf curve's y-values must all be >= 0 (the spline is clipped
-        at zero so the tails can't dip negative)."""
+        """The pmf line's y-values (the probabilities) must all be >= 0."""
         Poisson(lam=4).plot()
         (line,) = plt.gca().get_lines()
         ys = np.asarray(line.get_ydata())

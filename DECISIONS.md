@@ -93,7 +93,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 **Rationale**
 > The budget started from the crowding rationale (the thing that gets crowded is the number of distinct marks/cells, and in 2-D that is judged per axis so a busy axis can bin on its own). We first guessed a smaller 2-D cap than the 1-D budget, then found a cleaner anchor: tie both to the resolution of the continuous fallback — the default histogram bin count (30). A discrete plot then stays discrete exactly while it is no finer than the histogram it would become, which happens to make both budgets the same number, `30`, with a reason behind it rather than a guess. Values remain provisional: the original Task 1A sweep varied `n` at a roughly fixed number of distinct values and never separately swept `k`, so the cutoffs still want a dedicated visual check — which is exactly what `team/discrete_continuous_threshold_tests.ipynb` is for (in particular, whether a `30×30` tile is acceptable or `K_2D` should come down).
 >
-> **Update (outlier-aware histogram binning, below): `B_1D`/`K_2D` are now explicitly decoupled from `HIST_DEFAULT_BINS`'s *typical* value, not just from its name.** `make_hist` no longer always renders `HIST_DEFAULT_BINS` (30) bars — for skewed/heavy-tailed data it now computes a Freedman-Diaconis-informed, Tukey-fence-clipped bin count (`HIST_MIN_AUTO_BINS`-`HIST_MAX_AUTO_BINS`, i.e. 8-60) instead. `B_1D`/`K_2D` were never literally computed *from* `HIST_DEFAULT_BINS` in code (they're independent hardcoded constants that happened to share its value), so no code changed here — but the anchor rationale above ("no finer than the histogram it would become") now refers specifically to `HIST_DEFAULT_BINS`'s narrower remaining role: the flat equal-width fallback for degenerate-spread data (`IQR == 0` or `n < 2`), not "the" bin count a typical continuous histogram renders with. This is intentional, not a loose end: "how many distinct values before a variable reads as discrete" and "how many bins does an already-continuous histogram use" are different questions that only coincidentally shared one constant before outlier-aware binning existed. **Confirmed explicitly (checked every use site, not assumed): `HIST2D_DEFAULT_BINS` (`make_hist2d`'s own `bins=None` fallback) and `TILE_DEFAULT_BINS` (`make_tile`'s) are untouched by this change — both remain flat `= 30` constants, independent of `HIST_DEFAULT_BINS`/`HIST_MIN_AUTO_BINS`/`HIST_MAX_AUTO_BINS` in code, not just in name. Only `make_hist`'s own binning changed; the 2-D mesh helpers' binning is unaffected.**
+> **Update (outlier-aware histogram binning — now moot):** for part of this session, `make_hist` computed a data-dependent bin count for skewed data instead of always rendering `HIST_DEFAULT_BINS` (30) bars (see the two superseded "Outlier/Skew-Aware Histogram Binning" entries below), which raised a real decoupling question — `B_1D`/`K_2D`'s anchor rationale ("no finer than the histogram it would become") would have referred to a bin count that no longer matched what a skewed histogram actually rendered. That feature has since been fully reverted ("Outlier/Skew-Aware Histogram Binning — Reverted to Flat 30 Bins"): `make_hist`'s `bins=None` default is flat `HIST_DEFAULT_BINS` (30) again, unconditionally, exactly as this section originally assumed. The decoupling concern no longer applies — `HIST_DEFAULT_BINS` is once again "the" bin count for every histogram `make_hist` draws, not just a degenerate-case fallback.
 
 **Alternatives Considered**
 > - **One flat global `N_UNIQUE_THRESHOLD`** (the original plan, shipped as `= 40`) — replaced; it had no principled anchor and applied the same count to 1-D marks and 2-D grids without distinguishing them.
@@ -132,7 +132,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: Outlier/Skew-Aware Histogram Binning
 
-**Status:** Implemented (in `plot.py`'s `make_hist`); threshold constants provisional, same status as `B_1D`/`K_2D`.
+**Status:** Superseded — see "Outlier/Skew-Aware Histogram Binning — Revised (No Overflow Bin)" below. Kept here per this file's "never remove an entry" policy; the fence + overflow-bar design described below was implemented, tested, then reverted in the same work session once the team clarified they didn't want a separate overflow bin at all.
 
 **Decision**
 > `make_hist`'s automatic binning (`bins=None` only — an explicit `bins=`, int or edges array, is untouched and keeps the flat equal-width scheme exactly as before) now pairs a Freedman-Diaconis bin width with a Tukey "far out" IQR fence (`[Q1 - HIST_OUTLIER_FENCE_MULT * IQR, Q3 + HIST_OUTLIER_FENCE_MULT * IQR]`, clipped to the data's own range, `HIST_OUTLIER_FENCE_MULT = 3.0`) instead of always spanning the raw min-max in `HIST_DEFAULT_BINS` (30) equal-width bins. Bin count within the fence is clamped to `[HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS]` = `[8, 60]`. Values beyond the fence are folded into one hatched **overflow bar** per affected side (not dropped) — the histogram's bars, regular and overflow together, still integrate to 1 (or the true total count) over every simulated value. Degenerate spread (`IQR == 0` or `n < 2`) falls back to the flat `HIST_DEFAULT_BINS`-bin scheme, unchanged.
@@ -141,7 +141,37 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 > `RV(F(5,4)).sim(10000)` has 99% of its mass below ~16 but a max of ~164 (one rare heavy-tail draw) — the old flat 30-bin-over-raw-range histogram crushed the real shape into 1-2 bins. Plain Freedman-Diaconis bin width alone isn't a fix either: computed over the full raw range it implies ~935 bins, outlier-robust in width but not in range (hundreds of empty bins past the bulk). Pairing FD width with a range clip fixes both. An overflow bar (rather than silently dropping out-of-fence data, or extending the last bin) was chosen over an optional log-scale axis: log-scale is a bigger conceptual jump for the package's target audience (general users, minimal stats/programming background, per `CLAUDE.md`'s "User Philosophy") and doesn't match a linear pmf/pdf reading elsewhere in the package. The overflow bar is visually distinguished with a hatch pattern precisely so it doesn't read as "just another equal-width bin."
 
 **Alternatives Considered**
-> Plain Freedman-Diaconis over the raw range — rejected, ~935 bins for the motivating example. Percentile-based range clip (e.g. 1st-99th) instead of a Tukey IQR fence — considered; the IQR fence was preferred for self-adapting to the data's actual spread/skew rather than a fixed percentile, and for matching a convention (Tukey's boxplot outlier fence) students commonly already see elsewhere in an intro stats course. Optional log-scale x-axis mode — rejected for this audience (see Rationale); may be worth revisiting as an opt-in for more advanced use later. Silently dropping/clipping out-of-fence data with no overflow indicator — rejected, would misrepresent the true total probability/count.
+> Plain Freedman-Diaconis over the raw range — rejected at the time, ~935 bins for the motivating example (this alternative is what the revision below actually adopts, once the overflow-bar approach itself was reconsidered). Percentile-based range clip (e.g. 1st-99th) instead of a Tukey IQR fence — considered; the IQR fence was preferred for self-adapting to the data's actual spread/skew rather than a fixed percentile, and for matching a convention (Tukey's boxplot outlier fence) students commonly already see elsewhere in an intro stats course. Optional log-scale x-axis mode — rejected for this audience (see Rationale); may be worth revisiting as an opt-in for more advanced use later. Silently dropping/clipping out-of-fence data with no overflow indicator — rejected, would misrepresent the true total probability/count.
+
+---
+
+## Decision: Outlier/Skew-Aware Histogram Binning — Revised (No Overflow Bin)
+
+**Status:** Superseded — see "Outlier/Skew-Aware Histogram Binning — Reverted to Flat 30 Bins" below. Kept here per this file's "never remove an entry" policy; this full-range-adaptive-bin-count design was implemented, tested, merged, and then reverted once the team decided against dynamic bin counts for `make_hist` altogether.
+
+**Decision**
+> Supersedes the fence + overflow-bar design above. `make_hist`'s automatic binning (`bins=None` only — an explicit `bins=`, int or edges array, is still untouched and keeps the flat equal-width scheme exactly as before) now computes a Freedman-Diaconis bin width over the **full, unclipped range** of the data — no fence, no range clipping, no overflow bin. The result is simply more equal-width bins than the flat `HIST_DEFAULT_BINS` (30) default, clamped to `[HIST_MIN_AUTO_BINS, HIST_MAX_AUTO_BINS]` = `[8, 2000]` (raised from `[8, 60]` specifically so the motivating example isn't clipped below its natural count). Degenerate spread (`IQR == 0`, zero range, or fewer than 2 values) falls back to the flat `HIST_DEFAULT_BINS`-bin scheme, unchanged. This also simplified the implementation substantially: `ax.hist` is called once, directly, with either the user's `bins=` or the auto-computed integer bin count — no manual edge construction, no `weights=` rescaling trick, no post-hoc patch styling, and correspondingly no more special-casing needed for `histtype` variants that don't expose one `Rectangle` patch per bin.
+
+**Rationale**
+> Team feedback after using the overflow-bar version: the number of bins should adapt to help with skew/outliers, using plain equal-length bins over the true range — not a separate "outlier bin." `RV(F(5,4)).sim(10000)` under this revision computes roughly 1600-1800 bins (varies by sample), which resolves the bulk of the distribution's shape far better than the old flat 30 while still showing the true full range with no visual discontinuity at a fence boundary and no bar that reads differently from the rest. The accepted tradeoff (discussed explicitly, not overlooked): for a distribution this skewed, a large fraction of the chart's horizontal width is a near-empty stretch out to the max outlier value, since equal-width bins over the full range are inherently proportional to that range regardless of bin count. That tradeoff was judged preferable to a second visual convention (the overflow bar) for representing the tail.
+
+**Alternatives Considered**
+> The fence + overflow-bar design (see the superseded entry above) — implemented and tested first, then reverted once the team clarified the overflow bin itself wasn't wanted, only the bin-count adaptation. Keeping the overflow-bar design's `HIST_MAX_AUTO_BINS = 60` cap while removing only the fence — rejected: with no range clipping, a 60-bin cap over F(5,4)'s full ~250-unit range would give ~4-unit-wide bins, still crushing the bulk (which spans roughly 0-16) into 3-4 bins; the cap had to rise substantially (to 2000) to actually deliver on "more bins resolves the bulk" once the range is no longer clipped.
+
+---
+
+## Decision: Outlier/Skew-Aware Histogram Binning — Reverted to Flat 30 Bins
+
+**Status:** Implemented (in `plot.py`'s `make_hist`). This is the current, final state — task 5 (outlier/skew-aware histogram binning) is no longer pursued at all.
+
+**Decision**
+> Supersedes both entries above. `make_hist`'s `bins=None` default is once again simply `HIST_DEFAULT_BINS` (30) equal-width bins spanning the full raw range of the data — exactly the pre-task-5 behavior. `_auto_hist_bin_count` (the Freedman-Diaconis full-range bin-count function) and the `HIST_MIN_AUTO_BINS`/`HIST_MAX_AUTO_BINS` constants are removed entirely, not just unused. An explicit `bins=` (int or edges array) is unaffected either way — it always won outright under every prior design too.
+
+**Rationale**
+> After using the no-overflow-bin, full-range-adaptive-bin-count version in the demo notebook, the team decided the dynamic bin count itself wasn't wanted for task 5 — only a flat, predictable default, matching every other plot type's binning (`HIST2D_DEFAULT_BINS`, `TILE_DEFAULT_BINS`, both still flat 30). Explicit, twice-confirmed instruction: "we want to go back to how the bining was, default at 30 as we had, not outlier bin" → "Yes, fully revert to flat 30 bins always." Task 5 is treated as closed with no adaptive-binning feature shipped; a future skew-aware design, if the team revisits it, should start fresh rather than resume from either superseded entry above.
+
+**Alternatives Considered**
+> Keeping the adaptive bin count but only for histograms above some skewness threshold (so well-behaved data stays at 30 and only heavy-tailed data adapts) — not pursued; the team's final direction was a flat, unconditional default rather than a conditional one. See the two superseded entries above for the previously-implemented alternatives (fence + overflow bar; full-range adaptive count) and why each was tried and abandoned in turn.
 
 ---
 
@@ -582,20 +612,62 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 **Status:** Implemented (in `distributions.py`)
 
 **Decision**
-> A discrete distribution's `.plot()` (its pmf) is now drawn as a **smooth, marker-free curve** — no dots at all — by wiring up the previously-unused `overlay_true_distribution()` helper in `plot.py` as the discrete rendering path. `Distribution.plot()`'s discrete branch calls `overlay_true_distribution(self.pmf, ax, xlim=(int(xs[0]), int(xs[-1])), color=color, alpha=alpha, **kwargs)`, so the pmf reads as a rounded reference curve (cubic spline through the pmf values, clipped at zero) the way a density curve reads over a histogram — styled from the named `TRUE_DIST_LINEWIDTH` / `TRUE_DIST_LINESTYLE` (solid) constants rather than the old hardcoded `ax.scatter(..., s=40)` plus a bare solid polyline.
+> A discrete distribution's `.plot()` (its pmf) is drawn as a **filled dot at each pmf value plus a dashed dot-to-dot connecting line** — dots always, standalone and overlaid alike. Both marks are styled from named constants in `plot.py` (`TRUE_DIST_MARKER_SIZE = 40`, `TRUE_DIST_LINESTYLE = "--"`, `TRUE_DIST_LINEWIDTH = 1.8`) instead of the old hardcoded `ax.scatter(..., s=40)` plus a bare solid polyline. Continuous distributions are unchanged (a smooth solid curve over the 200-point grid).
 >
 > Three coupled sub-decisions (from the finding #16 task prompt), as resolved:
-> - **Line style — smooth spline, not dashed dot-to-dot.** Chosen deliberately by the team over the dashed-straight-segment alternative. (Caveat accepted: a smooth discrete pmf reads similarly to a continuous pdf; that was weighed and accepted.)
-> - **Markers — none, in every case.** The prompt allowed "unfilled/open markers (or no markers)"; we took *no markers*. Because there are zero dots standalone *and* overlaid, the "filled vs. unfilled" question and its "tie it to an explicit flag vs. auto-detect overlay context" sub-question are **moot** — there is nothing to fill and no context to detect. No new `.plot()` kwarg was added (consistent with cosmetic controls being reserved for a future `.customize()`).
+> - **Line style — dashed dot-to-dot, not the smooth spline.** This is the prompt's "keep dot-to-dot but switch it to a dashed/dotted line" branch. Dashed so the connector can't be mistaken for a continuous curve (a pmf has no value between integers). Chosen after first trying the smooth-spline option and reverting.
+> - **Markers — filled dots, always.** The pmf points are kept (filled circles) in every case, standalone and overlaid. This intentionally overrides the prompt's suggested "unfilled/open markers (or no markers) when overlaying ... tie[d] to an explicit flag": the team chose dots-always for simplicity, accepting that overlaying the true pmf on an impulse plot places the true-pmf dots on that figure. No new `.plot()` kwarg was added (consistent with cosmetic controls being reserved for a future `.customize()`).
 > - **`ax.spines["bottom"].set_position("zero")` removed.** It was unique to `Distribution.plot()` among the value-plots and could visibly misplace the axis spine for a distribution centered far from 0 (e.g. `Binomial(200, 0.5)`); removed so the spine matches every other plot type.
 >
-> `overlay_true_distribution()` is **kept** (not retired) and is now actually called — the literal "wire it up" reading of the prompt. It continues to auto-label its curve `"True Distribution"` and refresh the legend, so overlaying `Poisson(5).plot()` on a simulated impulse plot yields a clean two-entry legend ("Variable 1" + "True Distribution").
+> Because the dot-to-dot path was chosen (not the spline), the previously-unused `overlay_true_distribution()` helper is **retired** (deleted from `plot.py`), along with its spline-only constants (`TRUE_DIST_CURVE_POINTS`, `TRUE_DIST_LABEL_DEFAULT`) and the `make_interp_spline` import — the "deliberately retire" half of the prompt's "wire up (or deliberately retire)", so the codebase doesn't keep a second, unreachable answer to "how do we draw a true pmf."
 
 **Rationale**
-> Finding #16 flagged that the discrete rendering used hardcoded values disconnected from the named per-plot-type constants, drew a solid straight dot-to-dot polyline that could be mistaken for something continuous, and carried a unique spine tweak — while a better-styled `overlay_true_distribution()` sat unused. Wiring that function up as the discrete path resolves all of it at once with a single implementation (no duplicated pmf-drawing logic). The "no dots at all" and "smooth curve" choices were made by the team during implementation.
+> Finding #16 flagged that the discrete rendering used hardcoded values disconnected from the named per-plot-type constants, drew a solid straight dot-to-dot polyline that could be mistaken for something continuous, and carried a unique spine tweak — while an unused `overlay_true_distribution()` spline helper sat alongside it. Dashing the dot-to-dot line fixes the "looks continuous" problem while keeping the discrete dots students expect; naming the constants fixes the hardcoding; retiring the spline helper removes the dead duplicate; dropping the spine tweak matches the other plots. The dashed-line and dots-always choices were made by the team during implementation (after weighing a smooth-markerless alternative and rejecting it).
 
 **Alternatives Considered**
-> Dashed straight dot-to-dot segments (keeps a discreteness cue now that there are no dots) — considered and explicitly rejected in favor of the smooth curve. Filled-standalone / unfilled-overlay markers toggled by an explicit flag or `prob=` (the prompt's default suggestion) — moot once "no markers at all" was chosen. Auto-detecting overlay context to switch marker fill — also moot for the same reason. Extracting the spline into a shared helper and deleting `overlay_true_distribution()` (cleaner, avoids a second copy) — rejected in favor of literally wiring up the existing function per the prompt.
+> Smooth, marker-free spline via `overlay_true_distribution()` (the other branch of the prompt) — implemented first, then reverted: a smooth discrete pmf reads too much like a continuous pdf, and dropping the dots lost the discreteness cue. Filled-standalone / unfilled-or-no-markers-when-overlaid, toggled by an explicit flag (the prompt's default suggestion) — rejected in favor of dots-always for simplicity; revisit if overlay occlusion becomes a problem. Keeping `overlay_true_distribution()` in place but unused — rejected as dead code once the dot-to-dot path was chosen.
+
+---
+
+## Decision: `Distribution.plot()` CDF Selection — `cdf=True` Boolean (not `type=`)
+
+**Status:** Finalized (implemented in `distributions.py`)
+
+**Decision**
+> `Distribution.plot()` selects between the two curves a theoretical distribution can show with a boolean **`cdf=`** (default `cdf=False` → pdf/pmf; `cdf=True` → cumulative distribution function). It does **not** use a `type=` argument. An old `type=` call (e.g. the former `type="cdf"`) raises a student-friendly `ValueError` pointing at `cdf=True`, rather than slipping through `**kwargs` into an opaque matplotlib error.
+
+**Rationale**
+> A `type=` vocabulary fits simulated *data*, which can be drawn many ways (dots, rug, impulse, histogram, density, ecdf, ...) — that is why `RVResults.plot()` keeps `type=`. A theoretical distribution has only two curves to show (pdf/pmf vs. cdf), so a single boolean is the honest fit; overloading a many-way selector onto a two-way choice would misrepresent the API. This reverses an earlier draft recommendation (in `team/symbulate-graphics-revisions.md`) that preferred `type="cdf"` for naming symmetry with `RVResults.plot(type="ecdf")`; that symmetry was judged not worth the mismatch. (The earlier recommendation was Claude's, not the team's — corrected here.)
+
+**Alternatives Considered**
+> `type="cdf"`/`type="pdf"` string selection (for symmetry with `RVResults.plot(type="ecdf")`) — rejected; overloads a data-plot vocabulary onto a binary choice. The fork's plain `cdf=True` boolean — adopted.
+
+---
+
+## Decision: `Distribution.plot()` Tight Window — `xlim="zoom"` (not `prob=`/`hdi=`)
+
+**Status:** Finalized (implemented in `distributions.py`)
+
+**Decision**
+> The tight / high-probability plotting window is exposed as a third accepted value on the existing `xlim` parameter — **`xlim="zoom"`** — not as a separate `prob=` (or `hdi=`) parameter. `xlim` accepts `None` (default window: full support when bounded, a probability cut where unbounded), `(lo, hi)` (exact range), or `"zoom"` (tightest window holding most of the probability, applied even to a bounded distribution). Coverage is a **fixed internal default** (`_PLOT_COVERAGE`); there is no custom-coverage float form.
+
+**Rationale**
+> Folding the tight window into `xlim` keeps a single parameter in charge of the x-window instead of two parameters that both affect it. `"zoom"` reads sensibly regardless of whether the curve is a pdf, pmf, or cdf (unlike `hdi=`, whose "highest density interval" is a pdf/pmf-specific notion). It directly solves the overlay-wastes-space problem — a theoretical curve forcing the shared axis out to full support (`Binomial(100, 0.5).plot()` → 0–100) when the simulated data occupies only the high-probability region — via an explicit opt-in rather than silently guessing overlay context.
+
+**Alternatives Considered**
+> A tri-state `prob=None/True/float` parameter (matching the `suggest=None/True/False` pattern), with a float for custom coverage — proposed in earlier drafts, rejected in favor of `xlim="zoom"`; the custom-coverage float was dropped with it. `hdi=` — rejected as semantically pdf/pmf-specific once CDF plotting existed.
+
+---
+
+## Decision: `Distribution.plot()` Axis Baseline and Labels
+
+**Status:** Finalized (implemented in `distributions.py`)
+
+**Decision**
+> Every `Distribution.plot()` curve (pdf, pmf, and cdf) anchors its y-axis baseline at exactly **0**, so the curve sits on the x-axis rather than floating above a padded baseline. Axes are labeled by context: x-axis `"Value"` (matching the simulated value plots in `plot.py`); y-axis `"Density"` (pdf), `"Probability"` (pmf), or `"Cumulative Probability"` (cdf). Labels are only set when the axis is not already labeled, so overlaying a theoretical curve onto a simulated plot preserves that plot's own labels (e.g. a count-scale histogram's `"Count"`).
+
+**Rationale**
+> A density/mass height reads correctly only against a zero baseline; padding below 0 floated the curve off the axis. `"Probability"` (pmf) is deliberately distinct from `"Density"` (pdf): a pmf height *is* a probability in [0, 1], whereas a pdf height is a density (can exceed 1, probability is the area). `"Density"` (not "Probability Density") matches `make_density`'s label in `plot.py` so an overlay of theoretical-on-simulated shows one consistent axis name.
 
 ---
 
@@ -622,4 +694,4 @@ The following questions must be resolved before or during Phase 2.
 - [ ] Overlay "+color" stacking: discrete groups use the categorical (Okabe-Ito) palette — should continuous groupings use a gradient instead, and if so how does that interact with the sequential (viridis) palette already reserved for magnitude encodings?
 - [x] Discrete-axis tick label crowding: `make_tile` upgraded to Option B (real-value cell positions for whole-number data, matplotlib's own locator) — see "Discrete-Axis Tick Label Thinning (2D Plots)". `make_segmented_rug/density/hist/box` and `make_violin` remain on the original Option A (rank-index + thinning); extending real-value positioning to them is still open
 - [ ] Marginal-panel axis mismatch: a tile main panel and its marginal panel don't share a coordinate system — `make_tile`'s discrete axis is now real-valued for whole-number data, which should make this easier to resolve (matplotlib's `sharex`/`sharey` could line the panels up), but the marginal-panel wiring in `results.py` hasn't been touched, so this is not yet fixed
-- [x] `Distribution.plot()` discrete rendering (finding #16): resolved — discrete pmf now drawn as a smooth, marker-free curve by wiring up `overlay_true_distribution()`; named `TRUE_DIST_*` constants replace the hardcoded `s=40`; the unique `set_position("zero")` spine tweak removed. See "Decision: `Distribution.plot()` Discrete Rendering (True-Distribution Curve)"
+- [x] `Distribution.plot()` discrete rendering (finding #16): resolved — discrete pmf drawn as filled dots + a dashed dot-to-dot line, styled by named `TRUE_DIST_*` constants (replacing the hardcoded `s=40`); the unused `overlay_true_distribution()` spline helper retired; the unique `set_position("zero")` spine tweak removed. See "Decision: `Distribution.plot()` Discrete Rendering (True-Distribution Curve)"
