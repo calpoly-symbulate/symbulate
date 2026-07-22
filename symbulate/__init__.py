@@ -39,6 +39,7 @@ from .distributions import (
     Pareto,
     Rayleigh,
     Weibull,
+    Logistic,
     MultivariateNormal,
     BivariateNormal,
     Multinomial,

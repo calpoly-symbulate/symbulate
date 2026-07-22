@@ -1161,6 +1161,62 @@ class TestWeibull(unittest.TestCase):
         plt.close("all")
 
 
+class TestLogistic(unittest.TestCase):
+
+    def test_Logistic_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Logistic(loc=2, scale=3))
+        sims = X.sim(Nsim)
+        cdf = stats.logistic(loc=2, scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Logistic_mean_var_sd(self):
+        X = Logistic(loc=2, scale=3)
+        th = stats.logistic(loc=2, scale=3)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_Logistic_closed_form_cdf(self):
+        # The defining feature: the CDF is the logistic (sigmoid) function
+        # 1 / (1 + exp(-(x - loc) / scale)).
+        X = Logistic(loc=1, scale=2)
+        for x in [-3.0, 0.0, 1.0, 4.5]:
+            expected = 1 / (1 + np.exp(-(x - 1) / 2))
+            self.assertAlmostEqual(float(X.cdf(x)), expected, places=9)
+
+    def test_Logistic_cdf_at_loc_is_half(self):
+        # Symmetric about loc, so P(X <= loc) = 1/2.
+        self.assertAlmostEqual(float(Logistic(loc=5, scale=2).cdf(5)), 0.5)
+
+    def test_Logistic_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Logistic(loc=0, scale=1).draw()
+        self.assertIsInstance(value, Scalar)
+
+    def test_Logistic_default_params(self):
+        X = Logistic()
+        self.assertEqual(X.loc, 0)
+        self.assertEqual(X.scale, 1)
+
+    def test_Logistic_invalid_loc_raises(self):
+        for bad in ["a", None]:
+            self.assertRaises(Exception, lambda b=bad: Logistic(loc=b))
+
+    def test_Logistic_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Logistic(scale=b))
+
+    def test_Logistic_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Logistic(0, 1).draw()
+        RV(Logistic(0, 1)).sim(100).plot()
+        Logistic(0, 1).plot()
+        Logistic(0, 1).plot(cdf=True)
+        plt.close("all")
+
+
 class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):
