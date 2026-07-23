@@ -498,6 +498,18 @@ VIOLIN_OVERLAY_WARNING = (
     "instead."
 )
 
+# A marginal=True plot builds a three-panel GridSpec layout that a later
+# .plot() call cannot share (a second plot would draw into whichever panel
+# is current, silently corrupting the figure). This is the "hard error"
+# tier of the overlay policy -- see DECISIONS.md, "Decision: Overlay
+# Behavior".
+MARGINAL_OVERLAY_ERROR = (
+    "You can't draw another plot on top of one made with marginal=True. "
+    "The marginal layout uses three separate panels that a second plot "
+    "can't share. Plot each one in its own cell, or draw both without "
+    "marginal=True so they can overlay."
+)
+
 
 class SymbulatePlot:
     """Wrapper object returned by every ``.plot()`` method.

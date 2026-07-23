@@ -30,6 +30,7 @@ from .plot import (
     TILE_DEFAULT_BINS,
     DISCRETE_INDEX_OFFSET,
     DOTPLOT_MAX_STACK,
+    MARGINAL_OVERLAY_ERROR,
     auto_jitter_mode,
     classify_values,
     default_plot_type,
@@ -1597,6 +1598,14 @@ class RVResults(Results):
                     "e.g. .plot(type='hist', marginal=True)."
                 )
 
+        # Overlay policy, hard-error tier: a prior marginal=True plot built
+        # a three-panel layout on this figure that a second plot can't
+        # share. Fail with a student-friendly message instead of silently
+        # drawing into one of the marginal strips. (A fresh Jupyter cell
+        # gets a fresh figure, so this only fires on a genuine second plot.)
+        if getattr(plt.gcf(), "_symbulate_marginal", False):
+            raise ValueError(MARGINAL_OVERLAY_ERROR)
+
         # Filled in by the dim == 1 and dim == 2 branches with
         # (shown, default, alternatives) so the suggestion note can be
         # printed after the plot renders. _jitter_note is set when a
@@ -1832,6 +1841,17 @@ class RVResults(Results):
 
             if marginal:
                 fig = plt.gcf()
+                # A marginal layout builds its own three-panel GridSpec, so
+                # it can't be retrofitted onto a figure that already has a
+                # plot on it. Fail the same way overlaying onto a marginal
+                # layout does (see MARGINAL_OVERLAY_ERROR) rather than
+                # stacking a second GridSpec on top of existing content.
+                if fig.axes:
+                    raise ValueError(MARGINAL_OVERLAY_ERROR)
+                # Tag the figure so a later .plot() call hits the hard-error
+                # guard at the top of this method instead of drawing into
+                # one of the marginal panels.
+                fig._symbulate_marginal = True
                 # Narrow the right margin so a colormap-based main panel's
                 # colorbar has room on the far right (add_colorbar places it
                 # there for the marginal layout); the non-colorbar plot types
