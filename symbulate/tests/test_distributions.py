@@ -855,6 +855,43 @@ class TestStudentT(unittest.TestCase):
     def test_StudentT_error_negative_df(self):
         self.assertRaises(Exception, lambda: StudentT(df=-1))
 
+    # --- noncentral t (noncentrality parameter, for power analysis) ---
+
+    def test_StudentT_default_noncentrality_is_zero(self):
+        self.assertEqual(StudentT(df=10).noncentrality, 0)
+
+    def test_StudentT_noncentral_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(StudentT(df=8, noncentrality=1.5))
+        sims = X.sim(Nsim)
+        cdf = stats.nct(df=8, nc=1.5).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_StudentT_noncentral_shifts_mean(self):
+        # Noncentrality shifts the mean away from 0; matches scipy's nct.
+        X = StudentT(df=10, noncentrality=2)
+        self.assertAlmostEqual(
+            float(X.mean()), float(stats.nct(df=10, nc=2).mean()), places=6
+        )
+        self.assertGreater(float(X.mean()), 0)
+
+    def test_StudentT_noncentral_zero_matches_central(self):
+        # noncentrality=0 must be bit-for-bit the central t at several points.
+        central, nc0 = StudentT(df=6), StudentT(df=6, noncentrality=0)
+        for x in [-2.0, -0.5, 0.0, 1.0, 3.0]:
+            self.assertEqual(float(nc0.cdf(x)), float(central.cdf(x)))
+
+    def test_StudentT_noncentral_invalid_raises(self):
+        self.assertRaises(Exception, lambda: StudentT(df=5, noncentrality="a"))
+
+    def test_StudentT_noncentral_plots_without_error(self):
+        StudentT(df=8, noncentrality=1.5).draw()
+        RV(StudentT(df=8, noncentrality=1.5)).sim(100).plot()
+        StudentT(df=8, noncentrality=1.5).plot()
+        StudentT(df=8, noncentrality=1.5).plot(cdf=True)
+        plt.close("all")
+
 
 class TestChiSquare(unittest.TestCase):
 
@@ -895,6 +932,37 @@ class TestChiSquare(unittest.TestCase):
     def test_ChiSquare_error_zero_df(self):
         self.assertRaises(Exception, lambda: ChiSquare(df=0))
 
+    # --- noncentral chi-square (noncentrality parameter, for power analysis) ---
+
+    def test_ChiSquare_default_noncentrality_is_zero(self):
+        self.assertEqual(ChiSquare(df=4).noncentrality, 0)
+
+    def test_ChiSquare_noncentral_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(ChiSquare(df=4, noncentrality=3))
+        sims = X.sim(Nsim)
+        cdf = stats.ncx2(df=4, nc=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_ChiSquare_noncentral_mean_is_df_plus_nc(self):
+        # Noncentral chi-square has mean df + noncentrality.
+        self.assertAlmostEqual(float(ChiSquare(df=4, noncentrality=3).mean()), 7.0)
+
+    def test_ChiSquare_noncentral_zero_matches_central(self):
+        central, nc0 = ChiSquare(df=6), ChiSquare(df=6, noncentrality=0)
+        for x in [0.5, 2.0, 5.0, 9.0]:
+            self.assertEqual(float(nc0.cdf(x)), float(central.cdf(x)))
+
+    def test_ChiSquare_negative_noncentrality_raises(self):
+        self.assertRaises(Exception, lambda: ChiSquare(df=4, noncentrality=-1))
+
+    def test_ChiSquare_noncentral_plots_without_error(self):
+        RV(ChiSquare(df=4, noncentrality=3)).sim(100).plot()
+        ChiSquare(df=4, noncentrality=3).plot()
+        ChiSquare(df=4, noncentrality=3).plot(cdf=True)
+        plt.close("all")
+
 
 class TestF(unittest.TestCase):
 
@@ -934,6 +1002,41 @@ class TestF(unittest.TestCase):
     def test_F_mean(self):
         X = F(dfN=5, dfD=10)
         self.assertAlmostEqual(float(X.mean()), 10 / (10 - 2))
+
+    # --- noncentral F (noncentrality parameter, for ANOVA power analysis) ---
+
+    def test_F_default_noncentrality_is_zero(self):
+        self.assertEqual(F(dfN=5, dfD=10).noncentrality, 0)
+
+    def test_F_noncentral_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(F(dfN=5, dfD=10, noncentrality=4))
+        sims = X.sim(Nsim)
+        cdf = stats.ncf(dfn=5, dfd=10, nc=4).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_F_noncentral_shifts_mean(self):
+        # Noncentral F: mean = dfD (dfN + nc) / (dfN (dfD - 2)); matches scipy.
+        X = F(dfN=5, dfD=10, noncentrality=4)
+        self.assertAlmostEqual(
+            float(X.mean()), float(stats.ncf(dfn=5, dfd=10, nc=4).mean()), places=6
+        )
+        self.assertGreater(float(X.mean()), float(F(dfN=5, dfD=10).mean()))
+
+    def test_F_noncentral_zero_matches_central(self):
+        central, nc0 = F(dfN=5, dfD=10), F(dfN=5, dfD=10, noncentrality=0)
+        for x in [0.25, 1.0, 2.0, 4.0]:
+            self.assertEqual(float(nc0.cdf(x)), float(central.cdf(x)))
+
+    def test_F_negative_noncentrality_raises(self):
+        self.assertRaises(Exception, lambda: F(dfN=5, dfD=10, noncentrality=-2))
+
+    def test_F_noncentral_plots_without_error(self):
+        RV(F(dfN=5, dfD=10, noncentrality=4)).sim(100).plot()
+        F(dfN=5, dfD=10, noncentrality=4).plot()
+        F(dfN=5, dfD=10, noncentrality=4).plot(cdf=True)
+        plt.close("all")
 
 
 class TestCauchy(unittest.TestCase):

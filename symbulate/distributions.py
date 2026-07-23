@@ -1506,20 +1506,33 @@ class StudentT(Distribution):
     is small. As degrees of freedom increase, it approaches the normal
     distribution.
 
+    With a nonzero ``noncentrality``, this is the **noncentral**
+    t-distribution: the (asymmetric) distribution of the t-statistic when
+    the true effect is not zero. It is the distribution needed for power
+    and effect-size analysis. ``noncentrality = 0`` (the default) is the
+    ordinary central t-distribution.
+
     Parameters
     ----------
     df : int or float
         Degrees of freedom. Must be positive.
+    noncentrality : float, optional
+        Noncentrality parameter (often written delta). Default is 0, which
+        gives the ordinary central t-distribution. A nonzero value shifts
+        the distribution and makes it asymmetric.
 
     Attributes
     ----------
     df : int or float
         Degrees of freedom. Must be positive.
+    noncentrality : float
+        Noncentrality parameter.
 
     Notes
     -----
-    The mean is undefined for ``df = 1`` (the Cauchy case); ``mean()``,
-    ``var()``, and ``sd()`` return ``nan`` there.
+    For the central case (``noncentrality = 0``) the mean is undefined for
+    ``df = 1`` (the Cauchy case); ``mean()``, ``var()``, and ``sd()``
+    return ``nan`` there.
 
     Examples
     --------
@@ -1527,32 +1540,49 @@ class StudentT(Distribution):
     >>> X = StudentT(df=10)
     >>> float(X.mean())
     0.0
+    >>> Y = StudentT(df=10, noncentrality=2)  # noncentral t, mean > 0
+    >>> round(float(Y.mean()), 4)
+    2.1674
     >>> X.draw()  # doctest: +SKIP
     0.312
     """
 
-    def __init__(self, df):
+    def __init__(self, df, noncentrality=0):
         """Initialize a Student's t-distribution.
 
         Raises
         ------
         Exception
-            If ``df`` is not a positive number.
+            If ``df`` is not a positive number, or ``noncentrality`` is not
+            a number.
         """
         _validate(
             (
                 not isinstance(df, numbers.Real) or df <= 0,
                 "df must be a positive number",
             ),
+            (
+                not isinstance(noncentrality, numbers.Real),
+                "noncentrality must be a number",
+            ),
         )
         self.df = df
+        self.noncentrality = noncentrality
 
-        params = {"df": df}
-        super().__init__(params, stats.t, False)
-        if df == 1:
-            self.mean = lambda: float("nan")
-            self.sd = lambda: float("nan")
-            self.var = lambda: float("nan")
+        # noncentrality = 0 is the ordinary central t: use scipy.stats.t so
+        # behavior is bit-for-bit unchanged. A nonzero value is the noncentral
+        # t (scipy.stats.nct), which reduces to the central t at nc = 0.
+        if noncentrality == 0:
+            params = {"df": df}
+            super().__init__(params, stats.t, False)
+            if df == 1:
+                # Central t with df = 1 is Cauchy: undefined moments.
+                self.mean = lambda: float("nan")
+                self.sd = lambda: float("nan")
+                self.var = lambda: float("nan")
+        else:
+            params = {"df": df, "nc": noncentrality}
+            super().__init__(params, stats.nct, False)
 
 
 class ChiSquare(Distribution):
@@ -1562,15 +1592,27 @@ class ChiSquare(Distribution):
     variables. Commonly used in hypothesis testing and confidence
     intervals for variance.
 
+    With a nonzero ``noncentrality``, this is the **noncentral**
+    chi-square distribution: the sum of squares of normals with nonzero
+    means. It is the distribution the test statistic follows when the null
+    hypothesis is false, so it is needed for power analysis.
+    ``noncentrality = 0`` (the default) is the ordinary chi-square.
+
     Parameters
     ----------
     df : int
         Degrees of freedom. Must be a positive integer.
+    noncentrality : float, optional
+        Noncentrality parameter (often written lambda). Must be
+        nonnegative. Default is 0, which gives the ordinary (central)
+        chi-square distribution.
 
     Attributes
     ----------
     df : int
         Degrees of freedom. Must be a positive integer.
+    noncentrality : float
+        Noncentrality parameter.
 
     Examples
     --------
@@ -1580,28 +1622,45 @@ class ChiSquare(Distribution):
     4.0
     >>> float(X.sd())
     2.8284271247461903
+    >>> Y = ChiSquare(df=4, noncentrality=3)  # noncentral: mean = df + nc
+    >>> float(Y.mean())
+    7.0
     >>> X.draw()  # doctest: +SKIP
     3.14
     """
 
-    def __init__(self, df):
+    def __init__(self, df, noncentrality=0):
         """Initialize a chi-square distribution.
 
         Raises
         ------
         Exception
-            If ``df`` is not a positive integer.
+            If ``df`` is not a positive integer, or ``noncentrality`` is
+            not a nonnegative number.
         """
         _validate(
             (
                 not isinstance(df, numbers.Integral) or df <= 0,
                 "df must be a positive integer",
             ),
+            (
+                not isinstance(noncentrality, numbers.Real) or noncentrality < 0,
+                "noncentrality must be a nonnegative number",
+            ),
         )
         self.df = df
+        self.noncentrality = noncentrality
 
-        params = {"df": df}
-        super().__init__(params, stats.chi2, False)
+        # noncentrality = 0 is the ordinary central chi-square: use
+        # scipy.stats.chi2 so behavior is bit-for-bit unchanged. A positive
+        # value is the noncentral chi-square (scipy.stats.ncx2), which reduces
+        # to the central chi-square at nc = 0.
+        if noncentrality == 0:
+            params = {"df": df}
+            super().__init__(params, stats.chi2, False)
+        else:
+            params = {"df": df, "nc": noncentrality}
+            super().__init__(params, stats.ncx2, False)
         # Highest-density window: trims the long right tail and, for df above
         # 2, lifts the left edge off the near-zero-density region.
         self.xlim = _continuous_hdi_xlim(self, 0)
@@ -1614,12 +1673,22 @@ class F(Distribution):
     their degrees of freedom. Commonly used in analysis of variance
     (ANOVA) to compare group variances.
 
+    With a nonzero ``noncentrality``, this is the **noncentral**
+    F-distribution: the distribution the ANOVA F-statistic follows when
+    the group means genuinely differ, so it is needed for ANOVA power
+    analysis. ``noncentrality = 0`` (the default) is the ordinary
+    (central) F-distribution.
+
     Parameters
     ----------
     dfN : int or float
         Degrees of freedom for the numerator. Must be positive.
     dfD : int or float
         Degrees of freedom for the denominator. Must be positive.
+    noncentrality : float, optional
+        Noncentrality parameter (often written lambda), carried by the
+        numerator. Must be nonnegative. Default is 0, which gives the
+        ordinary (central) F-distribution.
 
     Attributes
     ----------
@@ -1627,6 +1696,8 @@ class F(Distribution):
         Degrees of freedom for the numerator.
     dfD : int or float
         Degrees of freedom for the denominator.
+    noncentrality : float
+        Noncentrality parameter.
 
     Examples
     --------
@@ -1634,17 +1705,21 @@ class F(Distribution):
     >>> X = F(dfN=5, dfD=10)
     >>> float(X.mean())
     1.25
+    >>> Y = F(dfN=5, dfD=10, noncentrality=4)  # noncentral: larger mean
+    >>> round(float(Y.mean()), 4)
+    2.25
     >>> X.draw()  # doctest: +SKIP
     0.85
     """
 
-    def __init__(self, dfN, dfD):
+    def __init__(self, dfN, dfD, noncentrality=0):
         """Initialize an F-distribution.
 
         Raises
         ------
         Exception
-            If ``dfN`` or ``dfD`` is not a positive number.
+            If ``dfN`` or ``dfD`` is not a positive number, or
+            ``noncentrality`` is not a nonnegative number.
         """
 
         _validate(
@@ -1656,12 +1731,24 @@ class F(Distribution):
                 not isinstance(dfD, numbers.Real) or dfD <= 0,
                 "dfD must be a positive number",
             ),
+            (
+                not isinstance(noncentrality, numbers.Real) or noncentrality < 0,
+                "noncentrality must be a nonnegative number",
+            ),
         )
         self.dfN = dfN
         self.dfD = dfD
+        self.noncentrality = noncentrality
 
-        params = {"dfn": dfN, "dfd": dfD}
-        super().__init__(params, stats.f, False)
+        # noncentrality = 0 is the ordinary central F: use scipy.stats.f so
+        # behavior is bit-for-bit unchanged. A positive value is the noncentral
+        # F (scipy.stats.ncf), which reduces to the central F at nc = 0.
+        if noncentrality == 0:
+            params = {"dfn": dfN, "dfd": dfD}
+            super().__init__(params, stats.f, False)
+        else:
+            params = {"dfn": dfN, "dfd": dfD, "nc": noncentrality}
+            super().__init__(params, stats.ncf, False)
         # Highest-density window: trims the long right tail and, for numerator
         # df above 2, lifts the left edge off the near-zero-density region.
         self.xlim = _continuous_hdi_xlim(self, 0)
