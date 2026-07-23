@@ -2364,6 +2364,78 @@ class DeMoivre(Distribution):
         self.xlim = (0, omega)
 
 
+class GEV(Distribution):
+    """Probability space for a Generalized Extreme Value (GEV) distribution.
+
+    A continuous distribution for the maximum of many observations. A
+    single ``shape`` parameter (the extreme-value index, usually written
+    xi) unifies the three classical extreme-value laws in one family:
+
+    - ``shape == 0`` -- the **Gumbel** distribution (light-tailed, support
+      all real numbers);
+    - ``shape > 0`` -- the **Frechet** distribution (heavy right tail,
+      bounded below at ``loc - scale / shape``);
+    - ``shape < 0`` -- the **reverse-Weibull** distribution (short tail,
+      bounded above at ``loc - scale / shape``).
+
+    Parameters
+    ----------
+    loc : float, optional
+        Location parameter (the center). Default is 0.
+    scale : float, optional
+        Scale parameter (controls the spread). Must be positive.
+        Default is 1.
+    shape : float, optional
+        Shape parameter (the extreme-value index xi). Default is 0, which
+        gives the Gumbel distribution.
+
+    Attributes
+    ----------
+    loc : float
+        Location parameter.
+    scale : float
+        Scale parameter.
+    shape : float
+        Shape parameter (extreme-value index xi).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = GEV(loc=0, scale=1, shape=0)  # shape=0 is the Gumbel distribution
+    >>> round(float(X.mean()), 4)
+    0.5772
+    >>> X.draw()  # doctest: +SKIP
+    1.23
+    """
+
+    def __init__(self, loc=0, scale=1, shape=0):
+        """Initialize a Generalized Extreme Value distribution.
+
+        Raises
+        ------
+        Exception
+            If ``loc`` or ``shape`` is not a number, or ``scale`` is not a
+            positive number.
+        """
+        _validate(
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+            (not isinstance(shape, numbers.Real), "shape must be a number"),
+        )
+        self.loc = loc
+        self.scale = scale
+        self.shape = shape
+        # scipy's genextreme uses c = -shape: its sign convention is the
+        # opposite of the standard extreme-value index xi. So xi = 0 (Gumbel),
+        # xi > 0 (Frechet, heavy right tail), xi < 0 (reverse-Weibull, bounded
+        # above) map to c = 0, c < 0, c > 0 respectively.
+        params = {"c": -shape, "loc": loc, "scale": scale}
+        super().__init__(params, stats.genextreme, False)
+
+
 ## Multivariate Distributions
 
 
