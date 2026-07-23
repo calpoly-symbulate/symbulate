@@ -1561,6 +1561,81 @@ class TestMultinomial(unittest.TestCase):
         self.assertAlmostEqual(float(X.pdf([5, 3, 2])), expected)
 
 
+class TestDirichlet(unittest.TestCase):
+
+    def test_Dirichlet_error_alpha_non_positive(self):
+        self.assertRaises(Exception, lambda: Dirichlet(alpha=[2, -1, 3]))
+
+    def test_Dirichlet_error_alpha_zero(self):
+        self.assertRaises(Exception, lambda: Dirichlet(alpha=[2, 0, 3]))
+
+    def test_Dirichlet_error_alpha_too_short(self):
+        self.assertRaises(Exception, lambda: Dirichlet(alpha=[2]))
+
+    def test_Dirichlet_error_alpha_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception,
+            "alpha must be a list of at least two positive numbers",
+            lambda: Dirichlet(alpha=["a", "b"]),
+        )
+
+    def test_Dirichlet_mean_var_sd(self):
+        alpha = [2, 3, 5]
+        X = Dirichlet(alpha=alpha)
+        expected = stats.dirichlet(alpha)
+        # mean / var / sd each return one entry per category.
+        self.assertEqual(len(X.mean()), 3)
+        np.testing.assert_allclose(np.array(X.mean()), expected.mean())
+        np.testing.assert_allclose(np.array(X.var()), expected.var())
+        np.testing.assert_allclose(np.array(X.sd()), np.sqrt(expected.var()))
+
+    def test_Dirichlet_pdf(self):
+        alpha = [2, 3, 5]
+        X = Dirichlet(alpha=alpha)
+        point = [0.2, 0.3, 0.5]
+        expected = stats.dirichlet(alpha).pdf(point)
+        self.assertAlmostEqual(float(X.pdf(point)), float(expected))
+
+    def test_Dirichlet_no_cdf(self):
+        # A Dirichlet has no natural cdf; it should not advertise one.
+        X = Dirichlet(alpha=[2, 3, 5])
+        self.assertFalse(hasattr(X, "cdf"))
+
+    def test_Dirichlet_draw_shape_and_sums_to_one(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Dirichlet(alpha=[2, 3, 5])
+        draw = X.draw()
+        self.assertEqual(len(draw), 3)
+        self.assertTrue(np.all(np.array(draw) >= 0))
+        self.assertAlmostEqual(float(sum(draw)), 1.0)
+
+    def test_Dirichlet_sim_shape_and_sums_to_one(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Dirichlet(alpha=[2, 3, 5])
+        sims = X.sim(100)
+        arr = np.array(list(sims))
+        self.assertEqual(arr.shape, (100, 3))
+        np.testing.assert_allclose(arr.sum(axis=1), np.ones(100))
+
+    def test_Dirichlet_marginals_match_Beta(self):
+        # Each proportion X_i is marginally Beta(alpha_i, alpha0 - alpha_i).
+        distributions.rng = np.random.default_rng(42)
+        alpha = [2, 3, 5]
+        alpha0 = sum(alpha)
+        components = RV(Dirichlet(alpha=alpha))
+        for i, a_i in enumerate(alpha):
+            sims = components[i].sim(Nsim)
+            cdf = stats.beta(a_i, alpha0 - a_i).cdf
+            pval = stats.kstest(sims, cdf).pvalue
+            self.assertTrue(pval > 0.01)
+
+    def test_Dirichlet_plots_without_error(self):
+        # draw / RV / sim / plot all wired through, marginals overlaid.
+        Dirichlet(alpha=[2, 3, 5]).draw()
+        Dirichlet(alpha=[2, 3, 5]).plot()
+        plt.close("all")
+
+
 # ===========================================================================
 # Parameter validation: type guards and helpful error messages
 #

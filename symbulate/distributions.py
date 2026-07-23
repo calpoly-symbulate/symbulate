@@ -2728,3 +2728,204 @@ class Multinomial(Distribution):
                 return Vector(self.draw() for _ in range(exponent))
 
         return ProbabilitySpace(draw)
+
+
+class Dirichlet(Distribution):
+    """Probability space for a Dirichlet distribution.
+
+    The multivariate generalization of the beta distribution. Each draw is
+    a vector of non-negative numbers that sum to 1, so a Dirichlet is a
+    natural model for a random set of proportions -- for example, the mix
+    of probabilities across several categories. It is the conjugate prior
+    for the ``Multinomial`` distribution, which it pairs with the same way
+    the ``Beta`` pairs with the ``Binomial``.
+
+    The single parameter is a vector of concentration parameters
+    ``alpha``. Larger values pull draws toward the center of the simplex
+    (all proportions roughly equal); values below 1 push mass toward the
+    corners (one proportion near 1, the rest near 0). The relative sizes of
+    the entries set the average proportions: ``mean = alpha / sum(alpha)``.
+
+    Parameters
+    ----------
+    alpha : array-like of float
+        The concentration parameters, one per category. Must contain at
+        least two values, and every value must be strictly positive.
+
+    Attributes
+    ----------
+    alpha : list of float
+        The concentration parameters, one per category.
+    alpha0 : float
+        The sum of the concentration parameters. Its size controls how
+        tightly draws concentrate around the mean.
+
+    Notes
+    -----
+    A Dirichlet has no simple cumulative distribution function -- there is
+    no natural way to order the vectors it produces -- so unlike the
+    one-dimensional distributions it provides no ``cdf`` method. Each
+    individual proportion ``X_i`` does, however, follow a
+    ``Beta(alpha_i, alpha0 - alpha_i)`` distribution; :meth:`plot` uses
+    this to show the distribution one proportion at a time.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Dirichlet(alpha=[2, 3, 5])
+    >>> [round(float(m), 2) for m in X.mean()]
+    [0.2, 0.3, 0.5]
+    >>> draw = X.draw()
+    >>> round(float(sum(draw)), 10)
+    1.0
+    >>> X.draw()  # doctest: +SKIP
+    (0.19, 0.42, 0.39)
+    """
+
+    def __init__(self, alpha):
+        """Initialize a Dirichlet distribution.
+
+        Raises
+        ------
+        Exception
+            If ``alpha`` is not a list of at least two strictly positive
+            numbers.
+        """
+        # ``alpha`` is array-like, so guard the conversion and checks the
+        # same way ``Multinomial`` guards ``p``: a non-numeric, empty, or
+        # too-short ``alpha`` reports the helpful message instead of a
+        # cryptic low-level error.
+        try:
+            alpha_arr = np.asarray(alpha, dtype=float)
+            bad_alpha = (
+                alpha_arr.ndim != 1
+                or len(alpha_arr) < 2
+                or not np.all(np.isfinite(alpha_arr))
+                or np.any(alpha_arr <= 0)
+            )
+        except (TypeError, ValueError):
+            bad_alpha = True
+
+        _validate(
+            (
+                bad_alpha,
+                "alpha must be a list of at least two positive numbers "
+                "(the concentration parameters).",
+            ),
+        )
+        self.alpha = list(alpha)
+        self.alpha0 = float(alpha_arr.sum())
+
+        # Continuous over the probability simplex. Like the other
+        # multivariate distributions (MultivariateNormal, Multinomial), we
+        # set up the distribution directly instead of calling
+        # super().__init__, whose scalar scipy wiring (a 1-D cdf/quantile,
+        # scalar mean/var, an x-limit window) does not apply to a vector of
+        # proportions.
+        self.discrete = False
+        _scipy = stats.dirichlet(self.alpha)
+        # scipy is the source of truth for the pdf, mean, and variance;
+        # each summary is returned as a Vector, one entry per category.
+        self.pdf = lambda x: _scipy.pdf(x)
+        self.mean = lambda: Vector(_scipy.mean())
+        self.var = lambda: Vector(_scipy.var())
+        self.sd = lambda: Vector(np.sqrt(_scipy.var()))
+
+    def plot(self, xlim=None, alpha=None, ax=None, **kwargs):
+        """Plot the marginal density of each proportion.
+
+        A Dirichlet lives on the probability simplex, which cannot be drawn
+        directly once there are more than a couple of categories. Instead
+        this overlays the marginal distribution of each proportion ``X_i``,
+        which is a ``Beta(alpha_i, alpha0 - alpha_i)`` density on ``[0, 1]``
+        -- so a single plot shows how each proportion is distributed and
+        how the categories compare. Successive curves take distinct colors
+        automatically, exactly as overlaid one-dimensional plots do.
+
+        Parameters
+        ----------
+        xlim : tuple of float, optional
+            x-axis range, passed through to each marginal's plot. Defaults
+            to the ``[0, 1]`` support of every proportion.
+        alpha : float, optional
+            Transparency of the curves, from 0 (invisible) to 1 (opaque).
+        ax : matplotlib.axes.Axes, optional
+            The axes to draw on. Uses the current axes if not provided.
+        **kwargs
+            Additional keyword arguments forwarded to matplotlib.
+
+        Returns
+        -------
+        DistributionPlot
+            A wrapper around the axes the marginals were drawn on. Its
+            printed representation is empty, so Jupyter shows only the plot.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Dirichlet(alpha=[2, 3, 5]).plot()  # doctest: +SKIP
+        """
+        # Each proportion X_i is marginally Beta(alpha_i, alpha0 - alpha_i);
+        # alpha0 - alpha_i is a sum of the (strictly positive) other
+        # concentrations, so both Beta parameters are positive. Drawing each
+        # marginal with the existing Beta.plot reuses all of the shared plot
+        # machinery (color cycling, overlay onto the current axes, the
+        # DistributionPlot return value) without duplicating any of it.
+        plot = None
+        for a_i in self.alpha:
+            marginal = Beta(a=a_i, b=self.alpha0 - a_i)
+            plot = marginal.plot(xlim=xlim, alpha=alpha, ax=ax, **kwargs)
+        return plot
+
+    def draw(self):
+        """Draw a single random sample from the Dirichlet distribution.
+
+        Returns
+        -------
+        Vector
+            A vector of non-negative proportions, one per category, that
+            sums to 1.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Dirichlet(alpha=[2, 3, 5]).draw()  # doctest: +SKIP
+        (0.19, 0.42, 0.39)
+        """
+        return Vector(rng.dirichlet(self.alpha))
+
+    def __pow__(self, exponent):
+        """Draw multiple independent samples from the Dirichlet distribution.
+
+        Parameters
+        ----------
+        exponent : int or float
+            Number of samples to draw. Pass ``float('inf')`` to create
+            an infinite sequence of draws generated lazily on demand.
+
+        Returns
+        -------
+        ProbabilitySpace
+            A probability space whose draws produce ``exponent`` samples
+            at a time.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> (Dirichlet([2, 3, 5]) ** 3).draw()  # doctest: +SKIP
+        [(0.19, 0.42, 0.39), (0.31, 0.28, 0.41), (0.22, 0.35, 0.43)]
+        """
+        if exponent == float("inf"):
+
+            def draw():
+                def _func(_):
+                    return self.draw()
+
+                return InfiniteVector(_func)
+
+        else:
+
+            def draw():
+                return Vector(self.draw() for _ in range(exponent))
+
+        return ProbabilitySpace(draw)
