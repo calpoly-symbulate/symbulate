@@ -44,6 +44,7 @@ from .distributions import (
     Makeham,
     Laplace,
     DeMoivre,
+    GEV,
     MultivariateNormal,
     BivariateNormal,
     Multinomial,

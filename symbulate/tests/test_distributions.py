@@ -1428,6 +1428,70 @@ class TestDeMoivre(unittest.TestCase):
         plt.close("all")
 
 
+class TestGEV(unittest.TestCase):
+
+    def test_GEV_distributional(self):
+        # shape (xi) uses the standard EVT sign, so scipy's c is -shape.
+        distributions.rng = np.random.default_rng(42)
+        X = RV(GEV(loc=2, scale=3, shape=0.2))
+        sims = X.sim(Nsim)
+        cdf = stats.genextreme(c=-0.2, loc=2, scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_GEV_mean_var_sd(self):
+        X = GEV(loc=2, scale=3, shape=0.2)
+        th = stats.genextreme(c=-0.2, loc=2, scale=3)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_GEV_default_is_gumbel(self):
+        # shape=0 is the Gumbel distribution: unbounded, mean = euler-gamma.
+        X = GEV()
+        self.assertEqual(X.shape, 0)
+        self.assertAlmostEqual(
+            float(X.mean()), float(stats.gumbel_r().mean()), places=6
+        )
+        self.assertAlmostEqual(
+            float(X.cdf(100)), float(stats.gumbel_r().cdf(100)), places=9
+        )
+
+    def test_GEV_shape_sign_selects_the_three_laws(self):
+        # xi > 0 -> Frechet, bounded below; xi < 0 -> reverse-Weibull, bounded
+        # above; xi = 0 -> Gumbel, unbounded both ways.
+        frechet = GEV(loc=0, scale=1, shape=0.3)
+        self.assertGreater(float(frechet.quantile(0.0)), -np.inf)  # bounded below
+        self.assertEqual(float(frechet.quantile(1.0)), np.inf)  # heavy right tail
+        rweibull = GEV(loc=0, scale=1, shape=-0.3)
+        self.assertEqual(float(rweibull.quantile(0.0)), -np.inf)
+        self.assertLess(float(rweibull.quantile(1.0)), np.inf)  # bounded above
+        gumbel = GEV(loc=0, scale=1, shape=0)
+        self.assertEqual(float(gumbel.quantile(0.0)), -np.inf)
+        self.assertEqual(float(gumbel.quantile(1.0)), np.inf)
+
+    def test_GEV_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        value = GEV(loc=0, scale=1, shape=0.1).draw()
+        self.assertIsInstance(value, Scalar)
+
+    def test_GEV_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: GEV(scale=b))
+
+    def test_GEV_invalid_loc_shape_raise(self):
+        self.assertRaises(Exception, lambda: GEV(loc="a"))
+        self.assertRaises(Exception, lambda: GEV(shape="a"))
+
+    def test_GEV_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        GEV(0, 1, 0.2).draw()
+        RV(GEV(0, 1, 0.2)).sim(100).plot()
+        GEV(0, 1, 0.2).plot()
+        GEV(0, 1, 0.2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):
