@@ -48,6 +48,7 @@ from .distributions import (
     MultivariateNormal,
     BivariateNormal,
     Multinomial,
+    Dirichlet,
 )
 from .independence import AssumeIndependent
 from .index_sets import Naturals, Integers, Reals, DiscreteTimeSequence
