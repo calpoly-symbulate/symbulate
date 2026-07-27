@@ -859,6 +859,62 @@ class TestGamma(unittest.TestCase):
         self.assertAlmostEqual(float(X.mean()), 2.0)
 
 
+class TestInverseGamma(unittest.TestCase):
+
+    def test_InverseGamma_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(InverseGamma(shape=3, scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.invgamma(3, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_InverseGamma_mean_var_sd(self):
+        X = InverseGamma(shape=3, scale=2)
+        th = stats.invgamma(3, scale=2)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_InverseGamma_pdf(self):
+        X = InverseGamma(shape=3, scale=2)
+        for x in [0.5, 1, 3]:
+            self.assertAlmostEqual(
+                float(X.pdf(x)), float(stats.invgamma(3, scale=2).pdf(x))
+            )
+
+    def test_InverseGamma_is_reciprocal_of_gamma(self):
+        # If X ~ Gamma(shape, rate=scale) then 1/X ~ InverseGamma(shape, scale).
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Gamma(shape=3, rate=2))
+        sims = (1 / X).sim(Nsim)
+        cdf = stats.invgamma(3, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_InverseGamma_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = InverseGamma(shape=3, scale=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreater(float(value), 0.0)
+
+    def test_InverseGamma_error_shape_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: InverseGamma(shape=v, scale=2))
+
+    def test_InverseGamma_error_scale_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: InverseGamma(shape=3, scale=v))
+
+    def test_InverseGamma_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        InverseGamma(shape=3, scale=2).draw()
+        RV(InverseGamma(shape=3, scale=2)).sim(100).plot()
+        InverseGamma(shape=3, scale=2).plot()
+        InverseGamma(shape=3, scale=2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestBeta(unittest.TestCase):
 
     def test_Beta_error_a(self):

@@ -1529,6 +1529,81 @@ class Gamma(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class InverseGamma(Distribution):
+    """Probability space for an inverse gamma distribution.
+
+    A continuous distribution on (0, infinity): if ``X`` has a gamma
+    distribution, then ``1 / X`` has an inverse gamma distribution. It is
+    the standard conjugate prior for the variance parameter of a normal
+    distribution in Bayesian statistics.
+
+    Parameters
+    ----------
+    shape : float
+        Shape parameter (often written alpha). Must be positive.
+    scale : float, optional
+        Scale parameter (often written beta). Must be positive. Default is
+        1. It equals the rate of the underlying gamma distribution (see
+        Notes).
+
+    Attributes
+    ----------
+    shape : float
+        Shape parameter (alpha).
+    scale : float
+        Scale parameter (beta).
+
+    Notes
+    -----
+    The mean is finite only when ``shape > 1`` (and equals
+    ``scale / (shape - 1)``); the variance only when ``shape > 2``. The
+    reciprocal relationship is exact: ``1 / Gamma(shape, rate=scale)`` has
+    an ``InverseGamma(shape, scale)`` distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = InverseGamma(shape=3, scale=2)
+    >>> float(X.mean())
+    1.0
+    >>> float(X.sd())
+    1.0
+    >>> round(float(X.pdf(1)), 4)
+    0.5413
+    >>> X.draw()  # doctest: +SKIP
+    0.75
+    """
+
+    def __init__(self, shape, scale=1.0):
+        """Initialize an inverse gamma distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape`` or ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.shape = shape
+        self.scale = scale
+
+        # scipy's invgamma takes a as the shape and scale the scale.
+        params = {"a": shape, "scale": scale}
+        super().__init__(params, stats.invgamma, False)
+        # Highest-density window over the interior-mode density: trims the
+        # long, heavy right tail and lifts the left edge off the near-zero
+        # region, like Gamma.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 class Beta(Distribution):
     """Probability space for a beta distribution.
 
