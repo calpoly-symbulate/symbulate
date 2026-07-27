@@ -20,6 +20,7 @@ from .random_processes import RandomProcess
 from .distributions import (
     Bernoulli,
     Binomial,
+    BetaBinomial,
     Hypergeometric,
     Geometric,
     NegativeBinomial,

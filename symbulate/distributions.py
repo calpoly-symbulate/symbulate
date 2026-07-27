@@ -691,6 +691,91 @@ class Binomial(Distribution):
         self.xlim = (0, n)  # Binomial distributions are not defined for x < 0 and x > n
 
 
+class BetaBinomial(Distribution):
+    """Probability space for a beta-binomial distribution.
+
+    Models the number of successes in ``n`` independent trials when the
+    success probability is not fixed but is itself random, drawn once from
+    a ``Beta(a, b)`` distribution and then shared by all ``n`` trials. This
+    extra, trial-to-trial uncertainty in the probability makes the counts
+    more spread out (overdispersed) than a plain ``Binomial`` -- which is
+    why the beta-binomial is the standard model for overdispersed
+    binomial/count data. Because the beta is the conjugate prior for the
+    binomial, it is also the beta-binomial that describes the number of
+    successes before the probability is observed.
+
+    Parameters
+    ----------
+    n : int
+        Number of trials. Must be a non-negative integer.
+    a : float
+        First shape parameter (α) of the underlying beta distribution.
+        Must be positive.
+    b : float
+        Second shape parameter (β) of the underlying beta distribution.
+        Must be positive.
+
+    Attributes
+    ----------
+    n : int
+        Number of trials.
+    a : float
+        First shape parameter (α) of the underlying beta distribution.
+    b : float
+        Second shape parameter (β) of the underlying beta distribution.
+
+    Notes
+    -----
+    The mean is ``n * a / (a + b)`` -- the same as a ``Binomial`` whose
+    success probability equals the beta mean ``a / (a + b)``. As ``a`` and
+    ``b`` grow with that ratio held fixed the beta concentrates on a single
+    probability and the beta-binomial approaches that ``Binomial``; with
+    ``a = b = 1`` the probability is uniform and every count from 0 to
+    ``n`` is equally likely.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = BetaBinomial(n=10, a=2, b=3)
+    >>> float(X.mean())
+    4.0
+    >>> round(float(X.sd()), 4)
+    2.4495
+    >>> Y = BetaBinomial(n=10, a=1, b=1)  # a = b = 1 is uniform on 0..10
+    >>> round(float(Y.pmf(0)), 4)
+    0.0909
+    >>> X.draw()  # doctest: +SKIP
+    3
+    """
+
+    def __init__(self, n, a, b):
+        """Initialize a beta-binomial distribution.
+
+        Raises
+        ------
+        Exception
+            If ``n`` is not a non-negative integer, or ``a`` or ``b`` is
+            not a positive number.
+        """
+
+        _validate(
+            (
+                not isinstance(n, numbers.Integral) or n < 0,
+                "n must be a non-negative integer",
+            ),
+            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
+            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+        )
+        self.n = n
+        self.a = a
+        self.b = b
+
+        params = {"n": n, "a": a, "b": b}
+        super().__init__(params, stats.betabinom, True)
+        # Support is 0..n, exactly like the Binomial it generalizes.
+        self.xlim = (0, n)
+
+
 class Hypergeometric(Distribution):
     """Probability space for a hypergeometric distribution.
 
