@@ -2192,6 +2192,62 @@ class Rayleigh(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class HalfNormal(Distribution):
+    """Probability space for a half-normal distribution.
+
+    The distribution of ``|X|`` where ``X ~ Normal(0, scale)`` -- folding a
+    mean-zero normal distribution onto the non-negative half-line. A
+    common weakly-informative prior for a standard-deviation or other
+    scale parameter in Bayesian modeling (the default choice in Stan and
+    PyMC). Fixed at a fold point of 0; a distribution built the same way
+    around a nonzero center is a *Folded Normal*, a separate distribution.
+
+    Parameters
+    ----------
+    scale : float, optional
+        Standard deviation of the underlying (unfolded) normal
+        distribution. Must be positive. Default is 1.0.
+
+    Attributes
+    ----------
+    scale : float
+        Standard deviation of the underlying normal distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = HalfNormal(scale=1)
+    >>> round(float(X.mean()), 4)
+    0.7979
+    >>> round(float(X.pdf(0)), 4)
+    0.7979
+    >>> X.draw()  # doctest: +SKIP
+    0.42
+    """
+
+    def __init__(self, scale=1.0):
+        """Initialize a half-normal distribution.
+
+        Raises
+        ------
+        Exception
+            If ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.scale = scale
+
+        params = {"scale": scale}
+        super().__init__(params, stats.halfnorm, False)
+        # Highest-density window over the monotone-decreasing density (peak
+        # at 0); trims the long right tail, like Rayleigh/Weibull.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 class Weibull(Distribution):
     """Probability space for a Weibull distribution.
 
