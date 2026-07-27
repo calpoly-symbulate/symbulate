@@ -1299,6 +1299,59 @@ class TestRayleigh(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
 
+class TestHalfNormal(unittest.TestCase):
+
+    def test_HalfNormal_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(HalfNormal(scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.halfnorm(scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_HalfNormal_is_abs_of_Normal(self):
+        # |X| for X ~ Normal(0, scale) should match HalfNormal(scale).
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Normal(mean=0, sd=2))
+        sims = X.apply(abs).sim(Nsim)
+        cdf = stats.halfnorm(scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_HalfNormal_mean_var_sd(self):
+        X = HalfNormal(scale=2)
+        th = stats.halfnorm(scale=2)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_HalfNormal_pdf_at_zero(self):
+        X = HalfNormal(scale=1)
+        self.assertAlmostEqual(float(X.pdf(0)), np.sqrt(2 / np.pi), places=6)
+
+    def test_HalfNormal_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = HalfNormal(scale=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_HalfNormal_default_scale_is_one(self):
+        X = HalfNormal()
+        self.assertEqual(X.scale, 1.0)
+
+    def test_HalfNormal_invalid_scale_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: HalfNormal(scale=b))
+
+    def test_HalfNormal_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        HalfNormal(2).draw()
+        RV(HalfNormal(2)).sim(100).plot()
+        HalfNormal(2).plot()
+        HalfNormal(2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestWeibull(unittest.TestCase):
 
     def test_Weibull_distributional(self):
