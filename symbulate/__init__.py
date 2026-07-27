@@ -39,6 +39,7 @@ from .distributions import (
     LogNormal,
     Pareto,
     Burr,
+    Lomax,
     Rayleigh,
     HalfNormal,
     Weibull,
