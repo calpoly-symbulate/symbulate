@@ -2398,6 +2398,83 @@ class HalfNormal(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class HalfCauchy(Distribution):
+    """Probability space for a half-Cauchy distribution.
+
+    The distribution of ``|X|`` where ``X ~ Cauchy(0, scale)`` -- folding a
+    Cauchy distribution centered at 0 onto the non-negative half-line. Like
+    :class:`HalfNormal` it is used as a prior for a standard-deviation or
+    other scale parameter in Bayesian modeling, but its much heavier tail
+    makes it the more permissive of the two: it keeps meaningful
+    probability far from 0, so it is the usual recommendation for the
+    group-level standard deviation in a hierarchical model. Fixed at a fold
+    point of 0; a distribution built the same way around a nonzero center
+    is a *folded Cauchy*, a separate distribution.
+
+    Parameters
+    ----------
+    scale : float, optional
+        Scale parameter of the underlying (unfolded) Cauchy distribution.
+        Controls the spread, and equals the median. Must be positive.
+        Default is 1.0.
+
+    Attributes
+    ----------
+    scale : float
+        Scale parameter of the underlying Cauchy distribution.
+
+    Notes
+    -----
+    The half-Cauchy inherits the Cauchy's heavy tail, so it has no finite
+    moments: ``mean()``, ``var()``, and ``sd()`` all return ``inf`` (the
+    defining integrals diverge). Use ``median()``, which is exactly
+    ``scale``, to describe its center instead.
+
+    That same heavy tail makes the default plotting window wide -- covering
+    most of the probability genuinely requires reaching far out along the
+    tail -- so the density can look like a spike at 0. Pass an explicit
+    ``xlim=(0, high)`` to :meth:`plot` to inspect the bulk of the
+    distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = HalfCauchy(scale=1)
+    >>> round(float(X.median()), 4)
+    1.0
+    >>> round(float(X.pdf(0)), 4)
+    0.6366
+    >>> float(X.mean())
+    inf
+    >>> X.draw()  # doctest: +SKIP
+    0.42
+    """
+
+    def __init__(self, scale=1.0):
+        """Initialize a half-Cauchy distribution.
+
+        Raises
+        ------
+        Exception
+            If ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.scale = scale
+
+        params = {"scale": scale}
+        super().__init__(params, stats.halfcauchy, False)
+        # Highest-density window over the monotone-decreasing density (peak
+        # at 0), same treatment as HalfNormal. Anchors the left edge at the
+        # true support bound 0 rather than the base default's ppf(0.001).
+        # The window is still wide -- that is the Cauchy tail, not a bug.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 class Weibull(Distribution):
     """Probability space for a Weibull distribution.
 
@@ -2958,6 +3035,90 @@ class Gumbel(GEV):
         # The Gumbel is the shape=0 GEV; delegate to GEV so all of its
         # validation, scipy wiring, and plotting are reused unchanged.
         super().__init__(loc=loc, scale=scale, shape=0)
+
+
+class GPD(Distribution):
+    """Probability space for a Generalized Pareto Distribution (GPD).
+
+    A continuous distribution for the size of values above a threshold --
+    the amount by which a large observation exceeds a high cutoff. A
+    single ``shape`` parameter (usually written xi) sets the tail
+    behaviour:
+
+    - ``shape == 0`` -- the **exponential** distribution (light tail,
+      support ``[loc, inf)``);
+    - ``shape > 0`` -- a heavy right tail (support ``[loc, inf)``);
+    - ``shape < 0`` -- a short tail bounded above at ``loc - scale / shape``.
+
+    Parameters
+    ----------
+    loc : float, optional
+        Location parameter (the threshold, i.e. the lower bound of the
+        support). Default is 0.
+    scale : float, optional
+        Scale parameter (controls the spread). Must be positive.
+        Default is 1.
+    shape : float, optional
+        Shape parameter (the tail index xi). Default is 0, which gives the
+        exponential distribution.
+
+    Attributes
+    ----------
+    loc : float
+        Location parameter (threshold).
+    scale : float
+        Scale parameter.
+    shape : float
+        Shape parameter (tail index xi).
+
+    Notes
+    -----
+    This maps directly onto ``scipy.stats.genpareto``: the package's
+    ``shape`` is scipy's ``c`` with the *same* sign (unlike :class:`GEV`,
+    whose ``shape`` is the negative of scipy's ``c``), while ``loc`` and
+    ``scale`` pass through unchanged.
+
+    The mean is finite only when ``shape < 1``; for ``shape >= 1`` it
+    diverges to ``inf``. The variance is finite only when ``shape < 1/2``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = GPD(loc=0, scale=1, shape=0)  # shape=0 is the exponential
+    >>> float(X.mean())
+    1.0
+    >>> X.draw()  # doctest: +SKIP
+    0.42
+    """
+
+    def __init__(self, loc=0, scale=1, shape=0):
+        """Initialize a Generalized Pareto Distribution.
+
+        Raises
+        ------
+        Exception
+            If ``loc`` or ``shape`` is not a number, or ``scale`` is not a
+            positive number.
+        """
+        _validate(
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+            (not isinstance(shape, numbers.Real), "shape must be a number"),
+        )
+        self.loc = loc
+        self.scale = scale
+        self.shape = shape
+        # scipy's genpareto shape c matches the standard tail index xi
+        # directly (same sign), so shape passes straight through -- unlike
+        # GEV, whose shape is the negative of scipy's c.
+        params = {"c": shape, "loc": loc, "scale": scale}
+        super().__init__(params, stats.genpareto, False)
+        # Highest-density window over the monotone-decreasing density: keeps
+        # the peak at the threshold (loc) and trims the long right tail.
+        self.xlim = _continuous_hdi_xlim(self, loc)
 
 
 ## Multivariate Distributions
