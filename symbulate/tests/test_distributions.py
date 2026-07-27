@@ -1257,6 +1257,77 @@ class TestPareto(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
 
+class TestBurr(unittest.TestCase):
+
+    def test_Burr_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Burr(a=3, b=2, scale=1))
+        sims = X.sim(Nsim)
+        cdf = stats.burr12(3, 2, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Burr_mean_var_sd(self):
+        X = Burr(a=3, b=2, scale=1)
+        th = stats.burr12(3, 2, scale=1)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_Burr_pdf(self):
+        X = Burr(a=3, b=2, scale=2)
+        for x in [0.5, 1, 3]:
+            self.assertAlmostEqual(
+                float(X.pdf(x)), float(stats.burr12(3, 2, scale=2).pdf(x))
+            )
+
+    def test_Burr_b1_is_loglogistic(self):
+        # b = 1 is the log-logistic (Fisk) distribution.
+        X = Burr(a=2.5, b=1, scale=1)
+        for x in [0.3, 1, 4]:
+            self.assertAlmostEqual(
+                float(X.pdf(x)), float(stats.fisk(2.5).pdf(x)), places=9
+            )
+
+    def test_Burr_a1_shifted_is_pareto(self):
+        # a = 1 is a Pareto (Type II / Lomax); shifting by the scale gives a
+        # Pareto (Type I) with the same tail exponent.
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Burr(a=1, b=2, scale=1))
+        sims = (X + 1).sim(Nsim)
+        cdf = stats.pareto(b=2, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Burr_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Burr(a=3, b=2, scale=1).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_Burr_error_a_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: Burr(a=v, b=2, scale=1))
+
+    def test_Burr_error_b_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: Burr(a=2, b=v, scale=1))
+
+    def test_Burr_error_scale_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: Burr(a=2, b=2, scale=v))
+
+    def test_Burr_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class; a < 1 also
+        # exercises the monotone-decreasing high-density x-window.
+        Burr(a=3, b=2, scale=1).draw()
+        RV(Burr(a=3, b=2, scale=1)).sim(100).plot()
+        Burr(a=3, b=2, scale=1).plot()
+        Burr(a=0.5, b=2, scale=1).plot()
+        Burr(a=3, b=2, scale=1).plot(cdf=True)
+        plt.close("all")
+
+
 class TestWeibull(unittest.TestCase):
     def test_Weibull_to_Exponential(self):
         """X = RV(Weibull(scale=1, c=10))
