@@ -2080,6 +2080,91 @@ class Pareto(Distribution):
         return self.scale * (1 + rng.pareto(self.b))
 
 
+class Burr(Distribution):
+    """Probability space for a Burr (Burr Type XII) distribution.
+
+    A flexible, heavy-tailed continuous distribution on [0, infinity). In
+    actuarial science it is a standard model for claim severity -- the size
+    of an insurance loss -- in Klugman's *Loss Models*, where its two shape
+    parameters let it fit both the body and the heavy right tail of loss
+    data. Its two special cases explain the two shapes: with ``b = 1`` it is
+    the log-logistic (Fisk) distribution, and with ``a = 1`` it is a Pareto
+    (Type II / Lomax) distribution, so a ``Burr`` generalizes both.
+
+    The two shape parameters are named ``a`` and ``b`` to match the two
+    shape parameters of the ``Beta`` distribution.
+
+    Parameters
+    ----------
+    a : float
+        First shape parameter. Must be positive. Controls the shape of the
+        body near the origin.
+    b : float
+        Second shape parameter. Must be positive. The right tail decays like
+        a power law with index ``a * b``, so a smaller ``b`` gives a heavier
+        tail.
+    scale : float, optional
+        Scale parameter. Must be positive. Default is 1.
+
+    Attributes
+    ----------
+    a : float
+        First shape parameter (the body shape).
+    b : float
+        Second shape parameter (the tail exponent).
+    scale : float
+        Scale parameter.
+
+    Notes
+    -----
+    The mean is finite only when ``a * b > 1``; more generally the ``k``-th
+    moment is finite only when ``a * b > k``, so a heavy-tailed ``Burr``
+    (small ``a * b``) can have an infinite mean or variance.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Burr(a=3, b=2)
+    >>> round(float(X.median()), 4)
+    0.7454
+    >>> round(float(X.mean()), 4)
+    0.8061
+    >>> round(float(X.pdf(1)), 4)
+    0.75
+    >>> X.draw()  # doctest: +SKIP
+    0.62
+    """
+
+    def __init__(self, a, b, scale=1.0):
+        """Initialize a Burr (Type XII) distribution.
+
+        Raises
+        ------
+        Exception
+            If ``a``, ``b``, or ``scale`` is not a positive number.
+        """
+        _validate(
+            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
+            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.a = a
+        self.b = b
+        self.scale = scale
+
+        # scipy's burr12 takes c and d as the two shapes and scale the scale;
+        # our a maps to scipy's c (body shape) and b to scipy's d (tail
+        # exponent). loc stays at its 0 default so the support starts at 0.
+        params = {"c": a, "d": b, "scale": scale}
+        super().__init__(params, stats.burr12, False)
+        # Highest-density window over the monotone or single-mode density:
+        # trims the long, heavy right tail, like Pareto.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 class Rayleigh(Distribution):
     """Probability space for a Rayleigh distribution.
 

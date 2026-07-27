@@ -38,6 +38,7 @@ from .distributions import (
     Cauchy,
     LogNormal,
     Pareto,
+    Burr,
     Rayleigh,
     Weibull,
     Logistic,
