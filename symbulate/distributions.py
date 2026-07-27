@@ -776,6 +776,92 @@ class BetaBinomial(Distribution):
         self.xlim = (0, n)
 
 
+class BetaNegativeBinomial(Distribution):
+    """Probability space for a beta-negative binomial distribution.
+
+    Models the number of failures before the ``r``-th success (like the
+    :class:`Pascal` distribution) when the success probability is not fixed
+    but is itself random, drawn once from a ``Beta(a, b)`` distribution and
+    shared by all trials. That extra, trial-to-trial uncertainty in the
+    probability makes the counts more spread out (overdispersed) than a
+    plain ``Pascal``/``NegativeBinomial`` -- so this is the overdispersed
+    negative-binomial counterpart of the :class:`BetaBinomial`. It is also
+    known as the beta-Pascal distribution.
+
+    Parameters
+    ----------
+    r : int
+        Target number of successes. Must be a positive integer.
+    a : float
+        First shape parameter (α) of the underlying beta distribution.
+        Must be positive.
+    b : float
+        Second shape parameter (β) of the underlying beta distribution.
+        Must be positive.
+
+    Attributes
+    ----------
+    r : int
+        Target number of successes.
+    a : float
+        First shape parameter (α) of the underlying beta distribution.
+    b : float
+        Second shape parameter (β) of the underlying beta distribution.
+
+    Notes
+    -----
+    The counts are the number of failures, so the support is
+    ``0, 1, 2, ...``. The mean is finite only when ``a > 1`` (and equals
+    ``r * b / (a - 1)``). As ``a`` and ``b`` grow with the ratio
+    ``a / (a + b)`` held fixed, the beta concentrates on a single
+    probability ``p`` and the beta-negative binomial approaches a
+    ``Pascal(r, p)`` distribution; with ``r = 1`` it is a beta-geometric
+    distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = BetaNegativeBinomial(r=5, a=3, b=2)
+    >>> float(X.mean())
+    5.0
+    >>> round(float(X.pmf(0)), 4)
+    0.1667
+    >>> X.draw()  # doctest: +SKIP
+    7
+    """
+
+    def __init__(self, r, a, b):
+        """Initialize a beta-negative binomial distribution.
+
+        Raises
+        ------
+        Exception
+            If ``r`` is not a positive integer, or ``a`` or ``b`` is not a
+            positive number.
+        """
+
+        _validate(
+            (
+                not isinstance(r, numbers.Integral) or r <= 0,
+                "r must be a positive integer",
+            ),
+            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
+            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+        )
+        self.r = r
+        self.a = a
+        self.b = b
+
+        # scipy's betanbinom takes n as the target number of successes and
+        # a, b as the beta shape parameters; it counts failures, so the
+        # support is 0, 1, 2, ... like Pascal.
+        params = {"n": r, "a": a, "b": b}
+        super().__init__(params, stats.betanbinom, True)
+        # Highest-density window over the support [0, inf); trims the long
+        # upper tail, like Pascal and the other unbounded discrete cases.
+        self.xlim = _discrete_hdi_xlim(self, 0)
+
+
 class Hypergeometric(Distribution):
     """Probability space for a hypergeometric distribution.
 
