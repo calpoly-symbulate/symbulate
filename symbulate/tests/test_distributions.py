@@ -1930,6 +1930,81 @@ class TestGEV(unittest.TestCase):
         plt.close("all")
 
 
+class TestGPD(unittest.TestCase):
+
+    def test_GPD_distributional(self):
+        # shape (xi) maps straight onto scipy's c (same sign, unlike GEV).
+        distributions.rng = np.random.default_rng(42)
+        X = RV(GPD(loc=2, scale=3, shape=0.2))
+        sims = X.sim(Nsim)
+        cdf = stats.genpareto(c=0.2, loc=2, scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_GPD_mean_var_sd(self):
+        X = GPD(loc=2, scale=3, shape=0.2)
+        th = stats.genpareto(c=0.2, loc=2, scale=3)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_GPD_default_is_exponential(self):
+        # shape=0 is the exponential distribution: support [loc, inf), mean 1.
+        X = GPD()
+        self.assertEqual(X.shape, 0)
+        self.assertAlmostEqual(float(X.mean()), 1.0, places=6)
+        self.assertAlmostEqual(
+            float(X.cdf(1.3)), float(stats.expon().cdf(1.3)), places=9
+        )
+
+    def test_GPD_shape_zero_matches_exponential_scale(self):
+        # GPD(shape=0, loc=0, scale=s) is exactly Exponential(scale=s).
+        gpd = GPD(loc=0, scale=2, shape=0)
+        expo = Exponential(scale=2)
+        for x in [0.0, 0.5, 1.7, 4.0]:
+            self.assertAlmostEqual(float(gpd.pdf(x)), float(expo.pdf(x)), places=9)
+
+    def test_GPD_shape_sign_selects_the_support(self):
+        # xi >= 0 -> support [loc, inf); xi < 0 -> bounded above at
+        # loc - scale/shape.
+        heavy = GPD(loc=0, scale=1, shape=0.3)
+        self.assertEqual(float(heavy.quantile(0.0)), 0.0)  # lower bound = loc
+        self.assertEqual(float(heavy.quantile(1.0)), np.inf)  # heavy right tail
+        light = GPD(loc=0, scale=2, shape=0)
+        self.assertEqual(float(light.quantile(0.0)), 0.0)
+        self.assertEqual(float(light.quantile(1.0)), np.inf)
+        bounded = GPD(loc=0, scale=2, shape=-0.5)
+        self.assertEqual(float(bounded.quantile(0.0)), 0.0)
+        # loc - scale/shape = 0 - 2/(-0.5) = 4
+        self.assertAlmostEqual(float(bounded.quantile(1.0)), 4.0, places=6)
+
+    def test_GPD_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = GPD(loc=1, scale=1, shape=0.1).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 1.0)  # never below loc
+
+    def test_GPD_default_scale_is_one(self):
+        X = GPD(loc=0, shape=0.2)
+        self.assertEqual(X.scale, 1)
+
+    def test_GPD_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: GPD(scale=b))
+
+    def test_GPD_invalid_loc_shape_raise(self):
+        self.assertRaises(Exception, lambda: GPD(loc="a"))
+        self.assertRaises(Exception, lambda: GPD(shape="a"))
+
+    def test_GPD_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        GPD(0, 1, 0.2).draw()
+        RV(GPD(0, 1, 0.2)).sim(100).plot()
+        GPD(0, 1, 0.2).plot()
+        GPD(0, 1, 0.2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):
@@ -2676,6 +2751,7 @@ class TestDistributionXlim(unittest.TestCase):
             F(5, 10),
             LogNormal(0, 1),
             Pareto(2, 1),
+            GPD(loc=0, scale=1, shape=0.3),
         ]:
             lo, hi = d.xlim
             self.assertAlmostEqual(
@@ -2694,6 +2770,8 @@ class TestDistributionXlim(unittest.TestCase):
         # keeps that bound instead of solving for a left equal-density point.
         self.assertEqual(Pareto(2, 1).xlim[0], 1)  # scale
         self.assertEqual(Pareto(3, 5).xlim[0], 5)  # scale
+        self.assertEqual(GPD(loc=0, scale=1, shape=0.3).xlim[0], 0)  # loc
+        self.assertEqual(GPD(loc=2, scale=1, shape=0.3).xlim[0], 2)  # loc
         self.assertEqual(Gamma(0.5).xlim[0], 0)  # shape < 1 -> mode at 0
         self.assertEqual(ChiSquare(1).xlim[0], 0)  # df = 1 -> mode at 0
 

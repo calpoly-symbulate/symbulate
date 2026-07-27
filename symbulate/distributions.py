@@ -2899,6 +2899,90 @@ class GEV(Distribution):
         super().__init__(params, stats.genextreme, False)
 
 
+class GPD(Distribution):
+    """Probability space for a Generalized Pareto Distribution (GPD).
+
+    A continuous distribution for the size of values above a threshold --
+    the amount by which a large observation exceeds a high cutoff. A
+    single ``shape`` parameter (usually written xi) sets the tail
+    behaviour:
+
+    - ``shape == 0`` -- the **exponential** distribution (light tail,
+      support ``[loc, inf)``);
+    - ``shape > 0`` -- a heavy right tail (support ``[loc, inf)``);
+    - ``shape < 0`` -- a short tail bounded above at ``loc - scale / shape``.
+
+    Parameters
+    ----------
+    loc : float, optional
+        Location parameter (the threshold, i.e. the lower bound of the
+        support). Default is 0.
+    scale : float, optional
+        Scale parameter (controls the spread). Must be positive.
+        Default is 1.
+    shape : float, optional
+        Shape parameter (the tail index xi). Default is 0, which gives the
+        exponential distribution.
+
+    Attributes
+    ----------
+    loc : float
+        Location parameter (threshold).
+    scale : float
+        Scale parameter.
+    shape : float
+        Shape parameter (tail index xi).
+
+    Notes
+    -----
+    This maps directly onto ``scipy.stats.genpareto``: the package's
+    ``shape`` is scipy's ``c`` with the *same* sign (unlike :class:`GEV`,
+    whose ``shape`` is the negative of scipy's ``c``), while ``loc`` and
+    ``scale`` pass through unchanged.
+
+    The mean is finite only when ``shape < 1``; for ``shape >= 1`` it
+    diverges to ``inf``. The variance is finite only when ``shape < 1/2``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = GPD(loc=0, scale=1, shape=0)  # shape=0 is the exponential
+    >>> float(X.mean())
+    1.0
+    >>> X.draw()  # doctest: +SKIP
+    0.42
+    """
+
+    def __init__(self, loc=0, scale=1, shape=0):
+        """Initialize a Generalized Pareto Distribution.
+
+        Raises
+        ------
+        Exception
+            If ``loc`` or ``shape`` is not a number, or ``scale`` is not a
+            positive number.
+        """
+        _validate(
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+            (not isinstance(shape, numbers.Real), "shape must be a number"),
+        )
+        self.loc = loc
+        self.scale = scale
+        self.shape = shape
+        # scipy's genpareto shape c matches the standard tail index xi
+        # directly (same sign), so shape passes straight through -- unlike
+        # GEV, whose shape is the negative of scipy's c.
+        params = {"c": shape, "loc": loc, "scale": scale}
+        super().__init__(params, stats.genpareto, False)
+        # Highest-density window over the monotone-decreasing density: keeps
+        # the peak at the threshold (loc) and trims the long right tail.
+        self.xlim = _continuous_hdi_xlim(self, loc)
+
+
 ## Multivariate Distributions
 
 
