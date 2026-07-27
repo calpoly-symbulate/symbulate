@@ -1550,6 +1550,86 @@ class TestHalfNormal(unittest.TestCase):
         plt.close("all")
 
 
+class TestHalfCauchy(unittest.TestCase):
+
+    def test_HalfCauchy_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(HalfCauchy(scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.halfcauchy(scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_HalfCauchy_is_abs_of_Cauchy(self):
+        # |X| for X ~ Cauchy(0, scale) should match HalfCauchy(scale).
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Cauchy(loc=0, scale=2))
+        sims = X.apply(abs).sim(Nsim)
+        cdf = stats.halfcauchy(scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_HalfCauchy_median_is_scale(self):
+        for s in [0.5, 1, 2, 5]:
+            self.assertAlmostEqual(float(HalfCauchy(scale=s).median()), s, places=6)
+
+    def test_HalfCauchy_pdf_at_zero(self):
+        X = HalfCauchy(scale=1)
+        self.assertAlmostEqual(float(X.pdf(0)), 2 / np.pi, places=6)
+
+    def test_HalfCauchy_moments_are_infinite(self):
+        # The Cauchy tail is heavy enough that the defining integrals
+        # diverge; scipy reports this as inf rather than a finite value.
+        X = HalfCauchy(scale=1)
+        self.assertTrue(np.isinf(float(X.mean())))
+        self.assertTrue(np.isinf(float(X.var())))
+        self.assertTrue(np.isinf(float(X.sd())))
+
+    def test_HalfCauchy_cdf_matches_scipy(self):
+        X = HalfCauchy(scale=2)
+        th = stats.halfcauchy(scale=2)
+        for x in [0.0, 0.5, 1.0, 2.0, 10.0]:
+            self.assertAlmostEqual(float(X.cdf(x)), float(th.cdf(x)), places=8)
+
+    def test_HalfCauchy_xlim_anchored_at_zero_and_covers_probability(self):
+        # A monotone-decreasing density peaks at its lower support bound, so
+        # the highest-density window starts exactly at 0 (not ppf(0.001)).
+        X = HalfCauchy(scale=1)
+        low, high = X.xlim
+        self.assertEqual(low, 0.0)
+        self.assertAlmostEqual(float(X.cdf(high)) - float(X.cdf(low)), 0.998, places=4)
+
+    def test_HalfCauchy_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = HalfCauchy(scale=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_HalfCauchy_default_scale_is_one(self):
+        X = HalfCauchy()
+        self.assertEqual(X.scale, 1.0)
+
+    def test_HalfCauchy_invalid_scale_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: HalfCauchy(scale=b))
+
+    def test_HalfCauchy_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        HalfCauchy(2).draw()
+        RV(HalfCauchy(2)).sim(100).plot()
+        HalfCauchy(2).plot()
+        HalfCauchy(2).plot(cdf=True)
+        HalfCauchy(2).plot(xlim=(0, 10))
+        plt.close("all")
+
+    def test_HalfCauchy_heavier_tailed_than_HalfNormal(self):
+        # Both peak at 0, but the Cauchy tail keeps far more probability
+        # out past the bulk -- the reason it is the more permissive prior.
+        tail_cauchy = 1 - float(HalfCauchy(scale=1).cdf(10))
+        tail_normal = 1 - float(HalfNormal(scale=1).cdf(10))
+        self.assertGreater(tail_cauchy, tail_normal)
+
+
 class TestWeibull(unittest.TestCase):
 
     def test_Weibull_distributional(self):

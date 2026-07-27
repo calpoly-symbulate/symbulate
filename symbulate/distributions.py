@@ -2398,6 +2398,83 @@ class HalfNormal(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class HalfCauchy(Distribution):
+    """Probability space for a half-Cauchy distribution.
+
+    The distribution of ``|X|`` where ``X ~ Cauchy(0, scale)`` -- folding a
+    Cauchy distribution centered at 0 onto the non-negative half-line. Like
+    :class:`HalfNormal` it is used as a prior for a standard-deviation or
+    other scale parameter in Bayesian modeling, but its much heavier tail
+    makes it the more permissive of the two: it keeps meaningful
+    probability far from 0, so it is the usual recommendation for the
+    group-level standard deviation in a hierarchical model. Fixed at a fold
+    point of 0; a distribution built the same way around a nonzero center
+    is a *folded Cauchy*, a separate distribution.
+
+    Parameters
+    ----------
+    scale : float, optional
+        Scale parameter of the underlying (unfolded) Cauchy distribution.
+        Controls the spread, and equals the median. Must be positive.
+        Default is 1.0.
+
+    Attributes
+    ----------
+    scale : float
+        Scale parameter of the underlying Cauchy distribution.
+
+    Notes
+    -----
+    The half-Cauchy inherits the Cauchy's heavy tail, so it has no finite
+    moments: ``mean()``, ``var()``, and ``sd()`` all return ``inf`` (the
+    defining integrals diverge). Use ``median()``, which is exactly
+    ``scale``, to describe its center instead.
+
+    That same heavy tail makes the default plotting window wide -- covering
+    most of the probability genuinely requires reaching far out along the
+    tail -- so the density can look like a spike at 0. Pass an explicit
+    ``xlim=(0, high)`` to :meth:`plot` to inspect the bulk of the
+    distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = HalfCauchy(scale=1)
+    >>> round(float(X.median()), 4)
+    1.0
+    >>> round(float(X.pdf(0)), 4)
+    0.6366
+    >>> float(X.mean())
+    inf
+    >>> X.draw()  # doctest: +SKIP
+    0.42
+    """
+
+    def __init__(self, scale=1.0):
+        """Initialize a half-Cauchy distribution.
+
+        Raises
+        ------
+        Exception
+            If ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.scale = scale
+
+        params = {"scale": scale}
+        super().__init__(params, stats.halfcauchy, False)
+        # Highest-density window over the monotone-decreasing density (peak
+        # at 0), same treatment as HalfNormal. Anchors the left edge at the
+        # true support bound 0 rather than the base default's ppf(0.001).
+        # The window is still wide -- that is the Cauchy tail, not a bug.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 class Weibull(Distribution):
     """Probability space for a Weibull distribution.
 
