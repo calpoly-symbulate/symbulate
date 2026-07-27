@@ -31,6 +31,7 @@ from .distributions import (
     Normal,
     Exponential,
     Gamma,
+    InverseGamma,
     Beta,
     StudentT,
     ChiSquare,
