@@ -51,6 +51,7 @@ from .distributions import (
     Laplace,
     DeMoivre,
     GEV,
+    Gumbel,
     GPD,
     MultivariateNormal,
     BivariateNormal,

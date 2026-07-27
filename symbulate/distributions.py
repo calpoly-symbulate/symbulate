@@ -2976,6 +2976,67 @@ class GEV(Distribution):
         super().__init__(params, stats.genextreme, False)
 
 
+class Gumbel(GEV):
+    """Probability space for a Gumbel (Extreme Value Type I) distribution.
+
+    A continuous distribution on all real numbers for the maximum of many
+    observations. It is exactly the ``shape = 0`` case of the
+    :class:`GEV` distribution, so this class is a convenience name for
+    ``GEV(loc, scale, shape=0)`` -- the Gumbel is still taught and used by
+    name even where the general GEV is available. The distribution is
+    right-skewed, with a light left tail and a heavier right tail.
+
+    Parameters
+    ----------
+    loc : float, optional
+        Location parameter (the mode). Default is 0.
+    scale : float, optional
+        Scale parameter (controls the spread). Must be positive.
+        Default is 1.
+
+    Attributes
+    ----------
+    loc : float
+        Location parameter (the mode).
+    scale : float
+        Scale parameter (controls the spread).
+    shape : float
+        Extreme-value index, fixed at 0 (inherited from :class:`GEV`).
+
+    Notes
+    -----
+    This is the Gumbel distribution for maxima. The mean is
+    ``loc + euler_gamma * scale``, where ``euler_gamma`` is the
+    Euler-Mascheroni constant (about 0.5772).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Gumbel(loc=0, scale=1)
+    >>> round(float(X.mean()), 4)
+    0.5772
+    >>> round(float(X.median()), 4)
+    0.3665
+    >>> round(float(X.pdf(0)), 4)
+    0.3679
+    >>> X.draw()  # doctest: +SKIP
+    0.37
+    """
+
+    def __init__(self, loc=0, scale=1):
+        """Initialize a Gumbel distribution.
+
+        Raises
+        ------
+        Exception
+            If ``loc`` is not a number, or ``scale`` is not a positive
+            number.
+        """
+        # The Gumbel is the shape=0 GEV; delegate to GEV so all of its
+        # validation, scipy wiring, and plotting are reused unchanged.
+        super().__init__(loc=loc, scale=scale, shape=0)
+
+
 class GPD(Distribution):
     """Probability space for a Generalized Pareto Distribution (GPD).
 

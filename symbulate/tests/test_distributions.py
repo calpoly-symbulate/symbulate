@@ -2010,6 +2010,69 @@ class TestGEV(unittest.TestCase):
         plt.close("all")
 
 
+class TestGumbel(unittest.TestCase):
+
+    def test_Gumbel_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Gumbel(loc=2, scale=3))
+        sims = X.sim(Nsim)
+        cdf = stats.gumbel_r(loc=2, scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Gumbel_mean_var_sd(self):
+        X = Gumbel(loc=2, scale=3)
+        th = stats.gumbel_r(loc=2, scale=3)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_Gumbel_is_gev_shape_zero(self):
+        # Gumbel(loc, scale) is exactly GEV(loc, scale, shape=0).
+        X = Gumbel(loc=1, scale=2)
+        self.assertIsInstance(X, GEV)
+        self.assertEqual(X.shape, 0)
+        for x in [-1, 0, 3, 6]:
+            self.assertAlmostEqual(
+                float(X.pdf(x)), float(GEV(loc=1, scale=2, shape=0).pdf(x)), places=9
+            )
+
+    def test_Gumbel_matches_scipy_gumbel_r(self):
+        X = Gumbel(loc=0, scale=1)
+        for x in [-1, 0, 2, 5]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(stats.gumbel_r().pdf(x)))
+
+    def test_Gumbel_neg_log_exponential(self):
+        # -log(Exponential(1)) has a standard Gumbel(0, 1) distribution.
+        distributions.rng = np.random.default_rng(42)
+        E = RV(Exponential(rate=1))
+        sims = (-log(E)).sim(Nsim)
+        cdf = stats.gumbel_r(loc=0, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Gumbel_default_params(self):
+        X = Gumbel()
+        self.assertEqual(X.loc, 0)
+        self.assertEqual(X.scale, 1)
+        self.assertEqual(X.shape, 0)
+
+    def test_Gumbel_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Gumbel(scale=b))
+
+    def test_Gumbel_invalid_loc_raises(self):
+        self.assertRaises(Exception, lambda: Gumbel(loc="a"))
+
+    def test_Gumbel_plots_without_error(self):
+        # draw / RV / sim / plot all inherited from GEV / the base class.
+        Gumbel(0, 1).draw()
+        RV(Gumbel(0, 1)).sim(100).plot()
+        Gumbel(0, 1).plot()
+        Gumbel(0, 1).plot(cdf=True)
+        plt.close("all")
+
+
 class TestGPD(unittest.TestCase):
 
     def test_GPD_distributional(self):
