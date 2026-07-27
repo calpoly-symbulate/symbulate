@@ -568,6 +568,222 @@ class TestDiscreteUniform(unittest.TestCase):
             self.assertEqual(value, 3)
 
 
+class TestZipf(unittest.TestCase):
+    """The finite-support Zipf distribution on the ranks 1, ..., n."""
+
+    # --- expected probabilities ---
+
+    def test_Zipf_pmf_is_normalized_power_law(self):
+        # pmf(k) = (1 / k ** a) / H(n, a), computed here from the definition
+        # rather than from scipy, so the test would catch a wrong
+        # normalizing constant.
+        a, n = 1.5, 8
+        harmonic = math.fsum(1 / k**a for k in range(1, n + 1))
+        X = Zipf(a=a, n=n)
+        for k in range(1, n + 1):
+            self.assertAlmostEqual(float(X.pmf(k)), (1 / k**a) / harmonic, places=12)
+
+    def test_Zipf_pmf_sums_to_one(self):
+        X = Zipf(a=1, n=5)
+        self.assertAlmostEqual(float(np.sum(X.pmf(np.arange(1, 6)))), 1.0, places=12)
+
+    def test_Zipf_classic_a_one_probabilities(self):
+        # a = 1 is Zipf's law itself: rank k has probability proportional to
+        # 1 / k, normalized by the 5th harmonic number 137 / 60.
+        X = Zipf(a=1, n=5)
+        for k in range(1, 6):
+            self.assertAlmostEqual(float(X.pmf(k)), (1 / k) / (137 / 60), places=12)
+
+    def test_Zipf_mean_var_sd(self):
+        X = Zipf(a=1.2, n=10)
+        th = stats.zipfian(1.2, 10)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    # --- support ---
+
+    def test_Zipf_support_is_one_through_n(self):
+        # Finite support: nothing below 1, nothing above n.
+        X = Zipf(a=1.3, n=6)
+        self.assertEqual(float(X.pmf(0)), 0.0)
+        self.assertEqual(float(X.pmf(7)), 0.0)
+        self.assertAlmostEqual(float(X.cdf(6)), 1.0, places=12)
+        self.assertEqual(float(X.quantile(1.0)), 6.0)
+
+    def test_Zipf_xlim_is_full_support(self):
+        # Bounded at both ends, so the default plotting window is the whole
+        # support -- no probability trimmed, like Binomial and DiscreteUniform.
+        self.assertEqual(Zipf(a=1.1, n=50).xlim, (1, 50))
+
+    def test_Zipf_pmf_is_decreasing_in_rank(self):
+        # Zipf's law: rank 1 is the most common and probability falls off
+        # from there.
+        probs = Zipf(a=1.1, n=20).pmf(np.arange(1, 21))
+        self.assertTrue(all(np.diff(probs) < 0))
+
+    # --- wraps zipfian (finite), not zipf (the infinite-support zeta) ---
+
+    def test_Zipf_wraps_scipy_zipfian(self):
+        X = Zipf(a=2, n=10)
+        for k in [1, 2, 5, 10]:
+            self.assertAlmostEqual(
+                float(X.pmf(k)), float(stats.zipfian.pmf(k, 2, 10)), places=12
+            )
+
+    def test_Zipf_is_not_the_zeta_distribution(self):
+        # Regression guard for scipy's naming trap: scipy.stats.zipf is the
+        # infinite-support zeta distribution, NOT this one. The finite
+        # normalizing constant makes every probability strictly larger.
+        X = Zipf(a=2, n=10)
+        for k in [1, 2, 5, 10]:
+            self.assertGreater(float(X.pmf(k)), float(stats.zipf.pmf(k, 2)))
+        # The zeta distribution puts mass above n; the finite Zipf does not.
+        self.assertGreater(float(stats.zipf.pmf(11, 2)), 0.0)
+        self.assertEqual(float(X.pmf(11)), 0.0)
+
+    def test_Zipf_defined_for_a_below_one(self):
+        # The infinite sum diverges for a <= 1, so the zeta distribution does
+        # not exist there -- but a finite sum always converges, so the
+        # finite-support Zipf does.
+        for a in [0, 0.5, 1]:
+            probs = Zipf(a=a, n=6).pmf(np.arange(1, 7))
+            self.assertAlmostEqual(float(np.sum(probs)), 1.0, places=12)
+
+    def test_Zipf_large_n_approaches_zeta(self):
+        # With a > 1 fixed, growing n approaches the infinite-support zeta,
+        # because the ranks past n carry almost no probability.
+        X = Zipf(a=3, n=10000)
+        for k in [1, 2, 5]:
+            self.assertAlmostEqual(
+                float(X.pmf(k)), float(stats.zipf.pmf(k, 3)), places=6
+            )
+
+    # --- relationships with distributions already in Symbulate ---
+
+    def test_Zipf_a_zero_is_discrete_uniform(self):
+        # a = 0 makes every rank equally likely: DiscreteUniform(1, n).
+        X = Zipf(a=0, n=5)
+        for k in range(1, 6):
+            self.assertAlmostEqual(
+                float(X.pmf(k)), float(DiscreteUniform(a=1, b=5).pmf(k)), places=12
+            )
+
+    def test_Zipf_n_two_is_shifted_bernoulli(self):
+        # With only two ranks, Zipf(a, 2) is 1 + Bernoulli(p) where
+        # p = 2 ** -a / (1 + 2 ** -a) is the chance of landing on rank 2.
+        a = 1.4
+        p = 2**-a / (1 + 2**-a)
+        X = Zipf(a=a, n=2)
+        self.assertAlmostEqual(float(X.pmf(1)), float(Bernoulli(p).pmf(0)), places=12)
+        self.assertAlmostEqual(float(X.pmf(2)), float(Bernoulli(p).pmf(1)), places=12)
+
+    def test_Zipf_n_one_is_point_mass(self):
+        X = Zipf(a=1.5, n=1)
+        self.assertEqual(float(X.pmf(1)), 1.0)
+        self.assertEqual(float(X.mean()), 1.0)
+
+    # --- sampling ---
+
+    def test_Zipf_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        exp_list, obs_list = [], []
+        X = RV(Zipf(a=1.2, n=10))
+        sims = X.sim(Nsim)
+        simulated = sims.tabulate()
+        for k in range(1, 11):
+            expected = Nsim * float(stats.zipfian(1.2, 10).pmf(k))
+            if expected > 5:
+                exp_list.append(expected)
+                obs_list.append(simulated[k])
+        pval = stats.chisquare(
+            obs_list, np.array(exp_list) * sum(obs_list) / sum(exp_list)
+        ).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Zipf_sim_stays_in_support(self):
+        distributions.rng = np.random.default_rng(42)
+        sims = RV(Zipf(a=0.7, n=12)).sim(Nsim)
+        self.assertTrue(all(1 <= sim <= 12 for sim in sims))
+
+    def test_Zipf_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Zipf(a=1.2, n=10).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 1.0)
+        self.assertLessEqual(float(value), 10.0)
+
+    # --- reproducibility ---
+
+    def test_Zipf_same_seed_gives_same_sims(self):
+        distributions.rng = np.random.default_rng(2024)
+        first = list(RV(Zipf(a=1.2, n=10)).sim(500))
+        distributions.rng = np.random.default_rng(2024)
+        second = list(RV(Zipf(a=1.2, n=10)).sim(500))
+        self.assertEqual(first, second)
+
+    def test_Zipf_different_seed_gives_different_sims(self):
+        distributions.rng = np.random.default_rng(1)
+        first = list(RV(Zipf(a=1.2, n=10)).sim(500))
+        distributions.rng = np.random.default_rng(2)
+        second = list(RV(Zipf(a=1.2, n=10)).sim(500))
+        self.assertNotEqual(first, second)
+
+    # --- parameter validation ---
+
+    def test_Zipf_error_a_negative(self):
+        self.assertRaisesRegex(
+            Exception, "a must be a non-negative number", lambda: Zipf(a=-1, n=10)
+        )
+
+    def test_Zipf_error_a_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "a must be a non-negative number", lambda: Zipf(a="x", n=10)
+        )
+
+    def test_Zipf_error_n_not_positive(self):
+        for bad in [0, -3]:
+            self.assertRaisesRegex(
+                Exception,
+                "n must be a positive integer",
+                lambda v=bad: Zipf(a=1, n=v),
+            )
+
+    def test_Zipf_error_n_float(self):
+        self.assertRaisesRegex(
+            Exception, "n must be a positive integer", lambda: Zipf(a=1, n=10.5)
+        )
+
+    def test_Zipf_error_n_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "n must be a positive integer", lambda: Zipf(a=1, n="x")
+        )
+
+    def test_Zipf_stacks_a_and_n(self):
+        # Both parameters wrong -> both mistakes reported at once.
+        with self.assertRaises(Exception) as cm:
+            Zipf(a=-1, n=0)
+        message = str(cm.exception)
+        self.assertIn("Invalid parameters:", message)
+        self.assertIn("a must be a non-negative number", message)
+        self.assertIn("n must be a positive integer", message)
+
+    def test_Zipf_boundary_parameters_accepted(self):
+        # a = 0 (uniform) and n = 1 (point mass) are valid, not errors.
+        Zipf(a=0, n=1)
+        Zipf(a=0, n=10)
+        Zipf(a=1, n=1)
+
+    def test_Zipf_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Zipf(a=1.2, n=10).draw()
+        RV(Zipf(a=1.2, n=10)).sim(100).plot()
+        Zipf(a=1.2, n=10).plot()
+        Zipf(a=1.2, n=10).plot(cdf=True)
+        Zipf(a=1.2, n=500).plot(xlim="zoom")
+        plt.close("all")
+
+
 class TestUniform(unittest.TestCase):
 
     def test_Uniform_error(self):

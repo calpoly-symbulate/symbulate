@@ -28,6 +28,7 @@ from .distributions import (
     Pascal,
     Poisson,
     DiscreteUniform,
+    Zipf,
     Uniform,
     Normal,
     Exponential,

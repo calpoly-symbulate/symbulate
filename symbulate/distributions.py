@@ -1252,6 +1252,112 @@ class DiscreteUniform(Distribution):
         self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
 
 
+class Zipf(Distribution):
+    """Probability space for a Zipf distribution.
+
+    Ranks a fixed collection of ``n`` items from most common (rank 1) to
+    least common (rank ``n``), and gives the item of rank ``k`` a
+    probability proportional to ``1 / k ** a``. This is Zipf's law: a few
+    items take most of the probability and a long tail of items each take
+    very little. It is the standard model for word frequencies in a text,
+    city sizes in a country, or page visits on a website -- any setting
+    where the items can be ranked and the number of them is finite and
+    known.
+
+    Parameters
+    ----------
+    a : float
+        Exponent of the power law (the shape parameter). Must be
+        non-negative. A larger ``a`` piles more probability onto the first
+        few ranks and shortens the tail; ``a = 0`` makes every rank
+        equally likely.
+    n : int
+        Number of items being ranked, which is also the largest possible
+        value. Must be a positive integer.
+
+    Attributes
+    ----------
+    a : float
+        Exponent of the power law.
+    n : int
+        Number of items being ranked.
+
+    Notes
+    -----
+    The support is **finite**: the integers ``1, 2, ..., n``, and nothing
+    outside that range. The probability of rank ``k`` is
+
+    ``pmf(k) = (1 / k ** a) / H(n, a)``,
+
+    where ``H(n, a) = 1 / 1 ** a + 1 / 2 ** a + ... + 1 / n ** a`` is the
+    normalizing constant that makes the probabilities add up to 1.
+
+    This wraps ``scipy.stats.zipfian``, with both parameters passing
+    straight through: the package's ``a`` is scipy's ``a``, and ``n`` is
+    scipy's ``n``. Note that scipy's other power-law name,
+    ``scipy.stats.zipf``, is a **different** distribution -- the zeta
+    distribution, supported on ``1, 2, 3, ...`` with no upper limit -- so
+    it is deliberately not used here. That infinite-support version exists
+    only when ``a > 1`` (otherwise the infinite sum does not converge),
+    while the finite-support Zipf is defined for every ``a >= 0``, because
+    a sum of finitely many terms always converges.
+
+    Two special cases are worth knowing. ``a = 0`` is exactly
+    ``DiscreteUniform(1, n)``: every rank equally likely. And with ``a > 1``
+    held fixed, letting ``n`` grow approaches the zeta distribution, since
+    the ranks past ``n`` carry vanishingly little probability.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Zipf(a=1, n=5)
+    >>> round(float(X.pmf(1)), 4)  # 1 / (1 + 1/2 + 1/3 + 1/4 + 1/5)
+    0.438
+    >>> round(float(X.mean()), 4)
+    2.1898
+    >>> float(X.cdf(5))  # all of the probability is at or below n
+    1.0
+    >>> float(X.pmf(6))  # nothing above n
+    0.0
+    >>> X.draw()  # doctest: +SKIP
+    1
+    """
+
+    def __init__(self, a, n):
+        """Initialize a Zipf distribution.
+
+        Raises
+        ------
+        Exception
+            If ``a`` is not a non-negative number, or ``n`` is not a
+            positive integer.
+        """
+        _validate(
+            (
+                not isinstance(a, numbers.Real) or a < 0,
+                "a must be a non-negative number",
+            ),
+            (
+                not isinstance(n, numbers.Integral) or n < 1,
+                "n must be a positive integer",
+            ),
+        )
+        self.a = a
+        self.n = n
+
+        # scipy.stats.zipfian is the finite-support Zipf, and it takes these
+        # two parameters under these same two names, so both pass straight
+        # through. scipy.stats.zipf is NOT this distribution -- it is the
+        # infinite-support zeta distribution -- so it must not be used here.
+        params = {"a": a, "n": n}
+        super().__init__(params, stats.zipfian, True)
+        # Bounded at both ends, so the default window is the full support
+        # 1, ..., n with no probability trimmed, like Binomial and
+        # DiscreteUniform. Pass xlim="zoom" to plot() to frame just the
+        # high-probability ranks when n is large.
+        self.xlim = (1, n)
+
+
 ## Continuous Distributions
 
 
