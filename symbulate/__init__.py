@@ -21,6 +21,7 @@ from .distributions import (
     Bernoulli,
     Binomial,
     BetaBinomial,
+    BetaNegativeBinomial,
     Hypergeometric,
     Geometric,
     NegativeBinomial,

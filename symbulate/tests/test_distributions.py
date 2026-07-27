@@ -207,6 +207,80 @@ class TestBetaBinomial(unittest.TestCase):
         plt.close("all")
 
 
+class TestBetaNegativeBinomial(unittest.TestCase):
+
+    def test_BetaNegativeBinomial_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(BetaNegativeBinomial(r=5, a=4, b=3))
+        sims = X.sim(Nsim)
+        simulated = sims.tabulate()
+        exp_list, obs_list = [], []
+        for k in range(60):
+            expected = Nsim * stats.betanbinom(5, 4, 3).pmf(k)
+            if expected > 5:
+                exp_list.append(expected)
+                obs_list.append(simulated[k])
+        pval = stats.chisquare(
+            obs_list, np.array(exp_list) * sum(obs_list) / sum(exp_list)
+        ).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_BetaNegativeBinomial_mean_var_sd(self):
+        X = BetaNegativeBinomial(r=5, a=4, b=3)
+        th = stats.betanbinom(5, 4, 3)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_BetaNegativeBinomial_pmf(self):
+        X = BetaNegativeBinomial(r=5, a=3, b=2)
+        for k in [0, 1, 5, 12]:
+            self.assertAlmostEqual(
+                float(X.pmf(k)), float(stats.betanbinom(5, 3, 2).pmf(k))
+            )
+
+    def test_BetaNegativeBinomial_approaches_pascal(self):
+        # As a and b grow with a / (a + b) fixed, the beta concentrates on a
+        # single probability and the beta-negative binomial approaches a
+        # Pascal(r, p) (number of failures before the r-th success).
+        X = BetaNegativeBinomial(r=5, a=600, b=400)  # a/(a+b) = 0.6
+        pascal = Pascal(r=5, p=0.6)
+        for k in range(15):
+            self.assertAlmostEqual(float(X.pmf(k)), float(pascal.pmf(k)), places=2)
+
+    def test_BetaNegativeBinomial_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = BetaNegativeBinomial(r=5, a=3, b=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_BetaNegativeBinomial_error_r(self):
+        for bad in [0, -1, 2.5, "a"]:
+            self.assertRaises(
+                Exception, lambda v=bad: BetaNegativeBinomial(r=v, a=3, b=2)
+            )
+
+    def test_BetaNegativeBinomial_error_a_not_positive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(
+                Exception, lambda v=bad: BetaNegativeBinomial(r=5, a=v, b=2)
+            )
+
+    def test_BetaNegativeBinomial_error_b_not_positive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(
+                Exception, lambda v=bad: BetaNegativeBinomial(r=5, a=3, b=v)
+            )
+
+    def test_BetaNegativeBinomial_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        BetaNegativeBinomial(r=5, a=3, b=2).draw()
+        RV(BetaNegativeBinomial(r=5, a=3, b=2)).sim(100).plot()
+        BetaNegativeBinomial(r=5, a=3, b=2).plot()
+        BetaNegativeBinomial(r=5, a=3, b=2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestHypergeometric(unittest.TestCase):
 
     def test_Hypergeometric_no_failures(self):
