@@ -123,6 +123,90 @@ class TestBinomial(unittest.TestCase):
         self.assertAlmostEqual(float(X.pmf(3)), stats.binom(n=10, p=0.3).pmf(3))
 
 
+class TestBetaBinomial(unittest.TestCase):
+
+    def test_BetaBinomial_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        exp_list, obs_list = [], []
+        X = RV(BetaBinomial(n=10, a=2, b=3))
+        sims = X.sim(Nsim)
+        simulated = sims.tabulate()
+        for k in range(11):
+            expected = Nsim * stats.betabinom(10, 2, 3).pmf(k)
+            if expected > 5:
+                exp_list.append(expected)
+                obs_list.append(simulated[k])
+        pval = stats.chisquare(
+            obs_list, np.array(exp_list) * sum(obs_list) / sum(exp_list)
+        ).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_BetaBinomial_mean_var_sd(self):
+        X = BetaBinomial(n=10, a=2, b=3)
+        th = stats.betabinom(10, 2, 3)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_BetaBinomial_pmf(self):
+        X = BetaBinomial(n=10, a=2, b=3)
+        for k in [0, 3, 7, 10]:
+            self.assertAlmostEqual(
+                float(X.pmf(k)), float(stats.betabinom(10, 2, 3).pmf(k))
+            )
+
+    def test_BetaBinomial_uniform_when_a_b_equal_one(self):
+        # a = b = 1 makes the shared probability Uniform(0, 1), so every count
+        # from 0 to n is equally likely -- a DiscreteUniform on {0, ..., n}.
+        X = BetaBinomial(n=10, a=1, b=1)
+        for k in range(11):
+            self.assertAlmostEqual(float(X.pmf(k)), 1 / 11, places=9)
+
+    def test_BetaBinomial_n1_is_bernoulli(self):
+        # With a single trial the shared probability integrates out to its
+        # mean a / (a + b), so BetaBinomial(1, a, b) is Bernoulli(a / (a + b)).
+        X = BetaBinomial(n=1, a=2, b=3)
+        self.assertAlmostEqual(float(X.pmf(1)), 2 / 5, places=9)
+        self.assertAlmostEqual(float(X.pmf(0)), 3 / 5, places=9)
+
+    def test_BetaBinomial_approaches_binomial(self):
+        # As a and b grow with a / (a + b) fixed, the beta concentrates on a
+        # single probability and the beta-binomial approaches Binomial(n, p).
+        X = BetaBinomial(n=10, a=300, b=700)
+        binom = stats.binom(n=10, p=0.3)
+        for k in range(11):
+            self.assertAlmostEqual(float(X.pmf(k)), float(binom.pmf(k)), places=2)
+
+    def test_BetaBinomial_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = BetaBinomial(n=10, a=2, b=3).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+        self.assertLessEqual(float(value), 10.0)
+
+    def test_BetaBinomial_error_n_negative(self):
+        self.assertRaises(Exception, lambda: BetaBinomial(n=-1, a=2, b=3))
+
+    def test_BetaBinomial_error_n_float(self):
+        self.assertRaises(Exception, lambda: BetaBinomial(n=2.5, a=2, b=3))
+
+    def test_BetaBinomial_error_a_not_positive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: BetaBinomial(n=10, a=v, b=3))
+
+    def test_BetaBinomial_error_b_not_positive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: BetaBinomial(n=10, a=2, b=v))
+
+    def test_BetaBinomial_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        BetaBinomial(n=10, a=2, b=3).draw()
+        RV(BetaBinomial(n=10, a=2, b=3)).sim(100).plot()
+        BetaBinomial(n=10, a=2, b=3).plot()
+        BetaBinomial(n=10, a=2, b=3).plot(cdf=True)
+        plt.close("all")
+
+
 class TestHypergeometric(unittest.TestCase):
 
     def test_Hypergeometric_no_failures(self):
