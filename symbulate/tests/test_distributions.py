@@ -1328,6 +1328,77 @@ class TestBurr(unittest.TestCase):
         plt.close("all")
 
 
+class TestLomax(unittest.TestCase):
+
+    def test_Lomax_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Lomax(b=3, scale=1))
+        sims = X.sim(Nsim)
+        cdf = stats.lomax(3, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Lomax_mean_var_sd(self):
+        X = Lomax(b=3, scale=1)
+        th = stats.lomax(3, scale=1)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+
+    def test_Lomax_pdf(self):
+        X = Lomax(b=3, scale=2)
+        for x in [0, 1, 3]:
+            self.assertAlmostEqual(
+                float(X.pdf(x)), float(stats.lomax(3, scale=2).pdf(x))
+            )
+
+    def test_Lomax_is_burr_a1(self):
+        # Lomax(b, scale) is exactly the a = 1 special case of Burr.
+        for x in [0.0, 0.5, 2.0]:
+            self.assertAlmostEqual(
+                float(Lomax(b=2, scale=1).pdf(x)),
+                float(Burr(a=1, b=2, scale=1).pdf(x)),
+                places=9,
+            )
+
+    def test_Lomax_shifted_is_pareto(self):
+        # Adding the scale to a Lomax gives a Pareto (Type I) with the same
+        # tail exponent.
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Lomax(b=3, scale=1))
+        sims = (X + 1).sim(Nsim)
+        cdf = stats.pareto(b=3, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Lomax_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Lomax(b=3, scale=1).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+
+    def test_Lomax_default_params(self):
+        X = Lomax()
+        self.assertEqual(X.b, 1.0)
+        self.assertEqual(X.scale, 1.0)
+
+    def test_Lomax_error_b_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: Lomax(b=v, scale=1))
+
+    def test_Lomax_error_scale_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: Lomax(b=2, scale=v))
+
+    def test_Lomax_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Lomax(b=3, scale=1).draw()
+        RV(Lomax(b=3, scale=1)).sim(100).plot()
+        Lomax(b=3, scale=1).plot()
+        Lomax(b=3, scale=1).plot(cdf=True)
+        plt.close("all")
+
+
 class TestWeibull(unittest.TestCase):
     def test_Weibull_to_Exponential(self):
         """X = RV(Weibull(scale=1, c=10))

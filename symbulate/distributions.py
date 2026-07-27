@@ -2165,6 +2165,81 @@ class Burr(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class Lomax(Distribution):
+    """Probability space for a Lomax (Pareto Type II) distribution.
+
+    A heavy-tailed continuous distribution on [0, infinity). It is the
+    Pareto distribution shifted to start at 0 instead of at its scale, which
+    is why it is also called the Pareto Type II distribution. Like the
+    ``Pareto``, it is a common model for claim sizes and other quantities
+    with a heavy right tail, and it is exactly the ``a = 1`` special case of
+    the ``Burr`` distribution.
+
+    Parameters
+    ----------
+    b : float, optional
+        Shape parameter (the tail index), named ``b`` to match the shape
+        parameter of the ``Pareto`` distribution. Must be positive. The
+        right tail decays like a power law with index ``b``, so a smaller
+        ``b`` gives a heavier tail. Default is 1.
+    scale : float, optional
+        Scale parameter. Must be positive. Default is 1.
+
+    Attributes
+    ----------
+    b : float
+        Shape parameter (the tail index).
+    scale : float
+        Scale parameter.
+
+    Notes
+    -----
+    The mean is finite only when ``b > 1``, and the variance only when
+    ``b > 2``. Adding the scale to a ``Lomax(b, scale)`` gives a
+    ``Pareto(b, scale)`` (Type I): the Lomax is the same power law with its
+    support shifted from ``[scale, inf)`` down to ``[0, inf)``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Lomax(b=3, scale=1)
+    >>> float(X.mean())
+    0.5
+    >>> round(float(X.sd()), 4)
+    0.866
+    >>> float(X.pdf(0))
+    3.0
+    >>> X.draw()  # doctest: +SKIP
+    0.41
+    """
+
+    def __init__(self, b=1.0, scale=1.0):
+        """Initialize a Lomax (Pareto Type II) distribution.
+
+        Raises
+        ------
+        Exception
+            If ``b`` or ``scale`` is not a positive number.
+        """
+        _validate(
+            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.b = b
+        self.scale = scale
+
+        # scipy's lomax takes c as the shape and scale the scale; loc stays at
+        # its 0 default so the support starts at 0 (the Pareto Type II form).
+        params = {"c": b, "scale": scale}
+        super().__init__(params, stats.lomax, False)
+        # Highest-density window over the monotone-decreasing density: keeps
+        # the peak at 0 and trims the long, heavy right tail, like Pareto.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 class Rayleigh(Distribution):
     """Probability space for a Rayleigh distribution.
 
