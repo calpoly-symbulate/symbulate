@@ -43,6 +43,7 @@ from .distributions import (
     Lomax,
     Rayleigh,
     HalfNormal,
+    HalfCauchy,
     Weibull,
     Logistic,
     Gompertz,
