@@ -850,6 +850,79 @@ class TestUniform(unittest.TestCase):
         self.assertAlmostEqual(float(X.cdf(4)), 1.0)
 
 
+class TestBates(unittest.TestCase):
+
+    def test_Bates_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Bates(n=5, a=2, b=8))
+        sims = X.sim(Nsim)
+        cdf = stats.irwinhall(5, loc=2, scale=(8 - 2) / 5).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Bates_mean_var_sd(self):
+        X = Bates(n=5, a=2, b=8)
+        # mean = (a + b) / 2, var = (b - a)**2 / (12 n)
+        self.assertAlmostEqual(float(X.mean()), 5.0, places=6)
+        self.assertAlmostEqual(float(X.var()), (8 - 2) ** 2 / (12 * 5), places=6)
+        self.assertAlmostEqual(
+            float(X.sd()), np.sqrt((8 - 2) ** 2 / (12 * 5)), places=6
+        )
+
+    def test_Bates_support(self):
+        # Bates lives on [a, b].
+        X = Bates(n=4, a=1, b=3)
+        self.assertEqual(X.xlim, (1, 3))
+        self.assertAlmostEqual(float(X.cdf(1)), 0.0, places=9)
+        self.assertAlmostEqual(float(X.cdf(3)), 1.0, places=9)
+
+    def test_Bates_n1_is_uniform(self):
+        # The average of a single uniform is that uniform.
+        X = Bates(n=1, a=2, b=5)
+        for x in [2.5, 3.0, 4.7]:
+            self.assertAlmostEqual(
+                float(X.pdf(x)), float(Uniform(a=2, b=5).pdf(x)), places=9
+            )
+
+    def test_Bates_n2_is_triangular(self):
+        # The average of two U(0, 1) is triangular on [0, 1], peak 2 at 0.5.
+        X = Bates(n=2, a=0, b=1)
+        self.assertAlmostEqual(float(X.pdf(0.5)), 2.0, places=6)
+        self.assertAlmostEqual(float(X.pdf(0.25)), 1.0, places=6)
+
+    def test_Bates_is_mean_of_uniforms(self):
+        # Bates(n) is the distribution of the average of n Uniform(0, 1).
+        distributions.rng = np.random.default_rng(42)
+        n = 5
+        U = RV(Uniform(0, 1) ** n)
+        sims = U.apply(lambda u: sum(u) / n).sim(Nsim)
+        cdf = stats.irwinhall(n, loc=0, scale=1 / n).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Bates_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Bates(n=5, a=0, b=1).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+        self.assertLessEqual(float(value), 1.0)
+
+    def test_Bates_error_n(self):
+        for bad in [0, -1, 2.5, "a"]:
+            self.assertRaises(Exception, lambda v=bad: Bates(n=v))
+
+    def test_Bates_error_reversed_bounds(self):
+        self.assertRaises(Exception, lambda: Bates(n=3, a=5, b=1))
+
+    def test_Bates_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Bates(n=5).draw()
+        RV(Bates(n=5)).sim(100).plot()
+        Bates(n=5).plot()
+        Bates(n=5).plot(cdf=True)
+        plt.close("all")
+
+
 class TestNormal(unittest.TestCase):
 
     def test_Normal_error(self):
