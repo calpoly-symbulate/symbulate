@@ -1496,6 +1496,156 @@ class TestExponential(unittest.TestCase):
         self.assertAlmostEqual(float(X.sd()), 0.5)
 
 
+class TestExponentiallyModifiedGaussian(unittest.TestCase):
+
+    def test_EMG_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(ExponentiallyModifiedGaussian(mean=0, sd=1, rate=1))
+        sims = X.sim(Nsim)
+        cdf = stats.exponnorm(K=1 / (1 * 1), loc=0, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_EMG_general_params_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(ExponentiallyModifiedGaussian(mean=500, sd=50, rate=0.01))
+        sims = X.sim(Nsim)
+        cdf = stats.exponnorm(K=1 / (0.01 * 50), loc=500, scale=50).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_EMG_matches_normal_plus_exponential(self):
+        # The defining property: adding an independent normal value and an
+        # exponential value gives this distribution.
+        distributions.rng = np.random.default_rng(42)
+        Z, W = RV(Normal(mean=2, sd=3) * Exponential(rate=0.5))
+        sims = (Z + W).sim(Nsim)
+        cdf = ExponentiallyModifiedGaussian(mean=2, sd=3, rate=0.5).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_EMG_mean_var_sd(self):
+        # Means add and variances add, since the two pieces are independent.
+        for mean, sd, rate in [
+            (0, 1, 1),
+            (0, 1, 5),
+            (2, 0.5, 0.25),
+            (-3, 4, 2),
+            (500, 50, 0.01),
+        ]:
+            X = ExponentiallyModifiedGaussian(mean=mean, sd=sd, rate=rate)
+            self.assertAlmostEqual(float(X.mean()), mean + 1 / rate, places=8)
+            self.assertAlmostEqual(float(X.var()), sd**2 + 1 / rate**2, places=8)
+            self.assertAlmostEqual(
+                float(X.sd()), math.sqrt(sd**2 + 1 / rate**2), places=8
+            )
+
+    def test_EMG_mean_is_not_the_mean_argument(self):
+        # The trap worth pinning down: the exponential part shifts the center,
+        # so mean() is not what was passed in as mean.
+        X = ExponentiallyModifiedGaussian(mean=0, sd=1, rate=1)
+        self.assertAlmostEqual(float(X.mean()), 1.0, places=8)
+        self.assertAlmostEqual(float(X.var()), 2.0, places=8)
+
+    def test_EMG_stores_component_params(self):
+        # Stored under loc/scale/rate so the mean/sd methods are not shadowed.
+        X = ExponentiallyModifiedGaussian(mean=2, sd=0.5, rate=0.25)
+        self.assertEqual(X.loc, 2)
+        self.assertEqual(X.scale, 0.5)
+        self.assertEqual(X.rate, 0.25)
+        self.assertTrue(callable(X.mean) and callable(X.sd))
+
+    def test_EMG_scipy_shape_param(self):
+        # K is the exponential's average delay measured in sds of the normal.
+        X = ExponentiallyModifiedGaussian(mean=2, sd=0.5, rate=0.25)
+        self.assertAlmostEqual(X.params["K"], 1 / (0.25 * 0.5), places=8)
+        self.assertEqual(X.params["loc"], 2)
+        self.assertEqual(X.params["scale"], 0.5)
+
+    def test_EMG_is_right_skewed(self):
+        # Always skewed right: the exponential part only ever adds to the
+        # value, so the mean is pulled past the median.
+        for mean, sd, rate in [(0, 1, 1), (2, 0.5, 0.25), (-3, 4, 2)]:
+            X = ExponentiallyModifiedGaussian(mean=mean, sd=sd, rate=rate)
+            self.assertLess(float(X.median()), float(X.mean()))
+
+    def test_EMG_approaches_Normal_as_rate_grows(self):
+        # A large rate means short exponential delays, so little is added and
+        # the shape closes in on the normal part it started from.
+        xs = np.linspace(-5, 5, 2001)
+        errors = []
+        for rate in [1, 2, 5, 10, 100]:
+            X = ExponentiallyModifiedGaussian(mean=0, sd=1, rate=rate)
+            # Largest gap between the two CDFs, which shrinks with every step
+            # up in rate.
+            errors.append(np.max(np.abs(X.cdf(xs) - stats.norm.cdf(xs))))
+        self.assertTrue(all(x > y for x, y in zip(errors, errors[1:])))
+        self.assertLess(errors[-1], 0.01)
+
+    def test_EMG_approaches_Exponential_as_sd_shrinks(self):
+        # A tiny sd leaves the normal part all but constant, so what remains
+        # is the exponential part shifted by mean (here mean = 0).
+        xs = np.linspace(-2, 8, 2001)
+        errors = []
+        for sd in [1, 0.5, 0.1, 0.01]:
+            X = ExponentiallyModifiedGaussian(mean=0, sd=sd, rate=1)
+            errors.append(np.max(np.abs(X.cdf(xs) - stats.expon.cdf(xs))))
+        self.assertTrue(all(x > y for x, y in zip(errors, errors[1:])))
+        self.assertLess(errors[-1], 0.01)
+
+    def test_EMG_supported_on_all_real_numbers(self):
+        # The normal part can reach any value, so there is density everywhere
+        # -- including well below the mean argument.
+        X = ExponentiallyModifiedGaussian(mean=0, sd=1, rate=1)
+        self.assertGreater(float(X.pdf(-6)), 0.0)
+        self.assertGreater(float(X.cdf(-6)), 0.0)
+        self.assertLess(float(X.cdf(20)), 1.0)
+
+    def test_EMG_cdf_quantile_roundtrip(self):
+        X = ExponentiallyModifiedGaussian(mean=500, sd=50, rate=0.01)
+        for q in [0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99]:
+            self.assertAlmostEqual(float(X.cdf(X.quantile(q))), q, places=6)
+
+    def test_EMG_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(ExponentiallyModifiedGaussian().draw(), Scalar)
+
+    def test_EMG_xlim_is_equal_tailed_default(self):
+        # Unbounded on both sides, so no HDI trim -- the base window is used.
+        X = ExponentiallyModifiedGaussian(mean=0, sd=1, rate=1)
+        self.assertAlmostEqual(X.xlim[0], float(X.quantile(0.001)), places=8)
+        self.assertAlmostEqual(X.xlim[1], float(X.quantile(0.999)), places=8)
+
+    def test_EMG_invalid_params_raise(self):
+        for bad in [0, -1, "1", None]:
+            self.assertRaises(
+                Exception, lambda b=bad: ExponentiallyModifiedGaussian(sd=b)
+            )
+            self.assertRaises(
+                Exception, lambda b=bad: ExponentiallyModifiedGaussian(rate=b)
+            )
+        self.assertRaises(Exception, lambda: ExponentiallyModifiedGaussian(mean="0"))
+
+    def test_EMG_error_message_points_to_simpler_distribution(self):
+        # sd = 0 and rate = 0 are the two limiting cases, and each has its own
+        # distribution already; the message should say which one.
+        with self.assertRaises(Exception) as caught:
+            ExponentiallyModifiedGaussian(sd=0)
+        self.assertIn("Exponential", str(caught.exception))
+        with self.assertRaises(Exception) as caught:
+            ExponentiallyModifiedGaussian(rate=0)
+        self.assertIn("Normal", str(caught.exception))
+
+    def test_EMG_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        ExponentiallyModifiedGaussian().draw()
+        RV(ExponentiallyModifiedGaussian()).sim(100).plot()
+        ExponentiallyModifiedGaussian().plot()
+        ExponentiallyModifiedGaussian().plot(cdf=True)
+        ExponentiallyModifiedGaussian(mean=0, sd=1, rate=0.05).plot(xlim="zoom")
+        plt.close("all")
+
+
 class TestGamma(unittest.TestCase):
 
     def test_Gamma_shape_error(self):

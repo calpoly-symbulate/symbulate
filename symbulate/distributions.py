@@ -2034,6 +2034,134 @@ class Exponential(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class ExponentiallyModifiedGaussian(Distribution):
+    """Probability space for an exponentially modified Gaussian distribution.
+
+    The distribution of a normal value **plus** an independent exponential
+    value: ``Normal(mean, sd) + Exponential(rate)``. The result looks like
+    a bell curve that has been smeared out to the right -- a rounded peak
+    on the left, and a long exponential tail on the right. It is also
+    called the ex-Gaussian distribution, and it is the standard model for
+    a quantity built from a symmetric part plus a one-sided delay: human
+    reaction times (a steady motor response plus a variable decision
+    time), or the shape of a chromatography peak.
+
+    The two pieces control the two halves of the shape. ``sd`` sets how
+    wide the rounded left side is, and ``rate`` sets how long the right
+    tail is: a large ``rate`` means short exponential delays and a nearly
+    normal shape, while a small ``rate`` means long delays and a strongly
+    skewed one.
+
+    Parameters
+    ----------
+    mean : float, optional
+        Mean of the normal part being added. Default is 0.0. This is not
+        the mean of the whole distribution -- see Notes.
+    sd : float, optional
+        Standard deviation of the normal part being added. Must be a
+        positive number. Default is 1.0.
+    rate : float, optional
+        Rate parameter λ of the exponential part being added. Must be a
+        positive number. Default is 1.0. The average delay it contributes
+        is ``1 / rate``.
+
+    Attributes
+    ----------
+    loc : float
+        Mean of the normal part (the ``mean`` argument). Stored under this
+        name because ``mean`` is the method that reports the mean of the
+        whole distribution.
+    scale : float
+        Standard deviation of the normal part (the ``sd`` argument).
+        Stored under this name because ``sd`` is the method that reports
+        the standard deviation of the whole distribution.
+    rate : float
+        Rate parameter λ of the exponential part.
+
+    Notes
+    -----
+    Adding the exponential part shifts the center to the right and widens
+    the spread, so the summary numbers are *not* the ``mean`` and ``sd``
+    that were passed in:
+
+    ``X.mean() == mean + 1 / rate``  and  ``X.var() == sd ** 2 + 1 / rate ** 2``.
+
+    Both follow from adding independent pieces: means add, and variances
+    add. So ``ExponentiallyModifiedGaussian(mean=0, sd=1, rate=1)`` has
+    mean 1, not 0. The distribution is always skewed to the right, and it
+    covers every real number, since the normal part can reach arbitrarily
+    far in either direction.
+
+    The two familiar distributions it is built from are its limiting
+    cases. As ``rate`` grows the exponential delay shrinks to nothing and
+    the shape approaches ``Normal(mean, sd)``; as ``sd`` shrinks toward 0
+    the normal part becomes a constant and the shape approaches an
+    ``Exponential(rate)`` shifted right by ``mean``. Neither endpoint is
+    allowed here (both ``sd`` and ``rate`` must be positive) -- use
+    :class:`Normal` or :class:`Exponential` directly for those.
+
+    This wraps ``scipy.stats.exponnorm``, whose shape parameter ``K`` is
+    the exponential's average delay measured in standard deviations of the
+    normal part, so it is passed as ``K = 1 / (rate * sd)``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = ExponentiallyModifiedGaussian(mean=0, sd=1, rate=1)
+    >>> float(X.mean())  # 0 + 1 / 1, not the mean=0 that was passed in
+    1.0
+    >>> float(X.var())  # 1 ** 2 + 1 / 1 ** 2
+    2.0
+    >>> round(float(X.pdf(0)), 4)
+    0.2616
+    >>> Y = ExponentiallyModifiedGaussian(mean=0, sd=1, rate=100)
+    >>> round(float(Y.pdf(0)), 4)  # a big rate is nearly Normal(0, 1)'s 0.3989
+    0.3989
+    >>> X.draw()  # doctest: +SKIP
+    1.42
+    """
+
+    def __init__(self, mean=0.0, sd=1.0, rate=1.0):
+        """Initialize an exponentially modified Gaussian distribution.
+
+        Raises
+        ------
+        Exception
+            If ``mean`` is not a number, or ``sd`` or ``rate`` is not a
+            positive number.
+        """
+        _validate(
+            (not isinstance(mean, numbers.Real), "mean must be a number"),
+            (
+                not isinstance(sd, numbers.Real) or sd <= 0,
+                "sd must be a positive number. For sd = 0 there is no normal "
+                "part left to add, so use Exponential(rate) instead.",
+            ),
+            (
+                not isinstance(rate, numbers.Real) or rate <= 0,
+                "rate must be a positive number. For no exponential part at "
+                "all, use Normal(mean, sd) instead.",
+            ),
+        )
+        # Not stored as self.mean / self.sd: those names belong to the methods
+        # that report the mean and sd of the whole distribution, which include
+        # the exponential part and so differ from these two arguments.
+        self.loc = mean
+        self.scale = sd
+        self.rate = rate
+
+        # scipy's exponnorm measures the exponential's average delay (1 / rate)
+        # in units of the normal part's standard deviation, so its shape
+        # parameter is K = (1 / rate) / sd.
+        params = {"K": 1.0 / (rate * sd), "loc": mean, "scale": sd}
+        super().__init__(params, stats.exponnorm, False)
+        # Unbounded on both sides, like Laplace and Gumbel, so the base
+        # equal-tailed ppf(.001, .999) window is used as-is; the HDI trim needs
+        # a bounded side to work from. A small rate makes the right tail long
+        # enough that the window looks lopsided -- pass xlim="zoom" to plot()
+        # to frame the bulk of the probability instead.
+
+
 class Gamma(Distribution):
     """Probability space for a gamma distribution.
 

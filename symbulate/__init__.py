@@ -37,6 +37,7 @@ from .distributions import (
     Reciprocal,
     Normal,
     Exponential,
+    ExponentiallyModifiedGaussian,
     Gamma,
     InverseGamma,
     ScaledInverseChiSquare,
