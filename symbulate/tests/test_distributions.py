@@ -1429,6 +1429,82 @@ class TestInverseGamma(unittest.TestCase):
         plt.close("all")
 
 
+class TestScaledInverseChiSquare(unittest.TestCase):
+
+    def test_ScaledInverseChiSquare_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(ScaledInverseChiSquare(df=6, scale=2))
+        sims = X.sim(Nsim)
+        # equivalent inverse gamma: shape=df/2, scale=df*scale/2
+        cdf = stats.invgamma(3, scale=6).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_ScaledInverseChiSquare_mean_var_sd(self):
+        X = ScaledInverseChiSquare(df=6, scale=2)
+        # mean = df*scale/(df-2); var = 2 df^2 scale^2 / ((df-2)^2 (df-4))
+        self.assertAlmostEqual(float(X.mean()), 6 * 2 / (6 - 2), places=6)
+        self.assertAlmostEqual(
+            float(X.var()), 2 * 6**2 * 2**2 / ((6 - 2) ** 2 * (6 - 4)), places=6
+        )
+        self.assertAlmostEqual(float(X.sd()), 3.0, places=6)
+
+    def test_ScaledInverseChiSquare_is_inverse_gamma(self):
+        # ScaledInverseChiSquare(df, scale) == InverseGamma(df/2, df*scale/2).
+        X = ScaledInverseChiSquare(df=6, scale=2)
+        self.assertIsInstance(X, InverseGamma)
+        Y = InverseGamma(shape=3, scale=6)
+        for x in [0.5, 2, 5, 12]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=9)
+
+    def test_ScaledInverseChiSquare_pdf(self):
+        X = ScaledInverseChiSquare(df=6, scale=2)
+        for x in [0.5, 2, 5]:
+            self.assertAlmostEqual(
+                float(X.pdf(x)), float(stats.invgamma(3, scale=6).pdf(x))
+            )
+
+    def test_ScaledInverseChiSquare_chisquare_relationship(self):
+        # If X ~ ScaledInvChiSq(df, scale), then df*scale/X ~ ChiSquare(df).
+        distributions.rng = np.random.default_rng(42)
+        X = RV(ScaledInverseChiSquare(df=6, scale=2))
+        sims = (6 * 2 / X).sim(Nsim)
+        cdf = stats.chi2(df=6).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_ScaledInverseChiSquare_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = ScaledInverseChiSquare(df=6, scale=2).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreater(float(value), 0.0)
+
+    def test_ScaledInverseChiSquare_default_scale(self):
+        X = ScaledInverseChiSquare(df=6)
+        self.assertEqual(X.df, 6)
+        self.assertEqual(X.scale, 1.0)
+
+    def test_ScaledInverseChiSquare_error_df_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(
+                Exception, lambda v=bad: ScaledInverseChiSquare(df=v, scale=2)
+            )
+
+    def test_ScaledInverseChiSquare_error_scale_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(
+                Exception, lambda v=bad: ScaledInverseChiSquare(df=6, scale=v)
+            )
+
+    def test_ScaledInverseChiSquare_plots_without_error(self):
+        # draw / RV / sim / plot all inherited from InverseGamma / base class.
+        ScaledInverseChiSquare(df=6, scale=2).draw()
+        RV(ScaledInverseChiSquare(df=6, scale=2)).sim(100).plot()
+        ScaledInverseChiSquare(df=6, scale=2).plot()
+        ScaledInverseChiSquare(df=6, scale=2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestLogGamma(unittest.TestCase):
 
     def test_LogGamma_distributional(self):

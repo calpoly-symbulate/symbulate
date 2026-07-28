@@ -36,6 +36,7 @@ from .distributions import (
     Exponential,
     Gamma,
     InverseGamma,
+    ScaledInverseChiSquare,
     LogGamma,
     Beta,
     PERT,

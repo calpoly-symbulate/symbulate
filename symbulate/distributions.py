@@ -2012,6 +2012,86 @@ class InverseGamma(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class ScaledInverseChiSquare(InverseGamma):
+    """Probability space for a scaled inverse chi-square distribution.
+
+    A continuous distribution on (0, infinity), written
+    ``Scaled-Inv-chi^2(df, scale)`` in Bayesian textbooks (e.g. Gelman et
+    al.). It is a standard conjugate prior for the variance of a normal
+    distribution, given in a degrees-of-freedom-and-scale parameterization.
+    It is exactly an :class:`InverseGamma` under a change of variables --
+
+        ``ScaledInverseChiSquare(df, scale)``
+        ``== InverseGamma(shape=df / 2, scale=df * scale / 2)``
+
+    -- so this class is a convenience name for that inverse gamma, using the
+    ``(df, scale)`` parameterization Bayesian work is usually written in.
+
+    Parameters
+    ----------
+    df : float
+        Degrees of freedom (often written nu). Must be positive.
+    scale : float, optional
+        Scale parameter (often written s-squared or tau-squared) -- a
+        variance-like scale, not a standard deviation. Must be positive.
+        Default is 1.
+
+    Attributes
+    ----------
+    df : float
+        Degrees of freedom.
+    scale : float
+        Scale parameter.
+
+    Notes
+    -----
+    The mean is ``df * scale / (df - 2)``, finite only when ``df > 2``; the
+    variance is finite only when ``df > 4``. The name comes from the
+    defining relationship: if ``X`` has this distribution, then
+    ``df * scale / X`` has a ``ChiSquare(df)`` distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = ScaledInverseChiSquare(df=6, scale=2)
+    >>> float(X.mean())
+    3.0
+    >>> float(X.sd())
+    3.0
+    >>> round(float(X.pdf(2)), 4)
+    0.3361
+    >>> X.draw()  # doctest: +SKIP
+    2.14
+    """
+
+    def __init__(self, df, scale=1.0):
+        """Initialize a scaled inverse chi-square distribution.
+
+        Raises
+        ------
+        Exception
+            If ``df`` or ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(df, numbers.Real) or df <= 0,
+                "df must be a positive number",
+            ),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        # Scaled-inv-chi^2(df, scale) is InverseGamma(df / 2, df * scale / 2);
+        # delegate to InverseGamma so all of its scipy wiring, plotting, and
+        # x-window are reused unchanged.
+        super().__init__(shape=df / 2, scale=df * scale / 2)
+        # Re-expose the distribution's own (df, scale) parameterization
+        # (this overrides InverseGamma's shape/scale attributes).
+        self.df = df
+        self.scale = scale
+
+
 class LogGamma(Distribution):
     """Probability space for a log-gamma distribution.
 
