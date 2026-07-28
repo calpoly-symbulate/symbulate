@@ -38,6 +38,7 @@ from .distributions import (
     Beta,
     PERT,
     Triangular,
+    Kumaraswamy,
     StudentT,
     ChiSquare,
     F,
