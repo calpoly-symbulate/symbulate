@@ -1775,7 +1775,7 @@ class LogUniform(Distribution):
     --------
     >>> from symbulate import *
     >>> X = LogUniform(a=1, b=100)
-    >>> float(X.median())
+    >>> round(float(X.median()), 4)
     10.0
     >>> round(float(X.mean()), 4)
     21.4976
@@ -1833,7 +1833,7 @@ class Reciprocal(LogUniform):
     Examples
     --------
     >>> from symbulate import *
-    >>> float(Reciprocal(a=1, b=100).median())
+    >>> round(float(Reciprocal(a=1, b=100).median()), 4)
     10.0
     """
 
@@ -4576,6 +4576,163 @@ class BivariateNormal(MultivariateNormal):
         self.cov = [[var1, cov], [cov, var2]]
         self.discrete = False
         self.pdf = lambda x: stats.multivariate_normal(self.mean, self.cov).pdf(x)
+
+
+class MultivariateT(Distribution):
+    """Probability space for a multivariate t (Student) distribution.
+
+    Generalizes Student's t-distribution to multiple dimensions -- the
+    heavy-tailed counterpart of the :class:`MultivariateNormal`. Each draw
+    produces a vector of correlated values described by a location vector, a
+    scale matrix, and the degrees of freedom that set the tail weight. As
+    the degrees of freedom grow, the distribution approaches a multivariate
+    normal with covariance equal to the scale matrix.
+
+    Parameters
+    ----------
+    mean : array-like of length n
+        The location (center) vector of the distribution.
+    cov : array-like of shape (n, n)
+        The scale matrix (also called the shape matrix). Must be symmetric
+        and positive semi-definite. It plays the role ``cov`` does for the
+        multivariate normal, but it is not the covariance: for ``df > 2``
+        the actual covariance is ``df / (df - 2)`` times this matrix.
+    df : float
+        Degrees of freedom. Must be positive. Smaller values give heavier
+        tails; as ``df`` grows the distribution approaches a
+        ``MultivariateNormal(mean, cov)``.
+
+    Attributes
+    ----------
+    mean : array-like of length n
+        The location vector.
+    cov : array-like of shape (n, n)
+        The scale matrix.
+    df : float
+        Degrees of freedom.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=5)
+    >>> X.draw()  # doctest: +SKIP
+    (0.42, -1.13)
+    """
+
+    def __init__(self, mean, cov, df):
+        """Initialize a multivariate t distribution.
+
+        Raises
+        ------
+        Exception
+            If the dimensions of ``mean`` and ``cov`` are incompatible; if
+            ``cov`` is not square or not symmetric positive semi-definite;
+            or if ``df`` is not a positive number.
+        """
+        if len(mean) != len(cov):
+            raise Exception(
+                "The dimension of the mean vector"
+                + " is not compatible with the dimensions"
+                + " of the scale matrix."
+            )
+
+        if len(mean) >= 1:
+            self.mean = mean
+        else:
+            raise Exception("Mean vector and scale matrix cannot be empty")
+
+        if len(cov) >= 1:
+            if all(len(row) == len(mean) for row in cov):
+                if np.all(np.linalg.eigvals(cov) >= 0) and np.allclose(
+                    cov, np.transpose(cov)
+                ):
+                    self.cov = cov
+                else:
+                    raise Exception(
+                        "Scale matrix is not symmetric and positive semi-definite"
+                    )
+            else:
+                raise Exception("Scale matrix is not square")
+        else:
+            raise Exception("Dimension of scale matrix cannot be less than 1")
+
+        if not isinstance(df, numbers.Real) or df <= 0:
+            raise Exception("df must be a positive number")
+        self.df = df
+
+        self.discrete = False
+        self.pdf = lambda x: stats.multivariate_t(
+            loc=self.mean, shape=self.cov, df=self.df
+        ).pdf(x)
+
+    def plot(self):
+        """Plot is not supported for multivariate distributions.
+
+        Raises
+        ------
+        Exception
+            Always raised — plotting is not available for the
+            multivariate t distribution.
+        """
+        raise Exception(
+            "Plotting is not currently available for the multivariate t distribution."
+        )
+
+    def draw(self):
+        """Draw a single random sample from the multivariate t distribution.
+
+        Returns
+        -------
+        Vector
+            A random vector drawn from the multivariate t distribution.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=5).draw()  # doctest: +SKIP
+        (0.42, -1.13)
+        """
+        return Vector(
+            stats.multivariate_t(loc=self.mean, shape=self.cov, df=self.df).rvs(
+                random_state=rng
+            )
+        )
+
+    def __pow__(self, exponent):
+        """Draw multiple independent samples from the multivariate t distribution.
+
+        Parameters
+        ----------
+        exponent : int or float
+            Number of samples to draw. Pass ``float('inf')`` to create
+            an infinite sequence of draws generated lazily on demand.
+
+        Returns
+        -------
+        ProbabilitySpace
+            A probability space whose draws produce ``exponent`` samples
+            at a time.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> (MultivariateT([0, 0], [[1, 0], [0, 1]], 5) ** 3).draw()  # doctest: +SKIP
+        [(0.42, -1.13), (0.31, -0.72), (0.88, -0.21)]
+        """
+        if exponent == float("inf"):
+
+            def draw():
+                def _func(n):
+                    return self.draw()
+
+                return InfiniteVector(_func)
+
+        else:
+
+            def draw():
+                return Vector(self.draw() for _ in range(exponent))
+
+        return ProbabilitySpace(draw)
 
 
 class Multinomial(Distribution):

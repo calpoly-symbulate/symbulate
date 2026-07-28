@@ -3521,6 +3521,69 @@ class TestMultivariateNormal(unittest.TestCase):
         self.assertRaises(Exception, X.plot)
 
 
+class TestMultivariateT(unittest.TestCase):
+
+    def test_MultivariateT_mean_cov_error(self):
+        self.assertRaises(
+            Exception, lambda: MultivariateT(mean=[2], cov=[[2, 2], [3, 4]], df=5)
+        )
+
+    def test_MultivariateT_cov_square_error(self):
+        self.assertRaises(
+            Exception,
+            lambda: MultivariateT(mean=[2, 4], cov=[[2, 4, 5], [2, 1]], df=5),
+        )
+
+    def test_MultivariateT_cov_not_psd(self):
+        self.assertRaises(
+            Exception,
+            lambda: MultivariateT(mean=[0, 0], cov=[[-1, 0], [0, 1]], df=5),
+        )
+
+    def test_MultivariateT_df_error(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(
+                Exception,
+                lambda v=bad: MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=v),
+            )
+
+    def test_MultivariateT_draw_shape(self):
+        distributions.rng = np.random.default_rng(42)
+        X = MultivariateT(mean=[0, 0, 0], cov=[[1, 0, 0], [0, 1, 0], [0, 0, 1]], df=5)
+        draw = X.draw()
+        self.assertIsInstance(draw, Vector)
+        self.assertEqual(len(draw), 3)
+
+    def test_MultivariateT_pdf_matches_scipy(self):
+        X = MultivariateT(mean=[1, 2], cov=[[2, 0.5], [0.5, 1]], df=5)
+        th = stats.multivariate_t(loc=[1, 2], shape=[[2, 0.5], [0.5, 1]], df=5)
+        for pt in [[0, 0], [1, 2], [2, 3]]:
+            self.assertAlmostEqual(float(X.pdf(pt)), float(th.pdf(pt)), places=9)
+
+    def test_MultivariateT_marginal_is_student_t(self):
+        # Each marginal of a multivariate t is a univariate t with the same
+        # df: location mean_i and scale sqrt(cov_ii).
+        distributions.rng = np.random.default_rng(42)
+        X, _ = RV(MultivariateT(mean=[3, 7], cov=[[4, 0], [0, 9]], df=5))
+        sims = X.sim(Nsim)
+        cdf = stats.t(df=5, loc=3, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_MultivariateT_large_df_approaches_normal(self):
+        # As df grows, the multivariate t approaches a MultivariateNormal
+        # with covariance equal to the scale matrix.
+        cov = [[2, 0.5], [0.5, 1]]
+        mvt = MultivariateT(mean=[0, 0], cov=cov, df=100000)
+        mvn = MultivariateNormal(mean=[0, 0], cov=cov)
+        for pt in [[0, 0], [1, 1], [2, -1]]:
+            self.assertAlmostEqual(float(mvt.pdf(pt)), float(mvn.pdf(pt)), places=3)
+
+    def test_MultivariateT_plot_raises(self):
+        X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=5)
+        self.assertRaises(Exception, X.plot)
+
+
 class TestBivariateNormal(unittest.TestCase):
 
     def test_BivariateNormal_error1(self):
