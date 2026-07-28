@@ -241,9 +241,9 @@ SEGMENTED_DENSITY_LINEWIDTH = 1.8  # ridge outlines are density curves, so this
 # drawn on top of the ridges (zorder=2) so a ridge=True fill can't wash it
 # out. The segmented histogram draws its baselines the same way, so the
 # two segmented plots of one dataset read identically.
-SEGMENTED_DENSITY_PEAK_SCALE = 1.6  # tallest peak's height, in units of the
-# spacing between neighboring baselines; > 1 gives the gentle overlap
-# that makes the stacked ridges read as one connected picture
+SEGMENTED_DENSITY_PEAK_SCALE = 0.9  # tallest peak's height, in units of the
+# spacing between neighboring baselines; <= 1 keeps every ridge contained
+# within its own segment, so no curve spills over into a neighboring level
 SEGMENTED_DENSITY_GRID_POINTS = 1000  # matches DENSITY_GRID_POINTS
 SEGMENTED_DENSITY_LEGEND_LOC = "upper right"
 SEGMENTED_DENSITY_TICK_FRAC = 0.2  # height of the fallback tick marks drawn
@@ -264,7 +264,7 @@ SEGMENTED_HIST_ALPHA = 0.65  # matches HIST_ALPHA -- the bars are
 # ordinary histogram bars, just small
 SEGMENTED_HIST_EDGECOLOR = "white"  # matches HIST_EDGECOLOR
 SEGMENTED_HIST_EDGEWIDTH = 0.8  # matches HIST_EDGEWIDTH
-SEGMENTED_HIST_PEAK_SCALE = 1.6  # matches SEGMENTED_DENSITY_PEAK_SCALE
+SEGMENTED_HIST_PEAK_SCALE = 0.9  # matches SEGMENTED_DENSITY_PEAK_SCALE
 # Each level's baseline is a grey line styled like a reference gridline
 # -- color, width, and alpha come from the grid.* rcParams in
 # symbulate.mplstyle. A blended transform makes it span the full axes and
