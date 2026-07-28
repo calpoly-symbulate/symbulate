@@ -68,6 +68,8 @@ from .distributions import (
     MultivariateNormal,
     BivariateNormal,
     MultivariateT,
+    Wishart,
+    InverseWishart,
     Multinomial,
     Dirichlet,
 )
