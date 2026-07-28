@@ -1850,6 +1850,234 @@ class Beta(Distribution):
         self.xlim = (0, 1)  # Beta distributions are not defined for x < 0 and x > 1
 
 
+class PERT(Distribution):
+    """Probability space for a PERT (beta-PERT) distribution.
+
+    A continuous distribution on ``[low, high]`` built from the three
+    numbers an expert can usually estimate: the best case, the most likely
+    case, and the worst case. It is the standard distribution of the
+    Program Evaluation and Review Technique, used in project management and
+    risk analysis to model something like how long a task will take.
+
+    Its appeal is the mean, ``(low + weight * mode + high) / (weight + 2)``
+    -- with the default ``weight`` of 4 this is the familiar
+    ``(low + 4 * mode + high) / 6``. The most likely value counts heavily,
+    but a far-away worst case still pulls the average toward it. So for a
+    task estimated at best 1 day, likely 2, worst 10, the mean is about
+    3.17 days rather than the 2 you might plan around.
+
+    Underneath, a PERT is a beta distribution stretched onto
+    ``[low, high]``, with shape parameters chosen so that its peak sits
+    exactly at ``mode``:
+
+    - ``alpha = 1 + weight * (mode - low) / (high - low)``
+    - ``beta = 1 + weight * (high - mode) / (high - low)``
+
+    Parameters
+    ----------
+    low : float
+        Smallest possible value -- the best case. Must be less than
+        ``high``.
+    mode : float
+        Most likely value, where the density peaks. Must be between ``low``
+        and ``high`` (either end is allowed).
+    high : float
+        Largest possible value -- the worst case. Must be greater than
+        ``low``.
+    weight : float, optional
+        How much weight the most likely value carries, relative to the two
+        extremes. Must be positive. Default is 4, which gives the standard
+        PERT distribution; larger values concentrate the distribution more
+        tightly around ``mode``.
+
+    Attributes
+    ----------
+    low : float
+        Smallest possible value.
+    mode : float
+        Most likely value.
+    high : float
+        Largest possible value.
+    weight : float
+        Weight carried by the most likely value.
+    alpha : float
+        First shape parameter of the underlying beta distribution.
+    beta : float
+        Second shape parameter of the underlying beta distribution.
+
+    Notes
+    -----
+    A ``mode`` at either endpoint is allowed and needs no special handling:
+    ``mode == low`` gives ``alpha = 1`` (a density that only decreases) and
+    ``mode == high`` gives ``beta = 1`` (one that only increases).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = PERT(low=1, mode=2, high=10)
+    >>> round(float(X.mean()), 4)
+    3.1667
+    >>> round(float(X.median()), 4)
+    2.8978
+    >>> X.draw()  # doctest: +SKIP
+    2.87
+    """
+
+    def __init__(self, low, mode, high, weight=4.0):
+        """Initialize a PERT distribution.
+
+        Raises
+        ------
+        Exception
+            If ``low``, ``mode``, or ``high`` is not a number; if ``high``
+            is not greater than ``low``; if ``mode`` does not lie between
+            ``low`` and ``high``; or if ``weight`` is not a positive number.
+        """
+        # The two cross-parameter checks below compare the three bounds, so
+        # they are guarded by this type check -- otherwise a non-numeric
+        # argument would raise a cryptic TypeError from the comparison
+        # instead of reporting the friendly message.
+        numeric = (
+            isinstance(low, numbers.Real)
+            and isinstance(mode, numbers.Real)
+            and isinstance(high, numbers.Real)
+        )
+        _validate(
+            (not isinstance(low, numbers.Real), "low must be a number"),
+            (not isinstance(mode, numbers.Real), "mode must be a number"),
+            (not isinstance(high, numbers.Real), "high must be a number"),
+            (
+                not isinstance(weight, numbers.Real) or weight <= 0,
+                "weight must be a positive number",
+            ),
+            (numeric and low >= high, "high must be greater than low"),
+            # Only meaningful once the bounds themselves make sense.
+            (
+                numeric and low < high and not low <= mode <= high,
+                "mode must be between low and high",
+            ),
+        )
+        self.low = low
+        self.mode = mode
+        self.high = high
+        self.weight = weight
+
+        # Translate the three-point estimate into the beta shape parameters
+        # that put the peak at `mode`, then stretch the standard beta from
+        # [0, 1] onto [low, high] with scipy's loc/scale.
+        span = high - low
+        self.alpha = 1 + weight * (mode - low) / span
+        self.beta = 1 + weight * (high - mode) / span
+
+        params = {"a": self.alpha, "b": self.beta, "loc": low, "scale": span}
+        super().__init__(params, stats.beta, False)
+        # Bounded at both ends, so the window shows the full support -- the
+        # same treatment Uniform, Beta, and DeMoivre get.
+        self.xlim = (low, high)
+
+
+class Triangular(Distribution):
+    """Probability space for a triangular distribution.
+
+    A continuous distribution on ``[low, high]`` whose density is literally
+    a triangle: it rises in a straight line from 0 at ``low`` up to a peak
+    at ``mode``, then falls in a straight line back to 0 at ``high``. The
+    peak height is ``2 / (high - low)``, whatever the mode, since the area
+    must be 1.
+
+    Like :class:`PERT` it is built from a three-point estimate -- the best
+    case, the most likely case, and the worst case -- which makes it a
+    common first choice in simulation and risk modeling when those three
+    numbers are all anyone can supply. It is the simpler and blunter of the
+    two: its mean is ``(low + mode + high) / 3``, giving the two extremes
+    the same weight as the most likely value, whereas a PERT weights the
+    mode four times as heavily. A triangular distribution is therefore
+    more spread out than the PERT on the same three numbers, and has a
+    sharp corner at the mode rather than a smooth peak.
+
+    Parameters
+    ----------
+    low : float
+        Smallest possible value -- the best case. Must be less than
+        ``high``.
+    mode : float
+        Most likely value, where the triangle peaks. Must be between
+        ``low`` and ``high`` (either end is allowed).
+    high : float
+        Largest possible value -- the worst case. Must be greater than
+        ``low``.
+
+    Attributes
+    ----------
+    low : float
+        Smallest possible value.
+    mode : float
+        Most likely value.
+    high : float
+        Largest possible value.
+
+    Notes
+    -----
+    A ``mode`` at either endpoint is allowed and gives a right triangle:
+    ``mode == low`` slopes only downward, and ``mode == high`` only upward.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Triangular(low=1, mode=2, high=10)
+    >>> round(float(X.mean()), 4)
+    4.3333
+    >>> float(X.median())
+    4.0
+    >>> round(float(X.pdf(2)), 4)
+    0.2222
+    >>> X.draw()  # doctest: +SKIP
+    3.61
+    """
+
+    def __init__(self, low, mode, high):
+        """Initialize a triangular distribution.
+
+        Raises
+        ------
+        Exception
+            If ``low``, ``mode``, or ``high`` is not a number; if ``high``
+            is not greater than ``low``; or if ``mode`` does not lie
+            between ``low`` and ``high``.
+        """
+        # As in PERT, the two cross-parameter checks compare the bounds, so
+        # they are guarded by this type check to keep a non-numeric argument
+        # from raising a cryptic TypeError from the comparison instead.
+        numeric = (
+            isinstance(low, numbers.Real)
+            and isinstance(mode, numbers.Real)
+            and isinstance(high, numbers.Real)
+        )
+        _validate(
+            (not isinstance(low, numbers.Real), "low must be a number"),
+            (not isinstance(mode, numbers.Real), "mode must be a number"),
+            (not isinstance(high, numbers.Real), "high must be a number"),
+            (numeric and low >= high, "high must be greater than low"),
+            # Only meaningful once the bounds themselves make sense.
+            (
+                numeric and low < high and not low <= mode <= high,
+                "mode must be between low and high",
+            ),
+        )
+        self.low = low
+        self.mode = mode
+        self.high = high
+
+        # scipy's triang takes the mode as a *fraction* of the way along the
+        # support (its `c`), not as a value on the data's own scale, so the
+        # mode has to be converted before being handed over.
+        span = high - low
+        params = {"c": (mode - low) / span, "loc": low, "scale": span}
+        super().__init__(params, stats.triang, False)
+        # Bounded at both ends, so the window shows the full support.
+        self.xlim = (low, high)
+
+
 class StudentT(Distribution):
     """Probability space for Student's t-distribution.
 

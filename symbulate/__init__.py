@@ -35,6 +35,8 @@ from .distributions import (
     Gamma,
     InverseGamma,
     Beta,
+    PERT,
+    Triangular,
     StudentT,
     ChiSquare,
     F,
