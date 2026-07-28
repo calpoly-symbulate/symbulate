@@ -129,7 +129,7 @@ class TestBetaBinomial(unittest.TestCase):
     def test_BetaBinomial_distributional(self):
         distributions.rng = np.random.default_rng(42)
         exp_list, obs_list = [], []
-        X = RV(BetaBinomial(n=10, a=2, b=3))
+        X = RV(BetaBinomial(n=10, shape1=2, shape2=3))
         sims = X.sim(Nsim)
         simulated = sims.tabulate()
         for k in range(11):
@@ -143,68 +143,74 @@ class TestBetaBinomial(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_BetaBinomial_mean_var_sd(self):
-        X = BetaBinomial(n=10, a=2, b=3)
+        X = BetaBinomial(n=10, shape1=2, shape2=3)
         th = stats.betabinom(10, 2, 3)
         self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
         self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
         self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
 
     def test_BetaBinomial_pmf(self):
-        X = BetaBinomial(n=10, a=2, b=3)
+        X = BetaBinomial(n=10, shape1=2, shape2=3)
         for k in [0, 3, 7, 10]:
             self.assertAlmostEqual(
                 float(X.pmf(k)), float(stats.betabinom(10, 2, 3).pmf(k))
             )
 
-    def test_BetaBinomial_uniform_when_a_b_equal_one(self):
-        # a = b = 1 makes the shared probability Uniform(0, 1), so every count
-        # from 0 to n is equally likely -- a DiscreteUniform on {0, ..., n}.
-        X = BetaBinomial(n=10, a=1, b=1)
+    def test_BetaBinomial_uniform_when_shapes_equal_one(self):
+        # shape1 = shape2 = 1 makes the shared probability Uniform(0, 1), so
+        # every count from 0 to n is equally likely -- a DiscreteUniform.
+        X = BetaBinomial(n=10, shape1=1, shape2=1)
         for k in range(11):
             self.assertAlmostEqual(float(X.pmf(k)), 1 / 11, places=9)
 
     def test_BetaBinomial_n1_is_bernoulli(self):
         # With a single trial the shared probability integrates out to its
-        # mean a / (a + b), so BetaBinomial(1, a, b) is Bernoulli(a / (a + b)).
-        X = BetaBinomial(n=1, a=2, b=3)
+        # mean shape1 / (shape1 + shape2), so BetaBinomial(1, shape1, shape2)
+        # is Bernoulli(shape1 / (shape1 + shape2)).
+        X = BetaBinomial(n=1, shape1=2, shape2=3)
         self.assertAlmostEqual(float(X.pmf(1)), 2 / 5, places=9)
         self.assertAlmostEqual(float(X.pmf(0)), 3 / 5, places=9)
 
     def test_BetaBinomial_approaches_binomial(self):
-        # As a and b grow with a / (a + b) fixed, the beta concentrates on a
-        # single probability and the beta-binomial approaches Binomial(n, p).
-        X = BetaBinomial(n=10, a=300, b=700)
+        # As the shapes grow with shape1 / (shape1 + shape2) fixed, the beta
+        # concentrates on a single probability and the beta-binomial
+        # approaches Binomial(n, p).
+        X = BetaBinomial(n=10, shape1=300, shape2=700)
         binom = stats.binom(n=10, p=0.3)
         for k in range(11):
             self.assertAlmostEqual(float(X.pmf(k)), float(binom.pmf(k)), places=2)
 
     def test_BetaBinomial_draw_is_scalar_in_support(self):
         distributions.rng = np.random.default_rng(0)
-        value = BetaBinomial(n=10, a=2, b=3).draw()
+        value = BetaBinomial(n=10, shape1=2, shape2=3).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
         self.assertLessEqual(float(value), 10.0)
 
     def test_BetaBinomial_error_n_negative(self):
-        self.assertRaises(Exception, lambda: BetaBinomial(n=-1, a=2, b=3))
+        self.assertRaises(Exception, lambda: BetaBinomial(n=-1, shape1=2, shape2=3))
 
     def test_BetaBinomial_error_n_float(self):
-        self.assertRaises(Exception, lambda: BetaBinomial(n=2.5, a=2, b=3))
+        self.assertRaises(Exception, lambda: BetaBinomial(n=2.5, shape1=2, shape2=3))
 
-    def test_BetaBinomial_error_a_not_positive(self):
+    def test_BetaBinomial_error_shape1_not_positive(self):
         for bad in [0, -1, "a"]:
-            self.assertRaises(Exception, lambda v=bad: BetaBinomial(n=10, a=v, b=3))
+            self.assertRaises(
+                Exception, lambda v=bad: BetaBinomial(n=10, shape1=v, shape2=3)
+            )
 
-    def test_BetaBinomial_error_b_not_positive(self):
+    def test_BetaBinomial_error_shape2_not_positive(self):
         for bad in [0, -1, "a"]:
-            self.assertRaises(Exception, lambda v=bad: BetaBinomial(n=10, a=2, b=v))
+            self.assertRaises(
+                Exception, lambda v=bad: BetaBinomial(n=10, shape1=2, shape2=v)
+            )
 
     def test_BetaBinomial_plots_without_error(self):
         # draw / RV / sim / plot all wired through the base class.
-        BetaBinomial(n=10, a=2, b=3).draw()
-        RV(BetaBinomial(n=10, a=2, b=3)).sim(100).plot()
-        BetaBinomial(n=10, a=2, b=3).plot()
-        BetaBinomial(n=10, a=2, b=3).plot(cdf=True)
+        BetaBinomial(n=10, shape1=2, shape2=3).draw()
+        RV(BetaBinomial(n=10, shape1=2, shape2=3)).sim(100).plot()
+        BetaBinomial(n=10, shape1=2, shape2=3).plot()
+        BetaBinomial(n=10, shape1=2, shape2=3).plot(cdf=True)
         plt.close("all")
 
 
@@ -212,7 +218,7 @@ class TestBetaNegativeBinomial(unittest.TestCase):
 
     def test_BetaNegativeBinomial_distributional(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(BetaNegativeBinomial(r=5, a=4, b=3))
+        X = RV(BetaNegativeBinomial(r=5, shape1=4, shape2=3))
         sims = X.sim(Nsim)
         simulated = sims.tabulate()
         exp_list, obs_list = [], []
@@ -227,58 +233,58 @@ class TestBetaNegativeBinomial(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_BetaNegativeBinomial_mean_var_sd(self):
-        X = BetaNegativeBinomial(r=5, a=4, b=3)
+        X = BetaNegativeBinomial(r=5, shape1=4, shape2=3)
         th = stats.betanbinom(5, 4, 3)
         self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
         self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
         self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
 
     def test_BetaNegativeBinomial_pmf(self):
-        X = BetaNegativeBinomial(r=5, a=3, b=2)
+        X = BetaNegativeBinomial(r=5, shape1=3, shape2=2)
         for k in [0, 1, 5, 12]:
             self.assertAlmostEqual(
                 float(X.pmf(k)), float(stats.betanbinom(5, 3, 2).pmf(k))
             )
 
     def test_BetaNegativeBinomial_approaches_pascal(self):
-        # As a and b grow with a / (a + b) fixed, the beta concentrates on a
-        # single probability and the beta-negative binomial approaches a
-        # Pascal(r, p) (number of failures before the r-th success).
-        X = BetaNegativeBinomial(r=5, a=600, b=400)  # a/(a+b) = 0.6
+        # As the shapes grow with shape1 / (shape1 + shape2) fixed, the beta
+        # concentrates on a single probability and the beta-negative binomial
+        # approaches a Pascal(r, p) (failures before the r-th success).
+        X = BetaNegativeBinomial(r=5, shape1=600, shape2=400)  # ratio = 0.6
         pascal = Pascal(r=5, p=0.6)
         for k in range(15):
             self.assertAlmostEqual(float(X.pmf(k)), float(pascal.pmf(k)), places=2)
 
     def test_BetaNegativeBinomial_draw_is_scalar_in_support(self):
         distributions.rng = np.random.default_rng(0)
-        value = BetaNegativeBinomial(r=5, a=3, b=2).draw()
+        value = BetaNegativeBinomial(r=5, shape1=3, shape2=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
 
     def test_BetaNegativeBinomial_error_r(self):
         for bad in [0, -1, 2.5, "a"]:
             self.assertRaises(
-                Exception, lambda v=bad: BetaNegativeBinomial(r=v, a=3, b=2)
+                Exception, lambda v=bad: BetaNegativeBinomial(r=v, shape1=3, shape2=2)
             )
 
-    def test_BetaNegativeBinomial_error_a_not_positive(self):
+    def test_BetaNegativeBinomial_error_shape1_not_positive(self):
         for bad in [0, -1, "a"]:
             self.assertRaises(
-                Exception, lambda v=bad: BetaNegativeBinomial(r=5, a=v, b=2)
+                Exception, lambda v=bad: BetaNegativeBinomial(r=5, shape1=v, shape2=2)
             )
 
-    def test_BetaNegativeBinomial_error_b_not_positive(self):
+    def test_BetaNegativeBinomial_error_shape2_not_positive(self):
         for bad in [0, -1, "a"]:
             self.assertRaises(
-                Exception, lambda v=bad: BetaNegativeBinomial(r=5, a=3, b=v)
+                Exception, lambda v=bad: BetaNegativeBinomial(r=5, shape1=3, shape2=v)
             )
 
     def test_BetaNegativeBinomial_plots_without_error(self):
         # draw / RV / sim / plot all wired through the base class.
-        BetaNegativeBinomial(r=5, a=3, b=2).draw()
-        RV(BetaNegativeBinomial(r=5, a=3, b=2)).sim(100).plot()
-        BetaNegativeBinomial(r=5, a=3, b=2).plot()
-        BetaNegativeBinomial(r=5, a=3, b=2).plot(cdf=True)
+        BetaNegativeBinomial(r=5, shape1=3, shape2=2).draw()
+        RV(BetaNegativeBinomial(r=5, shape1=3, shape2=2)).sim(100).plot()
+        BetaNegativeBinomial(r=5, shape1=3, shape2=2).plot()
+        BetaNegativeBinomial(r=5, shape1=3, shape2=2).plot(cdf=True)
         plt.close("all")
 
 
@@ -580,23 +586,23 @@ class TestZipf(unittest.TestCase):
         # normalizing constant.
         a, n = 1.5, 8
         harmonic = math.fsum(1 / k**a for k in range(1, n + 1))
-        X = Zipf(a=a, n=n)
+        X = Zipf(shape=a, n=n)
         for k in range(1, n + 1):
             self.assertAlmostEqual(float(X.pmf(k)), (1 / k**a) / harmonic, places=12)
 
     def test_Zipf_pmf_sums_to_one(self):
-        X = Zipf(a=1, n=5)
+        X = Zipf(shape=1, n=5)
         self.assertAlmostEqual(float(np.sum(X.pmf(np.arange(1, 6)))), 1.0, places=12)
 
-    def test_Zipf_classic_a_one_probabilities(self):
+    def test_Zipf_classic_shape_one_probabilities(self):
         # a = 1 is Zipf's law itself: rank k has probability proportional to
         # 1 / k, normalized by the 5th harmonic number 137 / 60.
-        X = Zipf(a=1, n=5)
+        X = Zipf(shape=1, n=5)
         for k in range(1, 6):
             self.assertAlmostEqual(float(X.pmf(k)), (1 / k) / (137 / 60), places=12)
 
     def test_Zipf_mean_var_sd(self):
-        X = Zipf(a=1.2, n=10)
+        X = Zipf(shape=1.2, n=10)
         th = stats.zipfian(1.2, 10)
         self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
         self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
@@ -606,7 +612,7 @@ class TestZipf(unittest.TestCase):
 
     def test_Zipf_support_is_one_through_n(self):
         # Finite support: nothing below 1, nothing above n.
-        X = Zipf(a=1.3, n=6)
+        X = Zipf(shape=1.3, n=6)
         self.assertEqual(float(X.pmf(0)), 0.0)
         self.assertEqual(float(X.pmf(7)), 0.0)
         self.assertAlmostEqual(float(X.cdf(6)), 1.0, places=12)
@@ -615,18 +621,18 @@ class TestZipf(unittest.TestCase):
     def test_Zipf_xlim_is_full_support(self):
         # Bounded at both ends, so the default plotting window is the whole
         # support -- no probability trimmed, like Binomial and DiscreteUniform.
-        self.assertEqual(Zipf(a=1.1, n=50).xlim, (1, 50))
+        self.assertEqual(Zipf(shape=1.1, n=50).xlim, (1, 50))
 
     def test_Zipf_pmf_is_decreasing_in_rank(self):
         # Zipf's law: rank 1 is the most common and probability falls off
         # from there.
-        probs = Zipf(a=1.1, n=20).pmf(np.arange(1, 21))
+        probs = Zipf(shape=1.1, n=20).pmf(np.arange(1, 21))
         self.assertTrue(all(np.diff(probs) < 0))
 
     # --- wraps zipfian (finite), not zipf (the infinite-support zeta) ---
 
     def test_Zipf_wraps_scipy_zipfian(self):
-        X = Zipf(a=2, n=10)
+        X = Zipf(shape=2, n=10)
         for k in [1, 2, 5, 10]:
             self.assertAlmostEqual(
                 float(X.pmf(k)), float(stats.zipfian.pmf(k, 2, 10)), places=12
@@ -636,25 +642,25 @@ class TestZipf(unittest.TestCase):
         # Regression guard for scipy's naming trap: scipy.stats.zipf is the
         # infinite-support zeta distribution, NOT this one. The finite
         # normalizing constant makes every probability strictly larger.
-        X = Zipf(a=2, n=10)
+        X = Zipf(shape=2, n=10)
         for k in [1, 2, 5, 10]:
             self.assertGreater(float(X.pmf(k)), float(stats.zipf.pmf(k, 2)))
         # The zeta distribution puts mass above n; the finite Zipf does not.
         self.assertGreater(float(stats.zipf.pmf(11, 2)), 0.0)
         self.assertEqual(float(X.pmf(11)), 0.0)
 
-    def test_Zipf_defined_for_a_below_one(self):
+    def test_Zipf_defined_for_shape_below_one(self):
         # The infinite sum diverges for a <= 1, so the zeta distribution does
         # not exist there -- but a finite sum always converges, so the
         # finite-support Zipf does.
         for a in [0, 0.5, 1]:
-            probs = Zipf(a=a, n=6).pmf(np.arange(1, 7))
+            probs = Zipf(shape=a, n=6).pmf(np.arange(1, 7))
             self.assertAlmostEqual(float(np.sum(probs)), 1.0, places=12)
 
     def test_Zipf_large_n_approaches_zeta(self):
         # With a > 1 fixed, growing n approaches the infinite-support zeta,
         # because the ranks past n carry almost no probability.
-        X = Zipf(a=3, n=10000)
+        X = Zipf(shape=3, n=10000)
         for k in [1, 2, 5]:
             self.assertAlmostEqual(
                 float(X.pmf(k)), float(stats.zipf.pmf(k, 3)), places=6
@@ -662,9 +668,9 @@ class TestZipf(unittest.TestCase):
 
     # --- relationships with distributions already in Symbulate ---
 
-    def test_Zipf_a_zero_is_discrete_uniform(self):
+    def test_Zipf_shape_zero_is_discrete_uniform(self):
         # a = 0 makes every rank equally likely: DiscreteUniform(1, n).
-        X = Zipf(a=0, n=5)
+        X = Zipf(shape=0, n=5)
         for k in range(1, 6):
             self.assertAlmostEqual(
                 float(X.pmf(k)), float(DiscreteUniform(a=1, b=5).pmf(k)), places=12
@@ -675,21 +681,21 @@ class TestZipf(unittest.TestCase):
         # p = 2 ** -a / (1 + 2 ** -a) is the chance of landing on rank 2.
         a = 1.4
         p = 2**-a / (1 + 2**-a)
-        X = Zipf(a=a, n=2)
+        X = Zipf(shape=a, n=2)
         self.assertAlmostEqual(float(X.pmf(1)), float(Bernoulli(p).pmf(0)), places=12)
         self.assertAlmostEqual(float(X.pmf(2)), float(Bernoulli(p).pmf(1)), places=12)
 
     def test_Zipf_n_one_is_point_mass(self):
-        X = Zipf(a=1.5, n=1)
+        X = Zipf(shape=1.5, n=1)
         self.assertEqual(float(X.pmf(1)), 1.0)
-        self.assertEqual(float(X.mean()), 1.0)
+        self.assertAlmostEqual(float(X.mean()), 1.0)
 
     # --- sampling ---
 
     def test_Zipf_distributional(self):
         distributions.rng = np.random.default_rng(42)
         exp_list, obs_list = [], []
-        X = RV(Zipf(a=1.2, n=10))
+        X = RV(Zipf(shape=1.2, n=10))
         sims = X.sim(Nsim)
         simulated = sims.tabulate()
         for k in range(1, 11):
@@ -704,12 +710,12 @@ class TestZipf(unittest.TestCase):
 
     def test_Zipf_sim_stays_in_support(self):
         distributions.rng = np.random.default_rng(42)
-        sims = RV(Zipf(a=0.7, n=12)).sim(Nsim)
+        sims = RV(Zipf(shape=0.7, n=12)).sim(Nsim)
         self.assertTrue(all(1 <= sim <= 12 for sim in sims))
 
     def test_Zipf_draw_is_scalar_in_support(self):
         distributions.rng = np.random.default_rng(0)
-        value = Zipf(a=1.2, n=10).draw()
+        value = Zipf(shape=1.2, n=10).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 1.0)
         self.assertLessEqual(float(value), 10.0)
@@ -718,28 +724,32 @@ class TestZipf(unittest.TestCase):
 
     def test_Zipf_same_seed_gives_same_sims(self):
         distributions.rng = np.random.default_rng(2024)
-        first = list(RV(Zipf(a=1.2, n=10)).sim(500))
+        first = list(RV(Zipf(shape=1.2, n=10)).sim(500))
         distributions.rng = np.random.default_rng(2024)
-        second = list(RV(Zipf(a=1.2, n=10)).sim(500))
+        second = list(RV(Zipf(shape=1.2, n=10)).sim(500))
         self.assertEqual(first, second)
 
     def test_Zipf_different_seed_gives_different_sims(self):
         distributions.rng = np.random.default_rng(1)
-        first = list(RV(Zipf(a=1.2, n=10)).sim(500))
+        first = list(RV(Zipf(shape=1.2, n=10)).sim(500))
         distributions.rng = np.random.default_rng(2)
-        second = list(RV(Zipf(a=1.2, n=10)).sim(500))
+        second = list(RV(Zipf(shape=1.2, n=10)).sim(500))
         self.assertNotEqual(first, second)
 
     # --- parameter validation ---
 
-    def test_Zipf_error_a_negative(self):
+    def test_Zipf_error_shape_negative(self):
         self.assertRaisesRegex(
-            Exception, "a must be a non-negative number", lambda: Zipf(a=-1, n=10)
+            Exception,
+            "shape must be a non-negative number",
+            lambda: Zipf(shape=-1, n=10),
         )
 
-    def test_Zipf_error_a_non_numeric(self):
+    def test_Zipf_error_shape_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "a must be a non-negative number", lambda: Zipf(a="x", n=10)
+            Exception,
+            "shape must be a non-negative number",
+            lambda: Zipf(shape="x", n=10),
         )
 
     def test_Zipf_error_n_not_positive(self):
@@ -747,41 +757,41 @@ class TestZipf(unittest.TestCase):
             self.assertRaisesRegex(
                 Exception,
                 "n must be a positive integer",
-                lambda v=bad: Zipf(a=1, n=v),
+                lambda v=bad: Zipf(shape=1, n=v),
             )
 
     def test_Zipf_error_n_float(self):
         self.assertRaisesRegex(
-            Exception, "n must be a positive integer", lambda: Zipf(a=1, n=10.5)
+            Exception, "n must be a positive integer", lambda: Zipf(shape=1, n=10.5)
         )
 
     def test_Zipf_error_n_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "n must be a positive integer", lambda: Zipf(a=1, n="x")
+            Exception, "n must be a positive integer", lambda: Zipf(shape=1, n="x")
         )
 
-    def test_Zipf_stacks_a_and_n(self):
+    def test_Zipf_stacks_shape_and_n(self):
         # Both parameters wrong -> both mistakes reported at once.
         with self.assertRaises(Exception) as cm:
-            Zipf(a=-1, n=0)
+            Zipf(shape=-1, n=0)
         message = str(cm.exception)
         self.assertIn("Invalid parameters:", message)
-        self.assertIn("a must be a non-negative number", message)
+        self.assertIn("shape must be a non-negative number", message)
         self.assertIn("n must be a positive integer", message)
 
     def test_Zipf_boundary_parameters_accepted(self):
         # a = 0 (uniform) and n = 1 (point mass) are valid, not errors.
-        Zipf(a=0, n=1)
-        Zipf(a=0, n=10)
-        Zipf(a=1, n=1)
+        Zipf(shape=0, n=1)
+        Zipf(shape=0, n=10)
+        Zipf(shape=1, n=1)
 
     def test_Zipf_plots_without_error(self):
         # draw / RV / sim / plot all wired through the base class.
-        Zipf(a=1.2, n=10).draw()
-        RV(Zipf(a=1.2, n=10)).sim(100).plot()
-        Zipf(a=1.2, n=10).plot()
-        Zipf(a=1.2, n=10).plot(cdf=True)
-        Zipf(a=1.2, n=500).plot(xlim="zoom")
+        Zipf(shape=1.2, n=10).draw()
+        RV(Zipf(shape=1.2, n=10)).sim(100).plot()
+        Zipf(shape=1.2, n=10).plot()
+        Zipf(shape=1.2, n=10).plot(cdf=True)
+        Zipf(shape=1.2, n=500).plot(xlim="zoom")
         plt.close("all")
 
 
@@ -1281,15 +1291,15 @@ class TestInverseGamma(unittest.TestCase):
 
 class TestBeta(unittest.TestCase):
 
-    def test_Beta_error_a(self):
-        self.assertRaises(Exception, lambda: Beta(a=-10, b=3))
+    def test_Beta_error_shape1(self):
+        self.assertRaises(Exception, lambda: Beta(shape1=-10, shape2=3))
 
-    def test_Beta_error_b(self):
-        self.assertRaises(Exception, lambda: Beta(a=3, b=-10))
+    def test_Beta_error_shape2(self):
+        self.assertRaises(Exception, lambda: Beta(shape1=3, shape2=-10))
 
     def test_Beta_to_Uniform(self):
         distributions.rng = np.random.default_rng(42)
-        X = Beta(a=1, b=1)
+        X = Beta(shape1=1, shape2=1)
         sims = X.sim(Nsim)
         cdf = stats.uniform(loc=0, scale=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
@@ -1297,7 +1307,7 @@ class TestBeta(unittest.TestCase):
 
     def test_Beta_symmetry(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(Beta(a=4, b=5))
+        X = RV(Beta(shape1=4, shape2=5))
         sims = (1 - X).sim(Nsim)
         cdf = stats.beta(a=5, b=4).cdf
         pval = stats.kstest(sims, cdf).pvalue
@@ -1305,7 +1315,7 @@ class TestBeta(unittest.TestCase):
 
     def test_Beta_to_Exponential(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(Beta(a=0.7, b=1))
+        X = RV(Beta(shape1=0.7, shape2=1))
         sims = (-log(X)).sim(Nsim)
         cdf = stats.expon(scale=1 / 0.7).cdf
         pval = stats.kstest(sims, cdf).pvalue
@@ -1313,14 +1323,14 @@ class TestBeta(unittest.TestCase):
 
     def test_Beta_to_F(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(Beta(a=10 / 2, b=12 / 2))
+        X = RV(Beta(shape1=10 / 2, shape2=12 / 2))
         sims = (12 * X / (10 * (1 - X))).sim(Nsim)
         cdf = stats.f(dfn=10, dfd=12).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
     def test_Beta_mean_pdf(self):
-        X = Beta(a=2, b=5)
+        X = Beta(shape1=2, shape2=5)
         self.assertAlmostEqual(float(X.mean()), 2 / 7)
         self.assertAlmostEqual(float(X.pdf(0.5)), stats.beta(a=2, b=5).pdf(0.5))
 
@@ -1366,7 +1376,7 @@ class TestPERT(unittest.TestCase):
     def test_PERT_symmetric_case_is_Beta_3_3(self):
         # low=0, mode=0.5, high=1 with the default weight is exactly Beta(3, 3).
         X = PERT(low=0, mode=0.5, high=1)
-        B = Beta(a=3, b=3)
+        B = Beta(shape1=3, shape2=3)
         self.assertAlmostEqual(X.alpha, 3.0, places=10)
         self.assertAlmostEqual(X.beta, 3.0, places=10)
         for x in [0.1, 0.3, 0.5, 0.7, 0.9]:
@@ -1534,7 +1544,7 @@ class TestKumaraswamy(unittest.TestCase):
     def test_Kumaraswamy_pdf_formula(self):
         # pdf(x) = a * b * x ** (a - 1) * (1 - x ** a) ** (b - 1)
         a, b = 2.5, 3.0
-        X = Kumaraswamy(a=a, b=b)
+        X = Kumaraswamy(shape1=a, shape2=b)
         for x in [0.05, 0.25, 0.5, 0.75, 0.95]:
             expected = a * b * x ** (a - 1) * (1 - x**a) ** (b - 1)
             self.assertAlmostEqual(float(X.pdf(x)), expected, places=12)
@@ -1542,20 +1552,20 @@ class TestKumaraswamy(unittest.TestCase):
     def test_Kumaraswamy_cdf_formula(self):
         # cdf(x) = 1 - (1 - x ** a) ** b
         a, b = 2.0, 4.0
-        X = Kumaraswamy(a=a, b=b)
+        X = Kumaraswamy(shape1=a, shape2=b)
         for x in [0.0, 0.1, 0.5, 0.9, 1.0]:
             self.assertAlmostEqual(float(X.cdf(x)), 1 - (1 - x**a) ** b, places=12)
 
     def test_Kumaraswamy_quantile_formula(self):
         # quantile(q) = (1 - (1 - q) ** (1 / b)) ** (1 / a)
         a, b = 3.0, 1.5
-        X = Kumaraswamy(a=a, b=b)
+        X = Kumaraswamy(shape1=a, shape2=b)
         for q in [0.01, 0.25, 0.5, 0.75, 0.99]:
             expected = (1 - (1 - q) ** (1 / b)) ** (1 / a)
             self.assertAlmostEqual(float(X.quantile(q)), expected, places=12)
 
     def test_Kumaraswamy_quantile_inverts_cdf(self):
-        X = Kumaraswamy(a=2.5, b=3.0)
+        X = Kumaraswamy(shape1=2.5, shape2=3.0)
         for q in [0.05, 0.3, 0.5, 0.8, 0.95]:
             self.assertAlmostEqual(float(X.cdf(X.quantile(q))), q, places=10)
 
@@ -1565,14 +1575,14 @@ class TestKumaraswamy(unittest.TestCase):
         from scipy.integrate import quad
 
         for a, b in [(0.5, 0.5), (2, 3), (5, 1.2)]:
-            X = Kumaraswamy(a=a, b=b)
+            X = Kumaraswamy(shape1=a, shape2=b)
             total, _ = quad(lambda x: float(X.pdf(x)), 0, 1)
             self.assertAlmostEqual(total, 1.0, places=6)
 
     # --- support ---
 
     def test_Kumaraswamy_support_is_zero_to_one(self):
-        X = Kumaraswamy(a=2, b=3)
+        X = Kumaraswamy(shape1=2, shape2=3)
         self.assertEqual(float(X.pdf(-0.1)), 0.0)
         self.assertEqual(float(X.pdf(1.1)), 0.0)
         self.assertEqual(float(X.cdf(0)), 0.0)
@@ -1583,14 +1593,14 @@ class TestKumaraswamy(unittest.TestCase):
     def test_Kumaraswamy_xlim_is_full_support(self):
         # Bounded at both ends, so the default window is all of [0, 1] with
         # no probability trimmed, like Beta.
-        self.assertEqual(Kumaraswamy(a=2, b=5).xlim, (0, 1))
+        self.assertEqual(Kumaraswamy(shape1=2, shape2=5).xlim, (0, 1))
 
     def test_Kumaraswamy_density_infinite_at_edges(self):
         # With a < 1 the density blows up at 0, and with b < 1 at 1. Both
         # are correct, and neither should raise or warn.
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            edges = Kumaraswamy(a=0.5, b=0.5).pdf(np.array([0.0, 1.0]))
+            edges = Kumaraswamy(shape1=0.5, shape2=0.5).pdf(np.array([0.0, 1.0]))
         self.assertTrue(np.isinf(edges).all())
 
     # --- moments ---
@@ -1598,7 +1608,7 @@ class TestKumaraswamy(unittest.TestCase):
     def test_Kumaraswamy_moments_are_beta_integrals(self):
         # E[X ** n] = b * B(1 + n / a, b), from substituting t = x ** a.
         a, b = 2.0, 3.0
-        X = Kumaraswamy(a=a, b=b)
+        X = Kumaraswamy(shape1=a, shape2=b)
         first = b * special.beta(1 + 1 / a, b)
         second = b * special.beta(1 + 2 / a, b)
         self.assertAlmostEqual(float(X.mean()), first, places=10)
@@ -1608,42 +1618,44 @@ class TestKumaraswamy(unittest.TestCase):
     def test_Kumaraswamy_mean_var_known_values(self):
         # a = b = 2: E[X] = 2 * B(3/2, 2) = 8 / 15 and E[X ** 2] = 2 * B(2, 2)
         # = 1 / 3, both worked out by hand.
-        X = Kumaraswamy(a=2, b=2)
+        X = Kumaraswamy(shape1=2, shape2=2)
         self.assertAlmostEqual(float(X.mean()), 8 / 15, places=12)
         self.assertAlmostEqual(float(X.var()), 1 / 3 - (8 / 15) ** 2, places=12)
 
     def test_Kumaraswamy_median_formula(self):
         a, b = 2.0, 2.0
         median = (1 - 2 ** (-1 / b)) ** (1 / a)
-        self.assertAlmostEqual(float(Kumaraswamy(a=a, b=b).median()), median, places=12)
+        self.assertAlmostEqual(
+            float(Kumaraswamy(shape1=a, shape2=b).median()), median, places=12
+        )
 
-    def test_Kumaraswamy_larger_a_shifts_right_larger_b_shifts_left(self):
-        base = float(Kumaraswamy(a=2, b=2).mean())
-        self.assertGreater(float(Kumaraswamy(a=5, b=2).mean()), base)
-        self.assertLess(float(Kumaraswamy(a=2, b=5).mean()), base)
+    def test_Kumaraswamy_larger_shape1_shifts_right_larger_shape2_shifts_left(self):
+        base = float(Kumaraswamy(shape1=2, shape2=2).mean())
+        self.assertGreater(float(Kumaraswamy(shape1=5, shape2=2).mean()), base)
+        self.assertLess(float(Kumaraswamy(shape1=2, shape2=5).mean()), base)
 
     # --- relationships with distributions already in Symbulate ---
 
-    def test_Kumaraswamy_b_one_is_Beta_a_one(self):
+    def test_Kumaraswamy_shape2_one_is_Beta(self):
         # b = 1 leaves cdf(x) = x ** a, which is exactly Beta(a, 1).
         a = 3.0
-        X, Y = Kumaraswamy(a=a, b=1), Beta(a=a, b=1)
+        X, Y = Kumaraswamy(shape1=a, shape2=1), Beta(shape1=a, shape2=1)
         for x in [0.1, 0.4, 0.7, 0.95]:
             self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=10)
             self.assertAlmostEqual(float(X.cdf(x)), float(Y.cdf(x)), places=10)
         self.assertAlmostEqual(float(X.mean()), float(Y.mean()), places=10)
 
-    def test_Kumaraswamy_a_one_is_Beta_one_b(self):
+    def test_Kumaraswamy_shape1_one_is_Beta(self):
         # a = 1 leaves cdf(x) = 1 - (1 - x) ** b, which is exactly Beta(1, b).
         b = 4.0
-        X, Y = Kumaraswamy(a=1, b=b), Beta(a=1, b=b)
+        X, Y = Kumaraswamy(shape1=1, shape2=b), Beta(shape1=1, shape2=b)
         for x in [0.1, 0.4, 0.7, 0.95]:
             self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=10)
             self.assertAlmostEqual(float(X.cdf(x)), float(Y.cdf(x)), places=10)
         self.assertAlmostEqual(float(X.mean()), float(Y.mean()), places=10)
 
     def test_Kumaraswamy_one_one_is_Uniform(self):
-        X = Kumaraswamy(a=1, b=1)
+        X = Kumaraswamy(shape1=1, shape2=1)
         for x in [0.1, 0.5, 0.9]:
             self.assertAlmostEqual(float(X.pdf(x)), 1.0, places=12)
             self.assertAlmostEqual(float(X.cdf(x)), x, places=12)
@@ -1652,16 +1664,16 @@ class TestKumaraswamy(unittest.TestCase):
     def test_Kumaraswamy_is_not_Beta_in_general(self):
         # Only a = 1 and b = 1 coincide with a Beta. Guard against anyone
         # "simplifying" this into a Beta with the same two parameters.
-        X, Y = Kumaraswamy(a=2, b=3), Beta(a=2, b=3)
+        X, Y = Kumaraswamy(shape1=2, shape2=3), Beta(shape1=2, shape2=3)
         self.assertNotAlmostEqual(float(X.mean()), float(Y.mean()), places=3)
         self.assertNotAlmostEqual(float(X.pdf(0.5)), float(Y.pdf(0.5)), places=3)
 
-    def test_Kumaraswamy_power_a_is_Beta_one_b(self):
+    def test_Kumaraswamy_power_shape1_is_Beta(self):
         # If X is Kumaraswamy(a, b), then X ** a is Beta(1, b): the general
         # link between the two families.
         distributions.rng = np.random.default_rng(42)
         a, b = 2.5, 3.0
-        X = RV(Kumaraswamy(a=a, b=b))
+        X = RV(Kumaraswamy(shape1=a, shape2=b))
         sims = (X**a).sim(Nsim)
         pval = stats.kstest(sims, stats.beta(a=1, b=b).cdf).pvalue
         self.assertTrue(pval > 0.01)
@@ -1673,12 +1685,12 @@ class TestKumaraswamy(unittest.TestCase):
         a, b = 2.0, 4.0
         U = RV(Uniform(0, 1))
         sims = ((1 - (1 - U) ** (1 / b)) ** (1 / a)).sim(Nsim)
-        pval = stats.kstest(sims, Kumaraswamy(a=a, b=b).cdf).pvalue
+        pval = stats.kstest(sims, Kumaraswamy(shape1=a, shape2=b).cdf).pvalue
         self.assertTrue(pval > 0.01)
 
     def test_Kumaraswamy_a_one_matches_Beta_sims(self):
         distributions.rng = np.random.default_rng(42)
-        sims = Kumaraswamy(a=1, b=3).sim(Nsim)
+        sims = Kumaraswamy(shape1=1, shape2=3).sim(Nsim)
         pval = stats.kstest(sims, stats.beta(a=1, b=3).cdf).pvalue
         self.assertTrue(pval > 0.01)
 
@@ -1686,25 +1698,25 @@ class TestKumaraswamy(unittest.TestCase):
 
     def test_Kumaraswamy_distributional(self):
         distributions.rng = np.random.default_rng(42)
-        X = Kumaraswamy(a=2.5, b=3.0)
+        X = Kumaraswamy(shape1=2.5, shape2=3.0)
         pval = stats.kstest(X.sim(Nsim), X.cdf).pvalue
         self.assertTrue(pval > 0.01)
 
     def test_Kumaraswamy_sim_stays_in_support(self):
         distributions.rng = np.random.default_rng(42)
-        sims = RV(Kumaraswamy(a=0.5, b=0.5)).sim(Nsim)
+        sims = RV(Kumaraswamy(shape1=0.5, shape2=0.5)).sim(Nsim)
         self.assertTrue(all(0 <= sim <= 1 for sim in sims))
 
     def test_Kumaraswamy_draw_is_scalar_in_support(self):
         distributions.rng = np.random.default_rng(0)
-        value = Kumaraswamy(a=2, b=3).draw()
+        value = Kumaraswamy(shape1=2, shape2=3).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
         self.assertLessEqual(float(value), 1.0)
 
     def test_Kumaraswamy_sample_mean_near_theoretical(self):
         distributions.rng = np.random.default_rng(42)
-        X = Kumaraswamy(a=2, b=3)
+        X = Kumaraswamy(shape1=2, shape2=3)
         sample_mean = RV(X).sim(Nsim).mean()
         self.assertAlmostEqual(float(sample_mean), float(X.mean()), places=2)
 
@@ -1712,66 +1724,70 @@ class TestKumaraswamy(unittest.TestCase):
 
     def test_Kumaraswamy_same_seed_gives_same_sims(self):
         distributions.rng = np.random.default_rng(2024)
-        first = list(RV(Kumaraswamy(a=2, b=3)).sim(500))
+        first = list(RV(Kumaraswamy(shape1=2, shape2=3)).sim(500))
         distributions.rng = np.random.default_rng(2024)
-        second = list(RV(Kumaraswamy(a=2, b=3)).sim(500))
+        second = list(RV(Kumaraswamy(shape1=2, shape2=3)).sim(500))
         self.assertEqual(first, second)
 
     def test_Kumaraswamy_different_seed_gives_different_sims(self):
         distributions.rng = np.random.default_rng(1)
-        first = list(RV(Kumaraswamy(a=2, b=3)).sim(500))
+        first = list(RV(Kumaraswamy(shape1=2, shape2=3)).sim(500))
         distributions.rng = np.random.default_rng(2)
-        second = list(RV(Kumaraswamy(a=2, b=3)).sim(500))
+        second = list(RV(Kumaraswamy(shape1=2, shape2=3)).sim(500))
         self.assertNotEqual(first, second)
 
     # --- parameter validation ---
 
-    def test_Kumaraswamy_error_a_not_positive(self):
+    def test_Kumaraswamy_error_shape1_not_positive(self):
         for bad in [0, -2]:
             self.assertRaisesRegex(
                 Exception,
-                "a must be a positive number",
-                lambda v=bad: Kumaraswamy(a=v, b=3),
+                "shape1 must be a positive number",
+                lambda v=bad: Kumaraswamy(shape1=v, shape2=3),
             )
 
-    def test_Kumaraswamy_error_b_not_positive(self):
+    def test_Kumaraswamy_error_shape2_not_positive(self):
         for bad in [0, -2]:
             self.assertRaisesRegex(
                 Exception,
-                "b must be a positive number",
-                lambda v=bad: Kumaraswamy(a=3, b=v),
+                "shape2 must be a positive number",
+                lambda v=bad: Kumaraswamy(shape1=3, shape2=v),
             )
 
     def test_Kumaraswamy_error_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "a must be a positive number", lambda: Kumaraswamy(a="x", b=3)
+            Exception,
+            "shape1 must be a positive number",
+            lambda: Kumaraswamy(shape1="x", shape2=3),
         )
         self.assertRaisesRegex(
-            Exception, "b must be a positive number", lambda: Kumaraswamy(a=3, b=None)
+            Exception,
+            "shape2 must be a positive number",
+            lambda: Kumaraswamy(shape1=3, shape2=None),
         )
 
-    def test_Kumaraswamy_stacks_a_and_b(self):
+    def test_Kumaraswamy_stacks_shape1_and_shape2(self):
         # Both parameters wrong -> both mistakes reported at once.
         with self.assertRaises(Exception) as cm:
-            Kumaraswamy(a=-1, b=0)
+            Kumaraswamy(shape1=-1, shape2=0)
         message = str(cm.exception)
         self.assertIn("Invalid parameters:", message)
-        self.assertIn("a must be a positive number", message)
-        self.assertIn("b must be a positive number", message)
+        self.assertIn("shape1 must be a positive number", message)
+        self.assertIn("shape2 must be a positive number", message)
 
     def test_Kumaraswamy_boundary_parameters_accepted(self):
         # Small shapes and the flat a = b = 1 case are valid, not errors.
-        Kumaraswamy(a=1, b=1)
-        Kumaraswamy(a=0.1, b=0.1)
+        Kumaraswamy(shape1=1, shape2=1)
+        Kumaraswamy(shape1=0.1, shape2=0.1)
 
     def test_Kumaraswamy_plots_without_error(self):
         # draw / RV / sim / plot all wired through the base class.
-        Kumaraswamy(a=2, b=3).draw()
-        RV(Kumaraswamy(a=2, b=3)).sim(100).plot()
-        Kumaraswamy(a=2, b=3).plot()
-        Kumaraswamy(a=2, b=3).plot(cdf=True)
-        Kumaraswamy(a=2, b=5).plot(xlim="zoom")
-        Kumaraswamy(a=0.5, b=0.5).plot()  # infinite density at both edges
+        Kumaraswamy(shape1=2, shape2=3).draw()
+        RV(Kumaraswamy(shape1=2, shape2=3)).sim(100).plot()
+        Kumaraswamy(shape1=2, shape2=3).plot()
+        Kumaraswamy(shape1=2, shape2=3).plot(cdf=True)
+        Kumaraswamy(shape1=2, shape2=5).plot(xlim="zoom")
+        Kumaraswamy(shape1=0.5, shape2=0.5).plot()  # infinite density at both edges
         plt.close("all")
 
 
@@ -2097,30 +2113,30 @@ class TestPareto(unittest.TestCase):
 
     def test_Pareto_to_Exponential(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(Pareto(b=1.5, scale=0.1))
+        X = RV(Pareto(shape=1.5, scale=0.1))
         sims = (log(X / 0.1)).sim(Nsim)
         cdf = stats.expon(scale=1 / 1.5).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
-    def test_Pareto_error_b_nonpositive(self):
-        self.assertRaises(Exception, lambda: Pareto(b=0, scale=1))
+    def test_Pareto_error_shape_nonpositive(self):
+        self.assertRaises(Exception, lambda: Pareto(shape=0, scale=1))
 
-    def test_Pareto_error_b_negative(self):
-        self.assertRaises(Exception, lambda: Pareto(b=-1, scale=1))
+    def test_Pareto_error_shape_negative(self):
+        self.assertRaises(Exception, lambda: Pareto(shape=-1, scale=1))
 
     def test_Pareto_error_scale_nonpositive(self):
-        self.assertRaises(Exception, lambda: Pareto(b=2, scale=0))
+        self.assertRaises(Exception, lambda: Pareto(shape=2, scale=0))
 
     def test_Pareto_draw_above_scale(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(Pareto(b=2, scale=3))
+        X = RV(Pareto(shape=2, scale=3))
         sims = X.sim(Nsim)
         self.assertTrue(all(sim >= 3 for sim in sims))
 
     def test_Pareto_distributional(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(Pareto(b=2, scale=1))
+        X = RV(Pareto(shape=2, scale=1))
         sims = X.sim(Nsim)
         cdf = stats.pareto(b=2, scale=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
@@ -2131,39 +2147,39 @@ class TestBurr(unittest.TestCase):
 
     def test_Burr_distributional(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(Burr(a=3, b=2, scale=1))
+        X = RV(Burr(shape1=3, shape2=2, scale=1))
         sims = X.sim(Nsim)
         cdf = stats.burr12(3, 2, scale=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
     def test_Burr_mean_var_sd(self):
-        X = Burr(a=3, b=2, scale=1)
+        X = Burr(shape1=3, shape2=2, scale=1)
         th = stats.burr12(3, 2, scale=1)
         self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
         self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
         self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
 
     def test_Burr_pdf(self):
-        X = Burr(a=3, b=2, scale=2)
+        X = Burr(shape1=3, shape2=2, scale=2)
         for x in [0.5, 1, 3]:
             self.assertAlmostEqual(
                 float(X.pdf(x)), float(stats.burr12(3, 2, scale=2).pdf(x))
             )
 
-    def test_Burr_b1_is_loglogistic(self):
+    def test_Burr_shape2_one_is_loglogistic(self):
         # b = 1 is the log-logistic (Fisk) distribution.
-        X = Burr(a=2.5, b=1, scale=1)
+        X = Burr(shape1=2.5, shape2=1, scale=1)
         for x in [0.3, 1, 4]:
             self.assertAlmostEqual(
                 float(X.pdf(x)), float(stats.fisk(2.5).pdf(x)), places=9
             )
 
-    def test_Burr_a1_shifted_is_pareto(self):
+    def test_Burr_shape1_one_shifted_is_pareto(self):
         # a = 1 is a Pareto (Type II / Lomax); shifting by the scale gives a
         # Pareto (Type I) with the same tail exponent.
         distributions.rng = np.random.default_rng(42)
-        X = RV(Burr(a=1, b=2, scale=1))
+        X = RV(Burr(shape1=1, shape2=2, scale=1))
         sims = (X + 1).sim(Nsim)
         cdf = stats.pareto(b=2, scale=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
@@ -2171,30 +2187,36 @@ class TestBurr(unittest.TestCase):
 
     def test_Burr_draw_is_scalar_in_support(self):
         distributions.rng = np.random.default_rng(0)
-        value = Burr(a=3, b=2, scale=1).draw()
+        value = Burr(shape1=3, shape2=2, scale=1).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
 
-    def test_Burr_error_a_nonpositive(self):
+    def test_Burr_error_shape1_nonpositive(self):
         for bad in [0, -1, "a"]:
-            self.assertRaises(Exception, lambda v=bad: Burr(a=v, b=2, scale=1))
+            self.assertRaises(
+                Exception, lambda v=bad: Burr(shape1=v, shape2=2, scale=1)
+            )
 
-    def test_Burr_error_b_nonpositive(self):
+    def test_Burr_error_shape2_nonpositive(self):
         for bad in [0, -1, "a"]:
-            self.assertRaises(Exception, lambda v=bad: Burr(a=2, b=v, scale=1))
+            self.assertRaises(
+                Exception, lambda v=bad: Burr(shape1=2, shape2=v, scale=1)
+            )
 
     def test_Burr_error_scale_nonpositive(self):
         for bad in [0, -1, "a"]:
-            self.assertRaises(Exception, lambda v=bad: Burr(a=2, b=2, scale=v))
+            self.assertRaises(
+                Exception, lambda v=bad: Burr(shape1=2, shape2=2, scale=v)
+            )
 
     def test_Burr_plots_without_error(self):
         # draw / RV / sim / plot all wired through the base class; a < 1 also
         # exercises the monotone-decreasing high-density x-window.
-        Burr(a=3, b=2, scale=1).draw()
-        RV(Burr(a=3, b=2, scale=1)).sim(100).plot()
-        Burr(a=3, b=2, scale=1).plot()
-        Burr(a=0.5, b=2, scale=1).plot()
-        Burr(a=3, b=2, scale=1).plot(cdf=True)
+        Burr(shape1=3, shape2=2, scale=1).draw()
+        RV(Burr(shape1=3, shape2=2, scale=1)).sim(100).plot()
+        Burr(shape1=3, shape2=2, scale=1).plot()
+        Burr(shape1=0.5, shape2=2, scale=1).plot()
+        Burr(shape1=3, shape2=2, scale=1).plot(cdf=True)
         plt.close("all")
 
 
@@ -2202,32 +2224,32 @@ class TestLomax(unittest.TestCase):
 
     def test_Lomax_distributional(self):
         distributions.rng = np.random.default_rng(42)
-        X = RV(Lomax(b=3, scale=1))
+        X = RV(Lomax(shape=3, scale=1))
         sims = X.sim(Nsim)
         cdf = stats.lomax(3, scale=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
     def test_Lomax_mean_var_sd(self):
-        X = Lomax(b=3, scale=1)
+        X = Lomax(shape=3, scale=1)
         th = stats.lomax(3, scale=1)
         self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
         self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
         self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
 
     def test_Lomax_pdf(self):
-        X = Lomax(b=3, scale=2)
+        X = Lomax(shape=3, scale=2)
         for x in [0, 1, 3]:
             self.assertAlmostEqual(
                 float(X.pdf(x)), float(stats.lomax(3, scale=2).pdf(x))
             )
 
-    def test_Lomax_is_burr_a1(self):
+    def test_Lomax_is_burr_shape1_one(self):
         # Lomax(b, scale) is exactly the a = 1 special case of Burr.
         for x in [0.0, 0.5, 2.0]:
             self.assertAlmostEqual(
-                float(Lomax(b=2, scale=1).pdf(x)),
-                float(Burr(a=1, b=2, scale=1).pdf(x)),
+                float(Lomax(shape=2, scale=1).pdf(x)),
+                float(Burr(shape1=1, shape2=2, scale=1).pdf(x)),
                 places=9,
             )
 
@@ -2235,7 +2257,7 @@ class TestLomax(unittest.TestCase):
         # Adding the scale to a Lomax gives a Pareto (Type I) with the same
         # tail exponent.
         distributions.rng = np.random.default_rng(42)
-        X = RV(Lomax(b=3, scale=1))
+        X = RV(Lomax(shape=3, scale=1))
         sims = (X + 1).sim(Nsim)
         cdf = stats.pareto(b=3, scale=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
@@ -2243,29 +2265,29 @@ class TestLomax(unittest.TestCase):
 
     def test_Lomax_draw_is_scalar_in_support(self):
         distributions.rng = np.random.default_rng(0)
-        value = Lomax(b=3, scale=1).draw()
+        value = Lomax(shape=3, scale=1).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
 
     def test_Lomax_default_params(self):
         X = Lomax()
-        self.assertEqual(X.b, 1.0)
+        self.assertEqual(X.shape, 1.0)
         self.assertEqual(X.scale, 1.0)
 
-    def test_Lomax_error_b_nonpositive(self):
+    def test_Lomax_error_shape_nonpositive(self):
         for bad in [0, -1, "a"]:
-            self.assertRaises(Exception, lambda v=bad: Lomax(b=v, scale=1))
+            self.assertRaises(Exception, lambda v=bad: Lomax(shape=v, scale=1))
 
     def test_Lomax_error_scale_nonpositive(self):
         for bad in [0, -1, "a"]:
-            self.assertRaises(Exception, lambda v=bad: Lomax(b=2, scale=v))
+            self.assertRaises(Exception, lambda v=bad: Lomax(shape=2, scale=v))
 
     def test_Lomax_plots_without_error(self):
         # draw / RV / sim / plot all wired through the base class.
-        Lomax(b=3, scale=1).draw()
-        RV(Lomax(b=3, scale=1)).sim(100).plot()
-        Lomax(b=3, scale=1).plot()
-        Lomax(b=3, scale=1).plot(cdf=True)
+        Lomax(shape=3, scale=1).draw()
+        RV(Lomax(shape=3, scale=1)).sim(100).plot()
+        Lomax(shape=3, scale=1).plot()
+        Lomax(shape=3, scale=1).plot(cdf=True)
         plt.close("all")
 
 
@@ -3319,12 +3341,16 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_Beta_a_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "a must be a positive number", lambda: Beta(a="x", b=1)
+            Exception,
+            "shape1 must be a positive number",
+            lambda: Beta(shape1="x", shape2=1),
         )
 
     def test_Beta_b_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "b must be a positive number", lambda: Beta(a=1, b="x")
+            Exception,
+            "shape2 must be a positive number",
+            lambda: Beta(shape1=1, shape2="x"),
         )
 
     def test_StudentT_df_non_numeric(self):
@@ -3371,14 +3397,14 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_Pareto_b_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "b must be a positive number", lambda: Pareto(b="x")
+            Exception, "shape must be a positive number", lambda: Pareto(shape="x")
         )
 
     def test_Pareto_scale_non_numeric(self):
         self.assertRaisesRegex(
             Exception,
             "scale must be a positive number",
-            lambda: Pareto(b=2, scale="x"),
+            lambda: Pareto(shape=2, scale="x"),
         )
 
     def test_BivariateNormal_mean1_non_numeric(self):
@@ -3582,12 +3608,12 @@ class TestStackedErrorMessages(unittest.TestCase):
         self.assertIn("n must be a non-negative integer", message)
         self.assertIn("p must be a number between 0 and 1", message)
 
-    def test_Beta_stacks_a_and_b(self):
+    def test_Beta_stacks_shape1_and_shape2(self):
         with self.assertRaises(Exception) as cm:
-            Beta(a=-1, b="x")
+            Beta(shape1=-1, shape2="x")
         message = str(cm.exception)
-        self.assertIn("a must be a positive number", message)
-        self.assertIn("b must be a positive number", message)
+        self.assertIn("shape1 must be a positive number", message)
+        self.assertIn("shape2 must be a positive number", message)
 
     def test_Gamma_stacks_shape_and_rate(self):
         with self.assertRaises(Exception) as cm:

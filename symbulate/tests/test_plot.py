@@ -3019,7 +3019,7 @@ class TestDistributionPlotContinuous(PlotTestCase):
         self.assertAlmostEqual(xlim[1], 5.0, places=5)
 
     def test_beta_xlim_is_zero_to_one(self):
-        Beta(a=2, b=3).plot()
+        Beta(shape1=2, shape2=3).plot()
         xlim = plt.gca().get_xlim()
         self.assertAlmostEqual(xlim[0], 0.0, places=5)
         self.assertAlmostEqual(xlim[1], 1.0, places=5)

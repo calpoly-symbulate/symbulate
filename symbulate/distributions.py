@@ -697,66 +697,68 @@ class BetaBinomial(Distribution):
 
     Models the number of successes in ``n`` independent trials when the
     success probability is not fixed but is itself random, drawn once from
-    a ``Beta(a, b)`` distribution and then shared by all ``n`` trials. This
-    extra, trial-to-trial uncertainty in the probability makes the counts
-    more spread out (overdispersed) than a plain ``Binomial`` -- which is
-    why the beta-binomial is the standard model for overdispersed
-    binomial/count data. Because the beta is the conjugate prior for the
-    binomial, it is also the beta-binomial that describes the number of
-    successes before the probability is observed.
+    a ``Beta`` distribution (with shape parameters ``shape1`` and
+    ``shape2``) and then shared by all ``n`` trials. This extra,
+    trial-to-trial uncertainty in the probability makes the counts more
+    spread out (overdispersed) than a plain ``Binomial`` -- which is why the
+    beta-binomial is the standard model for overdispersed binomial/count
+    data. Because the beta is the conjugate prior for the binomial, it is
+    also the beta-binomial that describes the number of successes before the
+    probability is observed.
 
     Parameters
     ----------
     n : int
         Number of trials. Must be a non-negative integer.
-    a : float
-        First shape parameter (α) of the underlying beta distribution.
-        Must be positive.
-    b : float
-        Second shape parameter (β) of the underlying beta distribution.
-        Must be positive.
+    shape1 : float
+        First shape parameter (often written α) of the underlying beta
+        distribution. Must be positive.
+    shape2 : float
+        Second shape parameter (often written β) of the underlying beta
+        distribution. Must be positive.
 
     Attributes
     ----------
     n : int
         Number of trials.
-    a : float
+    shape1 : float
         First shape parameter (α) of the underlying beta distribution.
-    b : float
+    shape2 : float
         Second shape parameter (β) of the underlying beta distribution.
 
     Notes
     -----
-    The mean is ``n * a / (a + b)`` -- the same as a ``Binomial`` whose
-    success probability equals the beta mean ``a / (a + b)``. As ``a`` and
-    ``b`` grow with that ratio held fixed the beta concentrates on a single
-    probability and the beta-binomial approaches that ``Binomial``; with
-    ``a = b = 1`` the probability is uniform and every count from 0 to
-    ``n`` is equally likely.
+    The mean is ``n * shape1 / (shape1 + shape2)`` -- the same as a
+    ``Binomial`` whose success probability equals the beta mean
+    ``shape1 / (shape1 + shape2)``. As ``shape1`` and ``shape2`` grow with
+    that ratio held fixed the beta concentrates on a single probability and
+    the beta-binomial approaches that ``Binomial``; with
+    ``shape1 = shape2 = 1`` the probability is uniform and every count from
+    0 to ``n`` is equally likely.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> X = BetaBinomial(n=10, a=2, b=3)
+    >>> X = BetaBinomial(n=10, shape1=2, shape2=3)
     >>> float(X.mean())
     4.0
     >>> round(float(X.sd()), 4)
     2.4495
-    >>> Y = BetaBinomial(n=10, a=1, b=1)  # a = b = 1 is uniform on 0..10
+    >>> Y = BetaBinomial(n=10, shape1=1, shape2=1)  # uniform on 0..10
     >>> round(float(Y.pmf(0)), 4)
     0.0909
     >>> X.draw()  # doctest: +SKIP
     3
     """
 
-    def __init__(self, n, a, b):
+    def __init__(self, n, shape1, shape2):
         """Initialize a beta-binomial distribution.
 
         Raises
         ------
         Exception
-            If ``n`` is not a non-negative integer, or ``a`` or ``b`` is
-            not a positive number.
+            If ``n`` is not a non-negative integer, or ``shape1`` or
+            ``shape2`` is not a positive number.
         """
 
         _validate(
@@ -764,14 +766,20 @@ class BetaBinomial(Distribution):
                 not isinstance(n, numbers.Integral) or n < 0,
                 "n must be a non-negative integer",
             ),
-            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
-            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(shape1, numbers.Real) or shape1 <= 0,
+                "shape1 must be a positive number",
+            ),
+            (
+                not isinstance(shape2, numbers.Real) or shape2 <= 0,
+                "shape2 must be a positive number",
+            ),
         )
         self.n = n
-        self.a = a
-        self.b = b
+        self.shape1 = shape1
+        self.shape2 = shape2
 
-        params = {"n": n, "a": a, "b": b}
+        params = {"n": n, "a": shape1, "b": shape2}
         super().__init__(params, stats.betabinom, True)
         # Support is 0..n, exactly like the Binomial it generalizes.
         self.xlim = (0, n)
@@ -782,10 +790,11 @@ class BetaNegativeBinomial(Distribution):
 
     Models the number of failures before the ``r``-th success (like the
     :class:`Pascal` distribution) when the success probability is not fixed
-    but is itself random, drawn once from a ``Beta(a, b)`` distribution and
-    shared by all trials. That extra, trial-to-trial uncertainty in the
-    probability makes the counts more spread out (overdispersed) than a
-    plain ``Pascal``/``NegativeBinomial`` -- so this is the overdispersed
+    but is itself random, drawn once from a ``Beta`` distribution (with
+    shape parameters ``shape1`` and ``shape2``) and shared by all trials.
+    That extra, trial-to-trial uncertainty in the probability makes the
+    counts more spread out (overdispersed) than a plain
+    ``Pascal``/``NegativeBinomial`` -- so this is the overdispersed
     negative-binomial counterpart of the :class:`BetaBinomial`. It is also
     known as the beta-Pascal distribution.
 
@@ -793,36 +802,36 @@ class BetaNegativeBinomial(Distribution):
     ----------
     r : int
         Target number of successes. Must be a positive integer.
-    a : float
-        First shape parameter (α) of the underlying beta distribution.
-        Must be positive.
-    b : float
-        Second shape parameter (β) of the underlying beta distribution.
-        Must be positive.
+    shape1 : float
+        First shape parameter (often written α) of the underlying beta
+        distribution. Must be positive.
+    shape2 : float
+        Second shape parameter (often written β) of the underlying beta
+        distribution. Must be positive.
 
     Attributes
     ----------
     r : int
         Target number of successes.
-    a : float
+    shape1 : float
         First shape parameter (α) of the underlying beta distribution.
-    b : float
+    shape2 : float
         Second shape parameter (β) of the underlying beta distribution.
 
     Notes
     -----
     The counts are the number of failures, so the support is
-    ``0, 1, 2, ...``. The mean is finite only when ``a > 1`` (and equals
-    ``r * b / (a - 1)``). As ``a`` and ``b`` grow with the ratio
-    ``a / (a + b)`` held fixed, the beta concentrates on a single
-    probability ``p`` and the beta-negative binomial approaches a
-    ``Pascal(r, p)`` distribution; with ``r = 1`` it is a beta-geometric
-    distribution.
+    ``0, 1, 2, ...``. The mean is finite only when ``shape1 > 1`` (and
+    equals ``r * shape2 / (shape1 - 1)``). As ``shape1`` and ``shape2`` grow
+    with the ratio ``shape1 / (shape1 + shape2)`` held fixed, the beta
+    concentrates on a single probability ``p`` and the beta-negative
+    binomial approaches a ``Pascal(r, p)`` distribution; with ``r = 1`` it
+    is a beta-geometric distribution.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> X = BetaNegativeBinomial(r=5, a=3, b=2)
+    >>> X = BetaNegativeBinomial(r=5, shape1=3, shape2=2)
     >>> float(X.mean())
     5.0
     >>> round(float(X.pmf(0)), 4)
@@ -831,14 +840,14 @@ class BetaNegativeBinomial(Distribution):
     7
     """
 
-    def __init__(self, r, a, b):
+    def __init__(self, r, shape1, shape2):
         """Initialize a beta-negative binomial distribution.
 
         Raises
         ------
         Exception
-            If ``r`` is not a positive integer, or ``a`` or ``b`` is not a
-            positive number.
+            If ``r`` is not a positive integer, or ``shape1`` or ``shape2``
+            is not a positive number.
         """
 
         _validate(
@@ -846,17 +855,23 @@ class BetaNegativeBinomial(Distribution):
                 not isinstance(r, numbers.Integral) or r <= 0,
                 "r must be a positive integer",
             ),
-            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
-            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(shape1, numbers.Real) or shape1 <= 0,
+                "shape1 must be a positive number",
+            ),
+            (
+                not isinstance(shape2, numbers.Real) or shape2 <= 0,
+                "shape2 must be a positive number",
+            ),
         )
         self.r = r
-        self.a = a
-        self.b = b
+        self.shape1 = shape1
+        self.shape2 = shape2
 
         # scipy's betanbinom takes n as the target number of successes and
         # a, b as the beta shape parameters; it counts failures, so the
         # support is 0, 1, 2, ... like Pascal.
-        params = {"n": r, "a": a, "b": b}
+        params = {"n": r, "a": shape1, "b": shape2}
         super().__init__(params, stats.betanbinom, True)
         # Highest-density window over the support [0, inf); trims the long
         # upper tail, like Pascal and the other unbounded discrete cases.
@@ -1258,27 +1273,26 @@ class Zipf(Distribution):
 
     Ranks a fixed collection of ``n`` items from most common (rank 1) to
     least common (rank ``n``), and gives the item of rank ``k`` a
-    probability proportional to ``1 / k ** a``. This is Zipf's law: a few
-    items take most of the probability and a long tail of items each take
-    very little. It is the standard model for word frequencies in a text,
-    city sizes in a country, or page visits on a website -- any setting
-    where the items can be ranked and the number of them is finite and
-    known.
+    probability proportional to ``1 / k ** shape``. This is Zipf's law: a
+    few items take most of the probability and a long tail of items each
+    take very little. It is the standard model for word frequencies in a
+    text, city sizes in a country, or page visits on a website -- any
+    setting where the items can be ranked and the number of them is finite
+    and known.
 
     Parameters
     ----------
-    a : float
-        Exponent of the power law (the shape parameter). Must be
-        non-negative. A larger ``a`` piles more probability onto the first
-        few ranks and shortens the tail; ``a = 0`` makes every rank
-        equally likely.
+    shape : float
+        Exponent of the power law. Must be non-negative. A larger ``shape``
+        piles more probability onto the first few ranks and shortens the
+        tail; ``shape = 0`` makes every rank equally likely.
     n : int
         Number of items being ranked, which is also the largest possible
         value. Must be a positive integer.
 
     Attributes
     ----------
-    a : float
+    shape : float
         Exponent of the power law.
     n : int
         Number of items being ranked.
@@ -1288,30 +1302,30 @@ class Zipf(Distribution):
     The support is **finite**: the integers ``1, 2, ..., n``, and nothing
     outside that range. The probability of rank ``k`` is
 
-    ``pmf(k) = (1 / k ** a) / H(n, a)``,
+    ``pmf(k) = (1 / k ** shape) / H(n, shape)``,
 
-    where ``H(n, a) = 1 / 1 ** a + 1 / 2 ** a + ... + 1 / n ** a`` is the
+    where ``H(n, shape) = 1 / 1 ** shape + ... + 1 / n ** shape`` is the
     normalizing constant that makes the probabilities add up to 1.
 
-    This wraps ``scipy.stats.zipfian``, with both parameters passing
-    straight through: the package's ``a`` is scipy's ``a``, and ``n`` is
-    scipy's ``n``. Note that scipy's other power-law name,
-    ``scipy.stats.zipf``, is a **different** distribution -- the zeta
+    This wraps ``scipy.stats.zipfian``: the package's ``shape`` is scipy's
+    ``a``, and ``n`` is scipy's ``n``. Note that scipy's other power-law
+    name, ``scipy.stats.zipf``, is a **different** distribution -- the zeta
     distribution, supported on ``1, 2, 3, ...`` with no upper limit -- so
     it is deliberately not used here. That infinite-support version exists
-    only when ``a > 1`` (otherwise the infinite sum does not converge),
-    while the finite-support Zipf is defined for every ``a >= 0``, because
-    a sum of finitely many terms always converges.
+    only when ``shape > 1`` (otherwise the infinite sum does not converge),
+    while the finite-support Zipf is defined for every ``shape >= 0``,
+    because a sum of finitely many terms always converges.
 
-    Two special cases are worth knowing. ``a = 0`` is exactly
-    ``DiscreteUniform(1, n)``: every rank equally likely. And with ``a > 1``
-    held fixed, letting ``n`` grow approaches the zeta distribution, since
-    the ranks past ``n`` carry vanishingly little probability.
+    Two special cases are worth knowing. ``shape = 0`` is exactly
+    ``DiscreteUniform(1, n)``: every rank equally likely. And with
+    ``shape > 1`` held fixed, letting ``n`` grow approaches the zeta
+    distribution, since the ranks past ``n`` carry vanishingly little
+    probability.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> X = Zipf(a=1, n=5)
+    >>> X = Zipf(shape=1, n=5)
     >>> round(float(X.pmf(1)), 4)  # 1 / (1 + 1/2 + 1/3 + 1/4 + 1/5)
     0.438
     >>> round(float(X.mean()), 4)
@@ -1324,33 +1338,33 @@ class Zipf(Distribution):
     1
     """
 
-    def __init__(self, a, n):
+    def __init__(self, shape, n):
         """Initialize a Zipf distribution.
 
         Raises
         ------
         Exception
-            If ``a`` is not a non-negative number, or ``n`` is not a
+            If ``shape`` is not a non-negative number, or ``n`` is not a
             positive integer.
         """
         _validate(
             (
-                not isinstance(a, numbers.Real) or a < 0,
-                "a must be a non-negative number",
+                not isinstance(shape, numbers.Real) or shape < 0,
+                "shape must be a non-negative number",
             ),
             (
                 not isinstance(n, numbers.Integral) or n < 1,
                 "n must be a positive integer",
             ),
         )
-        self.a = a
+        self.shape = shape
         self.n = n
 
-        # scipy.stats.zipfian is the finite-support Zipf, and it takes these
-        # two parameters under these same two names, so both pass straight
-        # through. scipy.stats.zipf is NOT this distribution -- it is the
-        # infinite-support zeta distribution -- so it must not be used here.
-        params = {"a": a, "n": n}
+        # scipy.stats.zipfian is the finite-support Zipf; the package's shape
+        # is scipy's `a` and n is scipy's `n`. scipy.stats.zipf is NOT this
+        # distribution -- it is the infinite-support zeta distribution -- so
+        # it must not be used here.
+        params = {"a": shape, "n": n}
         super().__init__(params, stats.zipfian, True)
         # Bounded at both ends, so the default window is the full support
         # 1, ..., n with no probability trimmed, like Binomial and
@@ -1886,26 +1900,26 @@ class Beta(Distribution):
 
     A continuous distribution defined on [0, 1], often used to model
     probabilities or proportions. The shape changes with parameters
-    ``a`` and ``b``.
+    ``shape1`` and ``shape2``.
 
     Parameters
     ----------
-    a : float
-        First shape parameter (α). Must be positive.
-    b : float
-        Second shape parameter (β). Must be positive.
+    shape1 : float
+        First shape parameter (often written α). Must be positive.
+    shape2 : float
+        Second shape parameter (often written β). Must be positive.
 
     Attributes
     ----------
-    a : float
+    shape1 : float
         First shape parameter (α). Must be positive.
-    b : float
+    shape2 : float
         Second shape parameter (β). Must be positive.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> X = Beta(a=1, b=1)
+    >>> X = Beta(shape1=1, shape2=1)
     >>> float(X.mean())
     0.5
     >>> round(float(X.pdf(0.5)), 4)
@@ -1914,23 +1928,29 @@ class Beta(Distribution):
     0.632
     """
 
-    def __init__(self, a, b):
+    def __init__(self, shape1, shape2):
         """Initialize a beta distribution.
 
         Raises
         ------
         Exception
-            If ``a`` or ``b`` is not a positive number.
+            If ``shape1`` or ``shape2`` is not a positive number.
         """
 
         _validate(
-            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
-            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(shape1, numbers.Real) or shape1 <= 0,
+                "shape1 must be a positive number",
+            ),
+            (
+                not isinstance(shape2, numbers.Real) or shape2 <= 0,
+                "shape2 must be a positive number",
+            ),
         )
-        self.a = a
-        self.b = b
+        self.shape1 = shape1
+        self.shape2 = shape2
 
-        params = {"a": a, "b": b}
+        params = {"a": shape1, "b": shape2}
         super().__init__(params, stats.beta, False)
         self.xlim = (0, 1)  # Beta distributions are not defined for x < 0 and x > 1
 
@@ -2239,10 +2259,11 @@ class Kumaraswamy(Distribution):
     as the fraction of a reservoir that is full or the share of a region's
     yearly rainfall that falls in one month.
 
-    Its shape is controlled by two positive parameters. Roughly, ``a``
-    controls the behavior near 0 and ``b`` the behavior near 1: raising
-    ``a`` pushes the values toward 1, raising ``b`` pushes them toward 0,
-    and ``a = b = 1`` leaves every value in [0, 1] equally likely.
+    Its shape is controlled by two positive parameters. Roughly, ``shape1``
+    controls the behavior near 0 and ``shape2`` the behavior near 1: raising
+    ``shape1`` pushes the values toward 1, raising ``shape2`` pushes them
+    toward 0, and ``shape1 = shape2 = 1`` leaves every value in [0, 1]
+    equally likely.
 
     The Kumaraswamy takes almost the same range of shapes as the ``Beta``
     -- bell-shaped, U-shaped, J-shaped, or flat -- but its cdf and quantile
@@ -2253,43 +2274,48 @@ class Kumaraswamy(Distribution):
 
     Parameters
     ----------
-    a : float
+    shape1 : float
         First shape parameter. Must be positive. Larger values shift the
         distribution toward 1.
-    b : float
+    shape2 : float
         Second shape parameter. Must be positive. Larger values shift the
         distribution toward 0.
 
     Attributes
     ----------
-    a : float
+    shape1 : float
         First shape parameter.
-    b : float
+    shape2 : float
         Second shape parameter.
 
     Notes
     -----
     The cumulative distribution function is
-    ``cdf(x) = 1 - (1 - x ** a) ** b`` on [0, 1], and inverting it gives the
-    quantile function ``quantile(q) = (1 - (1 - q) ** (1 / b)) ** (1 / a)``.
-    So if ``U`` is ``Uniform(0, 1)``, then
-    ``(1 - (1 - U) ** (1 / b)) ** (1 / a)`` is ``Kumaraswamy(a, b)`` -- the
-    inverse-cdf construction, which is how this distribution is sampled.
+    ``cdf(x) = 1 - (1 - x ** shape1) ** shape2`` on [0, 1], and inverting it
+    gives the quantile function
+    ``quantile(q) = (1 - (1 - q) ** (1 / shape2)) ** (1 / shape1)``. So if
+    ``U`` is ``Uniform(0, 1)``, then
+    ``(1 - (1 - U) ** (1 / shape2)) ** (1 / shape1)`` is
+    ``Kumaraswamy(shape1, shape2)`` -- the inverse-cdf construction, which is
+    how this distribution is sampled.
 
     Two special cases are exactly beta distributions, and only these two:
 
-    - ``b = 1`` gives ``Beta(a, 1)``, because both have cdf ``x ** a``.
-    - ``a = 1`` gives ``Beta(1, b)``, because both have cdf
-      ``1 - (1 - x) ** b``.
+    - ``shape2 = 1`` gives ``Beta(shape1, 1)``, because both have cdf
+      ``x ** shape1``.
+    - ``shape1 = 1`` gives ``Beta(1, shape2)``, because both have cdf
+      ``1 - (1 - x) ** shape2``.
 
     In particular ``Kumaraswamy(1, 1)`` is ``Uniform(0, 1)``. For every
     other pair the two families are close but not equal: a ``Kumaraswamy``
     can be matched to a ``Beta`` in mean and variance and still differ in
     its tails. The general link runs the other way -- if ``X`` is
-    ``Kumaraswamy(a, b)``, then ``X ** a`` is ``Beta(1, b)``.
+    ``Kumaraswamy(shape1, shape2)``, then ``X ** shape1`` is
+    ``Beta(1, shape2)``.
 
-    The moments are exact: ``E[X ** n] = b * B(1 + n / a, b)``, where ``B``
-    is the beta function.
+    The moments are exact:
+    ``E[X ** n] = shape2 * B(1 + n / shape1, shape2)``, where ``B`` is the
+    beta function.
 
     Unlike the other distributions in this package, this one is not in
     ``scipy.stats``; its density, cdf, quantile function and moments are
@@ -2298,37 +2324,43 @@ class Kumaraswamy(Distribution):
     Examples
     --------
     >>> from symbulate import *
-    >>> X = Kumaraswamy(a=2, b=2)
-    >>> round(float(X.mean()), 4)  # b * B(1 + 1 / a, b) = 8 / 15
+    >>> X = Kumaraswamy(shape1=2, shape2=2)
+    >>> round(float(X.mean()), 4)  # shape2 * B(1 + 1 / shape1, shape2)
     0.5333
-    >>> round(float(X.median()), 4)  # (1 - 2 ** (-1 / b)) ** (1 / a)
+    >>> round(float(X.median()), 4)  # (1 - 2 ** (-1 / shape2)) ** (1 / shape1)
     0.5412
     >>> round(float(X.cdf(0.5)), 4)  # 1 - (1 - 0.5 ** 2) ** 2
     0.4375
-    >>> float(Kumaraswamy(a=1, b=1).pdf(0.3))  # a = b = 1 is Uniform(0, 1)
+    >>> float(Kumaraswamy(shape1=1, shape2=1).pdf(0.3))  # this is Uniform(0, 1)
     1.0
     >>> X.draw()  # doctest: +SKIP
     0.6118
     """
 
-    def __init__(self, a, b):
+    def __init__(self, shape1, shape2):
         """Initialize a Kumaraswamy distribution.
 
         Raises
         ------
         Exception
-            If ``a`` or ``b`` is not a positive number.
+            If ``shape1`` or ``shape2`` is not a positive number.
         """
         _validate(
-            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
-            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(shape1, numbers.Real) or shape1 <= 0,
+                "shape1 must be a positive number",
+            ),
+            (
+                not isinstance(shape2, numbers.Real) or shape2 <= 0,
+                "shape2 must be a positive number",
+            ),
         )
-        self.a = a
-        self.b = b
+        self.shape1 = shape1
+        self.shape2 = shape2
 
-        # The two shape parameters pass straight through under the same two
-        # names to the generator defined just above.
-        params = {"a": a, "b": b}
+        # The two shape parameters pass straight through to the generator
+        # defined just above, whose scipy shape names are `a` and `b`.
+        params = {"a": shape1, "b": shape2}
         super().__init__(params, _kumaraswamy, False)
         # Bounded at both ends, so the window is the full support and no
         # probability is trimmed -- same as Beta.
@@ -2758,7 +2790,7 @@ class Pareto(Distribution):
 
     Parameters
     ----------
-    b : float, optional
+    shape : float, optional
         Shape parameter (tail index). Must be positive. Default is 1.0.
     scale : float, optional
         Minimum possible value (lower bound of the support).
@@ -2766,46 +2798,49 @@ class Pareto(Distribution):
 
     Attributes
     ----------
-    b : float
+    shape : float
         Shape parameter (tail index). Larger values give thinner tails.
     scale : float
         Minimum possible value (lower bound of the support).
 
     Notes
     -----
-    The mean is finite only when ``b > 1``; for ``b <= 1`` it diverges to
-    ``inf``. The variance is finite only when ``b > 2``.
+    The mean is finite only when ``shape > 1``; for ``shape <= 1`` it
+    diverges to ``inf``. The variance is finite only when ``shape > 2``.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> X = Pareto(b=2, scale=1)
+    >>> X = Pareto(shape=2, scale=1)
     >>> float(X.mean())
     2.0
     >>> X.draw()  # doctest: +SKIP
     1.34
     """
 
-    def __init__(self, b=1.0, scale=1.0):
+    def __init__(self, shape=1.0, scale=1.0):
         """Initialize a Pareto distribution.
 
         Raises
         ------
         Exception
-            If ``b`` or ``scale`` is not a positive number.
+            If ``shape`` or ``scale`` is not a positive number.
         """
 
         _validate(
-            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
             (
                 not isinstance(scale, numbers.Real) or scale <= 0,
                 "scale must be a positive number",
             ),
         )
-        self.b = b
+        self.shape = shape
         self.scale = scale
 
-        params = {"b": self.b, "scale": self.scale}
+        params = {"b": self.shape, "scale": self.scale}
         super().__init__(params, stats.pareto, False)
         # Highest-density window over the monotone-decreasing density: keeps
         # the peak at the lower bound (scale) and trims the long right tail.
@@ -2823,13 +2858,13 @@ class Pareto(Distribution):
         Examples
         --------
         >>> from symbulate import *
-        >>> Pareto(b=2, scale=1).draw()  # doctest: +SKIP
+        >>> Pareto(shape=2, scale=1).draw()  # doctest: +SKIP
         1.42
         """
 
         # Numpy's Pareto is Lomax distribution, or Type II Pareto
         # but we want the more standard parametrization
-        return self.scale * (1 + rng.pareto(self.b))
+        return self.scale * (1 + rng.pareto(self.shape))
 
 
 class Burr(Distribution):
@@ -2839,44 +2874,43 @@ class Burr(Distribution):
     actuarial science it is a standard model for claim severity -- the size
     of an insurance loss -- in Klugman's *Loss Models*, where its two shape
     parameters let it fit both the body and the heavy right tail of loss
-    data. Its two special cases explain the two shapes: with ``b = 1`` it is
-    the log-logistic (Fisk) distribution, and with ``a = 1`` it is a Pareto
-    (Type II / Lomax) distribution, so a ``Burr`` generalizes both.
-
-    The two shape parameters are named ``a`` and ``b`` to match the two
-    shape parameters of the ``Beta`` distribution.
+    data. Its two special cases explain the two shapes: with ``shape2 = 1``
+    it is the log-logistic (Fisk) distribution, and with ``shape1 = 1`` it
+    is a Pareto (Type II / Lomax) distribution, so a ``Burr`` generalizes
+    both.
 
     Parameters
     ----------
-    a : float
+    shape1 : float
         First shape parameter. Must be positive. Controls the shape of the
         body near the origin.
-    b : float
+    shape2 : float
         Second shape parameter. Must be positive. The right tail decays like
-        a power law with index ``a * b``, so a smaller ``b`` gives a heavier
-        tail.
+        a power law with index ``shape1 * shape2``, so a smaller ``shape2``
+        gives a heavier tail.
     scale : float, optional
         Scale parameter. Must be positive. Default is 1.
 
     Attributes
     ----------
-    a : float
+    shape1 : float
         First shape parameter (the body shape).
-    b : float
+    shape2 : float
         Second shape parameter (the tail exponent).
     scale : float
         Scale parameter.
 
     Notes
     -----
-    The mean is finite only when ``a * b > 1``; more generally the ``k``-th
-    moment is finite only when ``a * b > k``, so a heavy-tailed ``Burr``
-    (small ``a * b``) can have an infinite mean or variance.
+    The mean is finite only when ``shape1 * shape2 > 1``; more generally the
+    ``k``-th moment is finite only when ``shape1 * shape2 > k``, so a
+    heavy-tailed ``Burr`` (small ``shape1 * shape2``) can have an infinite
+    mean or variance.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> X = Burr(a=3, b=2)
+    >>> X = Burr(shape1=3, shape2=2)
     >>> round(float(X.median()), 4)
     0.7454
     >>> round(float(X.mean()), 4)
@@ -2887,30 +2921,37 @@ class Burr(Distribution):
     0.62
     """
 
-    def __init__(self, a, b, scale=1.0):
+    def __init__(self, shape1, shape2, scale=1.0):
         """Initialize a Burr (Type XII) distribution.
 
         Raises
         ------
         Exception
-            If ``a``, ``b``, or ``scale`` is not a positive number.
+            If ``shape1``, ``shape2``, or ``scale`` is not a positive
+            number.
         """
         _validate(
-            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
-            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(shape1, numbers.Real) or shape1 <= 0,
+                "shape1 must be a positive number",
+            ),
+            (
+                not isinstance(shape2, numbers.Real) or shape2 <= 0,
+                "shape2 must be a positive number",
+            ),
             (
                 not isinstance(scale, numbers.Real) or scale <= 0,
                 "scale must be a positive number",
             ),
         )
-        self.a = a
-        self.b = b
+        self.shape1 = shape1
+        self.shape2 = shape2
         self.scale = scale
 
         # scipy's burr12 takes c and d as the two shapes and scale the scale;
-        # our a maps to scipy's c (body shape) and b to scipy's d (tail
-        # exponent). loc stays at its 0 default so the support starts at 0.
-        params = {"c": a, "d": b, "scale": scale}
+        # our shape1 maps to scipy's c (body shape) and shape2 to scipy's d
+        # (tail exponent). loc stays at its 0 default so support starts at 0.
+        params = {"c": shape1, "d": shape2, "scale": scale}
         super().__init__(params, stats.burr12, False)
         # Highest-density window over the monotone or single-mode density:
         # trims the long, heavy right tail, like Pareto.
@@ -2924,37 +2965,36 @@ class Lomax(Distribution):
     Pareto distribution shifted to start at 0 instead of at its scale, which
     is why it is also called the Pareto Type II distribution. Like the
     ``Pareto``, it is a common model for claim sizes and other quantities
-    with a heavy right tail, and it is exactly the ``a = 1`` special case of
-    the ``Burr`` distribution.
+    with a heavy right tail, and it is exactly the ``shape1 = 1`` special
+    case of the ``Burr`` distribution.
 
     Parameters
     ----------
-    b : float, optional
-        Shape parameter (the tail index), named ``b`` to match the shape
-        parameter of the ``Pareto`` distribution. Must be positive. The
-        right tail decays like a power law with index ``b``, so a smaller
-        ``b`` gives a heavier tail. Default is 1.
+    shape : float, optional
+        Shape parameter (the tail index). Must be positive. The right tail
+        decays like a power law with index ``shape``, so a smaller ``shape``
+        gives a heavier tail. Default is 1.
     scale : float, optional
         Scale parameter. Must be positive. Default is 1.
 
     Attributes
     ----------
-    b : float
+    shape : float
         Shape parameter (the tail index).
     scale : float
         Scale parameter.
 
     Notes
     -----
-    The mean is finite only when ``b > 1``, and the variance only when
-    ``b > 2``. Adding the scale to a ``Lomax(b, scale)`` gives a
-    ``Pareto(b, scale)`` (Type I): the Lomax is the same power law with its
-    support shifted from ``[scale, inf)`` down to ``[0, inf)``.
+    The mean is finite only when ``shape > 1``, and the variance only when
+    ``shape > 2``. Adding the scale to a ``Lomax(shape, scale)`` gives a
+    ``Pareto(shape, scale)`` (Type I): the Lomax is the same power law with
+    its support shifted from ``[scale, inf)`` down to ``[0, inf)``.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> X = Lomax(b=3, scale=1)
+    >>> X = Lomax(shape=3, scale=1)
     >>> float(X.mean())
     0.5
     >>> round(float(X.sd()), 4)
@@ -2965,27 +3005,30 @@ class Lomax(Distribution):
     0.41
     """
 
-    def __init__(self, b=1.0, scale=1.0):
+    def __init__(self, shape=1.0, scale=1.0):
         """Initialize a Lomax (Pareto Type II) distribution.
 
         Raises
         ------
         Exception
-            If ``b`` or ``scale`` is not a positive number.
+            If ``shape`` or ``scale`` is not a positive number.
         """
         _validate(
-            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
             (
                 not isinstance(scale, numbers.Real) or scale <= 0,
                 "scale must be a positive number",
             ),
         )
-        self.b = b
+        self.shape = shape
         self.scale = scale
 
         # scipy's lomax takes c as the shape and scale the scale; loc stays at
         # its 0 default so the support starts at 0 (the Pareto Type II form).
-        params = {"c": b, "scale": scale}
+        params = {"c": shape, "scale": scale}
         super().__init__(params, stats.lomax, False)
         # Highest-density window over the monotone-decreasing density: keeps
         # the peak at 0 and trims the long, heavy right tail, like Pareto.
@@ -4307,7 +4350,7 @@ class Dirichlet(Distribution):
         # DistributionPlot return value) without duplicating any of it.
         plot = None
         for a_i in self.alpha:
-            marginal = Beta(a=a_i, b=self.alpha0 - a_i)
+            marginal = Beta(shape1=a_i, shape2=self.alpha0 - a_i)
             plot = marginal.plot(xlim=xlim, alpha=alpha, ax=ax, **kwargs)
         return plot
 
