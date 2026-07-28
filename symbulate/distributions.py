@@ -959,6 +959,109 @@ class Hypergeometric(Distribution):
         )  # Hypergeometric distributions are not defined for x < 0 and x > n
 
 
+class NegativeHypergeometric(Distribution):
+    """Probability space for a negative hypergeometric distribution.
+
+    The without-replacement counterpart of the :class:`Pascal`
+    distribution, and the "keep drawing until" version of
+    :class:`Hypergeometric`. Draw items one at a time and *without*
+    replacement from a collection of ``N0`` zeros and ``N1`` ones, stopping
+    as soon as ``r`` zeros have come out. This is the distribution of how
+    many ones were drawn along the way.
+
+    Where a :class:`Hypergeometric` fixes the number of draws and asks how
+    many ones turn up, this fixes the number of *zeros* to collect and asks
+    the same question -- so the number of draws is what varies.
+
+    Parameters
+    ----------
+    r : int
+        Number of zeros to draw before stopping. Must be a positive
+        integer, and cannot exceed ``N0`` -- you cannot wait for more zeros
+        than the collection holds.
+    N0 : int
+        Number of 0s (failures) in the collection. Must be a positive
+        integer.
+    N1 : int
+        Number of 1s (successes) in the collection. Must be a non-negative
+        integer.
+
+    Attributes
+    ----------
+    r : int
+        Number of zeros to draw before stopping.
+    N0 : int
+        Number of 0s (failures) in the collection.
+    N1 : int
+        Number of 1s (successes) in the collection.
+
+    Notes
+    -----
+    Note what ``r`` counts here. In :class:`NegativeBinomial` and
+    :class:`Pascal` the stopping count ``r`` is a number of *successes*; in
+    this distribution it is a number of *zeros* (failures), and the ones
+    are what gets counted up. The mean is ``r * N1 / (N0 + 1)``, and the
+    possible values run from 0 (no ones drawn) up to ``N1`` (every one
+    drawn before the last needed zero).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = NegativeHypergeometric(r=3, N0=7, N1=5)
+    >>> float(X.mean())
+    1.875
+    >>> round(float(X.pmf(2)), 4)
+    0.2652
+    >>> X.draw()  # doctest: +SKIP
+    2
+    """
+
+    def __init__(self, r, N0, N1):
+        """Initialize a negative hypergeometric distribution.
+
+        Raises
+        ------
+        Exception
+            If ``r`` or ``N0`` is not a positive integer; if ``N1`` is not a
+            non-negative integer; or if ``r`` is greater than ``N0``.
+        """
+        _validate(
+            (
+                not isinstance(r, numbers.Integral) or r <= 0,
+                "r must be a positive integer",
+            ),
+            (
+                not isinstance(N0, numbers.Integral) or N0 <= 0,
+                "N0 must be a positive integer",
+            ),
+            (
+                not isinstance(N1, numbers.Integral) or N1 < 0,
+                "N1 must be a non-negative integer",
+            ),
+            # Waiting for more zeros than the collection holds can never
+            # happen. scipy returns nan rather than raising, so this is
+            # caught here to give a clear message instead.
+            (
+                isinstance(r, numbers.Integral)
+                and isinstance(N0, numbers.Integral)
+                and 0 < N0 < r,
+                "r cannot be greater than N0, the number of 0s available to draw",
+            ),
+        )
+        self.r = r
+        self.N0 = N0
+        self.N1 = N1
+
+        # scipy's nhypergeom describes the same urn as M balls of which n are
+        # the type being counted, drawing until r of the *other* type appear.
+        # So M is the whole collection, its n is our N1, and its r is ours.
+        params = {"M": N0 + N1, "n": N1, "r": r}
+        super().__init__(params, stats.nhypergeom, True)
+        # At most every 1 in the collection can be drawn, so the support runs
+        # from 0 to N1 -- bounded at both ends, like Hypergeometric.
+        self.xlim = (0, N1)
+
+
 class Geometric(Distribution):
     """Probability space for a geometric distribution.
 

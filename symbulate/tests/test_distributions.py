@@ -333,6 +333,110 @@ class TestHypergeometric(unittest.TestCase):
         self.assertAlmostEqual(float(X.pmf(1)), stats.hypergeom(M=6, n=3, N=2).pmf(1))
 
 
+class TestNegativeHypergeometric(unittest.TestCase):
+
+    def test_NegativeHypergeometric_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(NegativeHypergeometric(r=3, N0=7, N1=5))
+        sims = X.sim(Nsim)
+        expected = stats.nhypergeom(M=12, n=5, r=3)
+        counts = np.bincount(np.array(list(sims), dtype=int), minlength=6)[:6]
+        pval = stats.chisquare(counts, len(sims) * expected.pmf(np.arange(6))).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_NegativeHypergeometric_matches_urn_simulation(self):
+        # Draw without replacement from an urn of N0 zeros and N1 ones until
+        # r zeros appear, counting the ones. This is the definition, checked
+        # independently of scipy's parameterization.
+        r, N0, N1 = 3, 7, 5
+        rng = np.random.default_rng(0)
+        urn = np.array([1] * N1 + [0] * N0)
+        outcomes = []
+        for _ in range(40000):
+            rng.shuffle(urn)
+            zeros = ones = 0
+            for ball in urn:
+                if ball == 0:
+                    zeros += 1
+                    if zeros == r:
+                        break
+                else:
+                    ones += 1
+            outcomes.append(ones)
+        empirical = np.bincount(outcomes, minlength=N1 + 1) / len(outcomes)
+        X = NegativeHypergeometric(r=r, N0=N0, N1=N1)
+        theoretical = np.array([float(X.pmf(k)) for k in range(N1 + 1)])
+        self.assertTrue(np.max(np.abs(empirical - theoretical)) < 0.01)
+
+    def test_NegativeHypergeometric_mean_closed_form(self):
+        # mean = r * N1 / (N0 + 1)
+        for r, N0, N1 in [(3, 7, 5), (1, 5, 4), (2, 10, 8), (7, 7, 5)]:
+            X = NegativeHypergeometric(r=r, N0=N0, N1=N1)
+            self.assertAlmostEqual(float(X.mean()), r * N1 / (N0 + 1), places=8)
+
+    def test_NegativeHypergeometric_pmf_sums_to_one(self):
+        X = NegativeHypergeometric(r=3, N0=7, N1=5)
+        total = sum(float(X.pmf(k)) for k in range(6))
+        self.assertAlmostEqual(total, 1.0, places=8)
+
+    def test_NegativeHypergeometric_pmf_matches_scipy(self):
+        X = NegativeHypergeometric(r=3, N0=7, N1=5)
+        th = stats.nhypergeom(M=12, n=5, r=3)
+        for k in range(6):
+            self.assertAlmostEqual(float(X.pmf(k)), float(th.pmf(k)), places=10)
+
+    def test_NegativeHypergeometric_support_is_zero_to_N1(self):
+        X = NegativeHypergeometric(r=3, N0=7, N1=5)
+        self.assertEqual(X.xlim, (0, 5))
+        self.assertGreater(float(X.pmf(5)), 0.0)
+        self.assertAlmostEqual(float(X.pmf(6)), 0.0, places=12)
+
+    def test_NegativeHypergeometric_r_equals_one(self):
+        # Stopping at the first zero: mean = N1 / (N0 + 1).
+        X = NegativeHypergeometric(r=1, N0=7, N1=5)
+        self.assertAlmostEqual(float(X.mean()), 5 / 8, places=8)
+
+    def test_NegativeHypergeometric_no_successes_is_point_mass_at_zero(self):
+        X = NegativeHypergeometric(r=3, N0=7, N1=0)
+        self.assertAlmostEqual(float(X.mean()), 0.0, places=10)
+        self.assertAlmostEqual(float(X.pmf(0)), 1.0, places=10)
+
+    def test_NegativeHypergeometric_draws_within_support(self):
+        distributions.rng = np.random.default_rng(0)
+        sims = RV(NegativeHypergeometric(r=3, N0=7, N1=5)).sim(1000)
+        self.assertTrue(all(0 <= int(v) <= 5 for v in sims))
+
+    def test_NegativeHypergeometric_r_greater_than_N0_raises(self):
+        # scipy silently returns nan here, so this must be caught up front.
+        self.assertRaises(Exception, lambda: NegativeHypergeometric(r=8, N0=7, N1=5))
+
+    def test_NegativeHypergeometric_invalid_r_raises(self):
+        for bad in [0, -1, 2.5, "a"]:
+            self.assertRaises(
+                Exception, lambda b=bad: NegativeHypergeometric(r=b, N0=7, N1=5)
+            )
+
+    def test_NegativeHypergeometric_invalid_N0_raises(self):
+        for bad in [0, -1, 2.5, "a"]:
+            self.assertRaises(
+                Exception, lambda b=bad: NegativeHypergeometric(r=1, N0=b, N1=5)
+            )
+
+    def test_NegativeHypergeometric_invalid_N1_raises(self):
+        for bad in [-1, 2.5, "a"]:
+            self.assertRaises(
+                Exception, lambda b=bad: NegativeHypergeometric(r=3, N0=7, N1=b)
+            )
+
+    def test_NegativeHypergeometric_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        NegativeHypergeometric(r=3, N0=7, N1=5).draw()
+        RV(NegativeHypergeometric(r=3, N0=7, N1=5)).sim(100).plot()
+        NegativeHypergeometric(r=3, N0=7, N1=5).plot()
+        NegativeHypergeometric(r=3, N0=7, N1=5).plot(cdf=True)
+        plt.close("all")
+
+
 class TestGeometric(unittest.TestCase):
 
     def test_Geometric_error(self):
