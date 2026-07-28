@@ -1324,6 +1324,202 @@ class TestBeta(unittest.TestCase):
         self.assertAlmostEqual(float(X.pdf(0.5)), stats.beta(a=2, b=5).pdf(0.5))
 
 
+class TestPERT(unittest.TestCase):
+
+    def test_PERT_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = PERT(low=1, mode=2, high=10)
+        sims = X.sim(Nsim)
+        cdf = stats.beta(X.alpha, X.beta, loc=1, scale=9).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_PERT_mean_is_classic_formula(self):
+        # The whole point of PERT: mean = (low + 4 * mode + high) / 6.
+        for low, mode, high in [(1, 2, 10), (0, 5, 10), (0, 9, 10), (-5, 0, 5)]:
+            X = PERT(low=low, mode=mode, high=high)
+            self.assertAlmostEqual(
+                float(X.mean()), (low + 4 * mode + high) / 6, places=8
+            )
+
+    def test_PERT_mean_uses_weight(self):
+        # A general weight generalizes the /6 formula to /(weight + 2).
+        low, mode, high, w = 0, 2, 10, 7.0
+        X = PERT(low=low, mode=mode, high=high, weight=w)
+        self.assertAlmostEqual(
+            float(X.mean()), (low + w * mode + high) / (w + 2), places=8
+        )
+
+    def test_PERT_density_peaks_at_mode(self):
+        # The shape parameters are chosen so the peak lands exactly on mode.
+        for low, mode, high in [(1, 2, 10), (0, 9, 10), (-5, 0, 5)]:
+            X = PERT(low=low, mode=mode, high=high)
+            xs = np.linspace(low, high, 200001)
+            self.assertAlmostEqual(float(xs[np.argmax(X.pdf(xs))]), mode, places=3)
+
+    def test_PERT_shape_parameters(self):
+        X = PERT(low=0, mode=2, high=10, weight=4)
+        self.assertAlmostEqual(X.alpha, 1 + 4 * (2 - 0) / 10, places=10)
+        self.assertAlmostEqual(X.beta, 1 + 4 * (10 - 2) / 10, places=10)
+
+    def test_PERT_symmetric_case_is_Beta_3_3(self):
+        # low=0, mode=0.5, high=1 with the default weight is exactly Beta(3, 3).
+        X = PERT(low=0, mode=0.5, high=1)
+        B = Beta(a=3, b=3)
+        self.assertAlmostEqual(X.alpha, 3.0, places=10)
+        self.assertAlmostEqual(X.beta, 3.0, places=10)
+        for x in [0.1, 0.3, 0.5, 0.7, 0.9]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(B.pdf(x)), places=8)
+            self.assertAlmostEqual(float(X.cdf(x)), float(B.cdf(x)), places=8)
+
+    def test_PERT_mode_at_endpoints_allowed(self):
+        # mode == low gives alpha = 1; mode == high gives beta = 1. Both are
+        # valid Beta distributions and need no special-casing.
+        X = PERT(low=0, mode=0, high=10)
+        self.assertAlmostEqual(X.alpha, 1.0, places=10)
+        Y = PERT(low=0, mode=10, high=10)
+        self.assertAlmostEqual(Y.beta, 1.0, places=10)
+
+    def test_PERT_weight_increases_concentration(self):
+        sds = [float(PERT(0, 5, 10, weight=w).sd()) for w in [1, 2, 4, 8, 20]]
+        self.assertEqual(sds, sorted(sds, reverse=True))
+
+    def test_PERT_draws_within_bounds(self):
+        distributions.rng = np.random.default_rng(0)
+        sims = RV(PERT(low=1, mode=2, high=10)).sim(1000)
+        values = [float(v) for v in sims]
+        self.assertTrue(all(1 <= v <= 10 for v in values))
+
+    def test_PERT_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(PERT(low=1, mode=2, high=10).draw(), Scalar)
+
+    def test_PERT_xlim_is_full_support(self):
+        self.assertEqual(PERT(low=1, mode=2, high=10).xlim, (1, 10))
+
+    def test_PERT_default_weight_is_four(self):
+        self.assertEqual(PERT(low=0, mode=1, high=2).weight, 4.0)
+
+    def test_PERT_invalid_bounds_raise(self):
+        # high must be strictly greater than low.
+        self.assertRaises(Exception, lambda: PERT(low=5, mode=5, high=5))
+        self.assertRaises(Exception, lambda: PERT(low=10, mode=5, high=1))
+
+    def test_PERT_mode_outside_bounds_raises(self):
+        self.assertRaises(Exception, lambda: PERT(low=0, mode=-1, high=10))
+        self.assertRaises(Exception, lambda: PERT(low=0, mode=11, high=10))
+
+    def test_PERT_invalid_weight_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: PERT(0, 5, 10, weight=b))
+
+    def test_PERT_non_numeric_raises(self):
+        self.assertRaises(Exception, lambda: PERT(low="a", mode=5, high=10))
+        self.assertRaises(Exception, lambda: PERT(low=0, mode="a", high=10))
+        self.assertRaises(Exception, lambda: PERT(low=0, mode=5, high="a"))
+
+    def test_PERT_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        PERT(1, 2, 10).draw()
+        RV(PERT(1, 2, 10)).sim(100).plot()
+        PERT(1, 2, 10).plot()
+        PERT(1, 2, 10).plot(cdf=True)
+        plt.close("all")
+
+
+class TestTriangular(unittest.TestCase):
+
+    def test_Triangular_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Triangular(low=1, mode=2, high=10)
+        sims = X.sim(Nsim)
+        cdf = stats.triang((2 - 1) / 9, loc=1, scale=9).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Triangular_mean_is_average_of_three_points(self):
+        for low, mode, high in [(1, 2, 10), (0, 5, 10), (0, 9, 10), (-5, 0, 5)]:
+            X = Triangular(low=low, mode=mode, high=high)
+            self.assertAlmostEqual(float(X.mean()), (low + mode + high) / 3, places=8)
+
+    def test_Triangular_variance_closed_form(self):
+        for a, b, c in [(1, 2, 10), (0, 5, 10), (-5, 0, 5), (0, 0, 10)]:
+            X = Triangular(low=a, mode=b, high=c)
+            expected = (a * a + b * b + c * c - a * b - a * c - b * c) / 18
+            self.assertAlmostEqual(float(X.var()), expected, places=8)
+
+    def test_Triangular_peak_height_is_two_over_span(self):
+        # The triangle's area must be 1, so its height is 2 / (high - low)
+        # regardless of where the mode sits.
+        for low, mode, high in [(1, 2, 10), (0, 5, 10), (0, 9, 10)]:
+            X = Triangular(low=low, mode=mode, high=high)
+            self.assertAlmostEqual(float(X.pdf(mode)), 2 / (high - low), places=8)
+
+    def test_Triangular_density_peaks_at_mode(self):
+        for low, mode, high in [(1, 2, 10), (0, 9, 10), (-5, 0, 5)]:
+            X = Triangular(low=low, mode=mode, high=high)
+            xs = np.linspace(low, high, 200001)
+            self.assertAlmostEqual(float(xs[np.argmax(X.pdf(xs))]), mode, places=3)
+
+    def test_Triangular_sides_are_linear(self):
+        # Halfway up the rising side, the density should be half its peak.
+        X = Triangular(low=0, mode=4, high=10)
+        peak = 2 / 10
+        self.assertAlmostEqual(float(X.pdf(2)), peak * 0.5, places=8)
+        # And on the falling side, a third of the way back down from the mode.
+        self.assertAlmostEqual(float(X.pdf(8)), peak * (10 - 8) / (10 - 4), places=8)
+
+    def test_Triangular_mode_at_endpoints_allowed(self):
+        # Right triangles: sloping only one way.
+        X = Triangular(low=0, mode=0, high=10)
+        self.assertAlmostEqual(float(X.mean()), 10 / 3, places=8)
+        self.assertAlmostEqual(float(X.pdf(0)), 0.2, places=8)
+        Y = Triangular(low=0, mode=10, high=10)
+        self.assertAlmostEqual(float(Y.mean()), 20 / 3, places=8)
+        self.assertAlmostEqual(float(Y.pdf(10)), 0.2, places=8)
+
+    def test_Triangular_more_spread_than_PERT(self):
+        # Triangular weights the extremes as heavily as the mode, so on the
+        # same three numbers it is the wider of the two.
+        low, mode, high = 0, 5, 10
+        t = float(Triangular(low=low, mode=mode, high=high).sd())
+        p = float(PERT(low=low, mode=mode, high=high).sd())
+        self.assertGreater(t, p)
+
+    def test_Triangular_draws_within_bounds(self):
+        distributions.rng = np.random.default_rng(0)
+        sims = RV(Triangular(low=1, mode=2, high=10)).sim(1000)
+        self.assertTrue(all(1 <= float(v) <= 10 for v in sims))
+
+    def test_Triangular_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(Triangular(low=1, mode=2, high=10).draw(), Scalar)
+
+    def test_Triangular_xlim_is_full_support(self):
+        self.assertEqual(Triangular(low=1, mode=2, high=10).xlim, (1, 10))
+
+    def test_Triangular_invalid_bounds_raise(self):
+        self.assertRaises(Exception, lambda: Triangular(low=5, mode=5, high=5))
+        self.assertRaises(Exception, lambda: Triangular(low=10, mode=5, high=1))
+
+    def test_Triangular_mode_outside_bounds_raises(self):
+        self.assertRaises(Exception, lambda: Triangular(low=0, mode=-1, high=10))
+        self.assertRaises(Exception, lambda: Triangular(low=0, mode=11, high=10))
+
+    def test_Triangular_non_numeric_raises(self):
+        self.assertRaises(Exception, lambda: Triangular(low="a", mode=5, high=10))
+        self.assertRaises(Exception, lambda: Triangular(low=0, mode="a", high=10))
+        self.assertRaises(Exception, lambda: Triangular(low=0, mode=5, high="a"))
+
+    def test_Triangular_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Triangular(1, 2, 10).draw()
+        RV(Triangular(1, 2, 10)).sim(100).plot()
+        Triangular(1, 2, 10).plot()
+        Triangular(1, 2, 10).plot(cdf=True)
+        plt.close("all")
+
+
 class TestStudentT(unittest.TestCase):
 
     def test_StudentT_df_error(self):
