@@ -48,6 +48,7 @@ from .distributions import (
     Triangular,
     Kumaraswamy,
     StudentT,
+    SkewT,
     ChiSquare,
     F,
     Cauchy,

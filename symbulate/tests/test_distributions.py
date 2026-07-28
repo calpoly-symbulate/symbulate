@@ -2606,6 +2606,64 @@ class TestStudentT(unittest.TestCase):
         plt.close("all")
 
 
+class TestSkewT(unittest.TestCase):
+
+    def test_SkewT_shape1_error(self):
+        self.assertRaises(Exception, lambda: SkewT(shape1=0, shape2=2))
+
+    def test_SkewT_shape2_error(self):
+        self.assertRaises(Exception, lambda: SkewT(shape1=2, shape2=-1))
+
+    def test_SkewT_scale_error(self):
+        self.assertRaises(Exception, lambda: SkewT(shape1=2, shape2=2, scale=0))
+
+    def test_SkewT_loc_error(self):
+        self.assertRaises(Exception, lambda: SkewT(shape1=2, shape2=2, loc="a"))
+
+    def test_SkewT_distribution(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(SkewT(shape1=5, shape2=2, loc=1, scale=2))
+        sims = X.sim(Nsim)
+        cdf = stats.jf_skew_t(5, 2, loc=1, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_SkewT_pdf_matches_scipy(self):
+        X = SkewT(shape1=5, shape2=2, loc=1, scale=2)
+        th = stats.jf_skew_t(5, 2, loc=1, scale=2)
+        for x in [-3, -1, 0, 1, 3, 6]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(th.pdf(x)), places=12)
+
+    def test_SkewT_symmetric_equals_StudentT(self):
+        # shape1 == shape2 == df / 2 is a symmetric Student's t with df d.o.f.
+        X = SkewT(shape1=3, shape2=3)
+        Y = StudentT(df=6)
+        for x in [-2, -0.5, 0, 1, 2.5]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=12)
+
+    def test_SkewT_symmetric_median_zero(self):
+        X = SkewT(shape1=4, shape2=4)
+        self.assertAlmostEqual(float(X.median()), 0.0, places=9)
+
+    def test_SkewT_right_skew_mean_positive(self):
+        # shape1 > shape2 puts the longer tail on the right: mean > median.
+        X = SkewT(shape1=6, shape2=2)
+        self.assertGreater(float(X.mean()), float(X.median()))
+
+    def test_SkewT_left_skew_mean_negative(self):
+        # shape1 < shape2 mirrors shape2 < shape1 about zero.
+        right = SkewT(shape1=5, shape2=2)
+        left = SkewT(shape1=2, shape2=5)
+        self.assertAlmostEqual(float(left.mean()), -float(right.mean()), places=9)
+
+    def test_SkewT_plots_without_error(self):
+        SkewT(shape1=5, shape2=2).draw()
+        RV(SkewT(shape1=5, shape2=2)).sim(100).plot()
+        SkewT(shape1=5, shape2=2).plot()
+        SkewT(shape1=5, shape2=2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestChiSquare(unittest.TestCase):
 
     def test_ChiSquare_error(self):

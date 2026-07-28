@@ -3228,6 +3228,108 @@ class StudentT(Distribution):
             super().__init__(params, stats.nct, False)
 
 
+class SkewT(Distribution):
+    """Probability space for a skew-t distribution.
+
+    A heavy-tailed, asymmetric bell curve: it takes Student's t-distribution
+    and lets the two sides of the curve have different weights, so one tail
+    can be longer than the other. This makes it the t-distribution's skewed
+    cousin, just as the skew-normal is the normal's -- and it is a popular
+    model in finance and robust statistics, where returns and errors are
+    both fat-tailed and lopsided.
+
+    This is the Jones and Faddy skew-t, controlled by two positive shape
+    parameters. When they are equal the distribution is symmetric and equals
+    an ordinary Student's t-distribution with ``shape1 + shape2`` degrees of
+    freedom. When ``shape1 > shape2`` the longer tail is on the right (right,
+    or positive, skew); when ``shape1 < shape2`` it is on the left. Larger
+    values of both make the tails lighter, approaching a normal curve.
+
+    Parameters
+    ----------
+    shape1 : float
+        First shape parameter. Must be positive. Controls the weight of the
+        right side; making it larger than ``shape2`` skews the distribution
+        to the right.
+    shape2 : float
+        Second shape parameter. Must be positive. Controls the weight of the
+        left side; making it larger than ``shape1`` skews the distribution
+        to the left.
+    loc : float, optional
+        Location (shift) parameter. Default is 0.
+    scale : float, optional
+        Scale parameter. Must be positive. Default is 1.
+
+    Attributes
+    ----------
+    shape1 : float
+        First shape parameter.
+    shape2 : float
+        Second shape parameter.
+    loc : float
+        Location (shift) parameter.
+    scale : float
+        Scale parameter.
+
+    Notes
+    -----
+    With ``shape1 == shape2 == df / 2`` the distribution is the symmetric
+    ``StudentT(df)`` (before shifting and scaling), so a symmetric skew-t
+    with ``df`` degrees of freedom uses ``shape1 = shape2 = df / 2``. The
+    tails behave like a t-distribution, so low shape values give an
+    undefined mean or variance just as a low-``df`` t does.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = SkewT(shape1=5, shape2=2)
+    >>> round(float(X.median()), 4)
+    1.413
+    >>> round(float(X.mean()), 4)
+    1.7046
+    >>> Y = SkewT(shape1=3, shape2=3)  # symmetric: a Student t with df = 6
+    >>> round(float(Y.pdf(0)), 4)
+    0.3827
+    >>> X.draw()  # doctest: +SKIP
+    0.87
+    """
+
+    def __init__(self, shape1, shape2, loc=0.0, scale=1.0):
+        """Initialize a skew-t distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape1``, ``shape2``, or ``scale`` is not a positive
+            number, or if ``loc`` is not a number.
+        """
+        _validate(
+            (
+                not isinstance(shape1, numbers.Real) or shape1 <= 0,
+                "shape1 must be a positive number",
+            ),
+            (
+                not isinstance(shape2, numbers.Real) or shape2 <= 0,
+                "shape2 must be a positive number",
+            ),
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.shape1 = shape1
+        self.shape2 = shape2
+        self.loc = loc
+        self.scale = scale
+
+        # scipy's jf_skew_t takes the two Jones-Faddy shapes as a and b; our
+        # shape1 maps to a (right-side weight) and shape2 to b (left-side
+        # weight), so shape1 > shape2 gives right skew.
+        params = {"a": shape1, "b": shape2, "loc": loc, "scale": scale}
+        super().__init__(params, stats.jf_skew_t, False)
+
+
 class ChiSquare(Distribution):
     """Probability space for a chi-square distribution.
 
