@@ -1279,6 +1279,96 @@ class TestInverseGamma(unittest.TestCase):
         plt.close("all")
 
 
+class TestLogGamma(unittest.TestCase):
+
+    def test_LogGamma_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(LogGamma(shape=2))
+        sims = X.sim(Nsim)
+        cdf = stats.loggamma(c=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogGamma_is_log_of_Gamma(self):
+        # The defining property: log(Gamma) has this distribution. Note the
+        # direction -- this is the opposite of LogNormal, where the variable's
+        # own log is normal.
+        distributions.rng = np.random.default_rng(42)
+        G = RV(Gamma(shape=2, scale=1))
+        sims = G.apply(log).sim(Nsim)
+        pval = stats.kstest(sims, stats.loggamma(c=2).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogGamma_exp_is_Gamma(self):
+        # The same fact read the other way round: exponentiating gives a Gamma.
+        distributions.rng = np.random.default_rng(7)
+        X = RV(LogGamma(shape=3))
+        sims = X.apply(exp).sim(Nsim)
+        pval = stats.kstest(sims, stats.gamma(a=3).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogGamma_mean_var_are_digamma_trigamma(self):
+        from scipy.special import digamma, polygamma
+
+        for shape in [0.5, 1.0, 2.0, 5.0]:
+            X = LogGamma(shape=shape)
+            self.assertAlmostEqual(float(X.mean()), float(digamma(shape)), places=8)
+            self.assertAlmostEqual(float(X.var()), float(polygamma(1, shape)), places=8)
+
+    def test_LogGamma_support_includes_negative_values(self):
+        # Unlike LogNormal, a log-gamma variable ranges over all real numbers.
+        X = LogGamma(shape=2)
+        self.assertLess(float(X.quantile(0.01)), 0.0)
+        self.assertGreater(float(X.pdf(-3)), 0.0)
+
+    def test_LogGamma_is_left_skewed(self):
+        for shape in [0.5, 1.0, 2.0]:
+            sk = float(stats.loggamma(c=shape).stats(moments="s"))
+            self.assertLess(sk, 0.0)
+
+    def test_LogGamma_loc_scale_shift_and_stretch(self):
+        from scipy.special import digamma
+
+        X = LogGamma(shape=2, loc=3, scale=2)
+        self.assertAlmostEqual(float(X.mean()), 3 + 2 * float(digamma(2)), places=8)
+
+    def test_LogGamma_shape_one_mirrors_Gumbel(self):
+        # shape=1 is the smallest-extreme-value distribution, which is the
+        # reflection of this package's Gumbel (that one models maxima).
+        X = LogGamma(shape=1)
+        G = Gumbel(loc=0, scale=1)
+        for x in [-1.5, -0.5, 0.0, 0.5, 1.5]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(G.pdf(-x)), places=8)
+
+    def test_LogGamma_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(LogGamma(shape=2).draw(), Scalar)
+
+    def test_LogGamma_defaults(self):
+        X = LogGamma(shape=2)
+        self.assertEqual(X.loc, 0)
+        self.assertEqual(X.scale, 1)
+
+    def test_LogGamma_invalid_shape_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: LogGamma(shape=b))
+
+    def test_LogGamma_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: LogGamma(shape=2, scale=b))
+
+    def test_LogGamma_invalid_loc_raises(self):
+        self.assertRaises(Exception, lambda: LogGamma(shape=2, loc="a"))
+
+    def test_LogGamma_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        LogGamma(shape=2).draw()
+        RV(LogGamma(shape=2)).sim(100).plot()
+        LogGamma(shape=2).plot()
+        LogGamma(shape=2).plot(cdf=True)
+        plt.close("all")
+
+
 class TestBeta(unittest.TestCase):
 
     def test_Beta_error_a(self):

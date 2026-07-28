@@ -1881,6 +1881,103 @@ class InverseGamma(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class LogGamma(Distribution):
+    """Probability space for a log-gamma distribution.
+
+    The distribution of the **logarithm of** a gamma random variable: if
+    ``G`` has a :class:`Gamma` distribution, then ``log(G)`` has this
+    log-gamma distribution. Taking the log compresses the gamma's long
+    right tail and stretches its left side, so the result is a
+    left-skewed distribution defined over *all* real numbers -- negative
+    values are perfectly ordinary. It appears in extreme value theory and,
+    in actuarial work, as a model on the log scale of a loss.
+
+    Parameters
+    ----------
+    shape : float
+        Shape parameter of the underlying gamma distribution. Must be
+        positive. Larger values make the distribution tighter and less
+        skewed.
+    loc : float, optional
+        Location parameter, shifting the whole distribution. Default is 0.
+    scale : float, optional
+        Scale parameter, stretching the distribution. Must be positive.
+        Default is 1. Note this scales the log-gamma variable itself, so it
+        is *not* the scale of the underlying gamma distribution.
+
+    Attributes
+    ----------
+    shape : float
+        Shape parameter of the underlying gamma distribution.
+    loc : float
+        Location parameter.
+    scale : float
+        Scale parameter.
+
+    Notes
+    -----
+    **Read the name carefully -- it points the opposite way from**
+    :class:`LogNormal`. A log-normal variable is one *whose own logarithm*
+    is normal, so a ``LogNormal`` is always positive. A log-gamma variable,
+    by the convention used here, *is itself a logarithm* of a gamma
+    variable, so it ranges over all real numbers and is frequently
+    negative. Put another way: ``log(LogNormal)`` is normal, whereas
+    ``exp(LogGamma)`` is gamma.
+
+    With ``loc = 0`` and ``scale = 1`` the mean and variance have closed
+    forms in terms of the digamma and trigamma functions:
+    ``mean = digamma(shape)`` and ``var = polygamma(1, shape)``.
+
+    Setting ``shape = 1`` gives the smallest-extreme-value distribution,
+    which is the mirror image of this package's :class:`Gumbel` (that one
+    models maxima, this reflection models minima).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = LogGamma(shape=2)
+    >>> round(float(X.mean()), 4)
+    0.4228
+    >>> round(float(X.sd()), 4)
+    0.8031
+    >>> round(float(X.pdf(0)), 4)
+    0.3679
+    >>> X.draw()  # doctest: +SKIP
+    0.31
+    """
+
+    def __init__(self, shape, loc=0, scale=1):
+        """Initialize a log-gamma distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape`` is not a positive number, ``loc`` is not a number,
+            or ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.shape = shape
+        self.loc = loc
+        self.scale = scale
+
+        # scipy's loggamma takes c as the shape of the underlying gamma.
+        params = {"c": shape, "loc": loc, "scale": scale}
+        # Unbounded in both directions and only moderately skewed, so the
+        # base equal-tailed window is appropriate -- the same treatment GEV
+        # gets. (The HDI trim is for one-sided skew like Gamma/Weibull.)
+        super().__init__(params, stats.loggamma, False)
+
+
 class Beta(Distribution):
     """Probability space for a beta distribution.
 
