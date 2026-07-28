@@ -34,6 +34,7 @@ from .distributions import (
     Gamma,
     InverseGamma,
     Beta,
+    Kumaraswamy,
     StudentT,
     ChiSquare,
     F,

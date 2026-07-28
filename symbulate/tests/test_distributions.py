@@ -2,6 +2,7 @@ import math
 import unittest
 import numpy as np
 import scipy.stats as stats
+import scipy.special as special
 import warnings
 
 import matplotlib
@@ -1175,6 +1176,260 @@ class TestBeta(unittest.TestCase):
         X = Beta(a=2, b=5)
         self.assertAlmostEqual(float(X.mean()), 2 / 7)
         self.assertAlmostEqual(float(X.pdf(0.5)), stats.beta(a=2, b=5).pdf(0.5))
+
+
+class TestKumaraswamy(unittest.TestCase):
+    """The Kumaraswamy distribution on [0, 1].
+
+    The only distribution in the package with no ``scipy.stats`` backing, so
+    the closed forms are checked against the definitions written out here
+    rather than against another implementation.
+    """
+
+    # --- density, cdf and quantile match their closed forms ---
+
+    def test_Kumaraswamy_pdf_formula(self):
+        # pdf(x) = a * b * x ** (a - 1) * (1 - x ** a) ** (b - 1)
+        a, b = 2.5, 3.0
+        X = Kumaraswamy(a=a, b=b)
+        for x in [0.05, 0.25, 0.5, 0.75, 0.95]:
+            expected = a * b * x ** (a - 1) * (1 - x**a) ** (b - 1)
+            self.assertAlmostEqual(float(X.pdf(x)), expected, places=12)
+
+    def test_Kumaraswamy_cdf_formula(self):
+        # cdf(x) = 1 - (1 - x ** a) ** b
+        a, b = 2.0, 4.0
+        X = Kumaraswamy(a=a, b=b)
+        for x in [0.0, 0.1, 0.5, 0.9, 1.0]:
+            self.assertAlmostEqual(float(X.cdf(x)), 1 - (1 - x**a) ** b, places=12)
+
+    def test_Kumaraswamy_quantile_formula(self):
+        # quantile(q) = (1 - (1 - q) ** (1 / b)) ** (1 / a)
+        a, b = 3.0, 1.5
+        X = Kumaraswamy(a=a, b=b)
+        for q in [0.01, 0.25, 0.5, 0.75, 0.99]:
+            expected = (1 - (1 - q) ** (1 / b)) ** (1 / a)
+            self.assertAlmostEqual(float(X.quantile(q)), expected, places=12)
+
+    def test_Kumaraswamy_quantile_inverts_cdf(self):
+        X = Kumaraswamy(a=2.5, b=3.0)
+        for q in [0.05, 0.3, 0.5, 0.8, 0.95]:
+            self.assertAlmostEqual(float(X.cdf(X.quantile(q))), q, places=10)
+
+    def test_Kumaraswamy_pdf_integrates_to_one(self):
+        # Numerically integrating the density is an independent check that
+        # the a * b out front is the right normalizing constant.
+        from scipy.integrate import quad
+
+        for a, b in [(0.5, 0.5), (2, 3), (5, 1.2)]:
+            X = Kumaraswamy(a=a, b=b)
+            total, _ = quad(lambda x: float(X.pdf(x)), 0, 1)
+            self.assertAlmostEqual(total, 1.0, places=6)
+
+    # --- support ---
+
+    def test_Kumaraswamy_support_is_zero_to_one(self):
+        X = Kumaraswamy(a=2, b=3)
+        self.assertEqual(float(X.pdf(-0.1)), 0.0)
+        self.assertEqual(float(X.pdf(1.1)), 0.0)
+        self.assertEqual(float(X.cdf(0)), 0.0)
+        self.assertEqual(float(X.cdf(1)), 1.0)
+        self.assertEqual(float(X.quantile(0)), 0.0)
+        self.assertEqual(float(X.quantile(1)), 1.0)
+
+    def test_Kumaraswamy_xlim_is_full_support(self):
+        # Bounded at both ends, so the default window is all of [0, 1] with
+        # no probability trimmed, like Beta.
+        self.assertEqual(Kumaraswamy(a=2, b=5).xlim, (0, 1))
+
+    def test_Kumaraswamy_density_infinite_at_edges(self):
+        # With a < 1 the density blows up at 0, and with b < 1 at 1. Both
+        # are correct, and neither should raise or warn.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            edges = Kumaraswamy(a=0.5, b=0.5).pdf(np.array([0.0, 1.0]))
+        self.assertTrue(np.isinf(edges).all())
+
+    # --- moments ---
+
+    def test_Kumaraswamy_moments_are_beta_integrals(self):
+        # E[X ** n] = b * B(1 + n / a, b), from substituting t = x ** a.
+        a, b = 2.0, 3.0
+        X = Kumaraswamy(a=a, b=b)
+        first = b * special.beta(1 + 1 / a, b)
+        second = b * special.beta(1 + 2 / a, b)
+        self.assertAlmostEqual(float(X.mean()), first, places=10)
+        self.assertAlmostEqual(float(X.var()), second - first**2, places=10)
+        self.assertAlmostEqual(float(X.sd()), math.sqrt(second - first**2), places=10)
+
+    def test_Kumaraswamy_mean_var_known_values(self):
+        # a = b = 2: E[X] = 2 * B(3/2, 2) = 8 / 15 and E[X ** 2] = 2 * B(2, 2)
+        # = 1 / 3, both worked out by hand.
+        X = Kumaraswamy(a=2, b=2)
+        self.assertAlmostEqual(float(X.mean()), 8 / 15, places=12)
+        self.assertAlmostEqual(float(X.var()), 1 / 3 - (8 / 15) ** 2, places=12)
+
+    def test_Kumaraswamy_median_formula(self):
+        a, b = 2.0, 2.0
+        median = (1 - 2 ** (-1 / b)) ** (1 / a)
+        self.assertAlmostEqual(float(Kumaraswamy(a=a, b=b).median()), median, places=12)
+
+    def test_Kumaraswamy_larger_a_shifts_right_larger_b_shifts_left(self):
+        base = float(Kumaraswamy(a=2, b=2).mean())
+        self.assertGreater(float(Kumaraswamy(a=5, b=2).mean()), base)
+        self.assertLess(float(Kumaraswamy(a=2, b=5).mean()), base)
+
+    # --- relationships with distributions already in Symbulate ---
+
+    def test_Kumaraswamy_b_one_is_Beta_a_one(self):
+        # b = 1 leaves cdf(x) = x ** a, which is exactly Beta(a, 1).
+        a = 3.0
+        X, Y = Kumaraswamy(a=a, b=1), Beta(a=a, b=1)
+        for x in [0.1, 0.4, 0.7, 0.95]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=10)
+            self.assertAlmostEqual(float(X.cdf(x)), float(Y.cdf(x)), places=10)
+        self.assertAlmostEqual(float(X.mean()), float(Y.mean()), places=10)
+
+    def test_Kumaraswamy_a_one_is_Beta_one_b(self):
+        # a = 1 leaves cdf(x) = 1 - (1 - x) ** b, which is exactly Beta(1, b).
+        b = 4.0
+        X, Y = Kumaraswamy(a=1, b=b), Beta(a=1, b=b)
+        for x in [0.1, 0.4, 0.7, 0.95]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=10)
+            self.assertAlmostEqual(float(X.cdf(x)), float(Y.cdf(x)), places=10)
+        self.assertAlmostEqual(float(X.mean()), float(Y.mean()), places=10)
+
+    def test_Kumaraswamy_one_one_is_Uniform(self):
+        X = Kumaraswamy(a=1, b=1)
+        for x in [0.1, 0.5, 0.9]:
+            self.assertAlmostEqual(float(X.pdf(x)), 1.0, places=12)
+            self.assertAlmostEqual(float(X.cdf(x)), x, places=12)
+        self.assertAlmostEqual(float(X.mean()), 0.5, places=12)
+
+    def test_Kumaraswamy_is_not_Beta_in_general(self):
+        # Only a = 1 and b = 1 coincide with a Beta. Guard against anyone
+        # "simplifying" this into a Beta with the same two parameters.
+        X, Y = Kumaraswamy(a=2, b=3), Beta(a=2, b=3)
+        self.assertNotAlmostEqual(float(X.mean()), float(Y.mean()), places=3)
+        self.assertNotAlmostEqual(float(X.pdf(0.5)), float(Y.pdf(0.5)), places=3)
+
+    def test_Kumaraswamy_power_a_is_Beta_one_b(self):
+        # If X is Kumaraswamy(a, b), then X ** a is Beta(1, b): the general
+        # link between the two families.
+        distributions.rng = np.random.default_rng(42)
+        a, b = 2.5, 3.0
+        X = RV(Kumaraswamy(a=a, b=b))
+        sims = (X**a).sim(Nsim)
+        pval = stats.kstest(sims, stats.beta(a=1, b=b).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Kumaraswamy_from_Uniform_inverse_cdf(self):
+        # If U is Uniform(0, 1), then (1 - (1 - U) ** (1 / b)) ** (1 / a) is
+        # Kumaraswamy(a, b) -- the inverse-cdf construction.
+        distributions.rng = np.random.default_rng(42)
+        a, b = 2.0, 4.0
+        U = RV(Uniform(0, 1))
+        sims = ((1 - (1 - U) ** (1 / b)) ** (1 / a)).sim(Nsim)
+        pval = stats.kstest(sims, Kumaraswamy(a=a, b=b).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Kumaraswamy_a_one_matches_Beta_sims(self):
+        distributions.rng = np.random.default_rng(42)
+        sims = Kumaraswamy(a=1, b=3).sim(Nsim)
+        pval = stats.kstest(sims, stats.beta(a=1, b=3).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    # --- sampling ---
+
+    def test_Kumaraswamy_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Kumaraswamy(a=2.5, b=3.0)
+        pval = stats.kstest(X.sim(Nsim), X.cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Kumaraswamy_sim_stays_in_support(self):
+        distributions.rng = np.random.default_rng(42)
+        sims = RV(Kumaraswamy(a=0.5, b=0.5)).sim(Nsim)
+        self.assertTrue(all(0 <= sim <= 1 for sim in sims))
+
+    def test_Kumaraswamy_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = Kumaraswamy(a=2, b=3).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 0.0)
+        self.assertLessEqual(float(value), 1.0)
+
+    def test_Kumaraswamy_sample_mean_near_theoretical(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Kumaraswamy(a=2, b=3)
+        sample_mean = RV(X).sim(Nsim).mean()
+        self.assertAlmostEqual(float(sample_mean), float(X.mean()), places=2)
+
+    # --- reproducibility ---
+
+    def test_Kumaraswamy_same_seed_gives_same_sims(self):
+        distributions.rng = np.random.default_rng(2024)
+        first = list(RV(Kumaraswamy(a=2, b=3)).sim(500))
+        distributions.rng = np.random.default_rng(2024)
+        second = list(RV(Kumaraswamy(a=2, b=3)).sim(500))
+        self.assertEqual(first, second)
+
+    def test_Kumaraswamy_different_seed_gives_different_sims(self):
+        distributions.rng = np.random.default_rng(1)
+        first = list(RV(Kumaraswamy(a=2, b=3)).sim(500))
+        distributions.rng = np.random.default_rng(2)
+        second = list(RV(Kumaraswamy(a=2, b=3)).sim(500))
+        self.assertNotEqual(first, second)
+
+    # --- parameter validation ---
+
+    def test_Kumaraswamy_error_a_not_positive(self):
+        for bad in [0, -2]:
+            self.assertRaisesRegex(
+                Exception,
+                "a must be a positive number",
+                lambda v=bad: Kumaraswamy(a=v, b=3),
+            )
+
+    def test_Kumaraswamy_error_b_not_positive(self):
+        for bad in [0, -2]:
+            self.assertRaisesRegex(
+                Exception,
+                "b must be a positive number",
+                lambda v=bad: Kumaraswamy(a=3, b=v),
+            )
+
+    def test_Kumaraswamy_error_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception, "a must be a positive number", lambda: Kumaraswamy(a="x", b=3)
+        )
+        self.assertRaisesRegex(
+            Exception, "b must be a positive number", lambda: Kumaraswamy(a=3, b=None)
+        )
+
+    def test_Kumaraswamy_stacks_a_and_b(self):
+        # Both parameters wrong -> both mistakes reported at once.
+        with self.assertRaises(Exception) as cm:
+            Kumaraswamy(a=-1, b=0)
+        message = str(cm.exception)
+        self.assertIn("Invalid parameters:", message)
+        self.assertIn("a must be a positive number", message)
+        self.assertIn("b must be a positive number", message)
+
+    def test_Kumaraswamy_boundary_parameters_accepted(self):
+        # Small shapes and the flat a = b = 1 case are valid, not errors.
+        Kumaraswamy(a=1, b=1)
+        Kumaraswamy(a=0.1, b=0.1)
+
+    def test_Kumaraswamy_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Kumaraswamy(a=2, b=3).draw()
+        RV(Kumaraswamy(a=2, b=3)).sim(100).plot()
+        Kumaraswamy(a=2, b=3).plot()
+        Kumaraswamy(a=2, b=3).plot(cdf=True)
+        Kumaraswamy(a=2, b=5).plot(xlim="zoom")
+        Kumaraswamy(a=0.5, b=0.5).plot()  # infinite density at both edges
+        plt.close("all")
 
 
 class TestStudentT(unittest.TestCase):
