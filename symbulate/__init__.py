@@ -23,6 +23,7 @@ from .distributions import (
     BetaBinomial,
     BetaNegativeBinomial,
     Hypergeometric,
+    NegativeHypergeometric,
     Geometric,
     NegativeBinomial,
     Pascal,
