@@ -1403,6 +1403,98 @@ class TestNormal(unittest.TestCase):
             self.assertEqual(value, 5)
 
 
+class TestTruncatedNormal(unittest.TestCase):
+
+    def test_TruncatedNormal_error_bounds(self):
+        self.assertRaises(Exception, lambda: TruncatedNormal(a=2, b=1))
+
+    def test_TruncatedNormal_error_bounds_equal(self):
+        self.assertRaises(Exception, lambda: TruncatedNormal(a=1, b=1))
+
+    def test_TruncatedNormal_error_sd_negative(self):
+        self.assertRaises(Exception, lambda: TruncatedNormal(sd=-1, a=-2, b=2))
+
+    def test_TruncatedNormal_error_sd_zero(self):
+        self.assertRaises(Exception, lambda: TruncatedNormal(sd=0, a=-2, b=2))
+
+    def test_TruncatedNormal_error_var_negative(self):
+        self.assertRaises(Exception, lambda: TruncatedNormal(var=-1.0, a=-2, b=2))
+
+    def test_TruncatedNormal_sd_var_conflict(self):
+        self.assertRaises(
+            ValueError, lambda: TruncatedNormal(mean=0, sd=2, var=9, a=-1, b=1)
+        )
+
+    def test_TruncatedNormal_distribution(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(TruncatedNormal(mean=1, sd=2, a=-1, b=4))
+        sims = X.sim(Nsim)
+        a_std, b_std = (-1 - 1) / 2, (4 - 1) / 2
+        cdf = stats.truncnorm(a_std, b_std, loc=1, scale=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_TruncatedNormal_pdf_matches_scipy(self):
+        X = TruncatedNormal(mean=1, sd=2, a=-1, b=4)
+        a_std, b_std = (-1 - 1) / 2, (4 - 1) / 2
+        th = stats.truncnorm(a_std, b_std, loc=1, scale=2)
+        for x in [-1, 0, 1, 2, 4]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(th.pdf(x)), places=12)
+
+    def test_TruncatedNormal_pdf_zero_outside_bounds(self):
+        X = TruncatedNormal(mean=0, sd=1, a=-2, b=2)
+        self.assertEqual(float(X.pdf(-3)), 0.0)
+        self.assertEqual(float(X.pdf(3)), 0.0)
+
+    def test_TruncatedNormal_mean_var_match_scipy(self):
+        X = TruncatedNormal(mean=1, sd=2, a=-1, b=4)
+        a_std, b_std = (-1 - 1) / 2, (4 - 1) / 2
+        th = stats.truncnorm(a_std, b_std, loc=1, scale=2)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()))
+        self.assertAlmostEqual(float(X.var()), float(th.var()))
+
+    def test_TruncatedNormal_draws_within_bounds(self):
+        distributions.rng = np.random.default_rng(42)
+        X = TruncatedNormal(mean=0, sd=3, a=-1, b=2)
+        for _ in range(500):
+            self.assertTrue(-1 <= X.draw() <= 2)
+
+    def test_TruncatedNormal_var_param(self):
+        # Passing var instead of sd gives the same distribution.
+        X = TruncatedNormal(mean=0, var=4, a=-3, b=3)
+        Y = TruncatedNormal(mean=0, sd=2, a=-3, b=3)
+        for x in [-3, -1, 0, 1, 3]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=12)
+
+    def test_TruncatedNormal_lower_truncation_is_halfnormal(self):
+        # A standard normal truncated below at its mean is a half-normal.
+        distributions.rng = np.random.default_rng(42)
+        X = RV(TruncatedNormal(mean=0, sd=1, a=0))
+        sims = X.sim(Nsim)
+        cdf = stats.halfnorm(loc=0, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_TruncatedNormal_infinite_bounds_is_normal(self):
+        # With no truncation the density equals the underlying normal's.
+        X = TruncatedNormal(mean=2, sd=3)
+        Y = Normal(mean=2, sd=3)
+        for x in [-4, 0, 2, 5, 8]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=12)
+
+    def test_TruncatedNormal_xlim_uses_finite_bounds(self):
+        X = TruncatedNormal(mean=0, sd=1, a=-2, b=2)
+        self.assertEqual(X.xlim, (-2, 2))
+
+    def test_TruncatedNormal_plots_without_error(self):
+        TruncatedNormal(mean=0, sd=1, a=-2, b=2).draw()
+        RV(TruncatedNormal(mean=0, sd=1, a=-2, b=2)).sim(100).plot()
+        TruncatedNormal(mean=0, sd=1, a=-2, b=2).plot()
+        TruncatedNormal(mean=0, sd=1, a=-2, b=2).plot(cdf=True)
+        TruncatedNormal(mean=0, sd=1, a=0).plot()
+        plt.close("all")
+
+
 class TestExponential(unittest.TestCase):
 
     def test_Exponential_error(self):

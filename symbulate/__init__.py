@@ -36,6 +36,7 @@ from .distributions import (
     LogUniform,
     Reciprocal,
     Normal,
+    TruncatedNormal,
     Exponential,
     Gamma,
     InverseGamma,

@@ -1937,6 +1937,154 @@ class Normal(Distribution):
         super().__init__(params, stats.norm, False)
 
 
+class TruncatedNormal(Distribution):
+    """Probability space for a truncated normal distribution.
+
+    A normal (Gaussian) distribution restricted to an interval ``[a, b]``:
+    values that would fall outside the interval are discarded and the
+    remaining bell curve is rescaled so it again integrates to one. This is
+    the continuous counterpart of truncating a distribution to a range, and
+    it is the standard way to model a quantity that is normally distributed
+    "in principle" but physically confined to a range -- a measurement that
+    cannot go below zero, a rating capped at a maximum, and so on.
+
+    Either bound may be infinite, giving a one-sided truncation: leave ``b``
+    at its default for a lower bound only (e.g. ``TruncatedNormal(a=0)``),
+    or leave ``a`` at its default for an upper bound only. As with
+    :class:`Normal`, you can specify either ``sd`` or ``var``, but not both.
+
+    Parameters
+    ----------
+    mean : float, optional
+        Mean of the *underlying* (untruncated) normal. Default is 0.0.
+        Note this is not the mean of the truncated distribution, which is
+        pulled toward the center of ``[a, b]``.
+    sd : float, optional
+        Standard deviation of the underlying normal. Must be a positive
+        number. Mutually exclusive with ``var``. Default is 1.0 (used when
+        neither ``sd`` nor ``var`` is given).
+    var : float, optional
+        Variance of the underlying normal. Must be a positive number.
+        Mutually exclusive with ``sd``.
+    a : float, optional
+        Lower truncation bound, in the same units as the data. Default is
+        ``-inf`` (no lower bound).
+    b : float, optional
+        Upper truncation bound, in the same units as the data. Must be
+        greater than ``a``. Default is ``+inf`` (no upper bound).
+
+    Attributes
+    ----------
+    a : float
+        Lower truncation bound.
+    b : float
+        Upper truncation bound.
+    scale : float
+        The standard deviation of the underlying normal, regardless of
+        whether ``sd`` or ``var`` was passed in.
+
+    Notes
+    -----
+    ``scipy.stats.truncnorm`` takes its bounds in *standardized* units, as
+    multiples of the standard deviation away from the mean. This class lets
+    you give ``a`` and ``b`` in the natural units of the data and converts
+    them internally with ``(a - mean) / sd`` and ``(b - mean) / sd``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = TruncatedNormal(mean=0, sd=1, a=-2, b=2)
+    >>> float(X.pdf(3))
+    0.0
+    >>> bool(-2 <= X.draw() <= 2)
+    True
+
+    See Also
+    --------
+    Normal : The untruncated normal distribution.
+    HalfNormal : A standard normal truncated below at zero.
+    """
+
+    def __init__(self, mean=0.0, sd=None, var=None, a=-np.inf, b=np.inf):
+        """Initialize a truncated normal distribution.
+
+        Raises
+        ------
+        ValueError
+            If both ``sd`` and ``var`` are specified with inconsistent values.
+        Exception
+            If ``mean``, ``a``, or ``b`` is not a number; if the supplied
+            ``sd`` or ``var`` is not a positive number; or if ``b`` is not
+            greater than ``a``.
+
+        Warns
+        -----
+        UserWarning
+            If both ``sd`` and ``var`` are specified but are consistent
+            (i.e. ``sd == sqrt(var)``). Use only one.
+        """
+
+        if sd is not None and var is not None:
+            if not (
+                isinstance(sd, numbers.Real)
+                and isinstance(var, numbers.Real)
+                and math.isclose(sd**2, var)
+            ):
+                raise ValueError("Specify sd or var, but not both.")
+            warnings.warn("Both sd and var were provided. Use only one.", UserWarning)
+            var = None
+
+        if sd is None and var is None:
+            sd = 1.0
+
+        if var is None:
+            _validate(
+                (not isinstance(mean, numbers.Real), "mean must be a number"),
+                (
+                    not isinstance(sd, numbers.Real) or sd <= 0,
+                    "sd must be a positive number",
+                ),
+            )
+            self.scale = sd
+        else:
+            _validate(
+                (not isinstance(mean, numbers.Real), "mean must be a number"),
+                (
+                    not isinstance(var, numbers.Real) or var <= 0,
+                    "var must be a positive number",
+                ),
+            )
+            self.scale = np.sqrt(var)
+
+        _validate(
+            (not isinstance(a, numbers.Real), "a must be a number"),
+            (not isinstance(b, numbers.Real), "b must be a number"),
+            (
+                isinstance(a, numbers.Real) and isinstance(b, numbers.Real) and a >= b,
+                "b must be greater than a",
+            ),
+        )
+        self.a = a
+        self.b = b
+
+        # scipy.stats.truncnorm takes its bounds in standardized units (number
+        # of standard deviations from the mean), so convert the data-unit
+        # bounds here. Infinite bounds pass through unchanged.
+        params = {
+            "a": (a - mean) / self.scale,
+            "b": (b - mean) / self.scale,
+            "loc": mean,
+            "scale": self.scale,
+        }
+        super().__init__(params, stats.truncnorm, False)
+
+        # Show the hard truncation edge wherever one exists, and fall back to
+        # a far quantile on any side left unbounded.
+        lower = a if np.isfinite(a) else self.quantile(0.001)
+        upper = b if np.isfinite(b) else self.quantile(0.999)
+        self.xlim = (lower, upper)
+
+
 class Exponential(Distribution):
     """Probability space for an exponential distribution.
 
