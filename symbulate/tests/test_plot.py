@@ -784,11 +784,23 @@ class TestPlot2DViolin(PlotTestCase):
     def test_violin_discrete_axis_tick_labels_are_the_category_values(self):
         """The discrete axis is labeled with the actual category values,
         not the boxplot overlay's own 1..n position defaults."""
-        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
-        sims = (X & Y).sim(500)
+        # Every category 0..5 is planted, rather than simulated from
+        # Binomial(5, 0.4) and hoped for: that distribution lands on 5 only
+        # about 1% of the time, so in 500 draws the top category is missing
+        # roughly 1 run in 170 -- and simulating draws from the package RNG,
+        # which np.random.seed does not control, so which run you get depends
+        # on test order. Same reasoning as the planted flier in the box tests.
+        rng = np.random.default_rng(0)
+        planted = RVResults(
+            [
+                (category, value)
+                for category in range(6)
+                for value in rng.normal(0, 1, 25)
+            ]
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", PendingDeprecationWarning)
-            sims.plot(type="violin")
+            planted.plot(type="violin")
         ax = plt.gca()
         labels = [t.get_text() for t in ax.get_xticklabels() if t.get_text()]
         self.assertEqual(labels, ["0.0", "1.0", "2.0", "3.0", "4.0", "5.0"])
