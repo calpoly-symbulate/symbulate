@@ -30,6 +30,7 @@ from .distributions import (
     DiscreteUniform,
     Zipf,
     Uniform,
+    IrwinHall,
     Bates,
     Normal,
     Exponential,
