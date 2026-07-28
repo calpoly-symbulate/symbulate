@@ -861,6 +861,146 @@ class TestUniform(unittest.TestCase):
         self.assertAlmostEqual(float(X.cdf(4)), 1.0)
 
 
+class TestIrwinHall(unittest.TestCase):
+
+    def test_IrwinHall_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(IrwinHall(n=5))
+        sims = X.sim(Nsim)
+        cdf = stats.irwinhall(5).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_IrwinHall_general_bounds_distributional(self):
+        # Sum of n uniforms on [a, b], not just on [0, 1].
+        distributions.rng = np.random.default_rng(42)
+        X = RV(IrwinHall(n=4, a=10, b=20))
+        sims = X.sim(Nsim)
+        cdf = stats.irwinhall(4, loc=4 * 10, scale=20 - 10).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_IrwinHall_matches_sum_of_uniforms(self):
+        # The defining property: adding n independent uniforms gives this
+        # distribution.
+        distributions.rng = np.random.default_rng(42)
+        U1, U2, U3 = RV(Uniform(0, 1) ** 3)
+        sims = (U1 + U2 + U3).sim(Nsim)
+        pval = stats.kstest(sims, IrwinHall(n=3).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_IrwinHall_mean_var_sd(self):
+        # n times the mean and variance of a single uniform, since the
+        # pieces are independent.
+        for n, a, b in [(1, 0, 1), (5, 0, 1), (12, 0, 1), (4, 10, 20), (3, -2, 2)]:
+            X = IrwinHall(n=n, a=a, b=b)
+            self.assertAlmostEqual(float(X.mean()), n * (a + b) / 2, places=8)
+            self.assertAlmostEqual(float(X.var()), n * (b - a) ** 2 / 12, places=8)
+            self.assertAlmostEqual(
+                float(X.sd()), math.sqrt(n * (b - a) ** 2 / 12), places=8
+            )
+
+    def test_IrwinHall_n_12_has_variance_one(self):
+        # The classic normal-approximation case: mean 6, variance exactly 1.
+        X = IrwinHall(n=12)
+        self.assertAlmostEqual(float(X.mean()), 6.0, places=8)
+        self.assertAlmostEqual(float(X.var()), 1.0, places=8)
+
+    def test_IrwinHall_n_1_is_Uniform(self):
+        X = IrwinHall(n=1, a=2, b=8)
+        Y = Uniform(a=2, b=8)
+        for x in [2, 3.5, 5, 8]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=8)
+            self.assertAlmostEqual(float(X.cdf(x)), float(Y.cdf(x)), places=8)
+
+    def test_IrwinHall_n_2_is_Triangular(self):
+        # Two uniforms on [a, b] sum to a triangle on [2a, 2b] peaking at a + b.
+        X = IrwinHall(n=2, a=0, b=1)
+        Y = Triangular(low=0, mode=1, high=2)
+        for x in [0, 0.5, 1, 1.5, 2]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=8)
+            self.assertAlmostEqual(float(X.cdf(x)), float(Y.cdf(x)), places=8)
+
+    def test_IrwinHall_over_n_is_Bates(self):
+        # The sum divided by n is the average of the n uniforms, which is
+        # exactly what Bates describes.
+        for n, a, b in [(5, 0, 1), (4, 10, 20)]:
+            X = IrwinHall(n=n, a=a, b=b)
+            Y = Bates(n=n, a=a, b=b)
+            for q in [0.1, 0.25, 0.5, 0.75, 0.9]:
+                # The scaled sum and the Bates variable share every quantile.
+                self.assertAlmostEqual(
+                    float(X.quantile(q)) / n, float(Y.quantile(q)), places=8
+                )
+
+    def test_IrwinHall_symmetric_about_mean(self):
+        X = IrwinHall(n=7)
+        for offset in [0.5, 1.5, 3.0]:
+            self.assertAlmostEqual(
+                float(X.pdf(3.5 - offset)), float(X.pdf(3.5 + offset)), places=8
+            )
+
+    def test_IrwinHall_density_peaks_at_mean(self):
+        X = IrwinHall(n=6)
+        xs = np.linspace(0, 6, 12001)
+        self.assertAlmostEqual(float(xs[np.argmax(X.pdf(xs))]), 3.0, places=3)
+
+    def test_IrwinHall_no_probability_outside_support(self):
+        X = IrwinHall(n=4, a=10, b=20)
+        self.assertAlmostEqual(float(X.pdf(39)), 0.0, places=8)
+        self.assertAlmostEqual(float(X.pdf(81)), 0.0, places=8)
+        self.assertAlmostEqual(float(X.cdf(40)), 0.0, places=8)
+        self.assertAlmostEqual(float(X.cdf(80)), 1.0, places=8)
+
+    def test_IrwinHall_approaches_Normal(self):
+        # The Central Limit Theorem, which is what this distribution is for:
+        # the standardized density gets closer to the standard normal one as
+        # n grows.
+        zs = np.linspace(-4, 4, 4001)
+        errors = []
+        for n in [1, 2, 6, 12, 30]:
+            X = IrwinHall(n=n)
+            sd = math.sqrt(n / 12)
+            # Largest gap between the standardized sum's CDF and the standard
+            # normal one. Compared on the CDF rather than the density: the
+            # densities agree at the center for small n by coincidence, while
+            # this whole-curve distance shrinks with every step up in n.
+            errors.append(np.max(np.abs(X.cdf(n / 2 + zs * sd) - stats.norm.cdf(zs))))
+        self.assertTrue(all(x > y for x, y in zip(errors, errors[1:])))
+        self.assertLess(errors[-1], 0.005)
+
+    def test_IrwinHall_draws_within_bounds(self):
+        distributions.rng = np.random.default_rng(0)
+        sims = RV(IrwinHall(n=4, a=10, b=20)).sim(1000)
+        self.assertTrue(all(40 <= float(v) <= 80 for v in sims))
+
+    def test_IrwinHall_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(IrwinHall(n=5).draw(), Scalar)
+
+    def test_IrwinHall_xlim_is_full_support(self):
+        self.assertEqual(IrwinHall(n=5).xlim, (0, 5))
+        self.assertEqual(IrwinHall(n=4, a=10, b=20).xlim, (40, 80))
+
+    def test_IrwinHall_invalid_n_raises(self):
+        for bad in [0, -3, 2.5, "5", None]:
+            self.assertRaises(Exception, lambda b=bad: IrwinHall(n=b))
+
+    def test_IrwinHall_invalid_bounds_raise(self):
+        self.assertRaises(Exception, lambda: IrwinHall(n=3, a=6, b=-1))
+        self.assertRaises(Exception, lambda: IrwinHall(n=3, a="a", b=1))
+        self.assertRaises(Exception, lambda: IrwinHall(n=3, a=0, b="b"))
+
+    def test_IrwinHall_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        IrwinHall(5).draw()
+        RV(IrwinHall(5)).sim(100).plot()
+        IrwinHall(5).plot()
+        IrwinHall(5).plot(cdf=True)
+        IrwinHall(30).plot(xlim="zoom")
+        plt.close("all")
+
+
 class TestBates(unittest.TestCase):
 
     def test_Bates_distributional(self):
@@ -1286,6 +1426,96 @@ class TestInverseGamma(unittest.TestCase):
         RV(InverseGamma(shape=3, scale=2)).sim(100).plot()
         InverseGamma(shape=3, scale=2).plot()
         InverseGamma(shape=3, scale=2).plot(cdf=True)
+        plt.close("all")
+
+
+class TestLogGamma(unittest.TestCase):
+
+    def test_LogGamma_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(LogGamma(shape=2))
+        sims = X.sim(Nsim)
+        cdf = stats.loggamma(c=2).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogGamma_is_log_of_Gamma(self):
+        # The defining property: log(Gamma) has this distribution. Note the
+        # direction -- this is the opposite of LogNormal, where the variable's
+        # own log is normal.
+        distributions.rng = np.random.default_rng(42)
+        G = RV(Gamma(shape=2, scale=1))
+        sims = G.apply(log).sim(Nsim)
+        pval = stats.kstest(sims, stats.loggamma(c=2).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogGamma_exp_is_Gamma(self):
+        # The same fact read the other way round: exponentiating gives a Gamma.
+        distributions.rng = np.random.default_rng(7)
+        X = RV(LogGamma(shape=3))
+        sims = X.apply(exp).sim(Nsim)
+        pval = stats.kstest(sims, stats.gamma(a=3).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogGamma_mean_var_are_digamma_trigamma(self):
+        from scipy.special import digamma, polygamma
+
+        for shape in [0.5, 1.0, 2.0, 5.0]:
+            X = LogGamma(shape=shape)
+            self.assertAlmostEqual(float(X.mean()), float(digamma(shape)), places=8)
+            self.assertAlmostEqual(float(X.var()), float(polygamma(1, shape)), places=8)
+
+    def test_LogGamma_support_includes_negative_values(self):
+        # Unlike LogNormal, a log-gamma variable ranges over all real numbers.
+        X = LogGamma(shape=2)
+        self.assertLess(float(X.quantile(0.01)), 0.0)
+        self.assertGreater(float(X.pdf(-3)), 0.0)
+
+    def test_LogGamma_is_left_skewed(self):
+        for shape in [0.5, 1.0, 2.0]:
+            sk = float(stats.loggamma(c=shape).stats(moments="s"))
+            self.assertLess(sk, 0.0)
+
+    def test_LogGamma_loc_scale_shift_and_stretch(self):
+        from scipy.special import digamma
+
+        X = LogGamma(shape=2, loc=3, scale=2)
+        self.assertAlmostEqual(float(X.mean()), 3 + 2 * float(digamma(2)), places=8)
+
+    def test_LogGamma_shape_one_mirrors_Gumbel(self):
+        # shape=1 is the smallest-extreme-value distribution, which is the
+        # reflection of this package's Gumbel (that one models maxima).
+        X = LogGamma(shape=1)
+        G = Gumbel(loc=0, scale=1)
+        for x in [-1.5, -0.5, 0.0, 0.5, 1.5]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(G.pdf(-x)), places=8)
+
+    def test_LogGamma_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(LogGamma(shape=2).draw(), Scalar)
+
+    def test_LogGamma_defaults(self):
+        X = LogGamma(shape=2)
+        self.assertEqual(X.loc, 0)
+        self.assertEqual(X.scale, 1)
+
+    def test_LogGamma_invalid_shape_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: LogGamma(shape=b))
+
+    def test_LogGamma_invalid_scale_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: LogGamma(shape=2, scale=b))
+
+    def test_LogGamma_invalid_loc_raises(self):
+        self.assertRaises(Exception, lambda: LogGamma(shape=2, loc="a"))
+
+    def test_LogGamma_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        LogGamma(shape=2).draw()
+        RV(LogGamma(shape=2)).sim(100).plot()
+        LogGamma(shape=2).plot()
+        LogGamma(shape=2).plot(cdf=True)
         plt.close("all")
 
 

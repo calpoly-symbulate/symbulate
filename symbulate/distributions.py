@@ -1433,6 +1433,123 @@ class Uniform(Distribution):
         self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
 
 
+class IrwinHall(Distribution):
+    """Probability space for an Irwin-Hall distribution.
+
+    The distribution of the **sum** of ``n`` independent uniform values.
+    With the default bounds that is ``Uniform(0, 1) + Uniform(0, 1) + ...``
+    added up ``n`` times, so the possible totals run from 0 to ``n``.
+
+    It is the standard way to watch the Central Limit Theorem happen with
+    the simplest ingredient there is. One uniform is flat, two make a
+    triangle, three already look rounded, and by a dozen the density is
+    almost indistinguishable from a normal curve -- even though no single
+    piece of the sum resembles one. ``IrwinHall(n=12)`` is the classic
+    demonstration case: it has mean 6 and variance exactly 1, so
+    subtracting 6 gives a well-known cheap stand-in for a standard normal
+    value.
+
+    It is the companion of :class:`Bates`, which is the *mean* of ``n``
+    uniforms rather than their sum.
+
+    Parameters
+    ----------
+    n : int
+        How many uniform values are added together. Must be a positive
+        integer.
+    a : float, optional
+        Lower bound of each uniform value being added. Default is 0.0.
+    b : float, optional
+        Upper bound of each uniform value being added. Default is 1.0.
+        Cannot be less than ``a``.
+
+    Attributes
+    ----------
+    n : int
+        How many uniform values are added together.
+    a : float
+        Lower bound of each uniform value being added.
+    b : float
+        Upper bound of each uniform value being added.
+
+    Notes
+    -----
+    The support is the interval ``[n * a, n * b]``: the smallest possible
+    total happens when every uniform value lands at its low end, and the
+    largest when they all land at the high end. The mean and variance are
+    just ``n`` times those of a single uniform,
+
+    ``mean = n * (a + b) / 2``  and  ``var = n * (b - a) ** 2 / 12``,
+
+    since the pieces are independent. Note that the spread grows like the
+    square root of ``n`` while the range grows like ``n``, which is why the
+    density bunches up in the middle of its support as ``n`` increases.
+
+    Two small cases are distributions in their own right: ``n = 1`` is
+    exactly ``Uniform(a, b)``, and ``n = 2`` is exactly
+    ``Triangular(2 * a, a + b, 2 * b)``. Dividing the sum by ``n`` gives the
+    **average** of the ``n`` uniform values, which is :class:`Bates`:
+    ``Bates(n, a, b)`` is the distribution of ``RV(IrwinHall(n, a, b)) / n``.
+
+    This wraps ``scipy.stats.irwinhall``, whose ``scale`` is the width of
+    each individual uniform rather than of the whole sum, so the bounds are
+    passed as ``loc = n * a`` and ``scale = b - a``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = IrwinHall(n=12)
+    >>> float(X.mean())
+    6.0
+    >>> float(X.var())
+    1.0
+    >>> round(float(X.pdf(6)), 4)  # nearly Normal(6, 1)'s 0.3989
+    0.3939
+    >>> float(IrwinHall(n=2).pdf(1))  # the peak of a triangle on [0, 2]
+    1.0
+    >>> X.draw()  # doctest: +SKIP
+    5.87
+    """
+
+    def __init__(self, n, a=0.0, b=1.0):
+        """Initialize an Irwin-Hall distribution.
+
+        Raises
+        ------
+        Exception
+            If ``n`` is not a positive integer, if ``a`` or ``b`` is not a
+            number, or if ``b`` is less than ``a``.
+        """
+        _validate(
+            (
+                not isinstance(n, numbers.Integral) or n < 1,
+                "n must be a positive integer",
+            ),
+            (not isinstance(a, numbers.Real), "a must be a number"),
+            (not isinstance(b, numbers.Real), "b must be a number"),
+            # Only meaningful once both bounds are numbers, so this
+            # comparison is guarded by its own type checks.
+            (
+                isinstance(a, numbers.Real) and isinstance(b, numbers.Real) and a > b,
+                "b cannot be less than a",
+            ),
+        )
+        self.n = n
+        self.a = a
+        self.b = b
+
+        # scipy's irwinhall scales each uniform being summed, not the sum
+        # itself: it draws n copies of Uniform(0, scale) and shifts the total
+        # by loc. So the width `b - a` is the scale, and the whole sum starts
+        # at `n * a` (all n pieces at their low end), not at `a`.
+        params = {"n": n, "loc": n * a, "scale": b - a}
+        super().__init__(params, stats.irwinhall, False)
+        # Bounded at both ends, so the window shows the full support, like
+        # Uniform and Triangular. For a large n the density occupies only the
+        # middle of that range -- pass xlim="zoom" to plot() to frame it.
+        self.xlim = (n * a, n * b)
+
+
 class Bates(Distribution):
     """Probability space for a Bates distribution.
 
@@ -1893,6 +2010,103 @@ class InverseGamma(Distribution):
         # long, heavy right tail and lifts the left edge off the near-zero
         # region, like Gamma.
         self.xlim = _continuous_hdi_xlim(self, 0)
+
+
+class LogGamma(Distribution):
+    """Probability space for a log-gamma distribution.
+
+    The distribution of the **logarithm of** a gamma random variable: if
+    ``G`` has a :class:`Gamma` distribution, then ``log(G)`` has this
+    log-gamma distribution. Taking the log compresses the gamma's long
+    right tail and stretches its left side, so the result is a
+    left-skewed distribution defined over *all* real numbers -- negative
+    values are perfectly ordinary. It appears in extreme value theory and,
+    in actuarial work, as a model on the log scale of a loss.
+
+    Parameters
+    ----------
+    shape : float
+        Shape parameter of the underlying gamma distribution. Must be
+        positive. Larger values make the distribution tighter and less
+        skewed.
+    loc : float, optional
+        Location parameter, shifting the whole distribution. Default is 0.
+    scale : float, optional
+        Scale parameter, stretching the distribution. Must be positive.
+        Default is 1. Note this scales the log-gamma variable itself, so it
+        is *not* the scale of the underlying gamma distribution.
+
+    Attributes
+    ----------
+    shape : float
+        Shape parameter of the underlying gamma distribution.
+    loc : float
+        Location parameter.
+    scale : float
+        Scale parameter.
+
+    Notes
+    -----
+    **Read the name carefully -- it points the opposite way from**
+    :class:`LogNormal`. A log-normal variable is one *whose own logarithm*
+    is normal, so a ``LogNormal`` is always positive. A log-gamma variable,
+    by the convention used here, *is itself a logarithm* of a gamma
+    variable, so it ranges over all real numbers and is frequently
+    negative. Put another way: ``log(LogNormal)`` is normal, whereas
+    ``exp(LogGamma)`` is gamma.
+
+    With ``loc = 0`` and ``scale = 1`` the mean and variance have closed
+    forms in terms of the digamma and trigamma functions:
+    ``mean = digamma(shape)`` and ``var = polygamma(1, shape)``.
+
+    Setting ``shape = 1`` gives the smallest-extreme-value distribution,
+    which is the mirror image of this package's :class:`Gumbel` (that one
+    models maxima, this reflection models minima).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = LogGamma(shape=2)
+    >>> round(float(X.mean()), 4)
+    0.4228
+    >>> round(float(X.sd()), 4)
+    0.8031
+    >>> round(float(X.pdf(0)), 4)
+    0.3679
+    >>> X.draw()  # doctest: +SKIP
+    0.31
+    """
+
+    def __init__(self, shape, loc=0, scale=1):
+        """Initialize a log-gamma distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape`` is not a positive number, ``loc`` is not a number,
+            or ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.shape = shape
+        self.loc = loc
+        self.scale = scale
+
+        # scipy's loggamma takes c as the shape of the underlying gamma.
+        params = {"c": shape, "loc": loc, "scale": scale}
+        # Unbounded in both directions and only moderately skewed, so the
+        # base equal-tailed window is appropriate -- the same treatment GEV
+        # gets. (The HDI trim is for one-sided skew like Gamma/Weibull.)
+        super().__init__(params, stats.loggamma, False)
 
 
 class Beta(Distribution):
