@@ -67,6 +67,7 @@ from .distributions import (
     GPD,
     MultivariateNormal,
     BivariateNormal,
+    MultivariateT,
     Multinomial,
     Dirichlet,
 )
