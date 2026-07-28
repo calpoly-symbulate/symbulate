@@ -4735,6 +4735,295 @@ class MultivariateT(Distribution):
         return ProbabilitySpace(draw)
 
 
+class Wishart(Distribution):
+    """Probability space for a Wishart distribution.
+
+    A distribution over symmetric, positive-definite matrices. The Wishart
+    generalizes the chi-square distribution to matrices: if you draw ``df``
+    independent vectors from a mean-zero :class:`MultivariateNormal` with
+    covariance ``scale`` and add up their outer products, the resulting
+    ``p x p`` matrix is Wishart-distributed. Because of this, it is the
+    standard model for a random covariance (or scatter) matrix, and it is
+    the conjugate prior for the *precision* matrix (inverse covariance) of
+    a multivariate normal.
+
+    Each draw is a ``p x p`` matrix, returned as a vector of its rows.
+
+    Parameters
+    ----------
+    df : float
+        Degrees of freedom. Must be greater than ``p - 1``, where ``p`` is
+        the dimension of ``scale``. With integer ``df`` this is the number
+        of normal vectors whose outer products are summed.
+    scale : array-like of shape (p, p)
+        The scale matrix. Must be symmetric and positive definite. It sets
+        the covariance of the underlying normal vectors; the mean of the
+        distribution is ``df * scale``.
+
+    Attributes
+    ----------
+    df : float
+        Degrees of freedom.
+    scale : array-like of shape (p, p)
+        The scale matrix.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Wishart(df=5, scale=[[1, 0], [0, 1]])
+    >>> X.draw()  # doctest: +SKIP
+    ((3.96, 0.25), (0.25, 3.63))
+
+    See Also
+    --------
+    InverseWishart : The distribution of the matrix inverse of a Wishart draw.
+    """
+
+    def __init__(self, df, scale):
+        """Initialize a Wishart distribution.
+
+        Raises
+        ------
+        Exception
+            If ``scale`` is empty, not square, or not symmetric positive
+            definite; or if ``df`` is not a number greater than ``p - 1``.
+        """
+        if len(scale) < 1:
+            raise Exception("Scale matrix cannot be empty")
+
+        p = len(scale)
+        if not all(len(row) == p for row in scale):
+            raise Exception("Scale matrix is not square")
+
+        if not (
+            np.all(np.linalg.eigvals(scale) > 0)
+            and np.allclose(scale, np.transpose(scale))
+        ):
+            raise Exception("Scale matrix is not symmetric and positive definite")
+        self.scale = scale
+
+        if not isinstance(df, numbers.Real) or df <= p - 1:
+            raise Exception(
+                "df must be a number greater than one less than the dimension "
+                "of the scale matrix (df > %d for a %d x %d scale matrix)"
+                % (p - 1, p, p)
+            )
+        self.df = df
+
+        self.discrete = False
+        self.pdf = lambda x: stats.wishart(df=self.df, scale=self.scale).pdf(x)
+
+    def plot(self):
+        """Plot is not supported for matrix-valued distributions.
+
+        Raises
+        ------
+        Exception
+            Always raised — plotting is not available for the Wishart
+            distribution.
+        """
+        raise Exception(
+            "Plotting is not currently available for the Wishart distribution."
+        )
+
+    def draw(self):
+        """Draw a single random matrix from the Wishart distribution.
+
+        Returns
+        -------
+        Vector
+            A ``p x p`` symmetric positive-definite matrix, stored as a
+            vector of its rows.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> Wishart(df=5, scale=[[1, 0], [0, 1]]).draw()  # doctest: +SKIP
+        ((3.96, 0.25), (0.25, 3.63))
+        """
+        matrix = stats.wishart(df=self.df, scale=self.scale).rvs(random_state=rng)
+        return Vector(Vector(row) for row in np.atleast_2d(matrix))
+
+    def __pow__(self, exponent):
+        """Draw multiple independent matrices from the Wishart distribution.
+
+        Parameters
+        ----------
+        exponent : int or float
+            Number of matrices to draw. Pass ``float('inf')`` to create an
+            infinite sequence of draws generated lazily on demand.
+
+        Returns
+        -------
+        ProbabilitySpace
+            A probability space whose draws produce ``exponent`` matrices
+            at a time.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> (Wishart(df=5, scale=[[1, 0], [0, 1]]) ** 3).draw()  # doctest: +SKIP
+        [((3.96, 0.25), (0.25, 3.63)), ...]
+        """
+        if exponent == float("inf"):
+
+            def draw():
+                def _func(n):
+                    return self.draw()
+
+                return InfiniteVector(_func)
+
+        else:
+
+            def draw():
+                return Vector(self.draw() for _ in range(exponent))
+
+        return ProbabilitySpace(draw)
+
+
+class InverseWishart(Distribution):
+    """Probability space for an inverse-Wishart distribution.
+
+    A distribution over symmetric, positive-definite matrices, obtained by
+    inverting a :class:`Wishart` draw: if ``W`` is Wishart with the inverse
+    of ``scale``, then ``W`` inverted is inverse-Wishart with this ``scale``.
+    It is the standard conjugate prior for the *covariance* matrix of a
+    multivariate normal, which makes it a staple of Bayesian multivariate
+    models.
+
+    Each draw is a ``p x p`` matrix, returned as a vector of its rows.
+
+    Parameters
+    ----------
+    df : float
+        Degrees of freedom. Must be greater than ``p - 1``, where ``p`` is
+        the dimension of ``scale``. The mean exists only when
+        ``df > p + 1``, in which case it equals ``scale / (df - p - 1)``.
+    scale : array-like of shape (p, p)
+        The scale matrix. Must be symmetric and positive definite.
+
+    Attributes
+    ----------
+    df : float
+        Degrees of freedom.
+    scale : array-like of shape (p, p)
+        The scale matrix.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = InverseWishart(df=5, scale=[[1, 0], [0, 1]])
+    >>> X.draw()  # doctest: +SKIP
+    ((0.31, -0.02), (-0.02, 0.28))
+
+    See Also
+    --------
+    Wishart : The distribution of the matrix inverse of an inverse-Wishart draw.
+    """
+
+    def __init__(self, df, scale):
+        """Initialize an inverse-Wishart distribution.
+
+        Raises
+        ------
+        Exception
+            If ``scale`` is empty, not square, or not symmetric positive
+            definite; or if ``df`` is not a number greater than ``p - 1``.
+        """
+        if len(scale) < 1:
+            raise Exception("Scale matrix cannot be empty")
+
+        p = len(scale)
+        if not all(len(row) == p for row in scale):
+            raise Exception("Scale matrix is not square")
+
+        if not (
+            np.all(np.linalg.eigvals(scale) > 0)
+            and np.allclose(scale, np.transpose(scale))
+        ):
+            raise Exception("Scale matrix is not symmetric and positive definite")
+        self.scale = scale
+
+        if not isinstance(df, numbers.Real) or df <= p - 1:
+            raise Exception(
+                "df must be a number greater than one less than the dimension "
+                "of the scale matrix (df > %d for a %d x %d scale matrix)"
+                % (p - 1, p, p)
+            )
+        self.df = df
+
+        self.discrete = False
+        self.pdf = lambda x: stats.invwishart(df=self.df, scale=self.scale).pdf(x)
+
+    def plot(self):
+        """Plot is not supported for matrix-valued distributions.
+
+        Raises
+        ------
+        Exception
+            Always raised — plotting is not available for the
+            inverse-Wishart distribution.
+        """
+        raise Exception(
+            "Plotting is not currently available for "
+            "the inverse-Wishart distribution."
+        )
+
+    def draw(self):
+        """Draw a single random matrix from the inverse-Wishart distribution.
+
+        Returns
+        -------
+        Vector
+            A ``p x p`` symmetric positive-definite matrix, stored as a
+            vector of its rows.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> InverseWishart(df=5, scale=[[1, 0], [0, 1]]).draw()  # doctest: +SKIP
+        ((0.31, -0.02), (-0.02, 0.28))
+        """
+        matrix = stats.invwishart(df=self.df, scale=self.scale).rvs(random_state=rng)
+        return Vector(Vector(row) for row in np.atleast_2d(matrix))
+
+    def __pow__(self, exponent):
+        """Draw multiple independent matrices from the inverse-Wishart distribution.
+
+        Parameters
+        ----------
+        exponent : int or float
+            Number of matrices to draw. Pass ``float('inf')`` to create an
+            infinite sequence of draws generated lazily on demand.
+
+        Returns
+        -------
+        ProbabilitySpace
+            A probability space whose draws produce ``exponent`` matrices
+            at a time.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> (InverseWishart(df=5, scale=[[1, 0], [0, 1]]) ** 3).draw()  # doctest: +SKIP
+        [((0.31, -0.02), (-0.02, 0.28)), ...]
+        """
+        if exponent == float("inf"):
+
+            def draw():
+                def _func(n):
+                    return self.draw()
+
+                return InfiniteVector(_func)
+
+        else:
+
+            def draw():
+                return Vector(self.draw() for _ in range(exponent))
+
+        return ProbabilitySpace(draw)
+
+
 class Multinomial(Distribution):
     """Probability space for a multinomial distribution.
 

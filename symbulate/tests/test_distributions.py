@@ -3584,6 +3584,129 @@ class TestMultivariateT(unittest.TestCase):
         self.assertRaises(Exception, X.plot)
 
 
+class TestWishart(unittest.TestCase):
+
+    def test_Wishart_scale_square_error(self):
+        self.assertRaises(Exception, lambda: Wishart(df=5, scale=[[2, 4, 5], [2, 1]]))
+
+    def test_Wishart_scale_not_pd(self):
+        self.assertRaises(Exception, lambda: Wishart(df=5, scale=[[-1, 0], [0, 1]]))
+
+    def test_Wishart_df_error(self):
+        # df must exceed p - 1 (here p = 2, so df must be > 1).
+        for bad in [1, 0.5, -1, "a"]:
+            self.assertRaises(
+                Exception, lambda v=bad: Wishart(df=v, scale=[[1, 0], [0, 1]])
+            )
+
+    def test_Wishart_draw_shape(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Wishart(df=5, scale=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        draw = X.draw()
+        self.assertIsInstance(draw, Vector)
+        self.assertEqual(len(draw), 3)
+        self.assertEqual(len(draw[0]), 3)
+
+    def test_Wishart_draw_symmetric_pd(self):
+        distributions.rng = np.random.default_rng(42)
+        draw = Wishart(df=6, scale=[[2, 0.5], [0.5, 1]]).draw()
+        m = np.array([list(row) for row in draw])
+        self.assertTrue(np.allclose(m, m.T))
+        self.assertTrue(np.all(np.linalg.eigvals(m) > 0))
+
+    def test_Wishart_pdf_matches_scipy(self):
+        X = Wishart(df=5, scale=[[2, 0.5], [0.5, 1]])
+        th = stats.wishart(df=5, scale=[[2, 0.5], [0.5, 1]])
+        for pt in [[[1, 0], [0, 1]], [[3, 0.5], [0.5, 2]]]:
+            self.assertAlmostEqual(float(X.pdf(pt)), float(th.pdf(pt)), places=9)
+
+    def test_Wishart_mean_matches_df_times_scale(self):
+        # E[W] = df * scale; check the Monte Carlo mean of the (0, 0) entry.
+        distributions.rng = np.random.default_rng(42)
+        df, scale = 8, [[2, 0.5], [0.5, 1]]
+        X = Wishart(df=df, scale=scale)
+        sims = [X.draw()[0][0] for _ in range(Nsim)]
+        self.assertAlmostEqual(np.mean(sims), df * scale[0][0], delta=0.5)
+
+    def test_Wishart_diagonal_is_scaled_chisquare(self):
+        # With an identity scale, each diagonal entry is chi-square(df).
+        distributions.rng = np.random.default_rng(42)
+        X = Wishart(df=6, scale=[[1, 0], [0, 1]])
+        sims = [X.draw()[0][0] for _ in range(Nsim)]
+        pval = stats.kstest(sims, stats.chi2(df=6).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Wishart_plot_raises(self):
+        X = Wishart(df=5, scale=[[1, 0], [0, 1]])
+        self.assertRaises(Exception, X.plot)
+
+
+class TestInverseWishart(unittest.TestCase):
+
+    def test_InverseWishart_scale_square_error(self):
+        self.assertRaises(
+            Exception, lambda: InverseWishart(df=5, scale=[[2, 4, 5], [2, 1]])
+        )
+
+    def test_InverseWishart_scale_not_pd(self):
+        self.assertRaises(
+            Exception, lambda: InverseWishart(df=5, scale=[[-1, 0], [0, 1]])
+        )
+
+    def test_InverseWishart_df_error(self):
+        for bad in [1, 0.5, -1, "a"]:
+            self.assertRaises(
+                Exception, lambda v=bad: InverseWishart(df=v, scale=[[1, 0], [0, 1]])
+            )
+
+    def test_InverseWishart_draw_shape(self):
+        distributions.rng = np.random.default_rng(42)
+        X = InverseWishart(df=5, scale=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        draw = X.draw()
+        self.assertIsInstance(draw, Vector)
+        self.assertEqual(len(draw), 3)
+        self.assertEqual(len(draw[0]), 3)
+
+    def test_InverseWishart_draw_symmetric_pd(self):
+        distributions.rng = np.random.default_rng(42)
+        draw = InverseWishart(df=6, scale=[[2, 0.5], [0.5, 1]]).draw()
+        m = np.array([list(row) for row in draw])
+        self.assertTrue(np.allclose(m, m.T))
+        self.assertTrue(np.all(np.linalg.eigvals(m) > 0))
+
+    def test_InverseWishart_pdf_matches_scipy(self):
+        X = InverseWishart(df=5, scale=[[2, 0.5], [0.5, 1]])
+        th = stats.invwishart(df=5, scale=[[2, 0.5], [0.5, 1]])
+        for pt in [[[1, 0], [0, 1]], [[3, 0.5], [0.5, 2]]]:
+            self.assertAlmostEqual(float(X.pdf(pt)), float(th.pdf(pt)), places=9)
+
+    def test_InverseWishart_mean_matches_formula(self):
+        # E[X] = scale / (df - p - 1), which requires df > p + 1.
+        distributions.rng = np.random.default_rng(42)
+        df, scale = 10, [[2, 0.5], [0.5, 1]]
+        X = InverseWishart(df=df, scale=scale)
+        sims = [X.draw()[0][0] for _ in range(Nsim)]
+        expected = scale[0][0] / (df - 2 - 1)
+        self.assertAlmostEqual(np.mean(sims), expected, delta=0.05)
+
+    def test_InverseWishart_inverse_is_wishart(self):
+        # If X ~ InverseWishart(df, scale), then inv(X) ~ Wishart(df, inv(scale)).
+        # Check the (0, 0) entry of the inverse against chi-square with an
+        # identity scale (whose inverse is also the identity).
+        distributions.rng = np.random.default_rng(42)
+        X = InverseWishart(df=6, scale=[[1, 0], [0, 1]])
+        sims = []
+        for _ in range(Nsim):
+            m = np.array([list(row) for row in X.draw()])
+            sims.append(np.linalg.inv(m)[0, 0])
+        pval = stats.kstest(sims, stats.chi2(df=6).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_InverseWishart_plot_raises(self):
+        X = InverseWishart(df=5, scale=[[1, 0], [0, 1]])
+        self.assertRaises(Exception, X.plot)
+
+
 class TestBivariateNormal(unittest.TestCase):
 
     def test_BivariateNormal_error1(self):
