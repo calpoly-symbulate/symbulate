@@ -2810,6 +2810,70 @@ class TestF(unittest.TestCase):
         plt.close("all")
 
 
+class TestHotelling(unittest.TestCase):
+
+    def test_Hotelling_dim_not_integer(self):
+        self.assertRaises(Exception, lambda: Hotelling(dim=2.5, df=10))
+
+    def test_Hotelling_dim_not_positive(self):
+        self.assertRaises(Exception, lambda: Hotelling(dim=0, df=10))
+
+    def test_Hotelling_df_too_small(self):
+        # df must exceed dim - 1, so dim=3 needs df > 2.
+        self.assertRaises(Exception, lambda: Hotelling(dim=3, df=2))
+
+    def test_Hotelling_is_scaled_F(self):
+        # T^2(p, nu) = c * F(p, nu - p + 1), c = nu * p / (nu - p + 1).
+        dim, df = 3, 10
+        c = df * dim / (df - dim + 1)
+        X = Hotelling(dim=dim, df=df)
+        th = stats.f(dfn=dim, dfd=df - dim + 1, scale=c)
+        for x in [0.5, 2.0, 5.0, 12.0]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(th.pdf(x)), places=12)
+
+    def test_Hotelling_scale_attribute(self):
+        X = Hotelling(dim=3, df=10)
+        self.assertAlmostEqual(X.scale, 10 * 3 / (10 - 3 + 1))
+
+    def test_Hotelling_mean_matches_scaled_F(self):
+        dim, df = 3, 10
+        c = df * dim / (df - dim + 1)
+        X = Hotelling(dim=dim, df=df)
+        self.assertAlmostEqual(
+            float(X.mean()), float(stats.f(dfn=dim, dfd=df - dim + 1, scale=c).mean())
+        )
+
+    def test_Hotelling_distribution(self):
+        # Simulate T^2 = nu * Z' W^{-1} Z from a standard normal vector Z and
+        # an independent Wishart scatter matrix W, and check it against the
+        # Hotelling distribution.
+        dim, df = 3, 8
+        X = Hotelling(dim=dim, df=df)
+        rng = np.random.default_rng(7)
+        sims = np.empty(3000)
+        for i in range(len(sims)):
+            z = rng.standard_normal(dim)
+            w = stats.wishart(df=df, scale=np.eye(dim)).rvs(random_state=rng)
+            sims[i] = df * z @ np.linalg.inv(w) @ z
+        pval = stats.kstest(sims, X.cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Hotelling_dim_one_is_studentt_squared(self):
+        # With dim = 1 the multiplier is 1 and T^2 = F(1, df) = StudentT(df)^2.
+        distributions.rng = np.random.default_rng(42)
+        X = RV(StudentT(df=9))
+        sims = (X**2).sim(Nsim)
+        pval = stats.kstest(sims, Hotelling(dim=1, df=9).cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Hotelling_plots_without_error(self):
+        Hotelling(dim=3, df=10).draw()
+        RV(Hotelling(dim=3, df=10)).sim(100).plot()
+        Hotelling(dim=3, df=10).plot()
+        Hotelling(dim=3, df=10).plot(cdf=True)
+        plt.close("all")
+
+
 class TestCauchy(unittest.TestCase):
 
     def test_Cauchy_mean(self):
