@@ -1074,6 +1074,97 @@ class TestBates(unittest.TestCase):
         plt.close("all")
 
 
+class TestLogUniform(unittest.TestCase):
+
+    def test_LogUniform_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(LogUniform(a=1, b=100))
+        sims = X.sim(Nsim)
+        cdf = stats.loguniform(1, 100).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogUniform_mean_median_sd(self):
+        X = LogUniform(a=1, b=100)
+        th = stats.loguniform(1, 100)
+        self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+        self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
+        # median is the geometric mean sqrt(a * b)
+        self.assertAlmostEqual(float(X.median()), (1 * 100) ** 0.5, places=6)
+
+    def test_LogUniform_pdf(self):
+        X = LogUniform(a=1, b=100)
+        for x in [1, 10, 100]:
+            self.assertAlmostEqual(
+                float(X.pdf(x)), float(stats.loguniform(1, 100).pdf(x))
+            )
+
+    def test_LogUniform_support(self):
+        X = LogUniform(a=2, b=50)
+        self.assertEqual(X.xlim, (2, 50))
+        self.assertAlmostEqual(float(X.cdf(2)), 0.0, places=9)
+        self.assertAlmostEqual(float(X.cdf(50)), 1.0, places=9)
+
+    def test_LogUniform_log_is_uniform(self):
+        # If X ~ LogUniform(a, b), then log(X) ~ Uniform(log a, log b).
+        distributions.rng = np.random.default_rng(42)
+        X = RV(LogUniform(a=1, b=100))
+        sims = log(X).sim(Nsim)
+        cdf = stats.uniform(0, np.log(100)).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogUniform_exp_of_uniform(self):
+        # exp(Uniform(log a, log b)) has a LogUniform(a, b) distribution.
+        distributions.rng = np.random.default_rng(42)
+        U = RV(Uniform(np.log(1), np.log(100)))
+        sims = exp(U).sim(Nsim)
+        cdf = stats.loguniform(1, 100).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_LogUniform_draw_is_scalar_in_support(self):
+        distributions.rng = np.random.default_rng(0)
+        value = LogUniform(a=1, b=100).draw()
+        self.assertIsInstance(value, Scalar)
+        self.assertGreaterEqual(float(value), 1.0)
+        self.assertLessEqual(float(value), 100.0)
+
+    def test_LogUniform_error_a_nonpositive(self):
+        for bad in [0, -1, "a"]:
+            self.assertRaises(Exception, lambda v=bad: LogUniform(a=v, b=10))
+
+    def test_LogUniform_error_b_not_greater(self):
+        self.assertRaises(Exception, lambda: LogUniform(a=10, b=2))
+        self.assertRaises(Exception, lambda: LogUniform(a=5, b=5))
+
+    def test_LogUniform_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        LogUniform(a=1, b=100).draw()
+        RV(LogUniform(a=1, b=100)).sim(100).plot()
+        LogUniform(a=1, b=100).plot()
+        LogUniform(a=1, b=100).plot(cdf=True)
+        plt.close("all")
+
+
+class TestReciprocal(unittest.TestCase):
+
+    def test_Reciprocal_is_loguniform(self):
+        # Reciprocal is an alias for LogUniform: same distribution.
+        X = Reciprocal(a=1, b=100)
+        self.assertIsInstance(X, LogUniform)
+        Y = LogUniform(a=1, b=100)
+        for x in [1, 10, 100]:
+            self.assertAlmostEqual(float(X.pdf(x)), float(Y.pdf(x)), places=12)
+        self.assertEqual(float(X.median()), float(Y.median()))
+
+    def test_Reciprocal_plots_without_error(self):
+        Reciprocal(a=1, b=100).draw()
+        RV(Reciprocal(a=1, b=100)).sim(100).plot()
+        Reciprocal(a=1, b=100).plot()
+        plt.close("all")
+
+
 class TestNormal(unittest.TestCase):
 
     def test_Normal_error(self):

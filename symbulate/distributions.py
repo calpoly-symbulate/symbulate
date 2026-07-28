@@ -1634,6 +1634,107 @@ class Bates(Distribution):
         self.xlim = (a, b)  # Bates is not defined outside [a, b]
 
 
+class LogUniform(Distribution):
+    """Probability space for a log-uniform (reciprocal) distribution.
+
+    A continuous distribution on ``[a, b]`` that is uniform on a
+    logarithmic scale: ``log(X)`` is uniformly distributed between
+    ``log(a)`` and ``log(b)``. Equivalently, its density is proportional to
+    ``1 / x``, which is why it is also called the reciprocal distribution
+    (see :class:`Reciprocal`). It is the standard choice for sampling a
+    machine-learning hyperparameter that ranges over several orders of
+    magnitude (a learning rate from 1e-5 to 1e-1, say), because it spreads
+    the draws evenly across the powers of ten rather than piling them up
+    near the top of the range.
+
+    Parameters
+    ----------
+    a : float
+        Lower bound of the support. Must be positive.
+    b : float
+        Upper bound of the support. Must be greater than ``a``.
+
+    Attributes
+    ----------
+    a : float
+        Lower bound of the support.
+    b : float
+        Upper bound of the support.
+
+    Notes
+    -----
+    The density is ``1 / (x * log(b / a))`` on ``[a, b]``. The mean is
+    ``(b - a) / log(b / a)`` and the median is the geometric mean
+    ``sqrt(a * b)``. If ``X`` has this distribution, then ``log(X)`` is
+    ``Uniform(log(a), log(b))`` -- the defining relationship.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = LogUniform(a=1, b=100)
+    >>> float(X.median())
+    10.0
+    >>> round(float(X.mean()), 4)
+    21.4976
+    >>> round(float(X.pdf(1)), 4)
+    0.2171
+    >>> X.draw()  # doctest: +SKIP
+    3.7
+    """
+
+    def __init__(self, a, b):
+        """Initialize a log-uniform distribution.
+
+        Raises
+        ------
+        Exception
+            If ``a`` or ``b`` is not a positive number, or ``b`` is not
+            greater than ``a``.
+        """
+        _validate(
+            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
+            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+            (
+                isinstance(a, numbers.Real)
+                and isinstance(b, numbers.Real)
+                and a > 0
+                and b > 0
+                and a >= b,
+                "b must be greater than a",
+            ),
+        )
+        self.a = a
+        self.b = b
+
+        # scipy's loguniform (a.k.a. reciprocal) takes the lower and upper
+        # bounds directly as a and b.
+        params = {"a": a, "b": b}
+        super().__init__(params, stats.loguniform, False)
+        self.xlim = (a, b)  # bounded support [a, b]
+
+
+class Reciprocal(LogUniform):
+    """Probability space for a reciprocal distribution.
+
+    An alternative name for the :class:`LogUniform` distribution: its
+    density is proportional to ``1 / x`` (the reciprocal) on ``[a, b]``, so
+    ``Reciprocal(a, b)`` is identical to ``LogUniform(a, b)``.
+
+    Parameters
+    ----------
+    a : float
+        Lower bound of the support. Must be positive.
+    b : float
+        Upper bound of the support. Must be greater than ``a``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> float(Reciprocal(a=1, b=100).median())
+    10.0
+    """
+
+
 class Normal(Distribution):
     """Probability space for a normal (Gaussian) distribution.
 

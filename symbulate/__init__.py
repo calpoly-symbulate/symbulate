@@ -32,6 +32,8 @@ from .distributions import (
     Uniform,
     IrwinHall,
     Bates,
+    LogUniform,
+    Reciprocal,
     Normal,
     Exponential,
     Gamma,
