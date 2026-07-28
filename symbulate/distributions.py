@@ -3499,6 +3499,105 @@ class F(Distribution):
         self.xlim = _continuous_hdi_xlim(self, 0)
 
 
+class Hotelling(Distribution):
+    """Probability space for Hotelling's T-squared distribution.
+
+    The multivariate generalization of the squared t-statistic. When you
+    test whether the mean vector of ``dim`` correlated measurements differs
+    from a hypothesized value, the T-squared statistic collapses that whole
+    vector into a single number measuring how far the sample mean sits from
+    the hypothesis. This is the distribution that number follows when the
+    hypothesis is true, and it is the workhorse of one- and two-sample mean
+    tests in multivariate statistics courses -- the multivariate cousin of
+    :class:`MultivariateT`.
+
+    Although it summarizes multivariate data, the distribution itself is
+    **univariate**: each draw is a single non-negative number, not a vector.
+    It is exactly a rescaled :class:`F` distribution,
+
+    ``Hotelling(dim, df) == (df * dim / (df - dim + 1)) * F(dim, df - dim + 1)``,
+
+    so it is drawn and plotted like any other one-dimensional continuous
+    distribution.
+
+    Parameters
+    ----------
+    dim : int
+        Number of variables (the dimension ``p`` of the data). Must be a
+        positive integer.
+    df : int or float
+        Degrees of freedom (often the sample size minus one). Must be
+        greater than ``dim - 1`` so the equivalent F-distribution is
+        defined.
+
+    Attributes
+    ----------
+    dim : int
+        Number of variables.
+    df : int or float
+        Degrees of freedom.
+    scale : float
+        The multiplier ``df * dim / (df - dim + 1)`` applied to the
+        underlying F-distribution.
+
+    Notes
+    -----
+    With ``dim = 1`` the multiplier is 1 and the distribution reduces to
+    ``F(1, df)``, which is the square of a ``StudentT(df)``: this is the
+    familiar fact that Hotelling's T-squared generalizes the squared
+    one-sample t-statistic.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Hotelling(dim=3, df=10)
+    >>> float(X.mean())
+    5.0
+    >>> round(float(X.median()), 4)
+    3.2251
+    >>> X.draw()  # doctest: +SKIP
+    2.71
+
+    See Also
+    --------
+    F : The distribution Hotelling's T-squared rescales.
+    MultivariateT : The vector-valued multivariate cousin.
+    """
+
+    def __init__(self, dim, df):
+        """Initialize a Hotelling's T-squared distribution.
+
+        Raises
+        ------
+        Exception
+            If ``dim`` is not a positive integer, or ``df`` is not a number
+            greater than ``dim - 1``.
+        """
+        _validate(
+            (
+                not isinstance(dim, numbers.Integral) or dim < 1,
+                "dim must be a positive integer",
+            ),
+            (
+                not isinstance(df, numbers.Real)
+                or (isinstance(dim, numbers.Integral) and df <= dim - 1),
+                "df must be a number greater than dim - 1",
+            ),
+        )
+        self.dim = dim
+        self.df = df
+
+        # Hotelling's T-squared is a rescaled F: T^2 = c * F(dim, df - dim + 1)
+        # with c = df * dim / (df - dim + 1). scipy's f takes that multiplier
+        # as its scale, so all methods come from the base class.
+        self.scale = df * dim / (df - dim + 1)
+        params = {"dfn": dim, "dfd": df - dim + 1, "scale": self.scale}
+        super().__init__(params, stats.f, False)
+        # Highest-density window over [0, inf): trims the long right tail,
+        # like the F-distribution it rescales.
+        self.xlim = _continuous_hdi_xlim(self, 0)
+
+
 class Cauchy(Distribution):
     """Probability space for a Cauchy distribution.
 

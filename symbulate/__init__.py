@@ -51,6 +51,7 @@ from .distributions import (
     SkewT,
     ChiSquare,
     F,
+    Hotelling,
     Cauchy,
     LogNormal,
     Pareto,
