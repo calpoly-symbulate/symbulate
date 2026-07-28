@@ -4,6 +4,7 @@ import warnings
 import numpy as np
 import scipy.stats as stats
 from scipy.optimize import brentq, minimize_scalar
+from scipy.special import beta as beta_function
 import matplotlib.pyplot as plt
 
 from .probability_space import ProbabilitySpace
@@ -2160,6 +2161,178 @@ class Triangular(Distribution):
         super().__init__(params, stats.triang, False)
         # Bounded at both ends, so the window shows the full support.
         self.xlim = (low, high)
+
+
+class _kumaraswamy_gen(stats.rv_continuous):
+    """The Kumaraswamy distribution written in scipy's generator form.
+
+    Every other distribution in this file wraps one that ``scipy.stats``
+    already ships. The Kumaraswamy is the exception -- scipy has no
+    ``kumaraswamy`` -- so it is supplied here, written to scipy's own
+    ``rv_continuous`` interface. That way :class:`Kumaraswamy` can hand this
+    object to ``Distribution.__init__`` exactly as :class:`Beta` hands over
+    ``stats.beta``, and it inherits ``draw``, ``sim``, ``plot`` and the
+    summary statistics with no special-casing anywhere else.
+
+    Private, and named in lowercase to match the scipy generator classes it
+    imitates (``beta_gen``, ``weibull_min_gen``). Students use
+    :class:`Kumaraswamy`, never this.
+
+    The two shape parameters ``a`` and ``b`` are positive and the support is
+    ``[0, 1]``. Every quantity below has a closed form, so none of it is
+    computed numerically:
+
+    - density:  ``a * b * x ** (a - 1) * (1 - x ** a) ** (b - 1)``
+    - cdf:      ``1 - (1 - x ** a) ** b``
+    - quantile: ``(1 - (1 - q) ** (1 / b)) ** (1 / a)``
+    - moments:  ``E[X ** n] = b * B(1 + n / a, b)``
+
+    Supplying the quantile function is what makes sampling exact: scipy's
+    default ``rvs`` feeds uniform draws through ``_ppf``, which is the
+    textbook inverse-cdf construction for this distribution.
+    """
+
+    def _pdf(self, x, a, b):
+        """Density at ``x``."""
+        # The density is genuinely infinite at 0 when a < 1, and at 1 when
+        # b < 1; numpy reaches those through a divide-by-zero in the power.
+        # The infinity is the correct answer, so silence the warning without
+        # touching the value -- plot() already filters non-finite heights.
+        with np.errstate(divide="ignore"):
+            return a * b * x ** (a - 1) * (1 - x**a) ** (b - 1)
+
+    def _cdf(self, x, a, b):
+        """Cumulative probability ``P(X <= x)``."""
+        return 1 - (1 - x**a) ** b
+
+    def _sf(self, x, a, b):
+        """Survival function ``P(X > x)``, exact instead of ``1 - cdf``."""
+        return (1 - x**a) ** b
+
+    def _ppf(self, q, a, b):
+        """Quantile function: the inverse of :meth:`_cdf`."""
+        return (1 - (1 - q) ** (1 / b)) ** (1 / a)
+
+    def _isf(self, q, a, b):
+        """Inverse survival function, exact instead of ``ppf(1 - q)``."""
+        return (1 - q ** (1 / b)) ** (1 / a)
+
+    def _munp(self, n, a, b):
+        """``n``-th raw moment ``E[X ** n] = b * B(1 + n / a, b)``."""
+        # Substituting t = x ** a in the defining integral turns it into a
+        # beta integral, so the moments are exact rather than quadrature.
+        return b * beta_function(1 + n / a, b)
+
+
+# Support [0, 1], like scipy's own `beta = beta_gen(a=0.0, b=1.0, ...)`. The
+# `a`/`b` here are rv_continuous's support bounds, not the shape parameters
+# of the same name -- scipy uses both spellings, exactly as it does for beta.
+_kumaraswamy = _kumaraswamy_gen(a=0.0, b=1.0, name="kumaraswamy", shapes="a, b")
+
+
+class Kumaraswamy(Distribution):
+    """Probability space for a Kumaraswamy distribution.
+
+    A continuous distribution on [0, 1], used -- like the ``Beta`` -- to
+    model a proportion, a percentage, or a probability. It was introduced
+    to describe hydrological quantities that are bounded at both ends, such
+    as the fraction of a reservoir that is full or the share of a region's
+    yearly rainfall that falls in one month.
+
+    Its shape is controlled by two positive parameters. Roughly, ``a``
+    controls the behavior near 0 and ``b`` the behavior near 1: raising
+    ``a`` pushes the values toward 1, raising ``b`` pushes them toward 0,
+    and ``a = b = 1`` leaves every value in [0, 1] equally likely.
+
+    The Kumaraswamy takes almost the same range of shapes as the ``Beta``
+    -- bell-shaped, U-shaped, J-shaped, or flat -- but its cdf and quantile
+    function are simple formulas rather than integrals that must be
+    evaluated numerically. That is its practical appeal: values are easy to
+    simulate by hand, and probabilities are easy to compute with a
+    calculator.
+
+    Parameters
+    ----------
+    a : float
+        First shape parameter. Must be positive. Larger values shift the
+        distribution toward 1.
+    b : float
+        Second shape parameter. Must be positive. Larger values shift the
+        distribution toward 0.
+
+    Attributes
+    ----------
+    a : float
+        First shape parameter.
+    b : float
+        Second shape parameter.
+
+    Notes
+    -----
+    The cumulative distribution function is
+    ``cdf(x) = 1 - (1 - x ** a) ** b`` on [0, 1], and inverting it gives the
+    quantile function ``quantile(q) = (1 - (1 - q) ** (1 / b)) ** (1 / a)``.
+    So if ``U`` is ``Uniform(0, 1)``, then
+    ``(1 - (1 - U) ** (1 / b)) ** (1 / a)`` is ``Kumaraswamy(a, b)`` -- the
+    inverse-cdf construction, which is how this distribution is sampled.
+
+    Two special cases are exactly beta distributions, and only these two:
+
+    - ``b = 1`` gives ``Beta(a, 1)``, because both have cdf ``x ** a``.
+    - ``a = 1`` gives ``Beta(1, b)``, because both have cdf
+      ``1 - (1 - x) ** b``.
+
+    In particular ``Kumaraswamy(1, 1)`` is ``Uniform(0, 1)``. For every
+    other pair the two families are close but not equal: a ``Kumaraswamy``
+    can be matched to a ``Beta`` in mean and variance and still differ in
+    its tails. The general link runs the other way -- if ``X`` is
+    ``Kumaraswamy(a, b)``, then ``X ** a`` is ``Beta(1, b)``.
+
+    The moments are exact: ``E[X ** n] = b * B(1 + n / a, b)``, where ``B``
+    is the beta function.
+
+    Unlike the other distributions in this package, this one is not in
+    ``scipy.stats``; its density, cdf, quantile function and moments are
+    implemented directly from the formulas above.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Kumaraswamy(a=2, b=2)
+    >>> round(float(X.mean()), 4)  # b * B(1 + 1 / a, b) = 8 / 15
+    0.5333
+    >>> round(float(X.median()), 4)  # (1 - 2 ** (-1 / b)) ** (1 / a)
+    0.5412
+    >>> round(float(X.cdf(0.5)), 4)  # 1 - (1 - 0.5 ** 2) ** 2
+    0.4375
+    >>> float(Kumaraswamy(a=1, b=1).pdf(0.3))  # a = b = 1 is Uniform(0, 1)
+    1.0
+    >>> X.draw()  # doctest: +SKIP
+    0.6118
+    """
+
+    def __init__(self, a, b):
+        """Initialize a Kumaraswamy distribution.
+
+        Raises
+        ------
+        Exception
+            If ``a`` or ``b`` is not a positive number.
+        """
+        _validate(
+            (not isinstance(a, numbers.Real) or a <= 0, "a must be a positive number"),
+            (not isinstance(b, numbers.Real) or b <= 0, "b must be a positive number"),
+        )
+        self.a = a
+        self.b = b
+
+        # The two shape parameters pass straight through under the same two
+        # names to the generator defined just above.
+        params = {"a": a, "b": b}
+        super().__init__(params, _kumaraswamy, False)
+        # Bounded at both ends, so the window is the full support and no
+        # probability is trimmed -- same as Beta.
+        self.xlim = (0, 1)
 
 
 class StudentT(Distribution):
