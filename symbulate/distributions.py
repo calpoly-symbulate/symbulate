@@ -1418,6 +1418,90 @@ class Uniform(Distribution):
         self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
 
 
+class Bates(Distribution):
+    """Probability space for a Bates distribution.
+
+    The distribution of the average of ``n`` independent ``Uniform(a, b)``
+    random variables. It is a classic teaching example of the central limit
+    theorem: with ``n = 1`` it is just the uniform distribution, and as
+    ``n`` grows the average's distribution becomes an increasingly tight,
+    bell-shaped curve centered at the uniform mean. It is the companion of
+    the Irwin-Hall distribution, which is the *sum* of ``n`` uniforms rather
+    than their mean.
+
+    Parameters
+    ----------
+    n : int
+        Number of uniform random variables being averaged. Must be a
+        positive integer.
+    a : float, optional
+        Lower bound of each uniform. Default is 0.0.
+    b : float, optional
+        Upper bound of each uniform. Default is 1.0.
+
+    Attributes
+    ----------
+    n : int
+        Number of uniform random variables being averaged.
+    a : float
+        Lower bound of each uniform.
+    b : float
+        Upper bound of each uniform.
+
+    Notes
+    -----
+    The support is ``[a, b]``. The mean is the uniform mean ``(a + b) / 2``,
+    and the variance is ``(b - a)**2 / (12 * n)`` -- the single-uniform
+    variance shrunk by a factor of ``n``. Special cases: ``n = 1`` is the
+    ``Uniform(a, b)`` distribution, and ``n = 2`` is the (symmetric)
+    triangular distribution on ``[a, b]``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Bates(n=5)
+    >>> float(X.mean())
+    0.5
+    >>> round(float(X.var()), 6)
+    0.016667
+    >>> X.draw()  # doctest: +SKIP
+    0.48
+    """
+
+    def __init__(self, n, a=0.0, b=1.0):
+        """Initialize a Bates distribution.
+
+        Raises
+        ------
+        Exception
+            If ``n`` is not a positive integer, ``a`` or ``b`` is not a
+            number, or ``b`` is less than ``a``.
+        """
+        _validate(
+            (
+                not isinstance(n, numbers.Integral) or n <= 0,
+                "n must be a positive integer",
+            ),
+            (not isinstance(a, numbers.Real), "a must be a number"),
+            (not isinstance(b, numbers.Real), "b must be a number"),
+            (
+                isinstance(a, numbers.Real) and isinstance(b, numbers.Real) and a > b,
+                "b cannot be less than a",
+            ),
+        )
+        self.n = n
+        self.a = a
+        self.b = b
+
+        # scipy has no Bates, but the mean of n uniforms is the Irwin-Hall
+        # sum divided by n: scaling scipy's irwinhall by (b - a) / n turns the
+        # sum of n Uniform(0, 1) variables into the mean of n Uniform(a, b)
+        # variables, with support [a, b].
+        params = {"n": n, "loc": a, "scale": (b - a) / n}
+        super().__init__(params, stats.irwinhall, False)
+        self.xlim = (a, b)  # Bates is not defined outside [a, b]
+
+
 class Normal(Distribution):
     """Probability space for a normal (Gaussian) distribution.
 
