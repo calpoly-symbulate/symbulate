@@ -4811,6 +4811,89 @@ class TestDirichlet(unittest.TestCase):
         plt.close("all")
 
 
+class TestDirichletMultinomial(unittest.TestCase):
+
+    def test_DirichletMultinomial_error_n_negative(self):
+        self.assertRaises(
+            Exception, lambda: DirichletMultinomial(n=-1, alpha=[2, 3, 5])
+        )
+
+    def test_DirichletMultinomial_error_n_float(self):
+        self.assertRaises(
+            Exception, lambda: DirichletMultinomial(n=5.5, alpha=[2, 3, 5])
+        )
+
+    def test_DirichletMultinomial_error_alpha_too_short(self):
+        self.assertRaises(Exception, lambda: DirichletMultinomial(n=10, alpha=[2]))
+
+    def test_DirichletMultinomial_error_alpha_non_positive(self):
+        self.assertRaises(
+            Exception, lambda: DirichletMultinomial(n=10, alpha=[2, -1, 3])
+        )
+
+    def test_DirichletMultinomial_draw_sums_to_n(self):
+        distributions.rng = np.random.default_rng(42)
+        X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+        draw = X.draw()
+        self.assertIsInstance(draw, Vector)
+        self.assertEqual(len(draw), 3)
+        self.assertEqual(int(sum(draw)), 10)
+
+    def test_DirichletMultinomial_mean_cov_var_match_scipy(self):
+        n, alpha = 10, [2, 3, 5]
+        X = DirichletMultinomial(n=n, alpha=alpha)
+        th = stats.dirichlet_multinomial(alpha, n)
+        np.testing.assert_allclose(np.array(X.mean()), th.mean())
+        np.testing.assert_allclose(X.cov(), th.cov())
+        np.testing.assert_allclose(np.array(X.var()), th.var())
+        np.testing.assert_allclose(np.array(X.sd()), np.sqrt(th.var()))
+
+    def test_DirichletMultinomial_corr_diagonal_is_one(self):
+        X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+        np.testing.assert_allclose(np.diag(X.corr()), [1.0, 1.0, 1.0])
+
+    def test_DirichletMultinomial_pdf_matches_scipy(self):
+        X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+        th = stats.dirichlet_multinomial([2, 3, 5], 10)
+        for pt in [[3, 3, 4], [10, 0, 0], [1, 4, 5]]:
+            self.assertAlmostEqual(float(X.pdf(pt)), float(th.pmf(pt)), places=12)
+
+    def test_DirichletMultinomial_overdispersed_vs_multinomial(self):
+        # Same mean as Multinomial(n, alpha/alpha0), but larger variances.
+        n, alpha = 10, [2, 3, 5]
+        alpha0 = sum(alpha)
+        X = DirichletMultinomial(n=n, alpha=alpha)
+        p = [a / alpha0 for a in alpha]
+        mult_var = [n * pi * (1 - pi) for pi in p]
+        np.testing.assert_allclose(
+            np.array(X.mean()), [n * pi for pi in p]
+        )  # same mean
+        self.assertTrue(all(dv > mv for dv, mv in zip(X.var(), mult_var)))
+
+    def test_DirichletMultinomial_marginal_is_beta_binomial(self):
+        # Each count is marginally BetaBinomial(n, alpha_i, alpha0 - alpha_i).
+        distributions.rng = np.random.default_rng(42)
+        A, B, C = RV(DirichletMultinomial(n=10, alpha=[2, 3, 5]))
+        sims = A.sim(Nsim)
+        th = stats.betabinom(n=10, a=2, b=8)  # alpha0 - alpha_0 = 10 - 2 = 8
+        obs, exp = [], []
+        for k in range(11):
+            e = Nsim * th.pmf(k)
+            if e > 5:
+                exp.append(e)
+                obs.append(sum(1 for s in sims if s == k))
+        pval = stats.chisquare(obs, np.array(exp) * sum(obs) / sum(exp)).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_DirichletMultinomial_is_multivariate_distribution(self):
+        X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+        self.assertIsInstance(X, MultivariateDistribution)
+
+    def test_DirichletMultinomial_plot_raises(self):
+        X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+        self.assertRaises(Exception, X.plot)
+
+
 # ===========================================================================
 # Parameter validation: type guards and helpful error messages
 #
