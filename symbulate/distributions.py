@@ -247,7 +247,20 @@ class Distribution(ProbabilitySpace):
         self.sd = lambda: scipy.std(**self.params)
         self.sim_func = scipy.rvs
 
-        self.xlim = (scipy.ppf(0.001, **self.params), scipy.ppf(0.999, **self.params))
+        # Default plotting window: an equal-tailed cut of the probability.
+        # Skipped when the subclass has already set its own `xlim` before
+        # calling up to here, because for a few distributions this quantile
+        # lookup is not merely redundant but prohibitively slow -- a power law
+        # with an exponent near 1 (see `Zeta`) has a 99.9th percentile so far
+        # out that scipy's search effectively never finishes. Subclasses that
+        # set `xlim` *after* calling up to here are unaffected: `hasattr` is
+        # False at this point, so the window is computed exactly as before and
+        # then overridden as usual.
+        if not hasattr(self, "xlim"):
+            self.xlim = (
+                scipy.ppf(0.001, **self.params),
+                scipy.ppf(0.999, **self.params),
+            )
 
     def draw(self):
         """Draw a single random sample from the distribution.
@@ -1474,6 +1487,97 @@ class Zipf(Distribution):
         # DiscreteUniform. Pass xlim="zoom" to plot() to frame just the
         # high-probability ranks when n is large.
         self.xlim = (1, n)
+
+
+class Zeta(Distribution):
+    """Probability space for a zeta distribution.
+
+    A discrete power-law distribution on the whole numbers
+    ``1, 2, 3, ...``, with probabilities proportional to ``1 / k ** shape``.
+    It is the unbounded counterpart of :class:`Zipf`: where a ``Zipf`` ranks
+    a fixed list of ``n`` items, a ``Zeta`` lets the list run on forever.
+    Used to model power-law counts such as word frequencies, city sizes, or
+    citation counts, where a few outcomes are enormously more common than
+    the rest.
+
+    The name comes from the Riemann zeta function, which supplies the
+    constant that makes the probabilities add to 1:
+    ``P(X = k) = 1 / (k ** shape * zeta(shape))``.
+
+    Parameters
+    ----------
+    shape : float
+        Power-law exponent. Must be **greater than 1** -- at 1 or below the
+        probabilities cannot be normalized. Larger values concentrate the
+        distribution on the smallest whole numbers.
+
+    Attributes
+    ----------
+    shape : float
+        Power-law exponent.
+
+    Notes
+    -----
+    This distribution has a genuinely heavy tail, and how many moments
+    exist depends on ``shape``: the mean is finite only when
+    ``shape > 2`` (where it equals ``zeta(shape - 1) / zeta(shape)``), and
+    the variance only when ``shape > 3``. Outside those ranges ``mean()``
+    and ``var()`` return ``inf`` rather than a number.
+
+    That tail also means no sensible plotting window can hold most of the
+    probability when ``shape`` is close to 1 -- at ``shape = 1.1`` even the
+    first hundred values carry only about 40% of it. So :attr:`xlim`
+    deliberately shows just the first 20 values, which is where the
+    power-law shape is visible, rather than stretching out along a tail
+    that never really ends. Pass an explicit ``xlim=(1, high)`` to
+    :meth:`plot` to look further out.
+
+    **A naming warning about scipy.** ``scipy.stats.zipf`` is this
+    distribution, the zeta -- *not* the finite Zipf, which scipy calls
+    ``scipy.stats.zipfian`` and this package exposes as :class:`Zipf`.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Zeta(shape=2.5)
+    >>> round(float(X.pmf(1)), 4)
+    0.7454
+    >>> round(float(X.mean()), 4)
+    1.9474
+    >>> float(Zeta(shape=1.5).mean())  # mean needs shape > 2
+    inf
+    >>> X.draw()  # doctest: +SKIP
+    1
+    """
+
+    def __init__(self, shape):
+        """Initialize a zeta distribution.
+
+        Raises
+        ------
+        Exception
+            If ``shape`` is not a number greater than 1.
+        """
+        _validate(
+            (
+                not isinstance(shape, numbers.Real) or shape <= 1,
+                "shape must be a number greater than 1",
+            ),
+        )
+        self.shape = shape
+
+        # A fixed head-of-the-distribution window, on purpose, and set *before*
+        # calling up so the base class skips its own quantile-based default.
+        # That default is not just unhelpful here but unusable: the 99.9th
+        # percentile of a power law with an exponent near 1 is so far out that
+        # scipy's quantile search effectively never returns. The pmf decreases
+        # from k = 1, so the first 20 values are always where the shape shows.
+        self.xlim = (1, 20)
+
+        # scipy's `zipf` is the zeta distribution (its `a` is our shape);
+        # scipy's `zipfian` is the finite Zipf that this package's Zipf uses.
+        params = {"a": shape}
+        super().__init__(params, stats.zipf, True)
 
 
 ## Continuous Distributions

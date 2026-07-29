@@ -30,6 +30,7 @@ from .distributions import (
     Poisson,
     DiscreteUniform,
     Zipf,
+    Zeta,
     Uniform,
     IrwinHall,
     Bates,
