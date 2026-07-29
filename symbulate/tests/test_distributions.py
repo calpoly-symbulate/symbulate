@@ -899,6 +899,126 @@ class TestZipf(unittest.TestCase):
         plt.close("all")
 
 
+class TestZeta(unittest.TestCase):
+
+    def test_Zeta_pmf_matches_formula(self):
+        # P(X = k) = 1 / (k ** shape * zeta(shape))
+        from scipy.special import zeta
+
+        shape = 2.5
+        X = Zeta(shape=shape)
+        for k in [1, 2, 3, 10, 50]:
+            expected = 1 / (k**shape * zeta(shape))
+            self.assertAlmostEqual(float(X.pmf(k)), float(expected), places=12)
+
+    def test_Zeta_pmf_matches_scipy_zipf(self):
+        # scipy's `zipf` is the zeta distribution, NOT the finite Zipf.
+        X = Zeta(shape=3.0)
+        th = stats.zipf(a=3.0)
+        for k in range(1, 11):
+            self.assertAlmostEqual(float(X.pmf(k)), float(th.pmf(k)), places=12)
+
+    def test_Zeta_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Zeta(shape=2.5))
+        sims = X.sim(Nsim)
+        # Compare the head of the distribution, lumping the tail into one bin
+        # so every expected count is large enough for a chi-square test.
+        values = np.array(list(sims), dtype=float)
+        edges = [1, 2, 3, 4, 5]
+        observed = [int((values == v).sum()) for v in edges]
+        observed.append(int((values > edges[-1]).sum()))
+        th = stats.zipf(a=2.5)
+        expected = [Nsim * float(th.pmf(v)) for v in edges]
+        expected.append(Nsim * float(th.sf(edges[-1])))
+        pval = stats.chisquare(observed, expected).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Zeta_pmf_agrees_with_cdf(self):
+        # Summing the pmf up to k must give the cdf at k. This is exact, so it
+        # holds regardless of how much probability is left in the tail -- which
+        # matters here, since the tail beyond any cutoff is never negligible.
+        X = Zeta(shape=2.5)
+        for k in [1, 5, 20, 500]:
+            head = sum(float(X.pmf(j)) for j in range(1, k + 1))
+            self.assertAlmostEqual(head, float(X.cdf(k)), places=10)
+
+    def test_Zeta_total_probability_is_one(self):
+        # The head plus the survival function beyond it accounts for all of it.
+        X = Zeta(shape=2.5)
+        head = sum(float(X.pmf(j)) for j in range(1, 501))
+        tail = float(stats.zipf(a=2.5).sf(500))
+        self.assertAlmostEqual(head + tail, 1.0, places=10)
+
+    def test_Zeta_is_decreasing(self):
+        X = Zeta(shape=2.0)
+        probs = [float(X.pmf(k)) for k in range(1, 30)]
+        self.assertEqual(probs, sorted(probs, reverse=True))
+
+    def test_Zeta_mean_finite_only_above_two(self):
+        from scipy.special import zeta
+
+        # shape > 2: finite, equal to zeta(shape - 1) / zeta(shape).
+        for shape in [2.5, 3.0, 4.0]:
+            X = Zeta(shape=shape)
+            expected = float(zeta(shape - 1) / zeta(shape))
+            self.assertAlmostEqual(float(X.mean()), expected, places=8)
+        # shape <= 2: the mean diverges.
+        for shape in [1.5, 2.0]:
+            self.assertTrue(np.isinf(float(Zeta(shape=shape).mean())))
+
+    def test_Zeta_var_finite_only_above_three(self):
+        self.assertTrue(np.isfinite(float(Zeta(shape=3.5).var())))
+        for shape in [1.5, 2.5, 3.0]:
+            self.assertTrue(np.isinf(float(Zeta(shape=shape).var())))
+
+    def test_Zeta_larger_shape_concentrates_on_one(self):
+        probs = [float(Zeta(shape=s).pmf(1)) for s in [1.5, 2.0, 2.5, 4.0]]
+        self.assertEqual(probs, sorted(probs))
+
+    def test_Zeta_is_limit_of_Zipf(self):
+        # Zeta is the n -> infinity limit of the finite Zipf.
+        shape = 2.5
+        target = float(Zeta(shape=shape).pmf(1))
+        approx = [float(Zipf(shape=shape, n=n).pmf(1)) for n in [10, 100, 1000, 100000]]
+        gaps = [abs(a - target) for a in approx]
+        self.assertEqual(gaps, sorted(gaps, reverse=True))
+        self.assertAlmostEqual(approx[-1], target, places=7)
+
+    def test_Zeta_xlim_is_bounded_head_window(self):
+        # Deliberately a small fixed window: the usual highest-density helper
+        # would enumerate out to an astronomically large quantile for a power
+        # law near shape = 1.
+        for shape in [1.1, 1.5, 2.5, 4.0]:
+            self.assertEqual(Zeta(shape=shape).xlim, (1, 20))
+
+    def test_Zeta_draws_are_positive_integers(self):
+        distributions.rng = np.random.default_rng(0)
+        sims = RV(Zeta(shape=2.5)).sim(500)
+        values = [float(v) for v in sims]
+        self.assertTrue(all(v >= 1 for v in values))
+        self.assertTrue(all(v == int(v) for v in values))
+
+    def test_Zeta_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(Zeta(shape=2.5).draw(), Scalar)
+
+    def test_Zeta_invalid_shape_raises(self):
+        # shape must be strictly greater than 1; at 1 or below the
+        # probabilities cannot be normalized.
+        for bad in [1, 1.0, 0.5, 0, -2, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Zeta(shape=b))
+
+    def test_Zeta_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Zeta(shape=2.5).draw()
+        RV(Zeta(shape=2.5)).sim(100).plot()
+        Zeta(shape=2.5).plot()
+        Zeta(shape=2.5).plot(cdf=True)
+        Zeta(shape=1.5).plot()
+        plt.close("all")
+
+
 class TestUniform(unittest.TestCase):
 
     def test_Uniform_error(self):
