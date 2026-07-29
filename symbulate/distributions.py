@@ -65,6 +65,32 @@ def _validate(*checks):
     raise Exception("Invalid parameters:\n" + "\n".join("  - " + e for e in errors))
 
 
+def _is_whole_number(value):
+    """Whether ``value`` is a whole number, however it is spelled.
+
+    True for an integer and for a float that happens to be whole (``6.0``),
+    false for a fractional number or a non-number. Used where a parameter
+    counts something and so has to land on an integer, but may reasonably
+    reach us as a float -- out of a division, or from a NumPy array.
+
+    This is the same test :class:`~symbulate.index_sets.Naturals` uses for
+    membership, kept consistent so ``6.0`` is accepted in both places.
+
+    Parameters
+    ----------
+    value : object
+        The value to test.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``value`` is a real number with no fractional part.
+    """
+    if isinstance(value, numbers.Integral):
+        return True
+    return isinstance(value, numbers.Real) and float(value).is_integer()
+
+
 # Tail probability trimmed from each unbounded side of a default plotting
 # window: the window runs from ``quantile(_PLOT_TAIL)`` to
 # ``quantile(1 - _PLOT_TAIL)`` wherever the support has no fixed bound. This is
@@ -1319,19 +1345,21 @@ class DiscreteUniform(Distribution):
         # and scipy's randint returns nan for every pmf, mean, and quantile
         # when handed a fractional bound -- with no error of its own -- so a
         # fractional bound has to be caught here or it fails silently later.
+        #
+        # A whole-valued float (6.0, or anything arriving from numpy or a
+        # division) is accepted, matching how `Naturals` tests membership in
+        # index_sets.py: only a genuinely fractional bound is rejected.
+        whole_a, whole_b = _is_whole_number(a), _is_whole_number(b)
         _validate(
-            (not isinstance(a, numbers.Integral), "a must be an integer"),
-            (not isinstance(b, numbers.Integral), "b must be an integer"),
-            (
-                isinstance(a, numbers.Integral)
-                and isinstance(b, numbers.Integral)
-                and a > b,
-                "b cannot be less than a",
-            ),
+            (not whole_a, "a must be an integer"),
+            (not whole_b, "b must be an integer"),
+            (whole_a and whole_b and a > b, "b cannot be less than a"),
         )
 
-        self.a = a
-        self.b = b + 1
+        # Stored as plain ints so the attributes match their documented type
+        # however the bounds were supplied.
+        self.a = int(a)
+        self.b = int(b) + 1
 
         params = {"low": self.a, "high": self.b}
 

@@ -5370,6 +5370,25 @@ class TestNonNumericInputs(unittest.TestCase):
             Exception, "b must be an integer", lambda: DiscreteUniform(a=0, b=3.5)
         )
 
+    def test_DiscreteUniform_accepts_whole_valued_floats(self):
+        # Only a *fractional* bound is rejected. A whole-valued float works
+        # fine in scipy's randint and reaches students easily -- out of a
+        # division, or from a NumPy array -- so it must keep working, and the
+        # bounds are stored as plain ints either way.
+        for a, b in [(1.0, 6.0), (0, 6.0), (0, 10 / 2), (np.float64(1), np.float64(6))]:
+            X = DiscreteUniform(a=a, b=b)
+            self.assertIsInstance(X.a, int)
+            self.assertIsInstance(X.b, int)
+            reference = DiscreteUniform(a=int(a), b=int(b))
+            self.assertAlmostEqual(float(X.mean()), float(reference.mean()))
+            self.assertAlmostEqual(float(X.pmf(int(b))), float(reference.pmf(int(b))))
+
+    def test_DiscreteUniform_whole_valued_float_bounds_compare(self):
+        # The b < a check still fires when the bounds arrive as floats.
+        self.assertRaisesRegex(
+            Exception, "b cannot be less than a", lambda: DiscreteUniform(a=6.0, b=3.0)
+        )
+
     def test_Uniform_a_non_numeric(self):
         self.assertRaisesRegex(
             Exception, "a must be a number", lambda: Uniform(a="x", b=1)
