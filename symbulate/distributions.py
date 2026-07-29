@@ -5436,11 +5436,11 @@ class MultivariateT(MultivariateDistribution):
     Methods
     -------
     mean()
-        The location vector, as a :class:`Vector` (this equals the mean for
-        ``df > 1``).
+        The mean vector (equal to the location), as a :class:`Vector`. Exists
+        only for ``df > 1``; raises otherwise.
     cov()
         The covariance matrix, as a NumPy 2-D array. This is ``df / (df - 2)``
-        times the scale matrix and exists only for ``df > 2``.
+        times the scale matrix and exists only for ``df > 2``; raises otherwise.
     var(), sd()
         The per-component variances and standard deviations, as ``Vector``\\ s.
     corr()
@@ -5517,15 +5517,28 @@ class MultivariateT(MultivariateDistribution):
         ).pdf(x)
 
     def mean(self):
-        """Return the location vector.
+        """Return the mean vector.
+
+        The mean equals the location vector, but it exists only for
+        ``df > 1`` -- just as the mean of a univariate Student's t is
+        undefined at one degree of freedom.
 
         Returns
         -------
         Vector
-            The location (center) vector. For ``df > 1`` this is also the
-            mean of the distribution; for ``df <= 1`` the mean does not exist
-            but the location is still the center of symmetry.
+            The mean (which equals the location vector).
+
+        Raises
+        ------
+        Exception
+            If ``df <= 1``, where the mean is undefined.
         """
+        if self._df <= 1:
+            raise Exception(
+                "The mean of a multivariate t is undefined for df <= 1; "
+                "here df = %s. It exists only for df > 1, where it equals "
+                "the location vector." % (self._df,)
+            )
         return Vector(self._mean)
 
     def cov(self):
@@ -5944,7 +5957,7 @@ class Multinomial(MultivariateDistribution):
         Vector
             The expected count of each category, ``n * p``.
         """
-        return Vector(self.n * np.asarray(self.p, dtype=float))
+        return Vector(stats.multinomial(self.n, self.p).mean())
 
     def cov(self):
         """Return the covariance matrix.
@@ -5958,8 +5971,7 @@ class Multinomial(MultivariateDistribution):
         numpy.ndarray
             The covariance matrix.
         """
-        p = np.asarray(self.p, dtype=float)
-        return self.n * (np.diag(p) - np.outer(p, p))
+        return np.asarray(stats.multinomial(self.n, self.p).cov(), dtype=float)
 
     def draw(self):
         """Draw a single random sample from the multinomial distribution.
