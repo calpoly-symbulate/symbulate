@@ -7,12 +7,20 @@ from scipy.optimize import brentq, minimize_scalar
 from scipy.special import beta as beta_function
 from scipy.special import gammaln, xlogy
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
 from .probability_space import ProbabilitySpace
 from .plot import (
     get_next_color,
     DistributionPlot,
+    JointDistributionPlot,
+    make_joint_pdf,
+    make_joint_pmf,
     ECDF_LINEWIDTH,
+    JOINT_PAIRS_MAX_DIM,
+    JOINT_PMF_MAX_CELLS,
+    JOINT_PAIRS_OVERLAY_ERROR,
+    JOINT_PAIRS_PANEL_SIZE,
     SHADE_COLOR,
     SHADE_ALPHA,
     TRUE_DIST_MARKER_SIZE,
@@ -457,19 +465,23 @@ class Distribution(ProbabilitySpace):
         ymax = ys[np.isfinite(ys)].max()
         ylim = 0, 1.05 * ymax
 
-        # get the current axis if they exist and no axis is specified
-        fig = plt.gcf()
-        if ax is None and fig.axes:
+        # get the current axis (creating one if the figure has none) unless
+        # an axis was specified
+        if ax is None:
             ax = plt.gca()
 
-        # if axis already exists, set it to the union of existing and current axis
-        if ax is not None:
+        # If the axes already has a plot on it, widen the window to the union
+        # of both, so overlaying a second curve doesn't crop the first. An
+        # axes with nothing drawn on it yet has placeholder limits of (0, 1),
+        # which are not a plot to make room for -- unioning with those would
+        # stretch the window and squash the curve into part of the panel (as
+        # happens when a caller passes in a fresh, empty axes, e.g. one panel
+        # of a pairs matrix).
+        if ax.has_data():
             xlower, xupper = ax.get_xlim()
             xlim = min(xlim[0], xlower), max(xlim[1], xupper)
             ylower, yupper = ax.get_ylim()
             ylim = min(ylim[0], ylower), max(ylim[1], yupper)
-        else:
-            ax = plt.gca()  # creates new axis
 
         # set the axis limits
         if xlim[0] == xlim[1]:
@@ -4942,8 +4954,12 @@ class MultivariateDistribution(Distribution):
       ``Vector``.
     - ``corr()`` -- the correlation matrix, as a NumPy 2-D array.
     - ``__pow__`` -- drawing several independent vectors at once.
-    - ``plot()`` -- disabled by default (raises); subclasses that can plot
-      override it.
+    - ``plot()`` -- the joint distribution of two of the variables, or a
+      matrix of every pair. To take part in this a subclass also supplies
+      ``_marginal_1d(i)`` (the distribution of one variable on its own) and
+      ``_joint_func(i, j)`` (the joint pdf/pmf of a pair); a subclass that
+      defines neither still gets a plot that explains why it can't be
+      drawn yet, rather than a broken one.
 
     Notes
     -----
@@ -4987,22 +5003,579 @@ class MultivariateDistribution(Distribution):
         sd = np.sqrt(np.diag(cov))
         return cov / np.outer(sd, sd)
 
-    def plot(self, *args, **kwargs):
-        """Plotting is not available for multivariate distributions.
+    # Whether the components must add up to a fixed total -- True for the
+    # families whose draws are a breakdown of a whole (``Multinomial``
+    # counts adding to n, ``Dirichlet`` proportions adding to 1). One
+    # component of such a draw is determined by the others, so a
+    # k-component distribution varies freely in only k - 1 directions:
+    # three categories is the "two variables, one joint plot" case, the
+    # same way two variables is for an unconstrained family. See
+    # ``_free_dim``.
+    _sum_constrained = False
+
+    def _n_components(self):
+        """Return how many components each draw has.
+
+        Returns
+        -------
+        int
+            The length of one draw from the distribution -- the number of
+            variables it describes.
+        """
+        return len(self.mean())
+
+    def _free_dim(self):
+        """Return how many of the components vary freely.
+
+        For most distributions this is just the number of components. For
+        a sum-constrained family (see ``_sum_constrained``) the last
+        component is fixed by the others, so a three-category
+        ``Multinomial`` or ``Dirichlet`` varies in two directions, not
+        three -- which is what makes it the natural single-joint-plot case.
+
+        Returns
+        -------
+        int
+            The number of freely varying components.
+        """
+        n = self._n_components()
+        return n - 1 if self._sum_constrained else n
+
+    def _variable_label(self, i):
+        """Return the axis label for component ``i``.
+
+        Parameters
+        ----------
+        i : int
+            Index of the component, counting from 0.
+
+        Returns
+        -------
+        str
+            The label, numbered from 1 the way the variables are written
+            mathematically -- component 0 is ``"X1"``.
+        """
+        return "X%d" % (i + 1)
+
+    def _marginal_1d(self, i):
+        """Return the distribution of component ``i`` on its own.
+
+        Each of these distributions has a *closed-form* marginal in a
+        family Symbulate already has, so the distribution of one component
+        is an exact one-dimensional distribution rather than something
+        estimated by simulation: one component of a ``MultivariateNormal``
+        is ``Normal``, one count of a ``Multinomial`` is ``Binomial``, one
+        proportion of a ``Dirichlet`` is ``Beta``. :meth:`plot` uses these
+        both to frame its axes and to draw the diagonal of a pairs matrix.
+
+        Parameters
+        ----------
+        i : int
+            Index of the component, counting from 0.
+
+        Returns
+        -------
+        Distribution
+            The one-dimensional distribution of that component.
 
         Raises
         ------
         Exception
-            Always raised. A multivariate distribution has no single
-            one-dimensional curve to draw. To visualize it, plot the
-            individual components or pairs of components from simulated
-            values instead.
+            If the subclass has not defined its marginals, so plotting is
+            not available for it yet.
         """
         raise Exception(
-            "Plotting is not currently available for multivariate "
-            "distributions. To visualize one, simulate values and plot a "
-            "single component (or a pair of components) at a time."
+            "Plotting is not available for this distribution yet, because "
+            "the distribution of a single one of its variables has not been "
+            "worked out in the code. To visualize it, simulate values and "
+            "plot one variable (or a pair of variables) at a time."
         )
+
+    def _joint_func(self, i, j):
+        """Return the joint pdf/pmf of components ``i`` and ``j``.
+
+        The two-variable counterpart of :meth:`_marginal_1d`, and likewise
+        exact rather than simulated: for a ``MultivariateNormal`` or
+        ``MultivariateT`` the pair's distribution comes from pulling out
+        those two entries of the mean vector and the corresponding 2x2
+        block of the covariance matrix; for a ``Multinomial`` or
+        ``Dirichlet`` it comes from pooling every other category into a
+        single "everything else" category, which gives back a
+        three-category distribution of the same family.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two components, counting from 0.
+
+        Returns
+        -------
+        callable
+            A function of two equal-length flat arrays of coordinates,
+            returning the joint density (or probability) at each of those
+            points as a flat array.
+
+        Raises
+        ------
+        Exception
+            If the subclass has not defined its pairwise distributions, so
+            plotting is not available for it yet.
+        """
+        raise Exception(
+            "Plotting is not available for this distribution yet, because "
+            "the joint distribution of a pair of its variables has not been "
+            "worked out in the code. To visualize it, simulate values and "
+            "plot one variable (or a pair of variables) at a time."
+        )
+
+    def _plot_window(self, i):
+        """Return the plotting window for component ``i``.
+
+        Reuses the window the component's own one-dimensional distribution
+        would use, so an axis of a joint plot is framed exactly the way the
+        univariate :meth:`Distribution.plot` frames that same variable.
+
+        Parameters
+        ----------
+        i : int
+            Index of the component, counting from 0.
+
+        Returns
+        -------
+        tuple of float
+            The ``(low, high)`` range to plot that component over.
+        """
+        return self._marginal_1d(i).xlim
+
+    def _plot_values(self, i):
+        """Return the values of a discrete component ``i`` to draw cells for.
+
+        The whole numbers inside :meth:`_plot_window`, matching how the
+        univariate :meth:`Distribution.plot` picks the values of a discrete
+        distribution to draw masses at.
+
+        Parameters
+        ----------
+        i : int
+            Index of the component, counting from 0.
+
+        Returns
+        -------
+        numpy.ndarray
+            The values that component can take, in increasing order.
+        """
+        low, high = self._plot_window(i)
+        return np.arange(int(low), int(high) + 1)
+
+    def _resolve_dims(self, dims, pairs):
+        """Check a ``dims`` argument and return it as a tuple of indices.
+
+        Parameters
+        ----------
+        dims : sequence of int or None
+            The requested variables. ``None`` falls back to the default:
+            the two freely varying variables for a single joint plot, or
+            every variable for a pairs matrix.
+        pairs : bool
+            Whether the caller asked for a pairs matrix, which takes any
+            number of variables from 2 up, rather than exactly two.
+
+        Returns
+        -------
+        tuple of int
+            The validated indices.
+
+        Raises
+        ------
+        Exception
+            If the distribution has too few freely varying variables to
+            plot; if ``dims`` was left out where there is no single natural
+            default; or if it is not the right number of distinct, in-range
+            whole numbers.
+        """
+        n = self._n_components()
+        free = self._free_dim()
+        if free < 2:
+            raise Exception(
+                "A joint plot needs two variables, and this distribution "
+                "varies in only one direction, so there is nothing to plot "
+                "against anything else. Plot it as the one-dimensional "
+                "distribution it is -- a one-variable MultivariateNormal is "
+                "a Normal, a two-category "
+                "Multinomial(n, [p, 1 - p]) is a Binomial(n, p), and a "
+                "two-category Dirichlet([a, b]) is a Beta(a, b)."
+            )
+
+        if dims is None:
+            if pairs:
+                dims = tuple(range(n))
+            elif free == 2:
+                # Exactly two freely varying variables, so there is only one
+                # joint distribution to show and no choice to make -- the
+                # same way a univariate plot() never asks which variable.
+                dims = (0, 1)
+            else:
+                raise Exception(
+                    "This distribution has %d variables, so there is no "
+                    "single joint plot to show. Choose which two to plot, "
+                    "for example .plot(dims=(0, 2)) for the 1st and 3rd "
+                    "variables (they are numbered from 0), or use "
+                    ".plot(pairs=True) to see every pair at once." % (n,)
+                )
+
+        # Checked before converting, so a single number or other non-sequence
+        # reports this instead of a cryptic TypeError from the conversion.
+        if not isinstance(dims, (tuple, list, np.ndarray)):
+            raise Exception(
+                "dims must be a pair of variable numbers, given as a tuple or "
+                "a list -- for example dims=(0, 2) for the 1st and 3rd "
+                "variables. You passed dims=%r." % (dims,)
+            )
+        dims = tuple(dims)
+
+        if pairs:
+            if len(dims) < 2:
+                raise Exception(
+                    "With pairs=True, dims chooses which variables to "
+                    "include, so it needs at least two -- for example "
+                    "dims=(0, 1, 3). You passed dims=%r." % (dims,)
+                )
+        elif len(dims) != 2:
+            raise Exception(
+                "dims must name exactly two variables, since a joint plot "
+                "has two axes -- for example dims=(0, 2) for the 1st and 3rd "
+                "variables. You passed %d of them (dims=%r). To see more "
+                "than two variables at once, use pairs=True." % (len(dims), dims)
+            )
+
+        for d in dims:
+            # bool is a subclass of int, so exclude it explicitly: dims=(True,
+            # False) would otherwise silently mean dims=(1, 0).
+            if isinstance(d, bool) or not isinstance(d, numbers.Integral):
+                raise Exception(
+                    "Every entry of dims must be a whole number naming a "
+                    "variable, counting from 0. You passed dims=%r." % (dims,)
+                )
+            if not 0 <= d < n:
+                raise Exception(
+                    "This distribution has %d variables, numbered 0 to %d, "
+                    "so dims=%r asks for a variable it doesn't have." % (n, n - 1, dims)
+                )
+        if len(set(dims)) != len(dims):
+            raise Exception(
+                "The variables in dims must all be different -- a variable "
+                "plotted against itself has nothing to show. You passed "
+                "dims=%r." % (dims,)
+            )
+
+        return tuple(int(d) for d in dims)
+
+    def _plot_joint(
+        self, i, j, ax, contour, colorbar=True, title=True, alpha=None, **kwargs
+    ):
+        """Draw the joint distribution of components ``i`` and ``j`` on one axes.
+
+        Chooses between the two joint plot types the same way the univariate
+        :meth:`Distribution.plot` chooses between a curve and a set of
+        masses: a continuous distribution gets a shaded density surface, a
+        discrete one gets a grid of probabilities at the values it can
+        actually take.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the components on the x- and y-axis, counting from 0.
+        ax : matplotlib.axes.Axes
+            The axes to draw on.
+        contour : bool
+            Whether to draw the continuous surface as discrete contour
+            bands. Has no effect on a discrete distribution, whose cells
+            are already discrete.
+        colorbar : bool, default True
+            Whether to add a colorbar. A panel of a pairs matrix passes
+            False.
+        title : bool, default True
+            Whether to title the axes. A panel of a pairs matrix passes
+            False, since the figure carries one title instead.
+        alpha : float, optional
+            Transparency of the surface, from 0 (invisible) to 1 (opaque).
+        **kwargs
+            Additional keyword arguments forwarded to matplotlib.
+
+        Returns
+        -------
+        matplotlib.cm.ScalarMappable
+            The surface or mesh that was drawn.
+        """
+        func = self._joint_func(i, j)
+        xlabel = self._variable_label(i)
+        ylabel = self._variable_label(j)
+        if self.discrete:
+            return make_joint_pmf(
+                func,
+                self._plot_values(i),
+                self._plot_values(j),
+                ax,
+                colorbar=colorbar,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                title=title,
+                alpha=alpha,
+                **kwargs,
+            )
+        return make_joint_pdf(
+            func,
+            self._plot_window(i),
+            self._plot_window(j),
+            ax,
+            contour=contour,
+            colorbar=colorbar,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            title=title,
+            alpha=alpha,
+            **kwargs,
+        )
+
+    def _plot_pairs(self, dims, contour, alpha=None, **kwargs):
+        """Draw a matrix of every pair of the chosen variables.
+
+        Builds an ``n`` by ``n`` grid of panels: each variable's own
+        distribution down the diagonal, and each pair's joint distribution
+        in the lower triangle. The upper triangle is left blank because
+        panel ``(i, j)`` and panel ``(j, i)`` show the same relationship
+        with the axes swapped, so filling both would draw everything twice.
+
+        Parameters
+        ----------
+        dims : tuple of int
+            The variables to include, already validated.
+        contour : bool
+            Whether the joint panels draw contour bands.
+        alpha : float, optional
+            Transparency of the panels.
+        **kwargs
+            Additional keyword arguments forwarded to matplotlib.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The bottom-left panel, as a representative of the layout.
+
+        Raises
+        ------
+        ValueError
+            If the figure already has a plot on it, which the grid can't
+            be built into.
+        Exception
+            If more variables were asked for than a readable matrix holds.
+        """
+        if len(dims) > JOINT_PAIRS_MAX_DIM:
+            raise Exception(
+                "A pairs plot of %d variables would need %d panels, too many "
+                "to read on one screen. Choose which variables to include, "
+                "for example .plot(pairs=True, dims=(0, 1, 2))."
+                % (len(dims), len(dims) * (len(dims) + 1) // 2)
+            )
+
+        fig = plt.gcf()
+        # The grid fills the whole figure, so it can neither be added to a
+        # figure that already has a plot on it nor accept one later. Fail
+        # the same way the marginal layout does (MARGINAL_OVERLAY_ERROR)
+        # rather than stacking a second layout on top of existing content.
+        if fig.axes:
+            raise ValueError(JOINT_PAIRS_OVERLAY_ERROR)
+        k = len(dims)
+        # Size the figure to the grid, so panels stay readable as variables
+        # are added instead of each one shrinking inside a single-plot figure.
+        fig.set_size_inches(k * JOINT_PAIRS_PANEL_SIZE, k * JOINT_PAIRS_PANEL_SIZE)
+        gs = GridSpec(k, k, figure=fig)
+
+        corner = None
+        for row in range(k):
+            for col in range(row + 1):
+                ax = fig.add_subplot(gs[row, col])
+                if row == col:
+                    # The diagonal is this variable on its own, so it is
+                    # exactly the univariate plot -- reuse it rather than
+                    # redraw it, which also advances each panel's own color
+                    # cycle (so every diagonal takes the same first color).
+                    # Framed on the same window the joint panels in this
+                    # column use, so every panel in a column really does
+                    # cover the variable over the same range -- which is
+                    # what makes hiding the inner x tick labels below safe.
+                    self._marginal_1d(dims[row]).plot(
+                        xlim=self._plot_window(dims[row]), ax=ax, alpha=alpha
+                    )
+                    ax.set_title("")
+                else:
+                    self._plot_joint(
+                        dims[col],
+                        dims[row],
+                        ax,
+                        contour,
+                        colorbar=False,
+                        title=False,
+                        alpha=alpha,
+                        **kwargs,
+                    )
+                # Name the variables only along the outside edges, so the
+                # inner panels aren't crowded with repeated labels. Set them
+                # here rather than leave whatever each panel drew: a
+                # diagonal panel came from the univariate plot(), which
+                # labels its x-axis "Value" since on its own it has no
+                # variable number to use.
+                if row == k - 1:
+                    ax.set_xlabel(self._variable_label(dims[col]))
+                else:
+                    ax.set_xlabel("")
+                    # Every panel in a column covers the same variable over
+                    # the same window, so hiding the inner x tick labels
+                    # loses nothing -- the bottom panel's still apply. The y
+                    # tick labels stay on every panel, since a diagonal
+                    # panel's y-axis is a density and genuinely differs from
+                    # its neighbors'.
+                    ax.set_xticklabels([])
+                # A diagonal panel's y-axis is a density or probability
+                # rather than the variable, so it is left unlabeled instead
+                # of being labeled with a variable it isn't showing -- the
+                # panel below it in the same column carries that name.
+                if col == 0 and row != col:
+                    ax.set_ylabel(self._variable_label(dims[row]))
+                else:
+                    ax.set_ylabel("")
+                if row == k - 1 and col == 0:
+                    corner = ax
+
+        fig.suptitle("Pairs Plot")
+        fig.tight_layout()
+        return corner
+
+    def plot(
+        self, dims=None, pairs=False, contour=False, alpha=None, ax=None, **kwargs
+    ):
+        """Plot the joint distribution of two of the variables.
+
+        A multivariate distribution describes several variables at once, so
+        it has no single curve to draw the way a one-dimensional
+        distribution does. What it does have is a joint distribution for
+        any two of its variables, and that is what this plots: a shaded
+        density surface (continuous distributions) or a grid of
+        probabilities (discrete distributions) showing how likely each
+        combination of the two values is.
+
+        What gets plotted depends on how many variables there are:
+
+        - **Two variables** (including a three-category ``Multinomial`` or
+          ``Dirichlet``, whose third category is fixed by the other two):
+          there is only one joint distribution, so it is plotted with no
+          arguments needed.
+        - **Three or more**: there is no single "the plot" any more, so
+          name the two variables you want with ``dims``, e.g.
+          ``dims=(0, 2)`` for the 1st and 3rd. This is asked for rather
+          than guessed, so that a pair with a much stronger relationship
+          can't stay hidden behind a silently chosen default.
+        - **Every pair at once**: ``pairs=True`` draws a matrix of panels
+          -- each variable's own distribution down the diagonal, each
+          pair's joint distribution below it.
+
+        Each panel shows an *exact* distribution, not an approximation:
+        every one of these families has a closed-form distribution for one
+        variable (``Normal``, ``Binomial``, ``Beta``) and for a pair of
+        them, so nothing here is estimated by simulation.
+
+        Parameters
+        ----------
+        dims : tuple of int, optional
+            Which variables to plot, numbered from 0. Exactly two for a
+            single joint plot (the default when the distribution has only
+            two freely varying variables); any number of them, to choose a
+            subset, with ``pairs=True``.
+        pairs : bool, default False
+            If True, draw a matrix of every pair of variables instead of a
+            single joint plot. Because the matrix fills the figure with its
+            own panels, it cannot share a figure with another plot.
+        contour : bool, default False
+            If True, draw a continuous density surface as discrete contour
+            bands with outlines between them, so bands can be matched to
+            the colorbar by eye. Has no effect on a discrete distribution,
+            whose grid of probabilities is already made of discrete cells.
+        alpha : float, optional
+            Transparency of the plot, from 0 (invisible) to 1 (opaque).
+        ax : matplotlib.axes.Axes, optional
+            The axes to draw on. Creates or uses the current axes if not
+            provided. Ignored when ``pairs=True``, which builds its own
+            panels.
+        **kwargs
+            Additional keyword arguments forwarded to matplotlib.
+
+        Returns
+        -------
+        JointDistributionPlot
+            A wrapper around the axes the plot was drawn on. Its printed
+            representation is empty, so Jupyter shows only the plot.
+
+        Raises
+        ------
+        Exception
+            If the distribution varies in only one direction (plot it as
+            the one-dimensional distribution it is); if it has three or
+            more variables and ``dims`` was not given; if ``dims`` does not
+            name the right number of distinct, in-range variables; or if a
+            ``pairs=True`` matrix would have more panels than fit.
+        ValueError
+            If ``pairs=True`` is used on a figure that already has a plot
+            on it.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()  # doctest: +SKIP
+        >>> X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4))  # doctest: +SKIP
+        >>> X.plot(dims=(0, 2))  # the 1st and 3rd variables  # doctest: +SKIP
+        >>> X.plot(pairs=True)  # every pair at once  # doctest: +SKIP
+        >>> Multinomial(n=10, p=[0.5, 0.3, 0.2]).plot()  # doctest: +SKIP
+        """
+        # A joint plot shows a whole surface rather than one curve, so
+        # neither the `type=` that selects among ways of drawing simulated
+        # data nor the `cdf=` that switches a univariate curve applies here.
+        # Catch both so they give a pointer instead of slipping through
+        # **kwargs into an opaque matplotlib error.
+        if "type" in kwargs:
+            raise ValueError(
+                "`plot()` does not take a `type=` argument. To see every "
+                "pair of variables instead of one, use pairs=True; to draw "
+                "the density surface as contour bands, use contour=True. "
+                "(`type=` selects among the many ways of drawing simulated "
+                "data.)"
+            )
+        if "cdf" in kwargs:
+            raise ValueError(
+                "`cdf=True` is not available for a multivariate "
+                "distribution's plot. A cumulative distribution function "
+                "needs an order on the values, and there is no natural way "
+                "to order vectors. Plot one variable at a time for a CDF -- "
+                "for example, Normal(0, 1).plot(cdf=True)."
+            )
+
+        dims = self._resolve_dims(dims, pairs)
+
+        if pairs:
+            ax = self._plot_pairs(dims, contour, alpha=alpha, **kwargs)
+            return JointDistributionPlot(ax, self, dims)
+
+        # Use the current axes if a figure already exists, so a joint plot
+        # lands on the same axes as anything drawn before it, exactly like
+        # the univariate plot().
+        if ax is None:
+            ax = plt.gca()
+        # Advance the color cycle once per plot() call, as every plot type
+        # does. A joint plot colors by a colormap rather than the cycle, but
+        # skipping this would leave a curve drawn onto the same axes
+        # afterwards reusing a color already on the plot.
+        get_next_color(ax)
+        self._plot_joint(dims[0], dims[1], ax, contour, alpha=alpha, **kwargs)
+        return JointDistributionPlot(ax, self, dims)
 
     def __pow__(self, exponent):
         """Draw several independent vectors from the distribution.
@@ -5147,6 +5720,53 @@ class MultivariateNormal(MultivariateDistribution):
             The covariance matrix.
         """
         return np.asarray(self._cov, dtype=float)
+
+    def _marginal_1d(self, i):
+        """Return the distribution of variable ``i`` on its own.
+
+        One variable of a multivariate normal is itself normal, with that
+        variable's own mean and the square root of its own variance (entry
+        ``i, i`` of the covariance matrix) as its standard deviation.
+
+        Parameters
+        ----------
+        i : int
+            Index of the variable, counting from 0.
+
+        Returns
+        -------
+        Normal
+            The distribution of that one variable.
+        """
+        mean = np.asarray(self._mean, dtype=float)
+        cov = np.asarray(self._cov, dtype=float)
+        return Normal(mean=mean[i], sd=np.sqrt(cov[i, i]))
+
+    def _joint_func(self, i, j):
+        """Return the joint density of variables ``i`` and ``j``.
+
+        Two variables of a multivariate normal are themselves a bivariate
+        normal, with those two entries of the mean vector and the
+        corresponding 2x2 block of the covariance matrix -- an exact
+        marginal distribution, so no simulation or numerical integration is
+        involved.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two variables, counting from 0.
+
+        Returns
+        -------
+        callable
+            The joint density, as a function of two equal-length flat
+            arrays of coordinates.
+        """
+        mean = np.asarray(self._mean, dtype=float)
+        cov = np.asarray(self._cov, dtype=float)
+        index = [i, j]
+        pair = stats.multivariate_normal(mean[index], cov[np.ix_(index, index)])
+        return lambda x, y: pair.pdf(np.column_stack([np.ravel(x), np.ravel(y)]))
 
     def draw(self):
         """Draw a single random sample from the multivariate normal distribution.
@@ -5431,6 +6051,63 @@ class MultivariateT(MultivariateDistribution):
                 "it equals df / (df - 2) times the scale matrix." % (self._df,)
             )
         return (self._df / (self._df - 2)) * np.asarray(self._cov, dtype=float)
+
+    def _marginal_1d(self, i):
+        """Return the distribution of variable ``i`` on its own.
+
+        One variable of a multivariate t is a t-distribution with the same
+        degrees of freedom, centered at that variable's location and scaled
+        by the square root of entry ``i, i`` of the scale matrix. Symbulate's
+        :class:`StudentT` is always centered at 0 with scale 1, so this
+        shifted and scaled version is built on scipy's ``t`` directly,
+        through the same wiring every one-dimensional distribution uses.
+
+        Parameters
+        ----------
+        i : int
+            Index of the variable, counting from 0.
+
+        Returns
+        -------
+        Distribution
+            The distribution of that one variable: a t-distribution with
+            ``df`` degrees of freedom, shifted and scaled.
+        """
+        mean = np.asarray(self._mean, dtype=float)
+        cov = np.asarray(self._cov, dtype=float)
+        params = {
+            "df": self._df,
+            "loc": mean[i],
+            "scale": np.sqrt(cov[i, i]),
+        }
+        return Distribution(params, stats.t, False)
+
+    def _joint_func(self, i, j):
+        """Return the joint density of variables ``i`` and ``j``.
+
+        Two variables of a multivariate t are themselves a bivariate t with
+        the *same* degrees of freedom, taking those two entries of the
+        location vector and the corresponding 2x2 block of the scale matrix
+        -- an exact marginal distribution, like the multivariate normal's.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two variables, counting from 0.
+
+        Returns
+        -------
+        callable
+            The joint density, as a function of two equal-length flat
+            arrays of coordinates.
+        """
+        mean = np.asarray(self._mean, dtype=float)
+        cov = np.asarray(self._cov, dtype=float)
+        index = [i, j]
+        pair = stats.multivariate_t(
+            loc=mean[index], shape=cov[np.ix_(index, index)], df=self._df
+        )
+        return lambda x, y: pair.pdf(np.column_stack([np.ravel(x), np.ravel(y)]))
 
     def draw(self):
         """Draw a single random sample from the multivariate t distribution.
@@ -5785,6 +6462,12 @@ class Multinomial(MultivariateDistribution):
     (5, 3, 2)
     """
 
+    # The counts always add up to n, so the last one is whatever is left
+    # over: a three-category multinomial varies in two directions, which
+    # makes it the natural single-joint-plot case (two categories is just a
+    # binomial). See MultivariateDistribution._free_dim.
+    _sum_constrained = True
+
     def __init__(self, n, p):
         """Initialize a multinomial distribution.
 
@@ -5812,8 +6495,12 @@ class Multinomial(MultivariateDistribution):
         self.n = n
         self.p = p
 
-        self.discrete = False
-        self.pdf = lambda x: stats.multinomial(n, p).pmf(x)
+        # A multinomial draw is a vector of counts, so the distribution is
+        # discrete: plot() draws a probability at each possible pair of
+        # counts rather than a smooth surface between them.
+        self.discrete = True
+        self.pmf = lambda x: stats.multinomial(n, p).pmf(x)
+        self.pdf = self.pmf  # pdf as an alias for pmf, as in Distribution
 
     def mean(self):
         """Return the mean count vector.
@@ -5838,6 +6525,102 @@ class Multinomial(MultivariateDistribution):
             The covariance matrix.
         """
         return np.asarray(stats.multinomial(self.n, self.p).cov(), dtype=float)
+
+    def _marginal_1d(self, i):
+        """Return the distribution of category ``i``'s count on its own.
+
+        Ignoring which of the other categories a trial landed in, each
+        trial either lands in category ``i`` or it doesn't -- so that one
+        count is a binomial with the same number of trials and that
+        category's own probability.
+
+        Parameters
+        ----------
+        i : int
+            Index of the category, counting from 0.
+
+        Returns
+        -------
+        Binomial
+            The distribution of that category's count.
+        """
+        return Binomial(n=self.n, p=float(np.asarray(self.p, dtype=float)[i]))
+
+    def _plot_window(self, i):
+        """Return the plotting window for category ``i``'s count.
+
+        A count can be anything from 0 to ``n``, and showing that whole
+        range is what makes the triangular shape of the joint support
+        visible (two counts can't add up to more than ``n``). But a joint
+        plot draws one cell per pair of counts, so the full range only fits
+        while ``n`` is small: past that, this falls back to the window
+        holding most of the probability -- the same window ``xlim="zoom"``
+        gives a one-dimensional plot -- so a distribution with many trials
+        still plots, showing the region the counts actually land in.
+
+        Parameters
+        ----------
+        i : int
+            Index of the category, counting from 0.
+
+        Returns
+        -------
+        tuple of float
+            The ``(low, high)`` range of counts to draw cells for.
+        """
+        marginal = self._marginal_1d(i)
+        low, high = marginal.xlim
+        n_values = int(high) - int(low) + 1
+        if n_values * n_values <= JOINT_PMF_MAX_CELLS:
+            return (low, high)
+        return marginal._hdi_window()
+
+    def _joint_func(self, i, j):
+        """Return the joint probability function of counts ``i`` and ``j``.
+
+        Pooling every other category into a single "everything else"
+        category gives back a three-category multinomial exactly -- the
+        aggregation property of the multinomial -- so the joint
+        distribution of two counts is that smaller multinomial's, read off
+        at ``(x, y, n - x - y)``. Pairs that would need more than ``n``
+        trials between them are impossible and get probability 0, which is
+        what makes the triangular shape of the joint support visible.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two categories, counting from 0.
+
+        Returns
+        -------
+        callable
+            The joint probability function, as a function of two
+            equal-length flat arrays of counts.
+        """
+        p = np.asarray(self.p, dtype=float)
+        # The pooled category's probability is whatever is left over. Clamp
+        # at 0 so floating-point round-off in the subtraction can't make it
+        # a tiny negative number, which is not a valid probability.
+        rest = max(0.0, 1.0 - p[i] - p[j])
+        pair = stats.multinomial(self.n, [p[i], p[j], rest])
+        n = self.n
+
+        def func(x, y):
+            x = np.ravel(x)
+            y = np.ravel(y)
+            pooled = n - x - y
+            out = np.zeros(len(x), dtype=float)
+            # Only ask scipy about pairs that leave a non-negative count for
+            # the pooled category; the rest are impossible, so they keep
+            # probability 0.
+            possible = pooled >= 0
+            if np.any(possible):
+                out[possible] = pair.pmf(
+                    np.column_stack([x[possible], y[possible], pooled[possible]])
+                )
+            return out
+
+        return func
 
     def draw(self):
         """Draw a single random sample from the multinomial distribution.
@@ -6289,8 +7072,8 @@ class Dirichlet(MultivariateDistribution):
     no natural way to order the vectors it produces -- so unlike the
     one-dimensional distributions it provides no ``cdf`` method. Each
     individual proportion ``X_i`` does, however, follow a
-    ``Beta(alpha_i, alpha0 - alpha_i)`` distribution; :meth:`plot` uses
-    this to show the distribution one proportion at a time.
+    ``Beta(alpha_i, alpha0 - alpha_i)`` distribution, which is what
+    ``plot(pairs=True)`` shows down its diagonal.
 
     Examples
     --------
@@ -6304,6 +7087,12 @@ class Dirichlet(MultivariateDistribution):
     >>> X.draw()  # doctest: +SKIP
     (0.19, 0.42, 0.39)
     """
+
+    # The proportions always add up to 1, so the last one is whatever is
+    # left over: a three-category Dirichlet varies in two directions, which
+    # makes it the natural single-joint-plot case (two categories is just a
+    # beta distribution). See MultivariateDistribution._free_dim.
+    _sum_constrained = True
 
     def __init__(self, alpha):
         """Initialize a Dirichlet distribution.
@@ -6373,51 +7162,91 @@ class Dirichlet(MultivariateDistribution):
         """
         return np.asarray(stats.dirichlet(self.alpha).cov(), dtype=float)
 
-    def plot(self, xlim=None, alpha=None, ax=None, **kwargs):
-        """Plot the marginal density of each proportion.
+    def _marginal_1d(self, i):
+        """Return the distribution of proportion ``i`` on its own.
 
-        A Dirichlet lives on the probability simplex, which cannot be drawn
-        directly once there are more than a couple of categories. Instead
-        this overlays the marginal distribution of each proportion ``X_i``,
-        which is a ``Beta(alpha_i, alpha0 - alpha_i)`` density on ``[0, 1]``
-        -- so a single plot shows how each proportion is distributed and
-        how the categories compare. Successive curves take distinct colors
-        automatically, exactly as overlaid one-dimensional plots do.
+        Pooling every other category together leaves just "this category
+        versus the rest", so a single proportion of a Dirichlet is a
+        ``Beta(alpha_i, alpha0 - alpha_i)`` on ``[0, 1]`` -- the same way a
+        Dirichlet with two categories *is* a beta distribution.
 
         Parameters
         ----------
-        xlim : tuple of float, optional
-            x-axis range, passed through to each marginal's plot. Defaults
-            to the ``[0, 1]`` support of every proportion.
-        alpha : float, optional
-            Transparency of the curves, from 0 (invisible) to 1 (opaque).
-        ax : matplotlib.axes.Axes, optional
-            The axes to draw on. Uses the current axes if not provided.
-        **kwargs
-            Additional keyword arguments forwarded to matplotlib.
+        i : int
+            Index of the category, counting from 0.
 
         Returns
         -------
-        DistributionPlot
-            A wrapper around the axes the marginals were drawn on. Its
-            printed representation is empty, so Jupyter shows only the plot.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> Dirichlet(alpha=[2, 3, 5]).plot()  # doctest: +SKIP
+        Beta
+            The distribution of that one proportion.
         """
-        # Each proportion X_i is marginally Beta(alpha_i, alpha0 - alpha_i);
-        # alpha0 - alpha_i is a sum of the (strictly positive) other
-        # concentrations, so both Beta parameters are positive. Drawing each
-        # marginal with the existing Beta.plot reuses all of the shared plot
-        # machinery (color cycling, overlay onto the current axes, the
-        # DistributionPlot return value) without duplicating any of it.
-        plot = None
-        for a_i in self.alpha:
-            marginal = Beta(shape1=a_i, shape2=self.alpha0 - a_i)
-            plot = marginal.plot(xlim=xlim, alpha=alpha, ax=ax, **kwargs)
-        return plot
+        # alpha0 - alpha_i sums the other (strictly positive) concentrations,
+        # so both Beta parameters are positive.
+        a_i = float(self.alpha[i])
+        return Beta(shape1=a_i, shape2=self.alpha0 - a_i)
+
+    def _plot_window(self, i):
+        """Return the plotting window for proportion ``i``.
+
+        Every proportion lives on ``[0, 1]``, and a pair of them lives on
+        the triangle where they also sum to at most 1. Framing each axis on
+        the full ``[0, 1]`` -- rather than on the window that proportion's
+        own beta distribution would use -- keeps that whole triangle in view,
+        so the shape of the support a Dirichlet lives on stays visible.
+
+        Parameters
+        ----------
+        i : int
+            Index of the category, counting from 0.
+
+        Returns
+        -------
+        tuple of float
+            The range ``(0, 1)``.
+        """
+        return (0.0, 1.0)
+
+    def _joint_func(self, i, j):
+        """Return the joint density of proportions ``i`` and ``j``.
+
+        Pooling every other category into a single "everything else"
+        category gives back a three-category Dirichlet exactly -- the
+        aggregation property of the Dirichlet -- so the joint density of two
+        proportions is that smaller Dirichlet's, read off at
+        ``(x, y, 1 - x - y)``. Pairs summing past 1 are outside the simplex
+        and get density 0, which is what draws the triangular support.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two categories, counting from 0.
+
+        Returns
+        -------
+        callable
+            The joint density, as a function of two equal-length flat
+            arrays of proportions.
+        """
+        a = np.asarray(self.alpha, dtype=float)
+        pooled_alpha = self.alpha0 - a[i] - a[j]
+        pair = stats.dirichlet([a[i], a[j], pooled_alpha])
+
+        def func(x, y):
+            x = np.ravel(x)
+            y = np.ravel(y)
+            pooled = 1.0 - x - y
+            out = np.zeros(len(x), dtype=float)
+            # scipy's dirichlet rejects points off the open simplex rather
+            # than returning 0 for them, so only ask about interior points;
+            # everything else is outside the support and keeps density 0.
+            inside = (x > 0) & (y > 0) & (pooled > 0)
+            if np.any(inside):
+                out[inside] = pair.pdf(
+                    np.vstack([x[inside], y[inside], pooled[inside]])
+                )
+            return out
+
+        return func
 
     def draw(self):
         """Draw a single random sample from the Dirichlet distribution.
