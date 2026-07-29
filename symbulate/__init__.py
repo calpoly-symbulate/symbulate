@@ -78,6 +78,7 @@ from .distributions import (
     Wishart,
     InverseWishart,
     Multinomial,
+    MultivariateHypergeometric,
     Dirichlet,
 )
 from .independence import AssumeIndependent

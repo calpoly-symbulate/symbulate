@@ -4561,6 +4561,84 @@ class TestMultinomial(unittest.TestCase):
         self.assertIsInstance(X, MultivariateDistribution)
 
 
+class TestMultivariateHypergeometric(unittest.TestCase):
+
+    def test_MVHypergeom_error_m_negative(self):
+        self.assertRaises(
+            Exception, lambda: MultivariateHypergeometric(m=[10, -1, 6], n=5)
+        )
+
+    def test_MVHypergeom_error_m_non_integer(self):
+        self.assertRaises(
+            Exception, lambda: MultivariateHypergeometric(m=[10.5, 8, 6], n=5)
+        )
+
+    def test_MVHypergeom_error_n_too_large(self):
+        # n cannot exceed the total number of items, sum(m) = 24.
+        self.assertRaises(
+            Exception, lambda: MultivariateHypergeometric(m=[10, 8, 6], n=25)
+        )
+
+    def test_MVHypergeom_error_n_negative(self):
+        self.assertRaises(
+            Exception, lambda: MultivariateHypergeometric(m=[10, 8, 6], n=-1)
+        )
+
+    def test_MVHypergeom_draw_sums_to_n(self):
+        distributions.rng = np.random.default_rng(42)
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        draw = X.draw()
+        self.assertIsInstance(draw, Vector)
+        self.assertEqual(len(draw), 3)
+        self.assertEqual(int(sum(draw)), 6)
+
+    def test_MVHypergeom_mean_cov_var_match_scipy(self):
+        m, n = [10, 8, 6], 6
+        X = MultivariateHypergeometric(m=m, n=n)
+        th = stats.multivariate_hypergeom(m, n)
+        np.testing.assert_allclose(np.array(X.mean()), th.mean())
+        np.testing.assert_allclose(X.cov(), th.cov())
+        np.testing.assert_allclose(np.array(X.var()), th.var())
+        np.testing.assert_allclose(np.array(X.sd()), np.sqrt(th.var()))
+
+    def test_MVHypergeom_corr_diagonal_is_one(self):
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        np.testing.assert_allclose(np.diag(X.corr()), [1.0, 1.0, 1.0])
+
+    def test_MVHypergeom_pdf_matches_scipy(self):
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        th = stats.multivariate_hypergeom([10, 8, 6], 6)
+        for pt in [[2, 2, 2], [6, 0, 0], [1, 2, 3]]:
+            self.assertAlmostEqual(float(X.pdf(pt)), float(th.pmf(pt)), places=12)
+
+    def test_MVHypergeom_marginal_is_hypergeometric(self):
+        # Lumping all other types together, each count is a univariate
+        # hypergeometric: type i vs. the rest. Here type 0 has 10 of 24,
+        # drawing 6, so the first count is Hypergeometric(n=6, N0=14, N1=10).
+        distributions.rng = np.random.default_rng(42)
+        A, B, C = RV(MultivariateHypergeometric(m=[10, 8, 6], n=6))
+        sims = A.sim(Nsim)
+        expected = stats.hypergeom(
+            M=24, n=10, N=6
+        )  # scipy: M pop, n successes, N draws
+        obs, exp = [], []
+        for k in range(7):
+            e = Nsim * expected.pmf(k)
+            if e > 5:
+                exp.append(e)
+                obs.append(sum(1 for s in sims if s == k))
+        pval = stats.chisquare(obs, np.array(exp) * sum(obs) / sum(exp)).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_MVHypergeom_is_multivariate_distribution(self):
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        self.assertIsInstance(X, MultivariateDistribution)
+
+    def test_MVHypergeom_plot_raises(self):
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        self.assertRaises(Exception, X.plot)
+
+
 class TestDirichlet(unittest.TestCase):
 
     def test_Dirichlet_error_alpha_non_positive(self):
