@@ -1495,6 +1495,184 @@ class TestTruncatedNormal(unittest.TestCase):
         plt.close("all")
 
 
+class TestSkewNormal(unittest.TestCase):
+
+    @staticmethod
+    def delta(shape):
+        # The tilt on a 0-to-1 scale, which every summary formula runs through.
+        return shape / math.sqrt(1 + shape**2)
+
+    def test_SkewNormal_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(SkewNormal(loc=0, scale=1, shape=4))
+        sims = X.sim(Nsim)
+        cdf = stats.skewnorm(a=4, loc=0, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_SkewNormal_general_params_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(SkewNormal(loc=70, scale=12, shape=-3))
+        sims = X.sim(Nsim)
+        cdf = stats.skewnorm(a=-3, loc=70, scale=12).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_SkewNormal_shape_zero_is_Normal(self):
+        # No tilt at all, so it should agree with the normal exactly.
+        X = SkewNormal(loc=5, scale=2, shape=0)
+        Y = Normal(mean=5, sd=2)
+        xs = np.linspace(-5, 15, 501)
+        self.assertTrue(np.allclose(X.pdf(xs), Y.pdf(xs)))
+        self.assertTrue(np.allclose(X.cdf(xs), Y.cdf(xs)))
+        self.assertAlmostEqual(float(X.mean()), 5.0, places=8)
+        self.assertAlmostEqual(float(X.sd()), 2.0, places=8)
+
+    def test_SkewNormal_mean_var_sd(self):
+        # Tilting moves the center and shrinks the spread, both by amounts set
+        # by delta.
+        for loc, scale, shape in [
+            (0, 1, 0),
+            (0, 1, 4),
+            (0, 1, -4),
+            (2, 3, 1),
+            (70, 12, -3),
+        ]:
+            X = SkewNormal(loc=loc, scale=scale, shape=shape)
+            d = self.delta(shape)
+            expected_mean = loc + scale * d * math.sqrt(2 / math.pi)
+            expected_var = scale**2 * (1 - 2 * d**2 / math.pi)
+            self.assertAlmostEqual(float(X.mean()), expected_mean, places=8)
+            self.assertAlmostEqual(float(X.var()), expected_var, places=8)
+            self.assertAlmostEqual(float(X.sd()), math.sqrt(expected_var), places=8)
+
+    def test_SkewNormal_mean_is_not_loc_and_sd_is_not_scale(self):
+        # The trap worth pinning down: with a tilt, loc and scale are not the
+        # mean and sd -- the mean rises above loc and the sd falls below scale.
+        X = SkewNormal(loc=0, scale=1, shape=4)
+        self.assertGreater(float(X.mean()), 0)
+        self.assertLess(float(X.sd()), 1)
+        self.assertAlmostEqual(float(X.mean()), 0.7740617226, places=8)
+        self.assertAlmostEqual(float(X.var()), 0.4008284495, places=8)
+
+    def test_SkewNormal_stores_params(self):
+        X = SkewNormal(loc=2, scale=3, shape=-1.5)
+        self.assertEqual(X.loc, 2)
+        self.assertEqual(X.scale, 3)
+        self.assertEqual(X.shape, -1.5)
+        self.assertAlmostEqual(X.params["a"], -1.5, places=8)
+        self.assertEqual(X.params["loc"], 2)
+        self.assertEqual(X.params["scale"], 3)
+
+    def test_SkewNormal_skew_direction(self):
+        # Positive shape stretches the right tail, so the mean is pulled past
+        # the median; negative shape does the mirror image.
+        right = SkewNormal(loc=0, scale=1, shape=4)
+        self.assertLess(float(right.median()), float(right.mean()))
+        left = SkewNormal(loc=0, scale=1, shape=-4)
+        self.assertGreater(float(left.median()), float(left.mean()))
+        none = SkewNormal(loc=0, scale=1, shape=0)
+        self.assertAlmostEqual(float(none.median()), float(none.mean()), places=8)
+
+    def test_SkewNormal_negative_shape_is_mirror_image(self):
+        # Centered at 0, shape and -shape are reflections of one another.
+        xs = np.linspace(-4, 4, 801)
+        X = SkewNormal(loc=0, scale=1, shape=3)
+        Y = SkewNormal(loc=0, scale=1, shape=-3)
+        self.assertTrue(np.allclose(X.pdf(xs), Y.pdf(-xs)))
+        self.assertAlmostEqual(float(X.mean()), -float(Y.mean()), places=8)
+        self.assertAlmostEqual(float(X.sd()), float(Y.sd()), places=8)
+
+    def test_SkewNormal_matches_stochastic_representation(self):
+        # The mixture the density is built from: a one-sided half-normal piece
+        # weighted by delta, plus an ordinary normal piece.
+        distributions.rng = np.random.default_rng(42)
+        shape = 4
+        d = self.delta(shape)
+        Z, W = RV(HalfNormal(scale=1) * Normal(mean=0, sd=1))
+        sims = (d * Z + math.sqrt(1 - d**2) * W).sim(Nsim)
+        cdf = SkewNormal(loc=0, scale=1, shape=shape).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_SkewNormal_approaches_HalfNormal_as_shape_grows(self):
+        # A big tilt squeezes the left half away, leaving a half-normal.
+        xs = np.linspace(-3, 5, 2001)
+        errors = []
+        for shape in [1, 2, 5, 10, 100]:
+            X = SkewNormal(loc=0, scale=1, shape=shape)
+            errors.append(np.max(np.abs(X.cdf(xs) - stats.halfnorm.cdf(xs))))
+        self.assertTrue(all(x > y for x, y in zip(errors, errors[1:])))
+        self.assertLess(errors[-1], 0.01)
+
+    def test_SkewNormal_skewness_is_capped(self):
+        # However far the shape is pushed, the skewness stops near 0.995 --
+        # the docstring tells students to switch distributions rather than
+        # keep raising shape, so pin the ceiling down.
+        skewnesses = []
+        for shape in [1, 5, 100, 10000]:
+            X = SkewNormal(loc=0, scale=1, shape=shape)
+            skewness = float(stats.skewnorm(**X.params).stats("s"))
+            self.assertLess(skewness, 0.9953)
+            skewnesses.append(skewness)
+        self.assertTrue(all(x < y for x, y in zip(skewnesses, skewnesses[1:])))
+        self.assertGreater(skewnesses[-1], 0.995)
+
+    def test_SkewNormal_supported_on_all_real_numbers(self):
+        # The thin tail is thin, not missing: there is density on both sides
+        # for any shape.
+        X = SkewNormal(loc=0, scale=1, shape=8)
+        self.assertGreater(float(X.pdf(-2)), 0.0)
+        self.assertGreater(float(X.cdf(-2)), 0.0)
+        self.assertLess(float(X.cdf(6)), 1.0)
+
+    def test_SkewNormal_cdf_quantile_roundtrip(self):
+        X = SkewNormal(loc=70, scale=12, shape=-3)
+        for q in [0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99]:
+            self.assertAlmostEqual(float(X.cdf(X.quantile(q))), q, places=6)
+
+    def test_SkewNormal_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(SkewNormal().draw(), Scalar)
+
+    def test_SkewNormal_default_is_standard_normal(self):
+        X = SkewNormal()
+        self.assertEqual((X.loc, X.scale, X.shape), (0, 1, 0))
+        self.assertAlmostEqual(float(X.pdf(0)), float(Normal().pdf(0)), places=8)
+
+    def test_SkewNormal_xlim_is_equal_tailed_default(self):
+        # Unbounded on both sides, so no HDI trim -- the base window is used.
+        X = SkewNormal(loc=0, scale=1, shape=4)
+        self.assertAlmostEqual(X.xlim[0], float(X.quantile(0.001)), places=8)
+        self.assertAlmostEqual(X.xlim[1], float(X.quantile(0.999)), places=8)
+
+    def test_SkewNormal_invalid_params_raise(self):
+        for bad in [0, -1, "1", None]:
+            self.assertRaises(Exception, lambda b=bad: SkewNormal(scale=b))
+        for bad in ["1", None]:
+            self.assertRaises(Exception, lambda b=bad: SkewNormal(loc=b))
+            self.assertRaises(Exception, lambda b=bad: SkewNormal(shape=b))
+
+    def test_SkewNormal_shape_error_message_explains_the_parameter(self):
+        # shape has no invalid numbers, so the message should say what the
+        # values mean rather than just rejecting the input.
+        with self.assertRaises(Exception) as caught:
+            SkewNormal(shape="a lot")
+        message = str(caught.exception)
+        self.assertIn("shape = 0", message)
+        self.assertIn("right tail", message)
+        self.assertIn("left tail", message)
+
+    def test_SkewNormal_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        SkewNormal().draw()
+        RV(SkewNormal(loc=0, scale=1, shape=4)).sim(100).plot()
+        SkewNormal(loc=0, scale=1, shape=4).plot()
+        SkewNormal(loc=0, scale=1, shape=-4).plot(cdf=True)
+        SkewNormal(loc=0, scale=1, shape=20).plot(xlim="zoom")
+        plt.close("all")
+
+
 class TestExponential(unittest.TestCase):
 
     def test_Exponential_error(self):
