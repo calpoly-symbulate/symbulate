@@ -6185,3 +6185,124 @@ class Dirichlet(MultivariateDistribution):
         (0.19, 0.42, 0.39)
         """
         return Vector(rng.dirichlet(self.alpha))
+
+
+class MultivariateLogNormal(MultivariateDistribution):
+    """Probability space for a multivariate log-normal distribution.
+
+    The multivariate generalization of the log-normal: the elementwise
+    exponential of a :class:`MultivariateNormal`. If ``Y`` is multivariate
+    normal with mean vector ``mean`` and covariance ``cov``, then
+    ``X = exp(Y)`` (component by component) is multivariate log-normal. Each
+    component is positive, and each is marginally a univariate ``LogNormal``.
+    It models several positive, correlated quantities at once -- for example
+    correlated prices, incomes, or biological measurements.
+
+    The parameters ``mean`` and ``cov`` describe the *underlying normal*, not
+    the log-normal itself. The mean and covariance of the log-normal are
+    larger and follow a standard correction (see :meth:`mean` and
+    :meth:`cov`), because exponentiating stretches the upper tail.
+
+    Parameters
+    ----------
+    mean : array-like of length n
+        The mean vector of the underlying normal (the mean of ``log(X)``).
+    cov : array-like of shape (n, n)
+        The covariance matrix of the underlying normal (the covariance of
+        ``log(X)``). Must be symmetric and positive semi-definite.
+
+    Methods
+    -------
+    mean()
+        The mean vector of the log-normal, as a :class:`Vector`.
+    cov()
+        The covariance matrix of the log-normal, as a NumPy 2-D array.
+    var(), sd()
+        The per-component variances and standard deviations, as ``Vector``\\ s.
+    corr()
+        The correlation matrix, as a NumPy 2-D array.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = MultivariateLogNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+    >>> X.draw()  # doctest: +SKIP
+    (0.72, 3.41)
+
+    See Also
+    --------
+    MultivariateNormal : The distribution whose exponential this is.
+    LogNormal : The univariate log-normal that each component follows.
+    """
+
+    def __init__(self, mean, cov):
+        """Initialize a multivariate log-normal distribution.
+
+        Raises
+        ------
+        Exception
+            If the mean vector is empty; if the mean and covariance matrix
+            have incompatible sizes; if the covariance matrix is not square;
+            or if it is not symmetric positive semi-definite. (These are the
+            same requirements as the underlying multivariate normal.)
+        """
+        # The log-normal is exp() of this normal; composing it reuses all of
+        # the underlying normal's validation (shape, symmetry, PSD) and its
+        # sampling, so nothing is duplicated here.
+        self._normal = MultivariateNormal(mean, cov)
+        self.discrete = False
+        # The density on the positive orthant is the normal density of log(x),
+        # divided by the Jacobian product of the components.
+        self.pdf = lambda x: self._normal.pdf(np.log(x)) / np.prod(x)
+
+    def mean(self):
+        """Return the mean vector of the log-normal.
+
+        This is not the exponential of the underlying mean: each component is
+        ``exp(mean_i + cov_ii / 2)``, larger than ``exp(mean_i)`` because
+        exponentiating stretches the upper tail.
+
+        Returns
+        -------
+        Vector
+            The mean of each component.
+        """
+        mu = np.asarray(self._normal.mean(), dtype=float)
+        variances = np.diag(self._normal.cov())
+        return Vector(np.exp(mu + variances / 2))
+
+    def cov(self):
+        """Return the covariance matrix of the log-normal.
+
+        Each entry is
+        ``exp(mean_i + mean_j + (cov_ii + cov_jj) / 2) * (exp(cov_ij) - 1)``,
+        the standard transform of the underlying normal's covariance.
+
+        Returns
+        -------
+        numpy.ndarray
+            The covariance matrix.
+        """
+        mu = np.asarray(self._normal.mean(), dtype=float)
+        sigma = self._normal.cov()
+        variances = np.diag(sigma)
+        return np.exp(np.add.outer(mu, mu) + np.add.outer(variances, variances) / 2) * (
+            np.exp(sigma) - 1
+        )
+
+    def draw(self):
+        """Draw a single random sample from the multivariate log-normal distribution.
+
+        Returns
+        -------
+        Vector
+            A random vector of positive values -- the elementwise exponential
+            of a draw from the underlying multivariate normal.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> MultivariateLogNormal(mean=[0, 0], cov=[[1, 0], [0, 1]]).draw()  # doctest: +SKIP
+        (0.72, 3.41)
+        """
+        return Vector(np.exp(np.asarray(self._normal.draw(), dtype=float)))

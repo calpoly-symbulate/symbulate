@@ -75,6 +75,7 @@ from .distributions import (
     MultivariateNormal,
     BivariateNormal,
     MultivariateT,
+    MultivariateLogNormal,
     Wishart,
     InverseWishart,
     Multinomial,
