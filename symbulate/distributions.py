@@ -1142,7 +1142,7 @@ class NegativeBinomial(Distribution):
 
         Returns
         -------
-        int
+        Scalar
             The total number of trials (including the ``r`` successes)
             until the ``r``-th success.
 
@@ -1155,7 +1155,10 @@ class NegativeBinomial(Distribution):
 
         # Numpy's negative binomial returns numbers in [0, inf),
         # but we want numbers in [r, inf).
-        return self.r + rng.negative_binomial(n=self.r, p=self.p)
+        # Wrapped in Scalar so this override returns the same type as every
+        # other `draw` (the base class returns `Scalar(...)`); `Int` subclasses
+        # `int`, so nothing that treated this as a plain int is affected.
+        return Scalar(self.r + rng.negative_binomial(n=self.r, p=self.p))
 
 
 class Pascal(Distribution):
@@ -1308,13 +1311,21 @@ class DiscreteUniform(Distribution):
         Raises
         ------
         Exception
-            If ``a`` or ``b`` is not a number, or if ``b`` is less than ``a``.
+            If ``a`` or ``b`` is not an integer, or if ``b`` is less than
+            ``a``.
         """
+        # The bounds must be whole numbers, not just numbers: this
+        # distribution puts equal probability on the *integers* from a to b,
+        # and scipy's randint returns nan for every pmf, mean, and quantile
+        # when handed a fractional bound -- with no error of its own -- so a
+        # fractional bound has to be caught here or it fails silently later.
         _validate(
-            (not isinstance(a, numbers.Real), "a must be a number"),
-            (not isinstance(b, numbers.Real), "b must be a number"),
+            (not isinstance(a, numbers.Integral), "a must be an integer"),
+            (not isinstance(b, numbers.Integral), "b must be an integer"),
             (
-                isinstance(a, numbers.Real) and isinstance(b, numbers.Real) and a > b,
+                isinstance(a, numbers.Integral)
+                and isinstance(b, numbers.Integral)
+                and a > b,
                 "b cannot be less than a",
             ),
         )
@@ -3796,7 +3807,7 @@ class Cauchy(Distribution):
 
         Returns
         -------
-        float
+        Scalar
             One random value drawn from the Cauchy distribution.
 
         Examples
@@ -3805,7 +3816,10 @@ class Cauchy(Distribution):
         >>> Cauchy().draw()  # doctest: +SKIP
         1.48
         """
-        return self.loc + (self.scale * rng.standard_cauchy())
+        # Wrapped in Scalar to match the base class and every other `draw`;
+        # `Float` subclasses `float`, so this stays usable anywhere the plain
+        # float was.
+        return Scalar(self.loc + (self.scale * rng.standard_cauchy()))
 
 
 class LogNormal(Distribution):
@@ -3865,17 +3879,53 @@ class LogNormal(Distribution):
         self.norm_mean = mu
 
         if sigma == 0:
+            # A point mass at exp(mu): there is no scipy object to delegate to,
+            # so every method this branch needs is supplied by hand. They are
+            # written to accept an array as well as a single number, because
+            # `plot` evaluates them on a grid of x-values -- passing an array
+            # to a scalar-only `pdf` used to raise a bare TypeError.
             _value = np.exp(mu)
+
+            def _scalar_or_array(values, x):
+                """Return a plain float for a single x, an array for an array."""
+                return float(values) if np.ndim(x) == 0 else values
+
             self.s = 0
             self.norm_sd = 0
             self.discrete = False
             self.params = {"s": 0, "scale": _value}
-            self.pdf = lambda x: float(x == _value)
-            self.cdf = lambda x: 0.0 if x < _value else 1.0
+            self.pdf = lambda x: _scalar_or_array(
+                np.where(np.asarray(x, dtype=float) == _value, 1.0, 0.0), x
+            )
+            self.cdf = lambda x: _scalar_or_array(
+                np.where(np.asarray(x, dtype=float) < _value, 0.0, 1.0), x
+            )
+            # Every quantile of a point mass is the point itself; a probability
+            # outside [0, 1] gives nan, matching scipy's `ppf`.
+            self.quantile = lambda q: _scalar_or_array(
+                np.where(
+                    (np.asarray(q, dtype=float) >= 0)
+                    & (np.asarray(q, dtype=float) <= 1),
+                    _value,
+                    np.nan,
+                ),
+                q,
+            )
             self.mean = lambda: _value
             self.var = lambda: 0.0
             self.sd = lambda: 0.0
             self.median = lambda: _value
+
+            # `__pow__` draws through `sim_func`, so supply one with the same
+            # calling convention scipy's `rvs` has (the `**self.params` keywords
+            # plus `size` and `random_state`). Without it, `LogNormal(mu, 0) ** n`
+            # failed with a bare AttributeError.
+            def _degenerate_rvs(s=None, scale=None, size=None, random_state=None):
+                if size is None:
+                    return _value
+                return np.full(size, _value)
+
+            self.sim_func = _degenerate_rvs
             self.xlim = (0, _value + 1)
             ProbabilitySpace.__init__(self, lambda: Scalar(_value))
             return
@@ -3954,7 +4004,7 @@ class Pareto(Distribution):
 
         Returns
         -------
-        float
+        Scalar
             One random value drawn from the Pareto distribution.
             Always greater than or equal to ``scale``.
 
@@ -3966,8 +4016,11 @@ class Pareto(Distribution):
         """
 
         # Numpy's Pareto is Lomax distribution, or Type II Pareto
-        # but we want the more standard parametrization
-        return self.scale * (1 + rng.pareto(self.shape))
+        # but we want the more standard parametrization.
+        # Wrapped in Scalar to match the base class and every other `draw`;
+        # `Float` subclasses `float`, so this stays usable anywhere the plain
+        # float was.
+        return Scalar(self.scale * (1 + rng.pareto(self.shape)))
 
 
 class Burr(Distribution):
@@ -4516,8 +4569,14 @@ class Makeham(Distribution):
     A continuous distribution on [0, infinity) used in actuarial science
     to model human mortality. It is the Gompertz law plus a constant,
     age-independent hazard term (the "accident" term): the force of
-    mortality is ``makeham + shape * e**(x / scale) / scale``. Setting
+    mortality is ``(makeham + shape * e**(x / scale)) / scale``. Setting
     ``makeham = 0`` recovers the plain :class:`Gompertz` distribution.
+
+    Note where the ``scale`` divides: it divides the *whole* hazard, so the
+    constant term contributes ``makeham / scale``, not ``makeham``. The two
+    parameters are therefore on the same footing -- both are measured
+    before the age axis is stretched -- but it does mean that at a
+    ``scale`` other than 1, ``makeham`` is not itself the constant hazard.
 
     Parameters
     ----------
@@ -5531,6 +5590,53 @@ class Wishart(Distribution):
         self.discrete = False
         self.pdf = lambda x: stats.wishart(df=self.df, scale=self.scale).pdf(x)
 
+    def mean(self):
+        """Return the mean matrix, ``df * scale``.
+
+        Returns
+        -------
+        Vector
+            The ``p x p`` mean matrix, stored as a vector of its rows -- the
+            same shape :meth:`draw` returns, so a draw and the mean can be
+            compared entry by entry.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> X = Wishart(df=5, scale=[[1, 0], [0, 1]])
+        >>> [[float(v) for v in row] for row in X.mean()]
+        [[5.0, 0.0], [0.0, 5.0]]
+        """
+        matrix = self.df * np.asarray(self.scale, dtype=float)
+        return Vector(Vector(row) for row in matrix)
+
+    def _no_vector_summary(self, name):
+        """Explain why a vector-shaped summary does not apply to a matrix draw."""
+        raise Exception(
+            "`%s()` is not available for the Wishart distribution, because "
+            "each draw is a whole %d x %d matrix rather than a vector, so "
+            "there is no single list of per-component values to report. Use "
+            "`.mean()` for the mean matrix (df * scale). To summarize the "
+            "spread, simulate matrices and summarize the entries you care "
+            "about, e.g. RV(X).sim(1000)." % (name, len(self.scale), len(self.scale))
+        )
+
+    def var(self):
+        """Not available for a matrix-valued distribution. See :meth:`mean`."""
+        self._no_vector_summary("var")
+
+    def sd(self):
+        """Not available for a matrix-valued distribution. See :meth:`mean`."""
+        self._no_vector_summary("sd")
+
+    def cov(self):
+        """Not available for a matrix-valued distribution. See :meth:`mean`."""
+        self._no_vector_summary("cov")
+
+    def corr(self):
+        """Not available for a matrix-valued distribution. See :meth:`mean`."""
+        self._no_vector_summary("corr")
+
     def plot(self):
         """Plot is not supported for matrix-valued distributions.
 
@@ -5672,6 +5778,68 @@ class InverseWishart(Distribution):
 
         self.discrete = False
         self.pdf = lambda x: stats.invwishart(df=self.df, scale=self.scale).pdf(x)
+
+    def mean(self):
+        """Return the mean matrix, ``scale / (df - p - 1)``.
+
+        Returns
+        -------
+        Vector
+            The ``p x p`` mean matrix, stored as a vector of its rows -- the
+            same shape :meth:`draw` returns.
+
+        Raises
+        ------
+        Exception
+            If ``df <= p + 1``, where the mean does not exist. (The
+            distribution itself is still perfectly well defined there, and
+            can still be drawn from -- only its mean is undefined.)
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> X = InverseWishart(df=5, scale=[[1, 0], [0, 1]])
+        >>> [[float(v) for v in row] for row in X.mean()]
+        [[0.5, 0.0], [0.0, 0.5]]
+        """
+        p = len(self.scale)
+        if self.df <= p + 1:
+            raise Exception(
+                "The mean of an inverse-Wishart exists only for df > p + 1, "
+                "where p is the dimension of the scale matrix; here df = %s "
+                "and p = %d, so df must be greater than %d. The distribution "
+                "can still be drawn from -- only its mean is undefined."
+                % (self.df, p, p + 1)
+            )
+        matrix = np.asarray(self.scale, dtype=float) / (self.df - p - 1)
+        return Vector(Vector(row) for row in matrix)
+
+    def _no_vector_summary(self, name):
+        """Explain why a vector-shaped summary does not apply to a matrix draw."""
+        raise Exception(
+            "`%s()` is not available for the inverse-Wishart distribution, "
+            "because each draw is a whole %d x %d matrix rather than a vector, "
+            "so there is no single list of per-component values to report. Use "
+            "`.mean()` for the mean matrix (scale / (df - p - 1)). To summarize "
+            "the spread, simulate matrices and summarize the entries you care "
+            "about, e.g. RV(X).sim(1000)." % (name, len(self.scale), len(self.scale))
+        )
+
+    def var(self):
+        """Not available for a matrix-valued distribution. See :meth:`mean`."""
+        self._no_vector_summary("var")
+
+    def sd(self):
+        """Not available for a matrix-valued distribution. See :meth:`mean`."""
+        self._no_vector_summary("sd")
+
+    def cov(self):
+        """Not available for a matrix-valued distribution. See :meth:`mean`."""
+        self._no_vector_summary("cov")
+
+    def corr(self):
+        """Not available for a matrix-valued distribution. See :meth:`mean`."""
+        self._no_vector_summary("corr")
 
     def plot(self):
         """Plot is not supported for matrix-valued distributions.
@@ -6650,8 +6818,13 @@ class MultivariateLogNormal(MultivariateDistribution):
         self._normal = MultivariateNormal(mean, cov)
         self.discrete = False
         # The density on the positive orthant is the normal density of log(x),
-        # divided by the Jacobian product of the components.
-        self.pdf = lambda x: self._normal.pdf(np.log(x)) / np.prod(x)
+        # divided by the Jacobian product of the components. The product runs
+        # over the last axis only -- the components of one vector -- so a 2-D
+        # input (one vector of values per row) divides each row by its own
+        # Jacobian instead of by the product of the whole array.
+        self.pdf = lambda x: self._normal.pdf(np.log(x)) / np.prod(
+            np.asarray(x, dtype=float), axis=-1
+        )
 
     def mean(self):
         """Return the mean vector of the log-normal.
