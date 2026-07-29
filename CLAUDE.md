@@ -30,7 +30,9 @@ must be understandable by a general audience without assuming prior knowledge.
   and live (see "classify_data" below).
 - `symbulate/results.py` — RVResults.plot() dispatch method (main entry point)
 - `symbulate/result.py` — plot() on individual TimeFunction and Tuple objects
-- `symbulate/distributions.py` — plot() on distribution objects (true pdf/pmf)
+- `symbulate/distributions.py` — plot() on distribution objects (true pdf/pmf),
+  plus the default plotting window: `xlim` is a lazy property whose value comes
+  from `Distribution._compute_xlim` (see "Distribution Plotting Window" below)
 - `symbulate/__init__.py` — public API; do not change without team discussion
 - `tests/` — pytest test suite; every PR adds at least one test
 
@@ -185,6 +187,37 @@ more tentative overlay-specific addendum too). Summary of defaults only:
 | Process time point, continuous-valued | Dot plot | Histogram |
 | 1D categorical / string | Dot plot | Impulse |
 
+## Distribution Plotting Window (`xlim`)
+
+`Distribution.xlim` is a **lazy property**, computed on first read by
+`Distribution._compute_xlim` and cached. Never compute it in `__init__`: a
+window is only needed for plotting, but `__init__` runs once per *draw* inside
+`PoissonProcess` and `ContinuousTimeMarkovChain` (they build a fresh
+`Exponential` every draw), so eager computation charges every simulated value
+for a plot nobody asked for. This was a real 26-second bug.
+
+One rule, applied to each end of the support independently — **a fixed bound is
+used as-is, an unbounded side is cut at a quantile** (`_PLOT_TAIL = 0.001`):
+
+| Support | Default `xlim` | Example |
+|---|---|---|
+| bounded both ends | full support | `Binomial(1000, 0.5)` → `(0, 1000)` |
+| fixed lower only | `(lower, quantile(0.999))` | `Poisson`, `Exponential` start at 0 |
+| fixed upper only | `(quantile(0.001), upper)` | none currently |
+| unbounded both ends | `(quantile(0.001), quantile(0.999))` | `Normal` |
+
+Bounds are read from scipy's own `support()` via `Distribution._scipy`, so a new
+distribution gets the right window with **no per-distribution code**. In
+`plot(xlim=)`: `None` applies the rule, `(a, b)` sets exact limits, and
+`"zoom"` cuts both ends at a quantile — framing the distribution as if it had
+no fixed bounds, so `Binomial(1000, 0.5)` zooms to ~`(451, 549)`.
+
+A highest-density interval (HDI) used to set this window. It was **removed** —
+it cost a root-find per distribution to buy a window only 5–26% narrower on
+most distributions, and one still unreadable on the heavy-tailed ones it was
+meant to help. See `DECISIONS.md`, "Decision: Default Plotting Window (HDI
+Removed)" for the measurements.
+
 ## Suggestion Messages
 
 Print a message after **every** plot renders — this fires whether or not
@@ -285,6 +318,8 @@ pytest tests/
 - Do not hardcode per-plot-type alpha or line-width values inline — use the named constants at the top of `plot.py` (rcParams can't express per-plot-type values)
 - Do not reintroduce `is_discrete()` into `results.py` — `classify_data()` is the live discreteness check there now. (`is_discrete()` remains a standalone utility in `math.py`; leave it.)
 - Do not hardcode the discreteness thresholds — use `B_1D` (1-D) and `K_2D` (2-D per axis) from `plot.py`, passed into `classify_data()` at the `results.py` dispatch (`B_1D` for 1-D, `K_2D` per axis for 2-D). Values are provisional (see `DECISIONS.md`).
+- Do not set `self.xlim` in a new distribution's `__init__`, and do not compute a window there — `Distribution._compute_xlim` derives it from scipy's `support()` on first read (see "Distribution Plotting Window"). The only exception is a degenerate branch that skips `Distribution.__init__` and so has no scipy object.
+- Do not reintroduce the highest-density interval (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, `_PLOT_COVERAGE`, `_hdi_window`) — removed by team decision; there are tests asserting it stays gone.
 - Do not rename `type=` to `kind=` or anything else — considered and decided against.
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
 - Do not use `viridis_r` (reversed) for 2D density/tile/hist2d — plain `viridis`, 0 = dark.

@@ -1,4 +1,6 @@
+import inspect
 import math
+import re
 import unittest
 import numpy as np
 import scipy.stats as stats
@@ -1761,7 +1763,7 @@ class TestSkewNormal(unittest.TestCase):
         self.assertAlmostEqual(float(X.pdf(0)), float(Normal().pdf(0)), places=8)
 
     def test_SkewNormal_xlim_is_equal_tailed_default(self):
-        # Unbounded on both sides, so no HDI trim -- the base window is used.
+        # Unbounded on both sides, so both ends are quantile cuts.
         X = SkewNormal(loc=0, scale=1, shape=4)
         self.assertAlmostEqual(X.xlim[0], float(X.quantile(0.001)), places=8)
         self.assertAlmostEqual(X.xlim[1], float(X.quantile(0.999)), places=8)
@@ -2001,7 +2003,7 @@ class TestExponentiallyModifiedGaussian(unittest.TestCase):
         self.assertIsInstance(ExponentiallyModifiedGaussian().draw(), Scalar)
 
     def test_EMG_xlim_is_equal_tailed_default(self):
-        # Unbounded on both sides, so no HDI trim -- the base window is used.
+        # Unbounded on both sides, so both ends are quantile cuts.
         X = ExponentiallyModifiedGaussian(mean=0, sd=1, rate=1)
         self.assertAlmostEqual(X.xlim[0], float(X.quantile(0.001)), places=8)
         self.assertAlmostEqual(X.xlim[1], float(X.quantile(0.999)), places=8)
@@ -3591,12 +3593,14 @@ class TestHalfCauchy(unittest.TestCase):
             self.assertAlmostEqual(float(X.cdf(x)), float(th.cdf(x)), places=8)
 
     def test_HalfCauchy_xlim_anchored_at_zero_and_covers_probability(self):
-        # A monotone-decreasing density peaks at its lower support bound, so
-        # the highest-density window starts exactly at 0 (not ppf(0.001)).
+        # Support is [0, inf): the fixed lower bound is used as-is, so the
+        # window starts exactly at 0 (not ppf(0.001)), and the unbounded upper
+        # side is a quantile cut.
         X = HalfCauchy(scale=1)
         low, high = X.xlim
         self.assertEqual(low, 0.0)
-        self.assertAlmostEqual(float(X.cdf(high)) - float(X.cdf(low)), 0.998, places=4)
+        self.assertAlmostEqual(high, float(X.quantile(0.999)), places=8)
+        self.assertAlmostEqual(float(X.cdf(high)) - float(X.cdf(low)), 0.999, places=4)
 
     def test_HalfCauchy_draw_is_scalar_in_support(self):
         distributions.rng = np.random.default_rng(0)
@@ -5110,30 +5114,45 @@ class TestStackedErrorMessages(unittest.TestCase):
 
 
 class TestDistributionXlim(unittest.TestCase):
-    """Default plotting x-limits (task 10).
+    """Default plotting x-limits.
 
-    Bounded distributions keep their true full support; skewed unbounded
-    distributions use a highest-density interval; symmetric unbounded ones
-    stay on the equal-tailed window. All checks read the closed-form
-    ``xlim`` (no simulation), so they are deterministic.
+    One rule, applied to each end of the support independently: a **fixed
+    bound is used as-is**, an **unbounded side is cut at a quantile**
+    (``_PLOT_TAIL`` / ``1 - _PLOT_TAIL``). This replaced a highest-density
+    interval, which was removed: it cost a root-find per distribution to buy
+    a window only a few percent narrower on most distributions, and one still
+    too wide to read on the heavy-tailed ones it was meant to help.
+
+    All checks read the closed-form ``xlim`` (no simulation), so they are
+    deterministic.
     """
 
-    COVERAGE = distributions._PLOT_COVERAGE
+    TAIL = distributions._PLOT_TAIL
 
-    # --- bounded distributions keep true full support (HDI must not leak in) ---
+    def _quantile_window(self, d):
+        return (float(d.quantile(self.TAIL)), float(d.quantile(1 - self.TAIL)))
+
+    # --- bounded both ends: the full true support, nothing trimmed ---
 
     def test_binomial_keeps_full_support(self):
-        # The large-n case is the tempting one to trim, and must not be.
+        # The motivating example: the large-n case is the tempting one to
+        # trim, and must show all of (0, n). `xlim="zoom"` is how a student
+        # zooms in instead.
         self.assertEqual(Binomial(1000, 0.5).xlim, (0, 1000))
         self.assertEqual(Binomial(10, 0.3).xlim, (0, 10))
 
     def test_bounded_continuous_keep_full_support(self):
         self.assertEqual(Beta(2, 5).xlim, (0, 1))
         self.assertEqual(Uniform(2, 7).xlim, (2, 7))
+        self.assertEqual(Kumaraswamy(2, 3).xlim, (0, 1))
+        self.assertEqual(Triangular(0, 2, 5).xlim, (0, 5))
+        self.assertEqual(TruncatedNormal(0, 1, a=-2, b=2).xlim, (-2, 2))
 
     def test_bounded_discrete_keep_full_support(self):
         self.assertEqual(DiscreteUniform(1, 6).xlim, (1, 6))
         self.assertEqual(Bernoulli(0.3).xlim, (0, 1))
+        self.assertEqual(BetaBinomial(10, 2, 3).xlim, (0, 10))
+        self.assertEqual(Zipf(2, 10).xlim, (1, 10))
 
     def test_hypergeometric_window_holds_all_mass(self):
         # Its support isn't a simple (0, n), so assert the window covers all
@@ -5142,149 +5161,236 @@ class TestDistributionXlim(unittest.TestCase):
         lo, hi = d.xlim
         self.assertAlmostEqual(float(d.cdf(hi) - d.cdf(lo - 1)), 1.0, places=9)
 
-    # --- symmetric unbounded stay on the equal-tailed window (HDI == that) ---
+    # --- unbounded both ends: a quantile cut at each end ---
 
-    def test_symmetric_unbounded_stay_equal_tailed(self):
-        for d in [Normal(0, 1), StudentT(5), Cauchy(0, 1)]:
-            lo, hi = d.xlim
-            self.assertAlmostEqual(lo, float(d.quantile(0.001)), places=6)
-            self.assertAlmostEqual(hi, float(d.quantile(0.999)), places=6)
+    def test_symmetric_unbounded_are_quantile_cut(self):
+        for d in [Normal(0, 1), StudentT(5), Cauchy(0, 1), Laplace(0, 1)]:
+            self.assertEqual(d.xlim, self._quantile_window(d))
 
-    # --- unbounded discrete: exact highest-density interval ---
+    def test_skewed_unbounded_are_quantile_cut(self):
+        # Skew no longer changes the rule -- that was the HDI's job.
+        for d in [Gumbel(), GEV(), LogGamma(2), SkewT(2, 3)]:
+            self.assertEqual(d.xlim, self._quantile_window(d))
 
-    def test_poisson_hdi_trims_right_tail(self):
-        # Right-skewed: keeps the dense low values, trims the thin upper tail
-        # below where the equal-tailed window would have stopped.
-        d = Poisson(0.5)
-        lo, hi = d.xlim
-        self.assertEqual(lo, 0)
-        self.assertLess(hi, int(d.quantile(0.999)))
+    # --- fixed lower bound only: true bound below, quantile cut above ---
 
-    def test_discrete_hdi_covers_target(self):
+    def test_fixed_lower_bound_used_as_is(self):
+        self.assertEqual(Poisson(2).xlim[0], 0)
+        self.assertEqual(Exponential(rate=2).xlim[0], 0)
+        self.assertEqual(Gamma(2, 3).xlim[0], 0)
+        self.assertEqual(Rayleigh().xlim[0], 0)
+        self.assertEqual(Geometric(0.3).xlim[0], 1)
+        self.assertEqual(NegativeBinomial(4, 0.3).xlim[0], 4)
+        self.assertEqual(Pareto(3, 5).xlim[0], 5)  # scale
+        self.assertEqual(GPD(loc=2, scale=1, shape=0.3).xlim[0], 2)  # loc
+
+    def test_fixed_lower_bound_upper_edge_is_quantile(self):
+        # This is what the HDI removal changed: the upper edge is now exactly
+        # quantile(1 - _PLOT_TAIL), with no highest-density trim.
         for d in [
-            Poisson(3),
-            Poisson(50),
-            Geometric(0.3),
-            NegativeBinomial(3, 0.5),
-            Pascal(2, 0.3),
-        ]:
-            lo, hi = d.xlim
-            cover = float(d.cdf(hi) - d.cdf(lo - 1))
-            self.assertGreaterEqual(cover, self.COVERAGE - 1e-9)
-
-    def test_discrete_hdi_respects_support_lower_bound(self):
-        self.assertGreaterEqual(Geometric(0.3).xlim[0], 1)
-        self.assertGreaterEqual(NegativeBinomial(3, 0.5).xlim[0], 3)
-
-    # --- skewed unbounded continuous: HDI via equal-density root-finding ---
-
-    def test_continuous_hdi_covers_target(self):
-        for d in [
-            Gamma(2),
-            Gamma(0.5),
-            ChiSquare(10),
-            ChiSquare(1),
-            F(5, 10),
+            Poisson(2),
+            Exponential(rate=2),
+            Gamma(2, 3),
+            ChiSquare(4),
+            F(5, 7),
             LogNormal(0, 1),
-            Pareto(2, 1),
-            GPD(loc=0, scale=1, shape=0.3),
+            Weibull(2, 3),
+            Geometric(0.3),
+            Pareto(3, 2),
         ]:
-            lo, hi = d.xlim
             self.assertAlmostEqual(
-                float(d.cdf(hi) - d.cdf(lo)), self.COVERAGE, places=3
+                float(d.xlim[1]), float(d.quantile(1 - self.TAIL)), places=9
             )
 
-    def test_continuous_interior_mode_endpoints_equal_density(self):
-        # For an interior-mode density the two HDI endpoints are the pair of
-        # equal-density points enclosing the coverage.
-        for d in [Gamma(9), ChiSquare(10), F(5, 10), LogNormal(0, 1)]:
-            lo, hi = d.xlim
-            self.assertAlmostEqual(float(d.pdf(lo)), float(d.pdf(hi)), places=6)
+    # --- the rule holds for every distribution, read from the true support ---
 
-    def test_continuous_monotone_starts_at_support_bound(self):
-        # Monotone-decreasing densities peak at the lower bound, so the HDI
-        # keeps that bound instead of solving for a left equal-density point.
-        self.assertEqual(Pareto(2, 1).xlim[0], 1)  # scale
-        self.assertEqual(Pareto(3, 5).xlim[0], 5)  # scale
-        self.assertEqual(GPD(loc=0, scale=1, shape=0.3).xlim[0], 0)  # loc
-        self.assertEqual(GPD(loc=2, scale=1, shape=0.3).xlim[0], 2)  # loc
-        self.assertEqual(Gamma(0.5).xlim[0], 0)  # shape < 1 -> mode at 0
-        self.assertEqual(ChiSquare(1).xlim[0], 0)  # df = 1 -> mode at 0
-
-    def test_skewed_hdi_narrower_than_equal_tailed(self):
-        # The whole point: for a skewed density the HDI is the shortest window
-        # for its coverage, so it is narrower than the old equal-tailed span.
-        for d in [Gamma(2), LogNormal(0, 1), F(5, 10)]:
+    def test_rule_matches_true_support_for_every_distribution(self):
+        # Data-driven: whatever scipy reports as the support, a finite end must
+        # appear verbatim in xlim and an infinite end must be a quantile.
+        for d in [
+            Bernoulli(0.3),
+            Binomial(1000, 0.5),
+            BetaBinomial(10, 2, 3),
+            Hypergeometric(5, 10, 7),
+            NegativeHypergeometric(3, 5, 4),
+            DiscreteUniform(1, 6),
+            DeMoivre(6),
+            Zipf(2, 10),
+            Uniform(1, 4),
+            Beta(2, 3),
+            Kumaraswamy(2, 3),
+            LogUniform(2, 3),
+            Bates(5),
+            IrwinHall(5),
+            PERT(0, 2, 5),
+            Triangular(0, 2, 5),
+            TruncatedNormal(0, 1, a=-2, b=2),
+            BetaNegativeBinomial(3, 2, 4),
+            Geometric(0.3),
+            NegativeBinomial(4, 0.3),
+            Pascal(4, 0.3),
+            Poisson(2),
+            Exponential(rate=2),
+            Gamma(2, 3),
+            InverseGamma(3, 2),
+            ChiSquare(4),
+            F(5, 7),
+            LogNormal(0, 1),
+            Pareto(3, 2),
+            Burr(3, 2),
+            Lomax(3),
+            Rayleigh(),
+            HalfNormal(2),
+            HalfCauchy(2),
+            Weibull(2, 3),
+            Gompertz(2, 3),
+            Makeham(2, 3, 1),
+            GPD(0.3, 1, 2),
+            Normal(0, 1),
+            Cauchy(),
+            StudentT(5),
+            Logistic(),
+            Laplace(),
+            Gumbel(),
+            GEV(),
+            LogGamma(2),
+            SkewT(2, 3),
+            ExponentiallyModifiedGaussian(),
+        ]:
+            name = type(d).__name__
+            support_low, support_high = d._support()
             lo, hi = d.xlim
-            equal_tailed_width = float(d.quantile(0.999)) - float(d.quantile(0.001))
-            self.assertLess(hi - lo, equal_tailed_width)
+            if np.isfinite(support_low):
+                self.assertEqual(float(lo), support_low, name)
+            else:
+                self.assertAlmostEqual(float(lo), float(d.quantile(self.TAIL)), 9, name)
+            if np.isfinite(support_high):
+                self.assertEqual(float(hi), support_high, name)
+            else:
+                self.assertAlmostEqual(
+                    float(hi), float(d.quantile(1 - self.TAIL)), 9, name
+                )
+
+    # --- degenerate parameters still give a usable, ordered window ---
+
+    def test_degenerate_parameters_give_ordered_window(self):
+        # scipy can return a quantile outside its own support for a degenerate
+        # parameter -- geom.ppf(0.999, p=1) is 0.0 although the support starts
+        # at 1 -- which would invert the window. It must collapse onto the
+        # exact support bound instead.
+        # scipy itself warns ("divide by zero in log1p") when asked for a
+        # quantile of a degenerate discrete distribution; that noise is not
+        # what this test is about.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            self.assertEqual(Geometric(1).xlim, (1, 1))
+            for d in [
+                Geometric(1),
+                Poisson(0),
+                Zipf(2, 1),
+                Bernoulli(0),
+                Bernoulli(1),
+                NegativeBinomial(3, 1),
+                Pascal(3, 1),
+                DiscreteUniform(3, 3),
+            ]:
+                lo, hi = d.xlim
+                self.assertLessEqual(lo, hi, type(d).__name__)
+
+    # --- the HDI machinery is gone and must stay gone ---
+
+    def test_hdi_helpers_removed(self):
+        for name in ["_discrete_hdi_xlim", "_continuous_hdi_xlim", "_PLOT_COVERAGE"]:
+            self.assertFalse(
+                hasattr(distributions, name),
+                f"{name} was removed with the HDI window; do not reintroduce it",
+            )
+        self.assertFalse(hasattr(Normal(0, 1), "_hdi_window"))
+
+    def test_source_mentions_no_hdi(self):
+        source = inspect.getsource(distributions)
+        self.assertNotIn("hdi", source.lower())
 
 
 class TestDistributionXlimZoom(unittest.TestCase):
     """The ``xlim`` parameter of ``Distribution.plot()``.
 
-    ``xlim=None`` (default) uses the distribution's own window: full
-    support when both ends are bounded, and a highest-density probability
-    cut where a side is unbounded. ``xlim="zoom"`` frames the plot on the
-    tightest window holding ``_PLOT_COVERAGE`` of the probability -- the
-    same window, applied even to a bounded distribution whose default
-    shows full support. ``xlim=(a, b)`` sets exact limits. Most checks
-    read the deterministic ``_hdi_window`` helper; the overlay and
-    rendering checks use a non-interactive backend.
+    ``xlim=None`` (default) applies the rule in
+    :class:`TestDistributionXlim`. ``xlim=(a, b)`` sets exact limits.
+    ``xlim="zoom"`` cuts **both** ends at a quantile -- i.e. frames the
+    distribution as if it had no fixed bounds -- so a bounded distribution
+    zooms in on where the probability actually lives without the student
+    working out endpoints. The overlay and rendering checks use a
+    non-interactive backend.
     """
 
-    COVERAGE = distributions._PLOT_COVERAGE
+    TAIL = distributions._PLOT_TAIL
 
     def tearDown(self):
         plt.close("all")
 
-    # --- the zoom window covers the standard share of the probability ---
+    # --- zoom is exactly the two-sided quantile window ---
 
-    def test_zoom_window_covers_target_discrete(self):
-        for d in [Binomial(100, 0.5), Poisson(20), Geometric(0.2)]:
-            lo, hi = d._hdi_window()
-            cover = float(d.cdf(hi) - d.cdf(lo - 1))
-            self.assertGreaterEqual(cover, self.COVERAGE - 1e-9)
-
-    def test_zoom_window_covers_target_continuous(self):
-        for d in [Gamma(2), LogNormal(0, 1), Normal(0, 1)]:
-            lo, hi = d._hdi_window()
-            self.assertAlmostEqual(
-                float(d.cdf(hi) - d.cdf(lo)), self.COVERAGE, places=3
-            )
-
-    # --- xlim="zoom" trims a bounded distribution's full-support default ---
-
-    def test_zoom_trims_bounded_binomial(self):
-        d = Binomial(100, 0.5)
-        self.assertEqual(d.xlim, (0, 100))  # default window unchanged
-        lo, hi = d._hdi_window()
-        self.assertGreater(lo, 0)
-        self.assertLess(hi, 100)
-
-    # --- xlim="zoom" == default for a distribution already framed on its
-    #     highest-density window (only bounded ones differ) ---
-
-    def test_zoom_matches_default_for_unbounded(self):
-        for d in [Poisson(50), Geometric(0.3), NegativeBinomial(3, 0.5)]:
-            self.assertEqual(d._hdi_window(), d.xlim)
+    def test_zoom_is_the_quantile_window(self):
         for d in [
+            Binomial(1000, 0.5),
+            Poisson(20),
+            Geometric(0.2),
+            Beta(2, 3),
+            Uniform(2, 7),
             Gamma(2),
             LogNormal(0, 1),
             Normal(0, 1),
-            Cauchy(0, 1),
-            Exponential(1),
-            Rayleigh(),
         ]:
-            lo, hi = d._hdi_window()
-            self.assertAlmostEqual(lo, float(d.xlim[0]), places=6)
-            self.assertAlmostEqual(hi, float(d.xlim[1]), places=6)
+            self.assertEqual(
+                d._zoom_xlim(),
+                (float(d.quantile(self.TAIL)), float(d.quantile(1 - self.TAIL))),
+                type(d).__name__,
+            )
+
+    # --- zoom trims a bounded distribution's full-support default ---
+
+    def test_zoom_trims_bounded_binomial(self):
+        # The professor's motivating example: default shows all 0..1000, and
+        # zoom finds the high-probability band on its own.
+        d = Binomial(1000, 0.5)
+        self.assertEqual(d.xlim, (0, 1000))  # default unchanged
+        lo, hi = d._zoom_xlim()
+        self.assertGreater(lo, 400)
+        self.assertLess(hi, 600)
+
+    def test_zoom_trims_bounded_continuous(self):
+        d = Beta(2, 5)
+        self.assertEqual(d.xlim, (0, 1))
+        lo, hi = d._zoom_xlim()
+        self.assertGreater(lo, 0)
+        self.assertLess(hi, 1)
+
+    # --- zoom == default exactly when the distribution has no fixed bounds ---
+
+    def test_zoom_matches_default_for_unbounded(self):
+        for d in [Normal(0, 1), Cauchy(0, 1), StudentT(5), Gumbel(), SkewT(2, 3)]:
+            self.assertEqual(d._zoom_xlim(), d.xlim, type(d).__name__)
+
+    def test_zoom_differs_from_default_only_at_bounded_end(self):
+        # A fixed lower bound is the only thing zoom gives up, so the upper
+        # edge is always shared and the lower edge never drops below the bound.
+        for d in [Poisson(50), Exponential(1), Gamma(2), Geometric(0.3)]:
+            name = type(d).__name__
+            zoom_lo, zoom_hi = d._zoom_xlim()
+            self.assertAlmostEqual(zoom_hi, float(d.xlim[1]), places=9, msg=name)
+            self.assertGreaterEqual(zoom_lo, float(d.xlim[0]), name)
+        # It lifts strictly off the bound whenever the lower quantile is not
+        # itself the bound -- which for a discrete distribution it can be
+        # (`Geometric(0.3).quantile(0.001)` is 1, the support minimum).
+        for d in [Poisson(50), Exponential(1), Gamma(2)]:
+            self.assertGreater(d._zoom_xlim()[0], float(d.xlim[0]), type(d).__name__)
 
     # --- overlay: the theoretical curve no longer stretches the shared axis ---
 
     def test_overlay_does_not_stretch_to_full_support(self):
         # 10000 draws of Binomial(100, 0.5) realize only a narrow band, but the
-        # theoretical curve's full (0, 100) support used to widen the shared
+        # theoretical curve's full (0, 100) support would widen the shared
         # axis to the whole range. xlim="zoom" keeps it tight.
         plt.figure()
         RV(Binomial(100, 0.5)).sim(10000).plot()
@@ -5342,9 +5448,11 @@ class TestDistributionXlimZoom(unittest.TestCase):
             Makeham(1.5, 0.3, 2),
         ]
         for d in dists:
-            lo, hi = d._hdi_window()
-            self.assertTrue(np.isfinite(lo) and np.isfinite(hi), type(d).__name__)
-            self.assertLessEqual(lo, hi, type(d).__name__)
+            name = type(d).__name__
+            for window in (d.xlim, d._zoom_xlim()):
+                lo, hi = window
+                self.assertTrue(np.isfinite(lo) and np.isfinite(hi), name)
+                self.assertLessEqual(lo, hi, name)
             for xlim in (None, "zoom"):
                 plt.figure()
                 d.plot(xlim=xlim)  # must not raise
@@ -5357,7 +5465,7 @@ class TestDistributionXlimZoom(unittest.TestCase):
         # collapses to a point; the axis must not be set to a singular
         # (equal) range, and no raw matplotlib warning should reach the user.
         for call in [
-            lambda: Bernoulli(0.999).plot(xlim="zoom"),  # zoom path
+            lambda: Geometric(0.999).plot(xlim="zoom"),  # zoom path
             lambda: Geometric(0.999).plot(),  # default path
         ]:
             plt.figure()
@@ -5372,23 +5480,133 @@ class TestDistributionXlimZoom(unittest.TestCase):
                 "set_xlim received identical limits",
             )
 
-    # --- fixed defaults: the two one-sided outliers now match the rest ---
 
-    def test_exponential_default_covers_standard_share(self):
-        # Was 0.999 (equal-tailed upper); now matches the other one-sided
-        # distributions at _PLOT_COVERAGE, still pinned at the lower bound 0.
-        d = Exponential(1)
-        lo, hi = d.xlim
-        self.assertEqual(lo, 0)
-        self.assertAlmostEqual(float(d.cdf(hi) - d.cdf(lo)), self.COVERAGE, places=3)
+class TestDistributionXlimLaziness(unittest.TestCase):
+    """``xlim`` is computed on first read, never in ``__init__``.
 
-    def test_rayleigh_default_starts_near_lower_bound(self):
-        # Was the equal-tailed 0.1st percentile (~0.045); now a highest-density
-        # window whose lower edge sits at the true bound 0.
-        d = Rayleigh()
-        lo, hi = d.xlim
-        self.assertLess(lo, 0.02)
-        self.assertAlmostEqual(float(d.cdf(hi) - d.cdf(lo)), self.COVERAGE, places=3)
+    A window is only ever needed for plotting, but ``__init__`` runs far more
+    often: ``PoissonProcess`` and ``ContinuousTimeMarkovChain`` build a fresh
+    ``Exponential`` on *every draw*. When the window was computed eagerly --
+    and, at the time, by highest-density root-finding -- ``.sim(1000)`` on a
+    Poisson process took about 26 seconds to produce a plot nobody asked for.
+    The HDI is gone, but the laziness is kept on its own merits: no
+    simulation should pay for a plotting window.
+    """
+
+    def setUp(self):
+        """Count window computations, restoring the original in tearDown."""
+        self.calls = []
+        self._original = distributions.Distribution._compute_xlim
+
+        def counted(inner_self):
+            self.calls.append(type(inner_self).__name__)
+            return self._original(inner_self)
+
+        distributions.Distribution._compute_xlim = counted
+
+    def tearDown(self):
+        distributions.Distribution._compute_xlim = self._original
+
+    # --- construction alone computes nothing ---
+
+    def test_construction_does_not_compute_window(self):
+        for make in [
+            lambda: Exponential(rate=2),
+            lambda: Gamma(2, 3),
+            lambda: Poisson(3),
+            lambda: Geometric(0.3),
+            lambda: Pareto(3, 2),
+            lambda: Weibull(2, 3),
+            lambda: Binomial(1000, 0.5),
+            lambda: Normal(0, 1),
+            lambda: Beta(2, 3),
+        ]:
+            self.calls.clear()
+            make()
+            self.assertEqual(self.calls, [])
+
+    def test_first_read_computes_and_caches(self):
+        d = Exponential(rate=2)
+        self.assertEqual(self.calls, [])
+        first = d.xlim
+        self.assertEqual(self.calls, ["Exponential"])
+        # A second read reuses the cached window rather than recomputing.
+        self.assertIs(d.xlim, first)
+        self.assertEqual(self.calls, ["Exponential"])
+
+    def test_plot_computes_the_window(self):
+        plt.figure()
+        Exponential(rate=2).plot()
+        self.assertEqual(self.calls, ["Exponential"])
+        plt.close("all")
+
+    def test_setting_xlim_overrides_the_default(self):
+        d = Exponential(rate=2)
+        d.xlim = (0, 5)
+        self.assertEqual(d.xlim, (0, 5))
+        self.assertEqual(self.calls, [])
+
+    def test_xlim_set_before_super_init_survives(self):
+        # `Zeta` sets its window *before* calling up, because its
+        # support-derived default would ask for the 99.9th percentile of a
+        # power law -- a quantile search that effectively never returns. So
+        # `Distribution.__init__` must not reset the window, and no default
+        # may be computed for it.
+        self.assertEqual(Zeta(2.5).xlim, (1, 20))
+        self.assertEqual(Zeta(1.1).xlim, (1, 20))
+        self.assertEqual(self.calls, [])
+
+        # The same contract, on a throwaway subclass, so the guarantee is
+        # tested directly rather than only through Zeta.
+        class PreSet(distributions.Distribution):
+            def __init__(self):
+                self.xlim = (-7, 7)
+                super().__init__({"loc": 0, "scale": 1}, stats.norm, False)
+
+        self.assertEqual(PreSet().xlim, (-7, 7))
+        self.assertEqual(self.calls, [])
+
+    # --- regression: simulating a process must not compute any window ---
+
+    def test_poisson_process_sim_computes_no_window(self):
+        # The reported bug: `Exponential` is rebuilt on every draw, so an
+        # eager window meant 1000 computations for one `.sim(1000)`.
+        X = RV(PoissonProcessProbabilitySpace(rate=2))
+        X[2.3].sim(100)
+        self.assertEqual(self.calls, [])
+
+    def test_poisson_process_rv_sim_computes_no_window(self):
+        PoissonProcess(rate=2)[2.3].sim(100)
+        self.assertEqual(self.calls, [])
+
+    def test_continuous_time_markov_chain_sim_computes_no_window(self):
+        generator = [[-2, 1, 1], [1, -2, 1], [1, 1, -2]]
+        ContinuousTimeMarkovChain(generator, [1, 0, 0])[1.5].sim(100)
+        self.assertEqual(self.calls, [])
+
+    def test_distribution_sim_computes_no_window(self):
+        # Plain simulation never needs a plotting window either.
+        RV(Exponential(rate=2)).sim(100)
+        self.assertEqual(self.calls, [])
+
+    # --- multivariate distributions have no window at all ---
+
+    def test_multivariate_has_no_xlim(self):
+        # These set up only a pdf and override `plot` to raise, so `.xlim` is
+        # meaningless -- and must stay absent rather than fail confusingly
+        # deeper in on a missing `quantile` or scipy object.
+        for make in [
+            lambda: MultivariateNormal([0, 0], [[1, 0], [0, 1]]),
+            lambda: BivariateNormal(),
+            lambda: Multinomial(10, [0.3, 0.3, 0.4]),
+            lambda: Dirichlet([1, 2, 3]),
+        ]:
+            d = make()
+            self.assertFalse(hasattr(d, "xlim"))
+            with self.assertRaises(AttributeError) as cm:
+                d.xlim
+            self.assertIn("no 'xlim'", str(cm.exception))
+            self.assertNotIn("quantile", str(cm.exception))
 
 
 class TestDistributionCDFPlot(unittest.TestCase):
