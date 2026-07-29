@@ -409,14 +409,18 @@ class ContinuousTimeMarkovChainProbabilitySpace(ProbabilitySpace):
             )
         self.transition_matrix = np.array(transition_matrix)
 
+        # Build the unscaled interarrival-time space once, not once per draw:
+        # it never varies, and each `.draw()` on it already yields a fresh,
+        # independent sequence.
+        unscaled_interarrivals = Exponential(1) ** inf
+
         # A continuous-time Markov chain is specified by the
         # sequence of states and the unscaled interarrival times.
         def _draw():
             states = MarkovChain(self.transition_matrix, self.initial_dist).draw()
             rates = -np.diag(self.generator_matrix)
-            unscaled_interarrival_times = (Exponential(1) ** inf).draw()
             return ContinuousTimeMarkovChainResult(
-                states, rates, unscaled_interarrival_times, self.state_labels
+                states, rates, unscaled_interarrivals.draw(), self.state_labels
             )
 
         super().__init__(_draw)

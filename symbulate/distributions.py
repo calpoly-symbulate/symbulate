@@ -64,124 +64,12 @@ def _validate(*checks):
     raise Exception("Invalid parameters:\n" + "\n".join("  - " + e for e in errors))
 
 
-# Share of the total probability the default plotting window should cover.
-# Matches the central 99.8% the old equal-tailed ppf(0.001)/ppf(0.999) default
-# spanned, so switching a distribution to a highest-density window keeps the
-# same amount of mass on screen -- only its placement changes.
-_PLOT_COVERAGE = 0.998
-
-
-def _discrete_hdi_xlim(dist, low, coverage=_PLOT_COVERAGE):
-    """Highest-density plotting x-limits for an unbounded discrete distribution.
-
-    Returns the smallest and largest of the fewest integer values whose
-    probabilities, taken largest first, together reach ``coverage`` of the
-    total mass -- an exact highest-density interval. For a right-skewed
-    distribution (e.g. a low-rate ``Poisson``) this keeps the dense low
-    values and trims the long, thin upper tail, unlike the equal-tailed
-    ``ppf(0.001)``/``ppf(0.999)`` window it replaces.
-
-    Parameters
-    ----------
-    dist : Distribution
-        The distribution to measure, read through its ``pmf`` and
-        ``quantile``.
-    low : int
-        The smallest value in the distribution's support (0 for ``Poisson``
-        and ``Pascal``, 1 for ``Geometric``, ``r`` for ``NegativeBinomial``).
-    coverage : float, optional
-        Target share of the total probability the interval must cover.
-        Defaults to ``_PLOT_COVERAGE`` (the central 99.8% the old
-        equal-tailed default spanned).
-
-    Returns
-    -------
-    tuple of (int, int)
-        ``(min, max)`` of the selected highest-probability values.
-    """
-    # Enumerate from the support minimum out to a far upper quantile -- past
-    # where any high-probability value could sit -- so the accumulation below
-    # sees every value that could belong to the interval.
-    high = max(int(dist.quantile(1 - 1e-6)), low)
-    values = np.arange(low, high + 1)
-    probs = dist.pmf(values)
-    # Take values in order of decreasing probability, stopping as soon as the
-    # accumulated mass first reaches the target coverage.
-    order = np.argsort(probs)[::-1]
-    accumulated = np.cumsum(probs[order])
-    count = min(int(np.searchsorted(accumulated, coverage)) + 1, len(values))
-    chosen = values[order[:count]]
-    return (int(chosen.min()), int(chosen.max()))
-
-
-def _continuous_hdi_xlim(dist, low, coverage=_PLOT_COVERAGE):
-    """Highest-density plotting x-limits for a skewed, unbounded continuous distribution.
-
-    Finds the horizontal density level ``h`` for which the region
-    ``{x : pdf(x) >= h}`` -- a single interval ``[a, b]`` for these unimodal
-    densities -- encloses ``coverage`` of the total probability, and returns
-    that interval. The endpoints ``a`` and ``b`` are the two equal-density
-    points found with :func:`scipy.optimize.brentq`; ``h`` is located by
-    bisection, since raising it shrinks the interval and lowers its coverage.
-    For a right-skewed density this trims the long upper tail and lifts the
-    lower edge off the near-zero-density region, unlike the equal-tailed
-    ``ppf(0.001)``/``ppf(0.999)`` window it replaces.
-
-    Handles both interior-mode densities (e.g. ``LogNormal``) and
-    monotone-decreasing ones (e.g. ``Pareto``, or ``Gamma`` with shape below
-    1): when the density at the lower support bound already exceeds ``h`` --
-    including when it is infinite there -- that bound is used as ``a``
-    directly, since the density is maximal there and no left equal-density
-    point exists. Using the true support bound (not a near-boundary quantile)
-    also keeps ``a`` at a clean value and lets the plot's own ``isfinite``
-    filter handle a density singularity at the bound.
-
-    Parameters
-    ----------
-    dist : Distribution
-        The distribution to measure, read through its ``pdf``, ``cdf`` and
-        ``quantile``.
-    low : float
-        The lower bound of the distribution's support (0 for ``Gamma``,
-        ``ChiSquare``, ``F`` and ``LogNormal``; ``scale`` for ``Pareto``).
-    coverage : float, optional
-        Target share of the total probability the interval must cover.
-        Defaults to ``_PLOT_COVERAGE``.
-
-    Returns
-    -------
-    tuple of (float, float)
-        The equal-density interval ``(a, b)`` enclosing ``coverage``.
-    """
-    pdf, cdf, quantile = dist.pdf, dist.cdf, dist.quantile
-    # Mode-search bounds sit just inside each tail, so the density is never
-    # sampled at a boundary where it may be infinite; the right bound also
-    # serves as the practical upper edge for a heavy tail.
-    search_low = quantile(1e-9)
-    right = quantile(1 - 1e-9)
-    # The mode is where the density peaks; for a monotone-decreasing density
-    # this lands at the left search bound.
-    mode = minimize_scalar(
-        lambda x: -pdf(x), bounds=(search_low, right), method="bounded"
-    ).x
-    peak = pdf(mode)
-    # Bisect on the density threshold h in (0, peak). At each h the interval is
-    # [a, b], the equal-density points on either side of the mode -- clamped to
-    # the support's lower bound / practical upper edge when the density there
-    # already exceeds h (as on either side of a monotone-decreasing density).
-    # Raising h shrinks [a, b] and lowers cdf(b) - cdf(a), so coverage is
-    # monotone in h and the bisection converges.
-    h_low, h_high = 0.0, peak
-    a, b = low, right
-    for _ in range(80):
-        h = 0.5 * (h_low + h_high)
-        a = low if pdf(low) >= h else brentq(lambda x: pdf(x) - h, low, mode)
-        b = right if pdf(right) >= h else brentq(lambda x: pdf(x) - h, mode, right)
-        if cdf(b) - cdf(a) > coverage:
-            h_low = h
-        else:
-            h_high = h
-    return (float(a), float(b))
+# Tail probability trimmed from each unbounded side of a default plotting
+# window: the window runs from ``quantile(_PLOT_TAIL)`` to
+# ``quantile(1 - _PLOT_TAIL)`` wherever the support has no fixed bound. This is
+# the 0.1% cut Symbulate has always used, kept unchanged so removing the
+# highest-density window restores the original framing exactly.
+_PLOT_TAIL = 0.001
 
 
 class Distribution(ProbabilitySpace):
@@ -223,8 +111,39 @@ class Distribution(ProbabilitySpace):
     median : callable
         Returns the median of the distribution.
     xlim : tuple of float
-        Default x-axis range used when plotting.
+        Default x-axis range used when plotting, derived from the true
+        support -- see the note below. Computed on first read and cached.
+
+    Notes
+    -----
+    The default window follows one rule, applied to each end of the support
+    independently: **a fixed bound is used as-is; an unbounded side is cut at
+    a quantile** (``_PLOT_TAIL`` / ``1 - _PLOT_TAIL``). So:
+
+    - bounded both ends (``Binomial``, ``Uniform``) -> the full support, e.g.
+      ``Binomial(1000, 0.5)`` gives ``(0, 1000)``;
+    - fixed lower bound only (``Poisson``, ``Exponential``) -> ``(lower,
+      quantile(0.999))``, and symmetrically for a fixed upper bound only;
+    - unbounded both ends (``Normal``) -> ``(quantile(0.001),
+      quantile(0.999))``.
+
+    The bounds come from ``scipy``'s own ``support()``, so a subclass gets the
+    right window with no per-distribution code. Set ``self.xlim = (low, high)``
+    only to *override* that (needed by a degenerate branch that never calls
+    this ``__init__`` and so has no ``scipy`` object to ask).
+
+    ``xlim`` is a lazy property, computed on the first read rather than in
+    ``__init__``. It is only ever needed for plotting, and ``__init__`` runs
+    far more often: ``PoissonProcess`` and ``ContinuousTimeMarkovChain`` build
+    a fresh distribution on *every draw*, so eager computation charged every
+    simulated value for a window nobody asked to see.
     """
+
+    # Defaults so the lazy `xlim` property below works even for a subclass
+    # that skips `Distribution.__init__` (e.g. degenerate `LogNormal`, and the
+    # multivariate distributions, which have no window at all).
+    _xlim = None  # the window, once computed or set outright
+    _scipy = None  # the scipy distribution the support is read from
 
     def __init__(self, params, scipy, discrete=True):
         """Initialize the base Distribution."""
@@ -246,21 +165,105 @@ class Distribution(ProbabilitySpace):
         self.var = lambda: scipy.var(**self.params)
         self.sd = lambda: scipy.std(**self.params)
         self.sim_func = scipy.rvs
+        self._scipy = scipy
 
-        # Default plotting window: an equal-tailed cut of the probability.
-        # Skipped when the subclass has already set its own `xlim` before
-        # calling up to here, because for a few distributions this quantile
-        # lookup is not merely redundant but prohibitively slow -- a power law
-        # with an exponent near 1 (see `Zeta`) has a 99.9th percentile so far
-        # out that scipy's search effectively never finishes. Subclasses that
-        # set `xlim` *after* calling up to here are unaffected: `hasattr` is
-        # False at this point, so the window is computed exactly as before and
-        # then overridden as usual.
-        if not hasattr(self, "xlim"):
-            self.xlim = (
-                scipy.ppf(0.001, **self.params),
-                scipy.ppf(0.999, **self.params),
+        # The window is deliberately left alone here. `_xlim` already
+        # defaults to None on the class, so `_compute_xlim` derives the window
+        # from the support on the first read of `.xlim` -- and a subclass that
+        # set its own `xlim` *before* calling up to here (as `Zeta` does, to
+        # avoid a quantile lookup that never finishes) keeps that window
+        # instead of having it reset. Either ordering works.
+
+    @property
+    def xlim(self):
+        """tuple of float : the default x-axis range used when plotting.
+
+        Computed the first time it is read and cached from then on, so a
+        distribution that is built but never plotted -- one per draw inside a
+        random process, say -- never pays for the window. See the class
+        ``Notes``.
+        """
+        if self._xlim is None:
+            self._xlim = self._compute_xlim()
+        return self._xlim
+
+    @xlim.setter
+    def xlim(self, value):
+        """Set an exact plotting window, replacing whatever was deferred."""
+        self._xlim = value
+
+    def _support(self):
+        """The distribution's true support bounds, either of which may be infinite.
+
+        Returns
+        -------
+        tuple of float
+            ``(low, high)`` as reported by the underlying scipy
+            distribution's ``support()``. An unbounded side is ``-inf`` or
+            ``inf``.
+        """
+        low, high = self._scipy.support(**self.params)
+        return float(low), float(high)
+
+    def _compute_xlim(self):
+        """Derive the default plotting window from the true support.
+
+        Each end is handled independently: a fixed bound is used as-is, and an
+        unbounded side is cut at a quantile. See the class ``Notes`` for the
+        three resulting cases.
+
+        Returns
+        -------
+        tuple of float
+            The ``(low, high)`` default window.
+
+        Raises
+        ------
+        AttributeError
+            For a multivariate distribution, which has no single x-axis to
+            frame and so no window to compute.
+        """
+        # The multivariate distributions (MultivariateNormal, Dirichlet,
+        # Wishart, ...) set up only a pdf -- never a quantile function -- and
+        # their `plot` raises on its own. Raising AttributeError here keeps
+        # `.xlim` behaving exactly as it did when it was a plain attribute
+        # those classes simply never set: `hasattr(d, "xlim")` stays False.
+        if not hasattr(self, "quantile") or self._scipy is None:
+            raise AttributeError(
+                f"A {type(self).__name__} has no 'xlim'. It is a distribution "
+                "over vectors or matrices, so there is no single x-axis to "
+                "frame. (Plotting is not available for it either.)"
             )
+        low, high = self._support()
+        bounded_low, bounded_high = np.isfinite(low), np.isfinite(high)
+        if not bounded_low:
+            low = float(self.quantile(_PLOT_TAIL))
+        if not bounded_high:
+            high = float(self.quantile(1 - _PLOT_TAIL))
+        # For a degenerate parameter value scipy can return a quantile outside
+        # its own support -- `geom.ppf(0.999, p=1)` is 0.0 though the support
+        # starts at 1 -- which would invert the window. The support bound is
+        # the exact one, so collapse onto it rather than trust the quantile.
+        if high < low:
+            return (low, low) if bounded_low else (high, high)
+        return (low, high)
+
+    def _zoom_xlim(self):
+        """The window used by ``plot(xlim="zoom")``: both ends cut at a quantile.
+
+        Frames the region where the probability actually lives by ignoring
+        fixed bounds -- treating the distribution as if it had none. For an
+        already-unbounded distribution this is the default window; for a
+        bounded one it zooms in, so ``Binomial(1000, 0.5)`` frames roughly
+        ``(451, 549)`` instead of its full ``(0, 1000)`` support, without the
+        student having to work out the endpoints.
+
+        Returns
+        -------
+        tuple of float
+            The ``(low, high)`` quantile window.
+        """
+        return (float(self.quantile(_PLOT_TAIL)), float(self.quantile(1 - _PLOT_TAIL)))
 
     def draw(self):
         """Draw a single random sample from the distribution.
@@ -339,40 +342,6 @@ class Distribution(ProbabilitySpace):
 
         return ProbabilitySpace(draw)
 
-    def _hdi_window(self, coverage=_PLOT_COVERAGE):
-        """Compute the highest-density x-range covering a share of the probability.
-
-        Returns the tightest range of x-values that together hold
-        ``coverage`` of the probability, reusing the same helpers that set
-        the default window for unbounded distributions
-        (:func:`_discrete_hdi_xlim` and :func:`_continuous_hdi_xlim`). Used
-        by :meth:`plot` for ``xlim="zoom"``, so a curve can be framed on
-        the region where the probability actually lives -- even for a
-        bounded distribution whose default window spans its full support.
-
-        Parameters
-        ----------
-        coverage : float, optional
-            Share of the total probability to enclose, strictly between 0
-            and 1. Defaults to ``_PLOT_COVERAGE``.
-
-        Returns
-        -------
-        tuple of float
-            The ``(low, high)`` x-range enclosing ``coverage`` of the
-            probability.
-        """
-        # The support's lower bound. For a discrete distribution scipy's
-        # quantile(0) sits one step below it -- a safe (never too high)
-        # start for the enumeration; for a distribution unbounded below it
-        # is -inf, so fall back to a far-left finite quantile.
-        low = self.quantile(0.0)
-        if not np.isfinite(low):
-            low = self.quantile(1e-9)
-        if self.discrete:
-            return _discrete_hdi_xlim(self, int(np.floor(low)), coverage)
-        return _continuous_hdi_xlim(self, low, coverage)
-
     def plot(self, xlim=None, alpha=None, ax=None, cdf=False, **kwargs):
         """Plot the probability function or the cumulative distribution function.
 
@@ -397,16 +366,18 @@ class Distribution(ProbabilitySpace):
         ----------
         xlim : tuple of float or "zoom", optional
             x-axis range. ``None`` (default) uses the distribution's own
-            window: the full support when both ends are bounded (e.g.
-            ``Binomial``, ``Uniform``), and a window holding most of the
-            probability where a side is unbounded (e.g. ``Poisson``,
-            ``Normal``). A ``(min, max)`` tuple sets an exact range.
-            ``"zoom"`` frames the plot on the tightest window holding most
-            of the probability -- the same high-density window, applied
-            even to a bounded distribution whose default shows full
-            support. Handy for lining a theoretical curve up against
-            simulated data, which occupies only the high-probability part
-            of the support.
+            window: the full support where a bound is fixed, and a quantile
+            cut where a side is unbounded. So ``Binomial(1000, 0.5)`` shows
+            all of ``(0, 1000)``, ``Poisson`` and ``Exponential`` start at
+            their true lower bound 0, and ``Normal`` is cut at both ends.
+            A ``(min, max)`` tuple sets an exact range. ``"zoom"`` cuts
+            *both* ends at a quantile -- framing the distribution as if it
+            had no fixed bounds -- so a bounded distribution zooms in on
+            where the probability actually is: ``Binomial(1000, 0.5)``
+            frames roughly ``(451, 549)`` instead of ``(0, 1000)``, with no
+            need to work out the endpoints by hand. Also handy for lining a
+            theoretical curve up against simulated data, which occupies
+            only the high-probability part of the support.
         cdf : bool, default False
             Which function to plot. ``False`` (the default) draws the
             probability density/mass function; ``True`` draws the
@@ -450,10 +421,11 @@ class Distribution(ProbabilitySpace):
                 "distribution has only these two curves to show.)"
             )
         # Resolve the x-axis range:
-        #   None        -> the distribution's default window (full support
-        #                  when bounded, a probability cut where unbounded);
-        #   "zoom"      -> the tightest window holding _PLOT_COVERAGE of the
-        #                  probability, zooming in even on a bounded default;
+        #   None        -> the distribution's default window (a fixed bound
+        #                  used as-is, a quantile cut where unbounded);
+        #   "zoom"      -> a quantile cut at *both* ends, i.e. the same
+        #                  framing an unbounded distribution already gets,
+        #                  which zooms in on a bounded default;
         #   (low, high) -> those exact limits, used as given.
         if xlim is None:
             xlim = self.xlim
@@ -465,7 +437,7 @@ class Distribution(ProbabilitySpace):
                     f"xlim={xlim!r}. Otherwise pass xlim=(low, high) for an "
                     "exact range, or leave it out for the default range."
                 )
-            xlim = self._hdi_window()
+            xlim = self._zoom_xlim()
 
         # get the x and y values. The x-window is chosen the same way for
         # both plot types (it only picks x-values); `cdf` decides which
@@ -637,10 +609,6 @@ class Bernoulli(Distribution):
 
         params = {"p": p}
         super().__init__(params, stats.bernoulli, True)
-        self.xlim = (
-            0,
-            1,
-        )  # Bernoulli distributions are not defined for x < 0 and x > 1
 
 
 class Binomial(Distribution):
@@ -702,7 +670,6 @@ class Binomial(Distribution):
 
         params = {"n": n, "p": p}
         super().__init__(params, stats.binom, True)
-        self.xlim = (0, n)  # Binomial distributions are not defined for x < 0 and x > n
 
 
 class BetaBinomial(Distribution):
@@ -794,8 +761,6 @@ class BetaBinomial(Distribution):
 
         params = {"n": n, "a": shape1, "b": shape2}
         super().__init__(params, stats.betabinom, True)
-        # Support is 0..n, exactly like the Binomial it generalizes.
-        self.xlim = (0, n)
 
 
 class BetaNegativeBinomial(Distribution):
@@ -886,9 +851,6 @@ class BetaNegativeBinomial(Distribution):
         # support is 0, 1, 2, ... like Pascal.
         params = {"n": r, "a": shape1, "b": shape2}
         super().__init__(params, stats.betanbinom, True)
-        # Highest-density window over the support [0, inf); trims the long
-        # upper tail, like Pascal and the other unbounded discrete cases.
-        self.xlim = _discrete_hdi_xlim(self, 0)
 
 
 class Hypergeometric(Distribution):
@@ -966,10 +928,6 @@ class Hypergeometric(Distribution):
         params = {"M": N0 + N1, "n": N1, "N": n}
 
         super().__init__(params, stats.hypergeom, True)
-        self.xlim = (
-            0,
-            n,
-        )  # Hypergeometric distributions are not defined for x < 0 and x > n
 
 
 class NegativeHypergeometric(Distribution):
@@ -1070,9 +1028,6 @@ class NegativeHypergeometric(Distribution):
         # So M is the whole collection, its n is our N1, and its r is ours.
         params = {"M": N0 + N1, "n": N1, "r": r}
         super().__init__(params, stats.nhypergeom, True)
-        # At most every 1 in the collection can be drawn, so the support runs
-        # from 0 to N1 -- bounded at both ends, like Hypergeometric.
-        self.xlim = (0, N1)
 
 
 class Geometric(Distribution):
@@ -1122,9 +1077,6 @@ class Geometric(Distribution):
 
         params = {"p": p}
         super().__init__(params, stats.geom, True)
-        # Highest-density window over the support [1, inf); trims the long
-        # upper tail the old equal-tailed ppf window left on screen.
-        self.xlim = _discrete_hdi_xlim(self, 1)
 
 
 class NegativeBinomial(Distribution):
@@ -1183,9 +1135,6 @@ class NegativeBinomial(Distribution):
 
         params = {"n": r, "p": p, "loc": r}
         super().__init__(params, stats.nbinom, True)
-        # Highest-density window over the support [r, inf); trims the long
-        # upper tail the old equal-tailed ppf window left on screen.
-        self.xlim = _discrete_hdi_xlim(self, r)
 
     def draw(self):
         """Draw a single random sample from the negative binomial distribution.
@@ -1266,9 +1215,6 @@ class Pascal(Distribution):
 
         params = {"n": r, "p": p}
         super().__init__(params, stats.nbinom, True)
-        # Highest-density window over the support [0, inf); trims the long
-        # upper tail the old equal-tailed ppf window left on screen.
-        self.xlim = _discrete_hdi_xlim(self, 0)
 
 
 class Poisson(Distribution):
@@ -1321,9 +1267,6 @@ class Poisson(Distribution):
 
         params = {"mu": lam}
         super().__init__(params, stats.poisson, True)
-        # Highest-density window over the support [0, inf); trims the long
-        # upper tail the old equal-tailed ppf window left on screen.
-        self.xlim = _discrete_hdi_xlim(self, 0)
 
 
 class DiscreteUniform(Distribution):
@@ -1381,7 +1324,6 @@ class DiscreteUniform(Distribution):
         params = {"low": self.a, "high": self.b}
 
         super().__init__(params, stats.randint, True)
-        self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
 
 
 class Zipf(Distribution):
@@ -1482,11 +1424,6 @@ class Zipf(Distribution):
         # it must not be used here.
         params = {"a": shape, "n": n}
         super().__init__(params, stats.zipfian, True)
-        # Bounded at both ends, so the default window is the full support
-        # 1, ..., n with no probability trimmed, like Binomial and
-        # DiscreteUniform. Pass xlim="zoom" to plot() to frame just the
-        # high-probability ranks when n is large.
-        self.xlim = (1, n)
 
 
 class Zeta(Distribution):
@@ -1566,12 +1503,16 @@ class Zeta(Distribution):
         )
         self.shape = shape
 
-        # A fixed head-of-the-distribution window, on purpose, and set *before*
-        # calling up so the base class skips its own quantile-based default.
-        # That default is not just unhelpful here but unusable: the 99.9th
-        # percentile of a power law with an exponent near 1 is so far out that
-        # scipy's quantile search effectively never returns. The pmf decreases
-        # from k = 1, so the first 20 values are always where the shape shows.
+        # A fixed head-of-the-distribution window, on purpose: this is the one
+        # distribution whose support-derived default would be unusable rather
+        # than merely unhelpful. The support is [1, inf), so the rule would cut
+        # the open end at a quantile -- and the 99.9th percentile of a power law
+        # with an exponent near 1 is so far out that scipy's quantile search
+        # effectively never returns. The pmf decreases from k = 1, so the first
+        # 20 values are always where the shape shows.
+        #
+        # Setting it here, before calling up, is safe: `Distribution.__init__`
+        # deliberately does not reset the window, so either ordering works.
         self.xlim = (1, 20)
 
         # scipy's `zipf` is the zeta distribution (its `a` is our shape);
@@ -1637,7 +1578,6 @@ class Uniform(Distribution):
         params = {"loc": a, "scale": b - a}
 
         super().__init__(params, stats.uniform, False)
-        self.xlim = (a, b)  # Uniform distributions are not defined for x < a and x > b
 
 
 class IrwinHall(Distribution):
@@ -1751,10 +1691,6 @@ class IrwinHall(Distribution):
         # at `n * a` (all n pieces at their low end), not at `a`.
         params = {"n": n, "loc": n * a, "scale": b - a}
         super().__init__(params, stats.irwinhall, False)
-        # Bounded at both ends, so the window shows the full support, like
-        # Uniform and Triangular. For a large n the density occupies only the
-        # middle of that range -- pass xlim="zoom" to plot() to frame it.
-        self.xlim = (n * a, n * b)
 
 
 class Bates(Distribution):
@@ -1838,7 +1774,6 @@ class Bates(Distribution):
         # variables, with support [a, b].
         params = {"n": n, "loc": a, "scale": (b - a) / n}
         super().__init__(params, stats.irwinhall, False)
-        self.xlim = (a, b)  # Bates is not defined outside [a, b]
 
 
 class LogUniform(Distribution):
@@ -1917,7 +1852,6 @@ class LogUniform(Distribution):
         # bounds directly as a and b.
         params = {"a": a, "b": b}
         super().__init__(params, stats.loguniform, False)
-        self.xlim = (a, b)  # bounded support [a, b]
 
 
 class Reciprocal(LogUniform):
@@ -2186,7 +2120,6 @@ class TruncatedNormal(Distribution):
         # a far quantile on any side left unbounded.
         lower = a if np.isfinite(a) else self.quantile(0.001)
         upper = b if np.isfinite(b) else self.quantile(0.999)
-        self.xlim = (lower, upper)
 
 
 class SkewNormal(Distribution):
@@ -2311,10 +2244,9 @@ class SkewNormal(Distribution):
         # scipy's skewnorm uses the same shape parameter alpha, under the name a.
         params = {"a": shape, "loc": loc, "scale": scale}
         super().__init__(params, stats.skewnorm, False)
-        # Unbounded on both sides, like Laplace and Gumbel, so the base
-        # equal-tailed ppf(.001, .999) window is used as-is; the HDI trim needs
-        # a bounded side to work from. Even at a large shape the thin tail is
-        # only ever thin, never absent, so the window stays reasonable.
+        # Unbounded on both sides, like Laplace and Gumbel, so both ends of
+        # the default window are quantile cuts. Even at a large shape the thin
+        # tail is only ever thin, never absent, so the window stays reasonable.
 
 
 class Exponential(Distribution):
@@ -2408,10 +2340,6 @@ class Exponential(Distribution):
             params = {"scale": scale}
 
         super().__init__(params, stats.expon, False)
-        # Highest-density window over the support [0, inf); trims the long
-        # upper tail and covers the same probability as the other one-sided
-        # distributions, instead of the wider equal-tailed default.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class ExponentiallyModifiedGaussian(Distribution):
@@ -2535,11 +2463,10 @@ class ExponentiallyModifiedGaussian(Distribution):
         # parameter is K = (1 / rate) / sd.
         params = {"K": 1.0 / (rate * sd), "loc": mean, "scale": sd}
         super().__init__(params, stats.exponnorm, False)
-        # Unbounded on both sides, like Laplace and Gumbel, so the base
-        # equal-tailed ppf(.001, .999) window is used as-is; the HDI trim needs
-        # a bounded side to work from. A small rate makes the right tail long
-        # enough that the window looks lopsided -- pass xlim="zoom" to plot()
-        # to frame the bulk of the probability instead.
+        # Unbounded on both sides, like Laplace and Gumbel, so both ends of
+        # the default window are quantile cuts. A small rate makes the right
+        # tail long enough that the window looks lopsided -- pass xlim="zoom"
+        # to plot() to frame the bulk of the probability instead.
 
 
 class Gamma(Distribution):
@@ -2644,9 +2571,6 @@ class Gamma(Distribution):
             params = {"a": shape, "scale": scale}
 
         super().__init__(params, stats.gamma, False)
-        # Highest-density window: trims the long right tail and, for shapes
-        # above 1, lifts the left edge off the near-zero-density region.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class InverseGamma(Distribution):
@@ -2718,10 +2642,6 @@ class InverseGamma(Distribution):
         # scipy's invgamma takes a as the shape and scale the scale.
         params = {"a": shape, "scale": scale}
         super().__init__(params, stats.invgamma, False)
-        # Highest-density window over the interior-mode density: trims the
-        # long, heavy right tail and lifts the left edge off the near-zero
-        # region, like Gamma.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class ScaledInverseChiSquare(InverseGamma):
@@ -2895,9 +2815,8 @@ class LogGamma(Distribution):
 
         # scipy's loggamma takes c as the shape of the underlying gamma.
         params = {"c": shape, "loc": loc, "scale": scale}
-        # Unbounded in both directions and only moderately skewed, so the
-        # base equal-tailed window is appropriate -- the same treatment GEV
-        # gets. (The HDI trim is for one-sided skew like Gamma/Weibull.)
+        # Unbounded in both directions, so both ends of the default window
+        # are quantile cuts -- the same treatment GEV gets.
         super().__init__(params, stats.loggamma, False)
 
 
@@ -2958,7 +2877,6 @@ class Beta(Distribution):
 
         params = {"a": shape1, "b": shape2}
         super().__init__(params, stats.beta, False)
-        self.xlim = (0, 1)  # Beta distributions are not defined for x < 0 and x > 1
 
 
 class PERT(Distribution):
@@ -3082,9 +3000,6 @@ class PERT(Distribution):
 
         params = {"a": self.alpha, "b": self.beta, "loc": low, "scale": span}
         super().__init__(params, stats.beta, False)
-        # Bounded at both ends, so the window shows the full support -- the
-        # same treatment Uniform, Beta, and DeMoivre get.
-        self.xlim = (low, high)
 
 
 class Triangular(Distribution):
@@ -3185,8 +3100,6 @@ class Triangular(Distribution):
         span = high - low
         params = {"c": (mode - low) / span, "loc": low, "scale": span}
         super().__init__(params, stats.triang, False)
-        # Bounded at both ends, so the window shows the full support.
-        self.xlim = (low, high)
 
 
 class _kumaraswamy_gen(stats.rv_continuous):
@@ -3368,9 +3281,6 @@ class Kumaraswamy(Distribution):
         # defined just above, whose scipy shape names are `a` and `b`.
         params = {"a": shape1, "b": shape2}
         super().__init__(params, _kumaraswamy, False)
-        # Bounded at both ends, so the window is the full support and no
-        # probability is trimmed -- same as Beta.
-        self.xlim = (0, 1)
 
 
 class StudentT(Distribution):
@@ -3638,9 +3548,6 @@ class ChiSquare(Distribution):
         else:
             params = {"df": df, "nc": noncentrality}
             super().__init__(params, stats.ncx2, False)
-        # Highest-density window: trims the long right tail and, for df above
-        # 2, lifts the left edge off the near-zero-density region.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class F(Distribution):
@@ -3726,9 +3633,6 @@ class F(Distribution):
         else:
             params = {"dfn": dfN, "dfd": dfD, "nc": noncentrality}
             super().__init__(params, stats.ncf, False)
-        # Highest-density window: trims the long right tail and, for numerator
-        # df above 2, lifts the left edge off the near-zero-density region.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Hotelling(Distribution):
@@ -3825,9 +3729,6 @@ class Hotelling(Distribution):
         self.scale = df * dim / (df - dim + 1)
         params = {"dfn": dim, "dfd": df - dim + 1, "scale": self.scale}
         super().__init__(params, stats.f, False)
-        # Highest-density window over [0, inf): trims the long right tail,
-        # like the F-distribution it rescales.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Cauchy(Distribution):
@@ -3983,9 +3884,6 @@ class LogNormal(Distribution):
 
         params = {"s": self.s, "scale": np.exp(mu)}
         super().__init__(params, stats.lognorm, False)
-        # Highest-density window over the interior-mode density: trims the long
-        # right tail and lifts the left edge off the near-zero-density region.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Pareto(Distribution):
@@ -4049,9 +3947,6 @@ class Pareto(Distribution):
 
         params = {"b": self.shape, "scale": self.scale}
         super().__init__(params, stats.pareto, False)
-        # Highest-density window over the monotone-decreasing density: keeps
-        # the peak at the lower bound (scale) and trims the long right tail.
-        self.xlim = _continuous_hdi_xlim(self, scale)
 
     def draw(self):
         """Draw a single random sample from the Pareto distribution.
@@ -4160,9 +4055,6 @@ class Burr(Distribution):
         # (tail exponent). loc stays at its 0 default so support starts at 0.
         params = {"c": shape1, "d": shape2, "scale": scale}
         super().__init__(params, stats.burr12, False)
-        # Highest-density window over the monotone or single-mode density:
-        # trims the long, heavy right tail, like Pareto.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Lomax(Distribution):
@@ -4237,9 +4129,6 @@ class Lomax(Distribution):
         # its 0 default so the support starts at 0 (the Pareto Type II form).
         params = {"c": shape, "scale": scale}
         super().__init__(params, stats.lomax, False)
-        # Highest-density window over the monotone-decreasing density: keeps
-        # the peak at 0 and trims the long, heavy right tail, like Pareto.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Rayleigh(Distribution):
@@ -4263,10 +4152,6 @@ class Rayleigh(Distribution):
         """Initialize a Rayleigh distribution."""
         params = {}
         super().__init__(params, stats.rayleigh, False)
-        # Highest-density window over the support [0, inf); keeps the lower
-        # edge at the true bound rather than the equal-tailed 0.1st-percentile
-        # start the base default would use.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class HalfNormal(Distribution):
@@ -4320,9 +4205,6 @@ class HalfNormal(Distribution):
 
         params = {"scale": scale}
         super().__init__(params, stats.halfnorm, False)
-        # Highest-density window over the monotone-decreasing density (peak
-        # at 0); trims the long right tail, like Rayleigh/Weibull.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class HalfCauchy(Distribution):
@@ -4395,11 +4277,6 @@ class HalfCauchy(Distribution):
 
         params = {"scale": scale}
         super().__init__(params, stats.halfcauchy, False)
-        # Highest-density window over the monotone-decreasing density (peak
-        # at 0), same treatment as HalfNormal. Anchors the left edge at the
-        # true support bound 0 rather than the base default's ppf(0.001).
-        # The window is still wide -- that is the Cauchy tail, not a bug.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Weibull(Distribution):
@@ -4459,8 +4336,6 @@ class Weibull(Distribution):
         # scale; loc stays at its 0 default so the support starts at 0.
         params = {"c": shape, "scale": scale}
         super().__init__(params, stats.weibull_min, False)
-        # Highest-density window: trims the long right tail, like Gamma.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Logistic(Distribution):
@@ -4523,9 +4398,8 @@ class Logistic(Distribution):
         self.scale = scale
 
         params = {"loc": loc, "scale": scale}
-        # Symmetric and unbounded on both sides, so the base equal-tailed
-        # ppf(.001, .999) window is already centered and appropriate -- no
-        # HDI trim (that is for one-sided skew like Gamma/Weibull).
+        # Symmetric and unbounded on both sides, so the default window is a
+        # quantile cut at each end, already centered.
         super().__init__(params, stats.logistic, False)
 
 
@@ -4588,8 +4462,6 @@ class Gompertz(Distribution):
         # stays at its 0 default so the support starts at 0.
         params = {"c": shape, "scale": scale}
         super().__init__(params, stats.gompertz, False)
-        # Highest-density window: trims the right tail, like Weibull/Gamma.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class _makeham_gen(stats.rv_continuous):
@@ -4708,8 +4580,6 @@ class Makeham(Distribution):
         # constant term); scale is applied by the framework as for Gompertz.
         params = {"c": shape, "lam": makeham, "scale": scale}
         super().__init__(params, _makeham, False)
-        # Highest-density window: trims the right tail, like Gompertz.
-        self.xlim = _continuous_hdi_xlim(self, 0)
 
 
 class Laplace(Distribution):
@@ -4771,9 +4641,8 @@ class Laplace(Distribution):
         self.scale = scale
 
         params = {"loc": loc, "scale": scale}
-        # Symmetric and unbounded on both sides, so the base equal-tailed
-        # ppf(.001, .999) window is already centered and appropriate -- no
-        # HDI trim (that is for one-sided skew like Gamma/Weibull).
+        # Symmetric and unbounded on both sides, so the default window is a
+        # quantile cut at each end, already centered.
         super().__init__(params, stats.laplace, False)
 
 
@@ -4828,7 +4697,6 @@ class DeMoivre(Distribution):
         # on both ends, so xlim shows the full support (no probability trim).
         params = {"loc": 0, "scale": omega}
         super().__init__(params, stats.uniform, False)
-        self.xlim = (0, omega)
 
 
 class GEV(Distribution):
@@ -5043,9 +4911,6 @@ class GPD(Distribution):
         # GEV, whose shape is the negative of scipy's c.
         params = {"c": shape, "loc": loc, "scale": scale}
         super().__init__(params, stats.genpareto, False)
-        # Highest-density window over the monotone-decreasing density: keeps
-        # the peak at the threshold (loc) and trims the long right tail.
-        self.xlim = _continuous_hdi_xlim(self, loc)
 
 
 ## Multivariate Distributions

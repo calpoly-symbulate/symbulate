@@ -104,9 +104,13 @@ class PoissonProcessProbabilitySpace(ProbabilitySpace):
             )
         self.rate = rate
 
+        # Build the interarrival-time space once, not once per draw: the rate
+        # never changes, and each `.draw()` on it already yields a fresh,
+        # independent sequence.
+        interarrivals = Exponential(rate=self.rate) ** inf
+
         def draw():
-            interarrival_times = (Exponential(rate=self.rate) ** inf).draw()
-            return PoissonProcessResult(interarrival_times)
+            return PoissonProcessResult(interarrivals.draw())
 
         super().__init__(draw)
 

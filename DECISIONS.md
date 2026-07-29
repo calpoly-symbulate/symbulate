@@ -648,12 +648,50 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: Default Plotting Window (HDI Removed)
+
+**Status:** Finalized (implemented in `distributions.py`) — supersedes the highest-density-interval window.
+
+**Decision**
+> The highest-density interval (HDI) is **removed**. Both helpers (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, 113 lines), the `_PLOT_COVERAGE` constant, the `_hdi_window` method, and all 22 per-distribution HDI call sites are deleted. The default window follows **one rule, applied to each end of the support independently: a fixed bound is used as-is; an unbounded side is cut at a quantile** (`_PLOT_TAIL = 0.001`, i.e. `quantile(0.001)` / `quantile(0.999)` — the same 0.1% cut Symbulate used before the HDI existed). So:
+>
+> | support | default `xlim` | example |
+> |---|---|---|
+> | bounded both ends | `(lower, upper)` — full support | `Binomial(1000, 0.5)` → `(0, 1000)` |
+> | fixed lower only | `(lower, quantile(0.999))` | `Poisson`, `Exponential` → starts at `0` |
+> | fixed upper only | `(quantile(0.001), upper)` | (none currently in Symbulate) |
+> | unbounded both ends | `(quantile(0.001), quantile(0.999))` | `Normal`, `Skellam` |
+>
+> Within `Distribution.plot(xlim=)`: `None` applies that rule; `[a, b]` sets exact limits; `"zoom"` becomes `(quantile(0.001), quantile(0.999))` — a quantile cut at **both** ends, i.e. *treating the distribution as if it had no fixed bounds*, rather than an HDI.
+>
+> The bounds are read from **scipy's own `support()`** (`Distribution._scipy`, stored in `__init__`), so the rule is implemented once in `Distribution._compute_xlim` rather than per distribution. That also let the ~17 hardcoded `self.xlim = (a, b)` assignments be deleted: scipy's support reproduces every one of them exactly (verified across 51 distributions). Only the degenerate `LogNormal(mu, 0)` branch still sets `xlim` explicitly, because it never calls `Distribution.__init__` and so has no scipy object to ask.
+
+**Rationale**
+> The HDI was not worth its cost. Measured against the equal-tailed window it replaced: for **17 of the 22** distributions using it the window was only **5–26% narrower** (Exponential 1.11×, Weibull 1.05×, Rayleigh 1.05×) — visually indistinguishable. For the **5** heavy-tailed cases where it won 2–4× (`HalfCauchy`, `GPD`, `ScaledInverseChiSquare`, `Hotelling`, `Pareto(1.2)`), *both* windows were still unreadable: `GPD(0.3, 1, 2)` got `(0.3, 124999.8)`. So it bought nothing where plots were fine and not enough where they were broken. Window width is driven by the coverage target, not by window placement — the wrong knob. Against that it cost a mode search plus an 80-step bisection with two `brentq` root-finds per step (25–90 ms per distribution), which is what made `PoissonProcess(rate=2)` + `.sim(1000)` take ~26 seconds: those processes rebuild a fresh `Exponential` on every draw.
+>
+> `"zoom"` is what actually solves the motivating problem, and it no longer needs an HDI to do it: `Binomial(1000, 0.5).plot()` shows all of `(0, 1000)`, and `xlim="zoom"` frames `(451, 549)` automatically, where before a student had to guess `xlim=[400, 600]` by hand. Zooming the same way an already-unbounded distribution is framed works in the vast majority of cases.
+
+**Kept from the HDI work**
+> `xlim` remains a **lazy property** (`Distribution._compute_xlim`, cached on first read). This is orthogonal to the HDI and worth keeping on its own: a window is only needed for plotting, but `__init__` runs once per *draw* inside `PoissonProcess` and `ContinuousTimeMarkovChain`, so no simulation should pay for one. `PoissonProcessProbabilitySpace(rate=2)` + `X[2.3].sim(1000)` runs in **0.06 s** (was 25.8 s), and `ContinuousTimeMarkovChain` in **0.09 s** (was 27.2 s). Both also had their per-draw `Exponential` construction hoisted out of the draw closure.
+
+**Edge case**
+> For a degenerate parameter scipy can return a quantile *outside* its own support — `geom.ppf(0.999, p=1)` is `0.0` although the support starts at `1` — which would produce an inverted window `(1, 0)`. `_compute_xlim` collapses onto the exact support bound instead, so `Geometric(1).xlim` is `(1, 1)` and `plot()`'s existing single-point padding handles it.
+
+**Alternatives Considered**
+> - **Keep the HDI, relying on the laziness fix** — the performance bug was fixed independently, so this was viable at zero further cost; rejected because it leaves 113 lines and 22 call sites buying a 5–26% window change.
+> - **Delete the HDI and fall back to equal-tailed everywhere** (i.e. also cut the *lower* end of `Poisson`/`Exponential` at `quantile(0.001)`) — simpler still, but makes heavy-tailed plots 2–4× worse than the HDI and pointlessly lifts one-sided distributions off their true bound of 0. The chosen rule keeps the true bound.
+> - **Replace the HDI with a quantile window at lower coverage (~99%)** — would actually improve the heavy-tailed plots (25× tighter on `GPD`); rejected as a *default* because it changes how much probability is on screen, which is a separate question from removing the HDI. `xlim="zoom"` covers the zoom-in use case without touching coverage.
+
+---
+
 ## Decision: `Distribution.plot()` Tight Window — `xlim="zoom"` (not `prob=`/`hdi=`)
 
 **Status:** Finalized (implemented in `distributions.py`)
 
 **Decision**
-> The tight / high-probability plotting window is exposed as a third accepted value on the existing `xlim` parameter — **`xlim="zoom"`** — not as a separate `prob=` (or `hdi=`) parameter. `xlim` accepts `None` (default window: full support when bounded, a probability cut where unbounded), `(lo, hi)` (exact range), or `"zoom"` (tightest window holding most of the probability, applied even to a bounded distribution). Coverage is a **fixed internal default** (`_PLOT_COVERAGE`); there is no custom-coverage float form.
+> The tight / high-probability plotting window is exposed as a third accepted value on the existing `xlim` parameter — **`xlim="zoom"`** — not as a separate `prob=` (or `hdi=`) parameter. `xlim` accepts `None` (default window: see "Default Plotting Window (HDI Removed)" below), `(lo, hi)` (exact range), or `"zoom"`. Coverage is a **fixed internal default**; there is no custom-coverage float form.
+>
+> **Superseded in part:** `"zoom"` originally meant a highest-density interval at `_PLOT_COVERAGE`. The HDI was removed (see "Default Plotting Window (HDI Removed)"); `"zoom"` now means a quantile cut at *both* ends, i.e. framing the distribution as if it had no fixed bounds. The parameter name, spelling, and rationale below are unchanged — only how the window is computed.
 
 **Rationale**
 > Folding the tight window into `xlim` keeps a single parameter in charge of the x-window instead of two parameters that both affect it. `"zoom"` reads sensibly regardless of whether the curve is a pdf, pmf, or cdf (unlike `hdi=`, whose "highest density interval" is a pdf/pmf-specific notion). It directly solves the overlay-wastes-space problem — a theoretical curve forcing the shared axis out to full support (`Binomial(100, 0.5).plot()` → 0–100) when the simulated data occupies only the high-probability region — via an explicit opt-in rather than silently guessing overlay context.
@@ -718,3 +756,4 @@ The following questions must be resolved before or during Phase 2.
 - [x] Discrete-axis tick label crowding: `make_tile` upgraded to Option B (real-value cell positions for whole-number data, matplotlib's own locator) — see "Discrete-Axis Tick Label Thinning (2D Plots)". `make_segmented_rug/density/hist/box` and `make_violin` remain on the original Option A (rank-index + thinning); extending real-value positioning to them is still open
 - [ ] Marginal-panel axis mismatch: a tile main panel and its marginal panel don't share a coordinate system — `make_tile`'s discrete axis is now real-valued for whole-number data, which should make this easier to resolve (matplotlib's `sharex`/`sharey` could line the panels up), but the marginal-panel wiring in `results.py` hasn't been touched, so this is not yet fixed
 - [x] `Distribution.plot()` discrete rendering (finding #16): resolved — discrete pmf drawn as filled dots + a dashed dot-to-dot line, styled by named `TRUE_DIST_*` constants (replacing the hardcoded `s=40`); the unused `overlay_true_distribution()` spline helper retired; the unique `set_position("zero")` spine tweak removed. See "Decision: `Distribution.plot()` Discrete Rendering (True-Distribution Curve)"
+- [x] HDI default plotting window: **removed** by supervisor decision. The default window is now derived from the true support (fixed bound as-is, quantile cut where unbounded) and `xlim="zoom"` is a quantile cut at both ends. See "Decision: Default Plotting Window (HDI Removed)"
