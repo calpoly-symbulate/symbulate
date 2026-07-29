@@ -69,6 +69,7 @@ from .distributions import (
     GEV,
     Gumbel,
     GPD,
+    MultivariateDistribution,
     MultivariateNormal,
     BivariateNormal,
     MultivariateT,

@@ -4819,118 +4819,107 @@ class GPD(Distribution):
 ## Multivariate Distributions
 
 
-class MultivariateNormal(Distribution):
-    """Probability space for a multivariate normal distribution.
+class MultivariateDistribution(Distribution):
+    """Base class for multivariate (vector-valued) distributions.
 
-    Generalizes the normal distribution to multiple dimensions. Each
-    draw produces a vector of correlated normal values, described by
-    a mean vector and a covariance matrix.
+    Multivariate distributions in Symbulate produce a whole vector on each
+    draw rather than a single number, so they need a different shape of API
+    than the scalar :class:`Distribution`. This class collects the machinery
+    that is the same for every one of them, so each specific distribution
+    only has to supply the parts that are genuinely its own.
 
-    Parameters
-    ----------
-    mean : array-like of length n
-        The mean vector of the distribution.
-    cov : array-like of shape (n, n)
-        The covariance matrix. Must be symmetric and positive semi-definite.
+    A subclass must define:
 
-    Attributes
-    ----------
-    mean : array-like of length n
-        The mean vector of the distribution.
-    cov : array-like of shape (n, n)
-        The covariance matrix. Must be symmetric and positive semi-definite.
+    - ``mean()`` -- the mean vector, returned as a :class:`Vector`.
+    - ``cov()`` -- the covariance matrix, returned as a NumPy 2-D array.
+    - ``draw()`` -- one random vector.
 
-    Examples
-    --------
-    >>> from symbulate import *
-    >>> X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
-    >>> X.draw()  # doctest: +SKIP
-    (1.76, 0.40)
+    and, in its ``__init__``, set ``self.discrete`` and ``self.pdf`` (there is
+    no call to the scalar ``Distribution.__init__``).
+
+    This class then derives, once for all subclasses:
+
+    - ``var()`` -- the variances (the diagonal of ``cov()``), as a ``Vector``.
+    - ``sd()`` -- the standard deviations (square roots of ``var()``), as a
+      ``Vector``.
+    - ``corr()`` -- the correlation matrix, as a NumPy 2-D array.
+    - ``__pow__`` -- drawing several independent vectors at once.
+    - ``plot()`` -- disabled by default (raises); subclasses that can plot
+      override it.
+
+    Notes
+    -----
+    Vector-valued summaries (``mean``, ``var``, ``sd``) return a ``Vector``;
+    matrix-valued ones (``cov``, ``corr``) return a NumPy 2-D array so they
+    can be used directly in further linear-algebra computations.
     """
 
-    def __init__(self, mean, cov):
-        """Initialize a multivariate normal distribution."""
-        if len(mean) != len(cov):
-            raise Exception(
-                "The dimension of the mean vector"
-                + " is not compatible with the dimensions"
-                + " of the covariance matrix."
-            )
-
-        if len(mean) >= 1:
-            self.mean = mean
-        else:
-            raise Exception("Mean vector and Cov matrix cannot be empty")
-
-        if len(cov) >= 1:
-            if all(len(row) == len(mean) for row in cov):
-                if np.all(np.linalg.eigvals(cov) >= 0) and np.allclose(
-                    cov, np.transpose(cov)
-                ):
-                    self.cov = cov
-                else:
-                    raise Exception(
-                        "Cov matrix is not symmetric and positive semi-definite"
-                    )
-            else:
-                raise Exception("Cov matrix is not square")
-        else:
-            raise Exception("Dimension of cov matrix cannot be less than 1")
-
-        self.discrete = False
-        self.pdf = lambda x: stats.multivariate_normal(mean, cov).pdf(x)
-
-    def plot(self):
-        """Plot is not supported for multivariate distributions.
-
-        Raises
-        ------
-        Exception
-            Always raised — plotting is not available for the
-            multivariate normal distribution.
-        """
-        raise Exception(
-            "Plotting is not currently available for "
-            "the multivariate normal distribution."
-        )
-
-    def draw(self):
-        """Draw a single random sample from the multivariate normal distribution.
+    def var(self):
+        """Return the variance of each component as a Vector.
 
         Returns
         -------
         Vector
-            A random vector drawn from the multivariate normal distribution.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]]).draw()  # doctest: +SKIP
-        (1.76, 0.40)
+            The diagonal of the covariance matrix -- the variance of each
+            component of the distribution.
         """
+        return Vector(np.diag(np.asarray(self.cov(), dtype=float)))
 
-        return Vector(rng.multivariate_normal(self.mean, self.cov))
+    def sd(self):
+        """Return the standard deviation of each component as a Vector.
+
+        Returns
+        -------
+        Vector
+            The square root of each component's variance.
+        """
+        return Vector(np.sqrt(np.diag(np.asarray(self.cov(), dtype=float))))
+
+    def corr(self):
+        """Return the correlation matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            The correlation matrix, obtained by scaling the covariance matrix
+            by the outer product of the component standard deviations. Its
+            diagonal entries are all 1.
+        """
+        cov = np.asarray(self.cov(), dtype=float)
+        sd = np.sqrt(np.diag(cov))
+        return cov / np.outer(sd, sd)
+
+    def plot(self, *args, **kwargs):
+        """Plotting is not available for multivariate distributions.
+
+        Raises
+        ------
+        Exception
+            Always raised. A multivariate distribution has no single
+            one-dimensional curve to draw. To visualize it, plot the
+            individual components or pairs of components from simulated
+            values instead.
+        """
+        raise Exception(
+            "Plotting is not currently available for multivariate "
+            "distributions. To visualize one, simulate values and plot a "
+            "single component (or a pair of components) at a time."
+        )
 
     def __pow__(self, exponent):
-        """Draw multiple independent samples from the multivariate normal distribution.
+        """Draw several independent vectors from the distribution.
 
         Parameters
         ----------
         exponent : int or float
-            Number of samples to draw. Pass ``float('inf')`` to create
-            an infinite sequence of draws generated lazily on demand.
+            Number of independent vectors to draw. Pass ``float('inf')`` to
+            create an infinite sequence generated lazily on demand.
 
         Returns
         -------
         ProbabilitySpace
-            A probability space whose draws produce ``exponent`` samples
-            at a time.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> (MultivariateNormal([0, 0], [[1, 0], [0, 1]]) ** 3).draw()  # doctest: +SKIP
-        [(-0.23, 1.72), (0.31, -0.72), (0.88, -0.21)]
+            A probability space whose draws produce ``exponent`` vectors at
+            a time.
         """
         if exponent == float("inf"):
 
@@ -4946,6 +4935,136 @@ class MultivariateNormal(Distribution):
                 return Vector(self.draw() for _ in range(exponent))
 
         return ProbabilitySpace(draw)
+
+
+class MultivariateNormal(MultivariateDistribution):
+    """Probability space for a multivariate normal distribution.
+
+    Generalizes the normal distribution to multiple dimensions. Each
+    draw produces a vector of correlated normal values, described by
+    a mean vector and a covariance matrix.
+
+    Parameters
+    ----------
+    mean : array-like of length n
+        The mean vector of the distribution.
+    cov : array-like of shape (n, n)
+        The covariance matrix. Must be symmetric and positive semi-definite.
+
+    Methods
+    -------
+    mean()
+        The mean vector, as a :class:`Vector`.
+    cov()
+        The covariance matrix, as a NumPy 2-D array.
+    var(), sd()
+        The per-component variances and standard deviations, as ``Vector``\\ s.
+    corr()
+        The correlation matrix, as a NumPy 2-D array.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+    >>> list(X.mean())
+    [0, 0]
+    >>> X.draw()  # doctest: +SKIP
+    (1.76, 0.40)
+    """
+
+    def __init__(self, mean, cov):
+        """Initialize a multivariate normal distribution.
+
+        Raises
+        ------
+        Exception
+            If the mean vector is empty; if the mean and covariance matrix
+            have incompatible sizes; if the covariance matrix is not square;
+            or if it is not symmetric positive semi-definite.
+        """
+        if len(mean) < 1:
+            raise Exception(
+                "The mean vector cannot be empty. Give one mean value per "
+                "variable, for example mean=[0, 0] for two variables."
+            )
+
+        if len(cov) != len(mean):
+            raise Exception(
+                "The mean vector and covariance matrix do not match: mean "
+                "has %d entries but cov has %d rows. Give one mean per "
+                "variable and a cov with that many rows and columns."
+                % (len(mean), len(cov))
+            )
+
+        if not all(len(row) == len(mean) for row in cov):
+            raise Exception(
+                "The covariance matrix must be square, with one row and one "
+                "column per variable (%d by %d here). Check that every row "
+                "of cov has %d entries." % (len(mean), len(mean), len(mean))
+            )
+
+        cov_array = np.asarray(cov, dtype=float)
+        if not np.allclose(cov_array, cov_array.T):
+            raise Exception(
+                "The covariance matrix must be symmetric: the entry in row i, "
+                "column j must equal the entry in row j, column i. Check that "
+                "the off-diagonal entries match."
+            )
+
+        # A symmetric matrix has real eigenvalues, so use eigvalsh (which
+        # assumes symmetry) rather than eigvals, which returns complex values
+        # for a non-symmetric matrix and makes the check unreliable. Allow a
+        # tiny negative tolerance so floating-point round-off in an otherwise
+        # valid matrix is not rejected.
+        if np.min(np.linalg.eigvalsh(cov_array)) < -1e-8:
+            raise Exception(
+                "The covariance matrix must be positive semi-definite, since "
+                "it describes variances and correlations and cannot imply a "
+                "negative variance. An off-diagonal (covariance) entry that "
+                "is too large relative to the diagonal (variance) entries is "
+                "the usual cause."
+            )
+
+        self._mean = mean
+        self._cov = cov
+        self.discrete = False
+        self.pdf = lambda x: stats.multivariate_normal(self._mean, self._cov).pdf(x)
+
+    def mean(self):
+        """Return the mean vector.
+
+        Returns
+        -------
+        Vector
+            The mean of each component.
+        """
+        return Vector(self._mean)
+
+    def cov(self):
+        """Return the covariance matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            The covariance matrix.
+        """
+        return np.asarray(self._cov, dtype=float)
+
+    def draw(self):
+        """Draw a single random sample from the multivariate normal distribution.
+
+        Returns
+        -------
+        Vector
+            A random vector drawn from the multivariate normal distribution.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]]).draw()  # doctest: +SKIP
+        (1.76, 0.40)
+        """
+        return Vector(rng.multivariate_normal(self._mean, self._cov))
 
 
 class BivariateNormal(MultivariateNormal):
@@ -4975,12 +5094,12 @@ class BivariateNormal(MultivariateNormal):
     cov : float, optional
         Covariance between the two variables. Overrides ``corr`` if provided.
 
-    Attributes
-    ----------
-    mean : list of float
-        The mean vector ``[mean1, mean2]``.
-    cov : list of list of float
-        The 2×2 covariance matrix.
+    Methods
+    -------
+    mean(), cov(), var(), sd(), corr()
+        Inherited from :class:`MultivariateNormal`. ``mean()`` returns the
+        mean vector ``[mean1, mean2]`` and ``cov()`` the 2x2 covariance
+        matrix; the others are derived from it.
 
     Examples
     --------
@@ -5007,8 +5126,10 @@ class BivariateNormal(MultivariateNormal):
         ------
         Exception
             If ``mean1``, ``mean2``, or ``cov`` is not a number; if ``corr``
-            is not a number between -1 and 1; or if ``sd1``, ``sd2``,
-            ``var1``, or ``var2`` is not a non-negative number.
+            is not a number between -1 and 1; if ``sd1``, ``sd2``, ``var1``,
+            or ``var2`` is not a non-negative number; or if the resulting
+            covariance matrix is not positive semi-definite (an explicit
+            ``cov`` too large relative to ``var1`` and ``var2``).
         """
 
         _validate(
@@ -5040,8 +5161,6 @@ class BivariateNormal(MultivariateNormal):
             ),
         )
 
-        self.mean = [mean1, mean2]
-
         # var1/var2 default to sd**2, and cov defaults to corr*sqrt(var1*var2);
         # every value used below has been validated above.
         if var1 is None:
@@ -5050,12 +5169,15 @@ class BivariateNormal(MultivariateNormal):
             var2 = sd2**2
         if cov is None:
             cov = corr * np.sqrt(var1 * var2)
-        self.cov = [[var1, cov], [cov, var2]]
-        self.discrete = False
-        self.pdf = lambda x: stats.multivariate_normal(self.mean, self.cov).pdf(x)
+
+        # Route through MultivariateNormal so the assembled covariance matrix
+        # gets the same positive semi-definite check and the shared
+        # mean()/cov()/var()/sd()/corr()/draw() machinery. This also validates
+        # an explicitly supplied cov that is too large relative to var1, var2.
+        super().__init__([mean1, mean2], [[var1, cov], [cov, var2]])
 
 
-class MultivariateT(Distribution):
+class MultivariateT(MultivariateDistribution):
     """Probability space for a multivariate t (Student) distribution.
 
     Generalizes Student's t-distribution to multiple dimensions -- the
@@ -5079,14 +5201,18 @@ class MultivariateT(Distribution):
         tails; as ``df`` grows the distribution approaches a
         ``MultivariateNormal(mean, cov)``.
 
-    Attributes
-    ----------
-    mean : array-like of length n
-        The location vector.
-    cov : array-like of shape (n, n)
-        The scale matrix.
-    df : float
-        Degrees of freedom.
+    Methods
+    -------
+    mean()
+        The location vector, as a :class:`Vector` (this equals the mean for
+        ``df > 1``).
+    cov()
+        The covariance matrix, as a NumPy 2-D array. This is ``df / (df - 2)``
+        times the scale matrix and exists only for ``df > 2``.
+    var(), sd()
+        The per-component variances and standard deviations, as ``Vector``\\ s.
+    corr()
+        The correlation matrix, as a NumPy 2-D array.
 
     Examples
     --------
@@ -5102,58 +5228,98 @@ class MultivariateT(Distribution):
         Raises
         ------
         Exception
-            If the dimensions of ``mean`` and ``cov`` are incompatible; if
-            ``cov`` is not square or not symmetric positive semi-definite;
-            or if ``df`` is not a positive number.
+            If the mean vector is empty; if the dimensions of ``mean`` and
+            ``cov`` are incompatible; if the scale matrix is not square or
+            not symmetric positive semi-definite; or if ``df`` is not a
+            positive number.
         """
-        if len(mean) != len(cov):
+        if len(mean) < 1:
             raise Exception(
-                "The dimension of the mean vector"
-                + " is not compatible with the dimensions"
-                + " of the scale matrix."
+                "The mean (location) vector cannot be empty. Give one value "
+                "per variable, for example mean=[0, 0] for two variables."
             )
 
-        if len(mean) >= 1:
-            self.mean = mean
-        else:
-            raise Exception("Mean vector and scale matrix cannot be empty")
+        if len(cov) != len(mean):
+            raise Exception(
+                "The mean vector and scale matrix do not match: mean has %d "
+                "entries but cov has %d rows. Give one location value per "
+                "variable and a scale matrix with that many rows and columns."
+                % (len(mean), len(cov))
+            )
 
-        if len(cov) >= 1:
-            if all(len(row) == len(mean) for row in cov):
-                if np.all(np.linalg.eigvals(cov) >= 0) and np.allclose(
-                    cov, np.transpose(cov)
-                ):
-                    self.cov = cov
-                else:
-                    raise Exception(
-                        "Scale matrix is not symmetric and positive semi-definite"
-                    )
-            else:
-                raise Exception("Scale matrix is not square")
-        else:
-            raise Exception("Dimension of scale matrix cannot be less than 1")
+        if not all(len(row) == len(mean) for row in cov):
+            raise Exception(
+                "The scale matrix must be square, with one row and one column "
+                "per variable (%d by %d here). Check that every row of cov "
+                "has %d entries." % (len(mean), len(mean), len(mean))
+            )
+
+        cov_array = np.asarray(cov, dtype=float)
+        if not np.allclose(cov_array, cov_array.T):
+            raise Exception(
+                "The scale matrix must be symmetric: the entry in row i, "
+                "column j must equal the entry in row j, column i. Check that "
+                "the off-diagonal entries match."
+            )
+
+        # A symmetric matrix has real eigenvalues, so use eigvalsh rather than
+        # eigvals (which returns complex values for a non-symmetric matrix).
+        # Allow a tiny negative tolerance for floating-point round-off.
+        if np.min(np.linalg.eigvalsh(cov_array)) < -1e-8:
+            raise Exception(
+                "The scale matrix must be positive semi-definite (it plays "
+                "the role a covariance matrix does). An off-diagonal entry "
+                "that is too large relative to the diagonal entries is the "
+                "usual cause."
+            )
 
         if not isinstance(df, numbers.Real) or df <= 0:
             raise Exception("df must be a positive number")
-        self.df = df
 
+        self._mean = mean
+        self._cov = cov
+        self._df = df
         self.discrete = False
         self.pdf = lambda x: stats.multivariate_t(
-            loc=self.mean, shape=self.cov, df=self.df
+            loc=self._mean, shape=self._cov, df=self._df
         ).pdf(x)
 
-    def plot(self):
-        """Plot is not supported for multivariate distributions.
+    def mean(self):
+        """Return the location vector.
+
+        Returns
+        -------
+        Vector
+            The location (center) vector. For ``df > 1`` this is also the
+            mean of the distribution; for ``df <= 1`` the mean does not exist
+            but the location is still the center of symmetry.
+        """
+        return Vector(self._mean)
+
+    def cov(self):
+        """Return the covariance matrix.
+
+        The scale matrix passed to the constructor is not the covariance: the
+        covariance is ``df / (df - 2)`` times the scale matrix, and it exists
+        only when ``df > 2``.
+
+        Returns
+        -------
+        numpy.ndarray
+            The covariance matrix.
 
         Raises
         ------
         Exception
-            Always raised — plotting is not available for the
-            multivariate t distribution.
+            If ``df <= 2``, where the covariance is undefined (infinite).
         """
-        raise Exception(
-            "Plotting is not currently available for the multivariate t distribution."
-        )
+        if self._df <= 2:
+            raise Exception(
+                "The covariance of a multivariate t is undefined (infinite) "
+                "for df <= 2; here df = %s. It exists only for df > 2, where "
+                "it equals df / (df - 2) times the scale matrix." % (self._df,)
+            )
+        return (self._df / (self._df - 2)) * np.asarray(self._cov, dtype=float)
 
     def draw(self):
         """Draw a single random sample from the multivariate t distribution.
@@ -5170,46 +5336,10 @@ class MultivariateT(Distribution):
         (0.42, -1.13)
         """
         return Vector(
-            stats.multivariate_t(loc=self.mean, shape=self.cov, df=self.df).rvs(
+            stats.multivariate_t(loc=self._mean, shape=self._cov, df=self._df).rvs(
                 random_state=rng
             )
         )
-
-    def __pow__(self, exponent):
-        """Draw multiple independent samples from the multivariate t distribution.
-
-        Parameters
-        ----------
-        exponent : int or float
-            Number of samples to draw. Pass ``float('inf')`` to create
-            an infinite sequence of draws generated lazily on demand.
-
-        Returns
-        -------
-        ProbabilitySpace
-            A probability space whose draws produce ``exponent`` samples
-            at a time.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> (MultivariateT([0, 0], [[1, 0], [0, 1]], 5) ** 3).draw()  # doctest: +SKIP
-        [(0.42, -1.13), (0.31, -0.72), (0.88, -0.21)]
-        """
-        if exponent == float("inf"):
-
-            def draw():
-                def _func(n):
-                    return self.draw()
-
-                return InfiniteVector(_func)
-
-        else:
-
-            def draw():
-                return Vector(self.draw() for _ in range(exponent))
-
-        return ProbabilitySpace(draw)
 
 
 class Wishart(Distribution):
@@ -5501,7 +5631,7 @@ class InverseWishart(Distribution):
         return ProbabilitySpace(draw)
 
 
-class Multinomial(Distribution):
+class Multinomial(MultivariateDistribution):
     """Probability space for a multinomial distribution.
 
     Generalizes the binomial distribution to more than two outcomes.
@@ -5523,10 +5653,23 @@ class Multinomial(Distribution):
     p : array-like of float
         Probability of each outcome. Must be non-negative and sum to 1.
 
+    Methods
+    -------
+    mean()
+        The mean count vector ``n * p``, as a :class:`Vector`.
+    cov()
+        The covariance matrix, as a NumPy 2-D array.
+    var(), sd()
+        The per-category variances and standard deviations, as ``Vector``\\ s.
+    corr()
+        The correlation matrix, as a NumPy 2-D array.
+
     Examples
     --------
     >>> from symbulate import *
     >>> X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
+    >>> [float(m) for m in X.mean()]
+    [5.0, 3.0, 2.0]
     >>> X.draw()  # doctest: +SKIP
     (5, 3, 2)
     """
@@ -5561,18 +5704,30 @@ class Multinomial(Distribution):
         self.discrete = False
         self.pdf = lambda x: stats.multinomial(n, p).pmf(x)
 
-    def plot(self):
-        """Plot is not supported for multivariate distributions.
+    def mean(self):
+        """Return the mean count vector.
 
-        Raises
-        ------
-        Exception
-            Always raised — plotting is not available for the
-            multinomial distribution.
+        Returns
+        -------
+        Vector
+            The expected count of each category, ``n * p``.
         """
-        raise Exception(
-            "Plotting is not currently available for " "the Multinomial distribution."
-        )
+        return Vector(self.n * np.asarray(self.p, dtype=float))
+
+    def cov(self):
+        """Return the covariance matrix.
+
+        The counts are negatively correlated because they must sum to ``n``:
+        the diagonal entries are ``n * p_i * (1 - p_i)`` and the off-diagonal
+        entries are ``-n * p_i * p_j``.
+
+        Returns
+        -------
+        numpy.ndarray
+            The covariance matrix.
+        """
+        p = np.asarray(self.p, dtype=float)
+        return self.n * (np.diag(p) - np.outer(p, p))
 
     def draw(self):
         """Draw a single random sample from the multinomial distribution.
@@ -5591,44 +5746,8 @@ class Multinomial(Distribution):
 
         return Vector(rng.multinomial(self.n, self.p))
 
-    def __pow__(self, exponent):
-        """Draw multiple independent samples from the multinomial distribution.
 
-        Parameters
-        ----------
-        exponent : int or float
-            Number of samples to draw. Pass ``float('inf')`` to create
-            an infinite sequence of draws generated lazily on demand.
-
-        Returns
-        -------
-        ProbabilitySpace
-            A probability space whose draws produce ``exponent`` samples
-            at a time.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> (Multinomial(10, [0.5, 0.3, 0.2]) ** 3).draw()  # doctest: +SKIP
-        [(5, 3, 2), (4, 4, 2), (6, 2, 2)]
-        """
-        if exponent == float("inf"):
-
-            def draw():
-                def _func(_):
-                    return self.draw()
-
-                return InfiniteVector(_func)
-
-        else:
-
-            def draw():
-                return Vector(self.draw() for _ in range(exponent))
-
-        return ProbabilitySpace(draw)
-
-
-class Dirichlet(Distribution):
+class Dirichlet(MultivariateDistribution):
     """Probability space for a Dirichlet distribution.
 
     The multivariate generalization of the beta distribution. Each draw is
@@ -5657,6 +5776,17 @@ class Dirichlet(Distribution):
     alpha0 : float
         The sum of the concentration parameters. Its size controls how
         tightly draws concentrate around the mean.
+
+    Methods
+    -------
+    mean()
+        The mean proportion vector ``alpha / alpha0``, as a :class:`Vector`.
+    cov()
+        The covariance matrix, as a NumPy 2-D array.
+    var(), sd()
+        The per-proportion variances and standard deviations, as ``Vector``\\ s.
+    corr()
+        The correlation matrix, as a NumPy 2-D array.
 
     Notes
     -----
@@ -5721,13 +5851,32 @@ class Dirichlet(Distribution):
         # scalar mean/var, an x-limit window) does not apply to a vector of
         # proportions.
         self.discrete = False
-        _scipy = stats.dirichlet(self.alpha)
-        # scipy is the source of truth for the pdf, mean, and variance;
-        # each summary is returned as a Vector, one entry per category.
-        self.pdf = lambda x: _scipy.pdf(x)
-        self.mean = lambda: Vector(_scipy.mean())
-        self.var = lambda: Vector(_scipy.var())
-        self.sd = lambda: Vector(np.sqrt(_scipy.var()))
+        # scipy is the source of truth for the pdf; mean() and cov() are
+        # defined as methods below, and var()/sd()/corr() are derived from
+        # cov() by the MultivariateDistribution base class.
+        self.pdf = lambda x: stats.dirichlet(self.alpha).pdf(x)
+
+    def mean(self):
+        """Return the mean proportion vector.
+
+        Returns
+        -------
+        Vector
+            The expected proportion of each category, ``alpha / alpha0``.
+        """
+        return Vector(stats.dirichlet(self.alpha).mean())
+
+    def cov(self):
+        """Return the covariance matrix.
+
+        The proportions are negatively correlated because they must sum to 1.
+
+        Returns
+        -------
+        numpy.ndarray
+            The covariance matrix.
+        """
+        return np.asarray(stats.dirichlet(self.alpha).cov(), dtype=float)
 
     def plot(self, xlim=None, alpha=None, ax=None, **kwargs):
         """Plot the marginal density of each proportion.
@@ -5791,39 +5940,3 @@ class Dirichlet(Distribution):
         (0.19, 0.42, 0.39)
         """
         return Vector(rng.dirichlet(self.alpha))
-
-    def __pow__(self, exponent):
-        """Draw multiple independent samples from the Dirichlet distribution.
-
-        Parameters
-        ----------
-        exponent : int or float
-            Number of samples to draw. Pass ``float('inf')`` to create
-            an infinite sequence of draws generated lazily on demand.
-
-        Returns
-        -------
-        ProbabilitySpace
-            A probability space whose draws produce ``exponent`` samples
-            at a time.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> (Dirichlet([2, 3, 5]) ** 3).draw()  # doctest: +SKIP
-        [(0.19, 0.42, 0.39), (0.31, 0.28, 0.41), (0.22, 0.35, 0.43)]
-        """
-        if exponent == float("inf"):
-
-            def draw():
-                def _func(_):
-                    return self.draw()
-
-                return InfiniteVector(_func)
-
-        else:
-
-            def draw():
-                return Vector(self.draw() for _ in range(exponent))
-
-        return ProbabilitySpace(draw)
