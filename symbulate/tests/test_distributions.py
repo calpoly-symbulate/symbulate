@@ -4062,6 +4062,41 @@ class TestMultivariateNormal(unittest.TestCase):
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
         self.assertRaises(Exception, X.plot)
 
+    def test_MultivariateNormal_is_multivariate_distribution(self):
+        X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+        self.assertIsInstance(X, MultivariateDistribution)
+
+    def test_MultivariateNormal_mean_cov_methods(self):
+        X = MultivariateNormal(mean=[1, 2], cov=[[2, 0.8], [0.8, 1]])
+        self.assertIsInstance(X.mean(), Vector)
+        np.testing.assert_allclose(np.array(X.mean()), [1, 2])
+        np.testing.assert_allclose(X.cov(), [[2, 0.8], [0.8, 1]])
+
+    def test_MultivariateNormal_var_sd_corr(self):
+        cov = [[2, 0.8], [0.8, 1]]
+        X = MultivariateNormal(mean=[1, 2], cov=cov)
+        np.testing.assert_allclose(np.array(X.var()), np.diag(cov))
+        np.testing.assert_allclose(np.array(X.sd()), np.sqrt(np.diag(cov)))
+        corr = X.corr()
+        np.testing.assert_allclose(np.diag(corr), [1.0, 1.0])
+        np.testing.assert_allclose(corr, [[1, 0.8 / np.sqrt(2)], [0.8 / np.sqrt(2), 1]])
+
+    def test_MultivariateNormal_3d_correlated_matches_scipy(self):
+        # Exact agreement with scipy on a correlated 3-D case.
+        mean = [1, -2, 3]
+        cov = [[4, 1, 0.5], [1, 2, -0.3], [0.5, -0.3, 1]]
+        X = MultivariateNormal(mean=mean, cov=cov)
+        th = stats.multivariate_normal(mean=mean, cov=cov)
+        np.testing.assert_allclose(np.array(X.mean()), th.mean)
+        np.testing.assert_allclose(X.cov(), th.cov)
+
+    def test_MultivariateNormal_nonsymmetric_cov_friendly_error(self):
+        # A non-symmetric matrix has complex eigenvalues; the check must raise
+        # a friendly Exception, not a numpy TypeError.
+        with self.assertRaises(Exception) as ctx:
+            MultivariateNormal(mean=[0, 0], cov=[[0, -1], [1, 0]])
+        self.assertNotIsInstance(ctx.exception, TypeError)
+
 
 class TestMultivariateT(unittest.TestCase):
 
@@ -4124,6 +4159,31 @@ class TestMultivariateT(unittest.TestCase):
     def test_MultivariateT_plot_raises(self):
         X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=5)
         self.assertRaises(Exception, X.plot)
+
+    def test_MultivariateT_mean_is_location(self):
+        X = MultivariateT(mean=[3, 7], cov=[[4, 0], [0, 9]], df=5)
+        self.assertIsInstance(X.mean(), Vector)
+        np.testing.assert_allclose(np.array(X.mean()), [3, 7])
+
+    def test_MultivariateT_cov_is_scaled_scale_matrix(self):
+        # For df > 2 the covariance is df / (df - 2) times the scale matrix.
+        scale = [[2, 0.5], [0.5, 1]]
+        df = 5
+        X = MultivariateT(mean=[0, 0], cov=scale, df=df)
+        np.testing.assert_allclose(
+            X.cov(), (df / (df - 2)) * np.asarray(scale, dtype=float)
+        )
+        # sd()/corr() derive from that covariance.
+        np.testing.assert_allclose(np.diag(X.corr()), [1.0, 1.0])
+
+    def test_MultivariateT_cov_undefined_for_low_df(self):
+        for df in [1, 2]:
+            X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=df)
+            self.assertRaises(Exception, X.cov)
+
+    def test_MultivariateT_is_multivariate_distribution(self):
+        X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=5)
+        self.assertIsInstance(X, MultivariateDistribution)
 
 
 class TestWishart(unittest.TestCase):
@@ -4301,7 +4361,16 @@ class TestBivariateNormal(unittest.TestCase):
     def test_BivariateNormal_explicit_cov(self):
         # Exercise the var1/var2/cov keyword paths (instead of sd/corr)
         X = BivariateNormal(mean1=1, mean2=2, var1=4, var2=9, cov=3.0)
-        self.assertEqual(X.cov, [[4, 3.0], [3.0, 9]])
+        np.testing.assert_allclose(X.cov(), [[4, 3.0], [3.0, 9]])
+
+    def test_BivariateNormal_explicit_cov_not_psd_raises(self):
+        # An explicit covariance too large relative to the variances is not
+        # positive semi-definite and must be rejected (regression: this used
+        # to construct silently and emit a raw numpy RuntimeWarning).
+        self.assertRaises(
+            Exception,
+            lambda: BivariateNormal(mean1=0, mean2=0, var1=1, var2=1, cov=5),
+        )
 
 
 class TestMultinomial(unittest.TestCase):
@@ -4345,6 +4414,19 @@ class TestMultinomial(unittest.TestCase):
         expected = stats.multinomial(10, [0.5, 0.3, 0.2]).pmf([5, 3, 2])
         self.assertAlmostEqual(float(X.pdf([5, 3, 2])), expected)
 
+    def test_Multinomial_mean_cov_var(self):
+        n, p = 10, [0.5, 0.3, 0.2]
+        X = Multinomial(n=n, p=p)
+        pa = np.asarray(p)
+        np.testing.assert_allclose(np.array(X.mean()), n * pa)
+        np.testing.assert_allclose(X.cov(), n * (np.diag(pa) - np.outer(pa, pa)))
+        # Diagonal of the covariance is the per-category binomial variance.
+        np.testing.assert_allclose(np.array(X.var()), n * pa * (1 - pa))
+
+    def test_Multinomial_is_multivariate_distribution(self):
+        X = Multinomial(n=10, p=[0.5, 0.5])
+        self.assertIsInstance(X, MultivariateDistribution)
+
 
 class TestDirichlet(unittest.TestCase):
 
@@ -4373,6 +4455,19 @@ class TestDirichlet(unittest.TestCase):
         np.testing.assert_allclose(np.array(X.mean()), expected.mean())
         np.testing.assert_allclose(np.array(X.var()), expected.var())
         np.testing.assert_allclose(np.array(X.sd()), np.sqrt(expected.var()))
+
+    def test_Dirichlet_cov_corr(self):
+        alpha = [2, 3, 5]
+        X = Dirichlet(alpha=alpha)
+        expected = stats.dirichlet(alpha)
+        np.testing.assert_allclose(X.cov(), expected.cov())
+        # var() (base) is the diagonal of cov(); matches scipy's var().
+        np.testing.assert_allclose(np.diag(X.cov()), expected.var())
+        np.testing.assert_allclose(np.diag(X.corr()), [1.0, 1.0, 1.0])
+
+    def test_Dirichlet_is_multivariate_distribution(self):
+        X = Dirichlet(alpha=[2, 3, 5])
+        self.assertIsInstance(X, MultivariateDistribution)
 
     def test_Dirichlet_pdf(self):
         alpha = [2, 3, 5]
