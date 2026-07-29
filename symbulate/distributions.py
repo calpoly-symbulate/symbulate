@@ -5991,6 +5991,142 @@ class Multinomial(MultivariateDistribution):
         return Vector(rng.multinomial(self.n, self.p))
 
 
+class MultivariateHypergeometric(MultivariateDistribution):
+    """Probability space for a multivariate hypergeometric distribution.
+
+    Generalizes the hypergeometric distribution to more than two types. A
+    collection contains ``m[i]`` items of type ``i``; you draw ``n`` items
+    all at once, without replacement. Each draw is a vector of counts, one
+    per type, that sums to ``n``. It is the without-replacement counterpart
+    of the ``Multinomial`` -- drawing colored balls from an urn and *not*
+    putting them back -- so the counts are negatively correlated.
+
+    Parameters
+    ----------
+    m : array-like of int
+        The number of items of each type in the collection. Must be
+        non-negative integers, not all zero.
+    n : int
+        The number of items drawn (without replacement). Must be a
+        non-negative integer no larger than the total ``sum(m)``.
+
+    Attributes
+    ----------
+    m : array-like of int
+        The number of items of each type in the collection.
+    n : int
+        The number of items drawn.
+
+    Methods
+    -------
+    mean()
+        The mean count vector ``n * m / sum(m)``, as a :class:`Vector`.
+    cov()
+        The covariance matrix, as a NumPy 2-D array.
+    var(), sd()
+        The per-type variances and standard deviations, as ``Vector``\\ s.
+    corr()
+        The correlation matrix, as a NumPy 2-D array.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+    >>> [float(v) for v in X.mean()]
+    [2.5, 2.0, 1.5]
+    >>> X.draw()  # doctest: +SKIP
+    (3, 2, 1)
+    """
+
+    def __init__(self, m, n):
+        """Initialize a multivariate hypergeometric distribution.
+
+        Raises
+        ------
+        Exception
+            If ``m`` is not a list of non-negative integers (not all zero),
+            or ``n`` is not a non-negative integer no larger than ``sum(m)``.
+        """
+        # ``m`` is array-like, so guard the conversion and checks the same way
+        # ``Multinomial`` guards ``p``: a non-numeric, empty, non-integer, or
+        # negative ``m`` reports the helpful message instead of a cryptic error.
+        try:
+            m_arr = np.asarray(m)
+            bad_m = (
+                m_arr.ndim != 1
+                or len(m_arr) < 1
+                or not np.issubdtype(m_arr.dtype, np.integer)
+                or np.any(m_arr < 0)
+                or m_arr.sum() == 0
+            )
+        except (TypeError, ValueError):
+            bad_m = True
+        total = int(m_arr.sum()) if not bad_m else 0
+
+        _validate(
+            (
+                bad_m,
+                "m must be a list of non-negative integers giving the number "
+                "of each type in the collection (and not all zero).",
+            ),
+            (
+                not isinstance(n, numbers.Integral)
+                or n < 0
+                or (not bad_m and n > total),
+                "n must be a non-negative integer no larger than the total "
+                "number of items sum(m).",
+            ),
+        )
+        self.m = m
+        self.n = n
+
+        self.discrete = False
+        self.pdf = lambda x: stats.multivariate_hypergeom(self.m, self.n).pmf(x)
+
+    def mean(self):
+        """Return the mean count vector.
+
+        Returns
+        -------
+        Vector
+            The expected count of each type, ``n * m / sum(m)``.
+        """
+        return Vector(stats.multivariate_hypergeom(self.m, self.n).mean())
+
+    def cov(self):
+        """Return the covariance matrix.
+
+        The counts are negatively correlated because they must sum to ``n``:
+        drawing more of one type leaves fewer draws for the others.
+
+        Returns
+        -------
+        numpy.ndarray
+            The covariance matrix.
+        """
+        return np.asarray(
+            stats.multivariate_hypergeom(self.m, self.n).cov(), dtype=float
+        )
+
+    def draw(self):
+        """Draw a single random sample from the multivariate hypergeometric distribution.
+
+        Returns
+        -------
+        Vector
+            A vector of counts, one per type, summing to ``n``.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> MultivariateHypergeometric(m=[10, 8, 6], n=6).draw()  # doctest: +SKIP
+        (3, 2, 1)
+        """
+        # scipy's rvs returns a (1, k) array for a single draw, so take row 0.
+        sample = stats.multivariate_hypergeom(self.m, self.n).rvs(random_state=rng)
+        return Vector(np.atleast_2d(sample)[0])
+
+
 class Dirichlet(MultivariateDistribution):
     """Probability space for a Dirichlet distribution.
 
