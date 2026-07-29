@@ -1,3 +1,5 @@
+import numbers
+
 import numpy as np
 
 from .index_sets import DiscreteTimeSequence, Reals
@@ -354,13 +356,9 @@ class BrownianMotionProbabilitySpace(GaussianProcessProbabilitySpace):
     def __init__(self, drift=0, scale=1):
         """Create a probability space for Brownian motion."""
         if not isinstance(drift, (int, float)):
-            raise TypeError(
-                f"drift must be a number, got {type(drift).__name__}."
-            )
+            raise TypeError(f"drift must be a number, got {type(drift).__name__}.")
         if not isinstance(scale, (int, float)):
-            raise TypeError(
-                f"scale must be a number, got {type(scale).__name__}."
-            )
+            raise TypeError(f"scale must be a number, got {type(scale).__name__}.")
         if scale <= 0:
             raise ValueError(
                 f"scale must be positive, got {scale}. "
@@ -412,5 +410,286 @@ class BrownianMotion(RandomProcess, RV):
     def __init__(self, drift=0, scale=1):
         """Create a Brownian motion process."""
         prob_space = BrownianMotionProbabilitySpace(drift=drift, scale=scale)
+        RandomProcess.__init__(self, prob_space)
+        RV.__init__(self, prob_space)
+
+
+# Sentinel for initial_value, asking the path to start from the process's own
+# long-run (stationary) distribution instead of from a fixed number.
+STATIONARY = "stationary"
+
+
+def _ornstein_uhlenbeck_funcs(reversion_rate, mean, scale, initial_value):
+    """Build the mean and covariance functions of an Ornstein-Uhlenbeck process.
+
+    Both parameterizations are exact closed forms, so an Ornstein-Uhlenbeck
+    process needs no simulation code of its own -- it is a Gaussian process,
+    and these two functions are all that distinguishes it from Brownian
+    motion.
+
+    Parameters
+    ----------
+    reversion_rate : float
+        How strongly the process is pulled back toward ``mean``.
+    mean : float
+        The level the process is pulled toward.
+    scale : float
+        The volatility of the random shocks.
+    initial_value : float or str
+        A number to start every path from, or ``"stationary"`` to start from
+        the process's long-run distribution.
+
+    Returns
+    -------
+    tuple of callable
+        The pair ``(mean_func, cov_func)`` to hand to a Gaussian process.
+
+    Notes
+    -----
+    ``scale ** 2 / (2 * reversion_rate)`` is the long-run variance: the
+    variance the process settles down to once the pull toward ``mean`` and the
+    random shocks balance out. It appears in both parameterizations.
+
+    Started from ``"stationary"``, the process is *stationary* -- its
+    covariance depends only on how far apart two times are, ``abs(s - t)``,
+    not on where they sit on the clock. Starting from a fixed number instead
+    adds the ``exp(-reversion_rate * (s + t))`` correction, which fades as
+    time passes: that is the transient, the stretch of path where the process
+    is still travelling from where it started toward ``mean``.
+    """
+    long_run_var = scale**2 / (2 * reversion_rate)
+
+    if initial_value == STATIONARY:
+
+        def mean_func(t):
+            return mean
+
+        def cov_func(s, t):
+            return long_run_var * np.exp(-reversion_rate * abs(s - t))
+
+    else:
+
+        def mean_func(t):
+            # Travels exponentially from initial_value toward mean.
+            return mean + (initial_value - mean) * np.exp(-reversion_rate * t)
+
+        def cov_func(s, t):
+            # At s = t = 0 this is exactly 0, so every path starts at
+            # initial_value with no randomness -- the same way Brownian
+            # motion starts at 0.
+            return long_run_var * (
+                np.exp(-reversion_rate * abs(s - t)) - np.exp(-reversion_rate * (s + t))
+            )
+
+    return mean_func, cov_func
+
+
+def _validate_ornstein_uhlenbeck(reversion_rate, mean, scale, initial_value):
+    """Check the parameters of an Ornstein-Uhlenbeck process.
+
+    Raises
+    ------
+    TypeError
+        If ``reversion_rate``, ``mean``, or ``scale`` is not a number, or if
+        ``initial_value`` is neither a number nor ``"stationary"``.
+    ValueError
+        If ``reversion_rate`` or ``scale`` is not positive.
+    """
+    if not isinstance(reversion_rate, numbers.Real):
+        raise TypeError(
+            f"reversion_rate must be a number, got "
+            f"{type(reversion_rate).__name__}. It says how strongly the "
+            f"process is pulled back toward mean, for example "
+            f"reversion_rate=1."
+        )
+    if not isinstance(mean, numbers.Real):
+        raise TypeError(
+            f"mean must be a number, got {type(mean).__name__}. It is the "
+            f"level the process is pulled toward, for example mean=0."
+        )
+    if not isinstance(scale, numbers.Real):
+        raise TypeError(
+            f"scale must be a number, got {type(scale).__name__}. It is the "
+            f"volatility of the random shocks, for example scale=1."
+        )
+    if not (isinstance(initial_value, numbers.Real) or initial_value == STATIONARY):
+        raise TypeError(
+            f'initial_value must be a number or the word "stationary", got '
+            f"{type(initial_value).__name__}. Give a number to start every "
+            f'path there, or initial_value="stationary" to start from the '
+            f"process's long-run distribution."
+        )
+    if reversion_rate <= 0:
+        raise ValueError(
+            f"reversion_rate must be positive, got {reversion_rate}. With no "
+            f"pull back toward mean the process would not revert at all -- "
+            f"that process is BrownianMotion(drift=0, scale=scale) instead."
+        )
+    if scale <= 0:
+        raise ValueError(
+            f"scale must be positive, got {scale}. A scale of 0 would give a "
+            "curve with no randomness, sliding straight from initial_value to "
+            "mean."
+        )
+
+
+# Define convenience class for the Ornstein-Uhlenbeck process
+class OrnsteinUhlenbeckProbabilitySpace(GaussianProcessProbabilitySpace):
+    """The probability space underlying an Ornstein-Uhlenbeck process.
+
+    Each draw from this space produces one simulated sample path of the
+    Ornstein-Uhlenbeck process. Paths are generated lazily, exactly as for
+    any other Gaussian process.
+
+    Parameters
+    ----------
+    reversion_rate : float, optional
+        How strongly the process is pulled back toward ``mean``. Must be
+        positive. Larger values pull harder, so the path stays closer to
+        ``mean``. Default is 1.
+    mean : float, optional
+        The level the process is pulled toward. Default is 0.
+    scale : float, optional
+        The volatility of the random shocks. Must be positive. Default is 1.
+    initial_value : float or str, optional
+        Where every path starts. Give a number, or ``"stationary"`` to start
+        from the process's long-run distribution. Default is 0.
+
+    Attributes
+    ----------
+    reversion_rate : float
+        How strongly the process is pulled back toward ``mean``.
+    mean : float
+        The level the process is pulled toward.
+    scale : float
+        The volatility of the random shocks.
+    initial_value : float or str
+        Where every path starts.
+
+    Raises
+    ------
+    TypeError
+        If ``reversion_rate``, ``mean``, or ``scale`` is not a number, or if
+        ``initial_value`` is neither a number nor ``"stationary"``.
+    ValueError
+        If ``reversion_rate`` or ``scale`` is not positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = OrnsteinUhlenbeckProbabilitySpace(reversion_rate=1, mean=0, scale=1)
+    >>> float(P.draw()(0.0))
+    0.0
+    >>> path = P.draw()  # doctest: +SKIP
+    >>> path(1.0)        # doctest: +SKIP
+    -0.29
+    """
+
+    def __init__(self, reversion_rate=1, mean=0, scale=1, initial_value=0):
+        """Create a probability space for an Ornstein-Uhlenbeck process."""
+        _validate_ornstein_uhlenbeck(reversion_rate, mean, scale, initial_value)
+
+        self.reversion_rate = reversion_rate
+        self.mean = mean
+        self.scale = scale
+        self.initial_value = initial_value
+
+        mean_func, cov_func = _ornstein_uhlenbeck_funcs(
+            reversion_rate, mean, scale, initial_value
+        )
+        super().__init__(mean_func=mean_func, cov_func=cov_func)
+
+
+class OrnsteinUhlenbeck(RandomProcess, RV):
+    """An Ornstein-Uhlenbeck process, a random variable over sample paths.
+
+    Brownian motion wanders off and never comes back. An Ornstein-Uhlenbeck
+    process is Brownian motion on a leash: the further it strays from
+    ``mean``, the harder it is pulled back, so instead of drifting away
+    forever it settles into wandering around one level. That makes it the
+    standard model for a quantity that fluctuates but does not run away -- an
+    interest rate (where it is known as the Vasicek model), a price relative
+    to its long-run average, or the velocity of a particle being slowed by
+    friction, which is the setting it was invented for.
+
+    It is often written as
+    ``dX = reversion_rate * (mean - X) dt + scale * dW``: the first term is
+    the pull back toward ``mean``, strongest when ``X`` is furthest away, and
+    the second is the random jostling that keeps it moving. It is still a
+    Gaussian process, so Symbulate simulates it exactly, with the same
+    machinery as :class:`BrownianMotion` and a different covariance function.
+
+    Parameters
+    ----------
+    reversion_rate : float, optional
+        How strongly the process is pulled back toward ``mean``. Must be
+        positive. Larger values pull harder, so the path stays closer to
+        ``mean``. Default is 1.
+    mean : float, optional
+        The level the process is pulled toward. Default is 0.
+    scale : float, optional
+        The volatility of the random shocks. Must be positive. Default is 1.
+    initial_value : float or str, optional
+        Where every path starts. Give a number, and the path begins there
+        exactly and travels toward ``mean`` -- the *transient*. Pass
+        ``"stationary"`` to start from the long-run distribution instead, so
+        there is no transient and the process looks the same at every time.
+        Default is 0.
+
+    Attributes
+    ----------
+    prob_space : OrnsteinUhlenbeckProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Notes
+    -----
+    Two facts describe the long-run behavior. However far a path starts from
+    ``mean``, the distance still left to travel is multiplied by
+    ``exp(-reversion_rate * t)`` as time passes, so the mean approaches
+    ``mean``. Meanwhile the variance climbs to
+    ``scale ** 2 / (2 * reversion_rate)``, the point where the inward pull and
+    the random shocks balance. Together those give the long-run distribution
+    ``Normal(mean, sd=sqrt(scale ** 2 / (2 * reversion_rate)))``, which is
+    what ``initial_value="stationary"`` starts from.
+
+    The covariance between two times falls off like
+    ``exp(-reversion_rate * abs(s - t))``: nearby times are strongly related
+    and distant ones are nearly independent. So a large ``reversion_rate``
+    gives a jagged path with a short memory, and a small one gives a smooth,
+    slowly-wandering path.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = OrnsteinUhlenbeck(reversion_rate=1, mean=0, scale=1)
+    >>> # Every path starts exactly at initial_value
+    >>> float(X.draw()(0.0))
+    0.0
+    >>> path = X.draw()                    # doctest: +SKIP
+    >>> path(0.5), path(1.0), path(5.0)    # doctest: +SKIP
+    (-0.41, -0.76, 0.33)
+    >>> # Starting far from mean, the process is pulled toward it
+    >>> Y = OrnsteinUhlenbeck(reversion_rate=1, mean=0, scale=1, initial_value=10)
+    >>> Y[3.0].sim(1000).mean()            # doctest: +SKIP
+    0.51
+    >>> # Started from its long-run distribution, there is no transient
+    >>> Z = OrnsteinUhlenbeck(initial_value="stationary")
+    >>> Z[0.0].sim(1000).var()             # doctest: +SKIP
+    0.49
+
+    See Also
+    --------
+    BrownianMotion : The same machinery without the pull back toward a mean.
+    GaussianProcess : The general process both are built on.
+    """
+
+    def __init__(self, reversion_rate=1, mean=0, scale=1, initial_value=0):
+        """Create an Ornstein-Uhlenbeck process."""
+        prob_space = OrnsteinUhlenbeckProbabilitySpace(
+            reversion_rate=reversion_rate,
+            mean=mean,
+            scale=scale,
+            initial_value=initial_value,
+        )
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
