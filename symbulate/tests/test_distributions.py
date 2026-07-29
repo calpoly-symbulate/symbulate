@@ -4319,6 +4319,90 @@ class TestMultivariateT(unittest.TestCase):
         self.assertIsInstance(X, MultivariateDistribution)
 
 
+class TestMultivariateLogNormal(unittest.TestCase):
+
+    def test_MVLogNormal_validation_inherited(self):
+        # Validation is delegated to the underlying MultivariateNormal.
+        self.assertRaises(
+            Exception,
+            lambda: MultivariateLogNormal(mean=[0, 0], cov=[[1, 0, 0], [0, 1, 0]]),
+        )
+        self.assertRaises(
+            Exception,
+            lambda: MultivariateLogNormal(mean=[0, 0], cov=[[0, -1], [1, 0]]),
+        )
+
+    def test_MVLogNormal_draw_positive(self):
+        distributions.rng = np.random.default_rng(42)
+        X = MultivariateLogNormal(mean=[0, 0, 0], cov=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        draw = X.draw()
+        self.assertIsInstance(draw, Vector)
+        self.assertEqual(len(draw), 3)
+        self.assertTrue(all(v > 0 for v in draw))
+
+    def test_MVLogNormal_mean_cov_var_closed_form(self):
+        mu = np.array([0.0, 0.5, -0.3])
+        sig = np.array([[0.4, 0.1, 0.05], [0.1, 0.3, -0.08], [0.05, -0.08, 0.2]])
+        X = MultivariateLogNormal(mean=mu.tolist(), cov=sig.tolist())
+        d = np.diag(sig)
+        exp_mean = np.exp(mu + d / 2)
+        exp_cov = np.exp(np.add.outer(mu, mu) + np.add.outer(d, d) / 2) * (
+            np.exp(sig) - 1
+        )
+        np.testing.assert_allclose(np.array(X.mean()), exp_mean)
+        np.testing.assert_allclose(X.cov(), exp_cov)
+        np.testing.assert_allclose(np.array(X.var()), np.diag(exp_cov))
+        np.testing.assert_allclose(np.array(X.sd()), np.sqrt(np.diag(exp_cov)))
+
+    def test_MVLogNormal_mean_matches_simulation(self):
+        distributions.rng = np.random.default_rng(0)
+        X = MultivariateLogNormal(mean=[0.0, 0.5], cov=[[0.4, 0.1], [0.1, 0.3]])
+        sims = np.array([list(X.draw()) for _ in range(50000)])
+        np.testing.assert_allclose(sims.mean(0), np.array(X.mean()), rtol=0.05)
+
+    def test_MVLogNormal_corr_diagonal_is_one(self):
+        X = MultivariateLogNormal(
+            mean=[0, 0, 0], cov=[[1, 0.3, 0.1], [0.3, 1, 0.2], [0.1, 0.2, 1]]
+        )
+        np.testing.assert_allclose(np.diag(X.corr()), [1.0, 1.0, 1.0])
+
+    def test_MVLogNormal_pdf_matches_transform(self):
+        mean = [0.0, 0.5]
+        cov = [[0.4, 0.1], [0.1, 0.3]]
+        X = MultivariateLogNormal(mean=mean, cov=cov)
+        normal = stats.multivariate_normal(mean, cov)
+        for pt in [[1.0, 1.0], [0.5, 2.0], [2.0, 0.5]]:
+            expected = normal.pdf(np.log(pt)) / np.prod(pt)
+            self.assertAlmostEqual(float(X.pdf(pt)), float(expected), places=12)
+
+    def test_MVLogNormal_marginal_is_lognormal(self):
+        # Each component is a univariate LogNormal with the underlying
+        # component's mean and sd.
+        distributions.rng = np.random.default_rng(42)
+        A, B = RV(MultivariateLogNormal(mean=[0.3, 1.0], cov=[[0.25, 0], [0, 0.5]]))
+        sims = A.sim(Nsim)
+        cdf = stats.lognorm(s=0.5, scale=np.exp(0.3)).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_MVLogNormal_log_is_normal(self):
+        # Taking logs recovers the underlying multivariate normal marginals.
+        distributions.rng = np.random.default_rng(42)
+        A, B = RV(MultivariateLogNormal(mean=[2, -1], cov=[[1, 0], [0, 4]]))
+        sims = A.apply(np.log).sim(Nsim)
+        cdf = stats.norm(loc=2, scale=1).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_MVLogNormal_is_multivariate_distribution(self):
+        X = MultivariateLogNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+        self.assertIsInstance(X, MultivariateDistribution)
+
+    def test_MVLogNormal_plot_raises(self):
+        X = MultivariateLogNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+        self.assertRaises(Exception, X.plot)
+
+
 class TestWishart(unittest.TestCase):
 
     def test_Wishart_scale_square_error(self):
