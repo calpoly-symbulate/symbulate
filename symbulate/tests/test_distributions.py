@@ -4894,6 +4894,176 @@ class TestDirichletMultinomial(unittest.TestCase):
         self.assertRaises(Exception, X.plot)
 
 
+class TestNegativeMultinomial(unittest.TestCase):
+
+    def test_NegativeMultinomial_error_r_zero(self):
+        self.assertRaisesRegex(
+            Exception,
+            "r must be a positive integer",
+            lambda: NegativeMultinomial(r=0, p=[0.3, 0.2]),
+        )
+
+    def test_NegativeMultinomial_error_r_float(self):
+        self.assertRaises(Exception, lambda: NegativeMultinomial(r=2.5, p=[0.3, 0.2]))
+
+    def test_NegativeMultinomial_error_r_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception,
+            "r must be a positive integer",
+            lambda: NegativeMultinomial(r="x", p=[0.3, 0.2]),
+        )
+
+    def test_NegativeMultinomial_error_p_sums_to_one(self):
+        # sum(p) == 1 leaves no probability for the stopping category, so the
+        # run would never end.
+        self.assertRaisesRegex(
+            Exception,
+            "p must be a list of non-negative numbers that sum to less than 1",
+            lambda: NegativeMultinomial(r=3, p=[0.5, 0.5]),
+        )
+
+    def test_NegativeMultinomial_error_p_sums_above_one(self):
+        self.assertRaises(Exception, lambda: NegativeMultinomial(r=3, p=[0.7, 0.6]))
+
+    def test_NegativeMultinomial_error_p_negative(self):
+        self.assertRaises(Exception, lambda: NegativeMultinomial(r=3, p=[-0.1, 0.2]))
+
+    def test_NegativeMultinomial_error_p_empty(self):
+        self.assertRaises(Exception, lambda: NegativeMultinomial(r=3, p=[]))
+
+    def test_NegativeMultinomial_error_p_non_numeric(self):
+        self.assertRaisesRegex(
+            Exception,
+            "p must be a list of non-negative numbers",
+            lambda: NegativeMultinomial(r=3, p=["a", "b"]),
+        )
+
+    def test_NegativeMultinomial_p0_is_leftover(self):
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        self.assertAlmostEqual(X.p0, 0.5)
+
+    def test_NegativeMultinomial_draw_shape(self):
+        distributions.rng = np.random.default_rng(42)
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        draw = X.draw()
+        self.assertIsInstance(draw, Vector)
+        self.assertEqual(len(draw), 2)
+        self.assertTrue(all(int(v) >= 0 for v in draw))
+
+    def test_NegativeMultinomial_pdf_sums_to_one(self):
+        # The support is unbounded, so check the pmf sums to 1 over a
+        # truncation large enough that the remaining tail is negligible.
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        counts = np.arange(120)
+        grid = np.stack(np.meshgrid(counts, counts, indexing="ij"), axis=-1)
+        self.assertAlmostEqual(float(X.pdf(grid.reshape(-1, 2)).sum()), 1.0, places=10)
+
+    def test_NegativeMultinomial_mean_cov_var_match_brute_force(self):
+        # Ground truth summed straight from the pmf, independent of the
+        # closed-form formulas being tested.
+        r, p = 3, [0.3, 0.2]
+        X = NegativeMultinomial(r=r, p=p)
+        counts = np.arange(150)
+        grid = np.stack(np.meshgrid(counts, counts, indexing="ij"), axis=-1).reshape(
+            -1, 2
+        )
+        probabilities = X.pdf(grid)
+        expected_mean = (probabilities[:, None] * grid).sum(axis=0)
+        centered = grid - expected_mean
+        expected_cov = (
+            probabilities[:, None, None] * centered[:, :, None] * centered[:, None, :]
+        ).sum(axis=0)
+        np.testing.assert_allclose(np.array(X.mean()), expected_mean, atol=1e-8)
+        np.testing.assert_allclose(X.cov(), expected_cov, atol=1e-8)
+        np.testing.assert_allclose(np.array(X.var()), np.diag(expected_cov), atol=1e-8)
+        np.testing.assert_allclose(
+            np.array(X.sd()), np.sqrt(np.diag(expected_cov)), atol=1e-8
+        )
+
+    def test_NegativeMultinomial_counts_are_positively_correlated(self):
+        # The distinguishing feature versus the Multinomial: nothing caps the
+        # total, so every off-diagonal covariance is positive.
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2, 0.1])
+        cov = X.cov()
+        off_diagonal = cov[~np.eye(3, dtype=bool)]
+        self.assertTrue(np.all(off_diagonal > 0))
+        np.testing.assert_allclose(np.diag(X.corr()), [1.0, 1.0, 1.0])
+
+    def test_NegativeMultinomial_pdf_impossible_counts_are_zero(self):
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        self.assertEqual(X.pdf([-1, 0]), 0.0)
+        self.assertEqual(X.pdf([1.5, 0]), 0.0)
+
+    def test_NegativeMultinomial_pdf_zero_probability_category(self):
+        # A category with probability 0 never occurs, so any positive count
+        # for it is impossible while a count of 0 is fine.
+        X = NegativeMultinomial(r=2, p=[0.4, 0.0])
+        self.assertGreater(X.pdf([1, 0]), 0.0)
+        self.assertEqual(X.pdf([1, 1]), 0.0)
+
+    def test_NegativeMultinomial_pdf_accepts_several_points(self):
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        points = [[0, 0], [1, 0], [2, 3]]
+        np.testing.assert_allclose(X.pdf(points), [X.pdf(point) for point in points])
+
+    def test_NegativeMultinomial_pdf_error_wrong_length(self):
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        self.assertRaisesRegex(
+            Exception, "pdf needs one count per category", lambda: X.pdf([1, 2, 3])
+        )
+
+    def test_NegativeMultinomial_one_category_is_Pascal(self):
+        # With a single counted category the run is an ordinary wait for the
+        # r-th stop, so the count is exactly Pascal(r, p0).
+        r, p1 = 4, 0.35
+        X = NegativeMultinomial(r=r, p=[p1])
+        Y = Pascal(r=r, p=1 - p1)
+        for k in range(8):
+            self.assertAlmostEqual(X.pdf([k]), float(Y.pmf(k)), places=12)
+        self.assertAlmostEqual(float(X.mean()[0]), float(Y.mean()))
+        self.assertAlmostEqual(float(X.var()[0]), float(Y.var()))
+
+    def test_NegativeMultinomial_marginal_is_Pascal(self):
+        # Ignoring every category but i and the stopping category, count i is
+        # Pascal(r, p0 / (p0 + p_i)) -- this also checks draw() reproduces the
+        # distribution the pmf describes.
+        distributions.rng = np.random.default_rng(42)
+        r, p = 3, [0.3, 0.2]
+        X = NegativeMultinomial(r=r, p=p)
+        components = RV(X)
+        for i, p_i in enumerate(p):
+            sims = components[i].sim(Nsim)
+            th = stats.nbinom(r, X.p0 / (X.p0 + p_i))
+            obs, exp = [], []
+            for k in range(60):
+                e = Nsim * th.pmf(k)
+                if e > 5:
+                    exp.append(e)
+                    obs.append(sum(1 for s in sims if s == k))
+            pval = stats.chisquare(obs, np.array(exp) * sum(obs) / sum(exp)).pvalue
+            self.assertTrue(pval > 0.01)
+
+    def test_NegativeMultinomial_sim_shape(self):
+        distributions.rng = np.random.default_rng(42)
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        arr = np.array(list(X.sim(100)))
+        self.assertEqual(arr.shape, (100, 2))
+
+    def test_NegativeMultinomial_no_cdf(self):
+        # Like the other multivariate distributions, it should not advertise
+        # a cdf -- there is no natural way to order the vectors it produces.
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        self.assertFalse(hasattr(X, "cdf"))
+
+    def test_NegativeMultinomial_is_multivariate_distribution(self):
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        self.assertIsInstance(X, MultivariateDistribution)
+
+    def test_NegativeMultinomial_plot_raises(self):
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        self.assertRaises(Exception, X.plot)
+
+
 # ===========================================================================
 # Parameter validation: type guards and helpful error messages
 #

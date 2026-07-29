@@ -80,6 +80,7 @@ from .distributions import (
     InverseWishart,
     Multinomial,
     MultivariateHypergeometric,
+    NegativeMultinomial,
     Dirichlet,
     DirichletMultinomial,
 )
