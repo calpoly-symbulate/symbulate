@@ -106,6 +106,7 @@ from .markov_chains import (
     MarkovChainProbabilitySpace,
     ContinuousTimeMarkovChain,
     ContinuousTimeMarkovChainProbabilitySpace,
+    BirthDeathProcess,
 )
 from .plot import figure, xlabel, ylabel, xlim, ylim, plot
 from .math import *
