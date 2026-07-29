@@ -5,6 +5,7 @@ import numpy as np
 import scipy.stats as stats
 from scipy.optimize import brentq, minimize_scalar
 from scipy.special import beta as beta_function
+from scipy.special import gammaln, xlogy
 import matplotlib.pyplot as plt
 
 from .probability_space import ProbabilitySpace
@@ -5990,6 +5991,255 @@ class MultivariateHypergeometric(MultivariateDistribution):
         # scipy's rvs returns a (1, k) array for a single draw, so take row 0.
         sample = stats.multivariate_hypergeom(self.m, self.n).rvs(random_state=rng)
         return Vector(np.atleast_2d(sample)[0])
+
+
+class NegativeMultinomial(MultivariateDistribution):
+    """Probability space for a negative multinomial distribution.
+
+    Generalizes the negative binomial distribution to more than two
+    outcomes, the same way the ``Multinomial`` generalizes the binomial.
+    Repeat an experiment with several possible outcomes until one
+    particular outcome -- the *stopping* category -- has happened ``r``
+    times, then count how many times each of the other categories
+    happened along the way. Each draw is the vector of those counts.
+
+    Where a ``Multinomial`` fixes the number of trials and lets the counts
+    vary, a ``NegativeMultinomial`` fixes the number of times the stopping
+    category occurs and lets the number of trials (and so all the other
+    counts) vary. That difference flips the sign of the relationship
+    between the counts: multinomial counts are negatively correlated,
+    because they must add up to a fixed total, while negative multinomial
+    counts are *positively* correlated, because a run that takes many
+    trials to finish tends to produce more of every category at once.
+
+    Parameters
+    ----------
+    r : int
+        How many times the stopping category has to occur before counting
+        stops. Must be a positive integer.
+    p : array-like of float
+        Probability of each counted category, one entry per category. Must
+        be non-negative and sum to strictly less than 1; the leftover
+        probability ``1 - sum(p)`` belongs to the stopping category.
+
+    Attributes
+    ----------
+    r : int
+        How many times the stopping category has to occur.
+    p : list of float
+        Probability of each counted category.
+    p0 : float
+        Probability of the stopping category, ``1 - sum(p)``.
+
+    Methods
+    -------
+    mean()
+        The mean count vector ``r * p / p0``, as a :class:`Vector`.
+    cov()
+        The covariance matrix, as a NumPy 2-D array.
+    var(), sd()
+        The per-category variances and standard deviations, as ``Vector``\\ s.
+    corr()
+        The correlation matrix, as a NumPy 2-D array.
+    pdf(x)
+        The probability of a specific vector of counts.
+
+    Notes
+    -----
+    Because the run stops on the stopping category rather than after a
+    fixed number of trials, the counts have no upper bound -- the support
+    is infinite, unlike the ``Multinomial``'s. Like the other multivariate
+    distributions, there is no ``cdf``: there is no natural way to order
+    the vectors it produces.
+
+    Each count ``X_i`` is marginally ``Pascal(r, p0 / (p0 + p_i))`` -- look
+    at category ``i`` and the stopping category only, ignore every other
+    trial, and what is left is an ordinary wait for the ``r``-th stop.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+    >>> [round(float(m), 2) for m in X.mean()]
+    [1.8, 1.2]
+    >>> X.draw()  # doctest: +SKIP
+    (2, 0)
+
+    See Also
+    --------
+    Multinomial : The fixed-number-of-trials counterpart.
+    Pascal : The two-outcome case, and the marginal of each count.
+    """
+
+    def __init__(self, r, p):
+        """Initialize a negative multinomial distribution.
+
+        Raises
+        ------
+        Exception
+            If ``r`` is not a positive integer, or the elements of ``p`` are
+            not non-negative numbers summing to strictly less than 1.
+        """
+        # ``p`` is array-like, so guard the conversion and checks the same way
+        # ``Multinomial`` guards its own ``p``: a non-numeric, empty, or
+        # out-of-range ``p`` reports the helpful message instead of a cryptic
+        # low-level error, and can be reported alongside an invalid ``r``.
+        try:
+            p_arr = np.asarray(p, dtype=float)
+            bad_p = (
+                p_arr.ndim != 1
+                or len(p_arr) < 1
+                or not np.all(np.isfinite(p_arr))
+                or np.any(p_arr < 0)
+                or p_arr.sum() >= 1
+            )
+        except (TypeError, ValueError):
+            bad_p = True
+
+        _validate(
+            (
+                not isinstance(r, numbers.Integral) or r <= 0,
+                "r must be a positive integer: the number of times the "
+                "stopping category has to occur before counting stops.",
+            ),
+            (
+                bad_p,
+                "p must be a list of non-negative numbers that sum to less "
+                "than 1, one for each category you are counting. The leftover "
+                "probability 1 - sum(p) belongs to the stopping category, so "
+                "the entries of p cannot add up to 1 or more.",
+            ),
+        )
+        self.r = r
+        self.p = list(p)
+        self.p0 = float(1 - p_arr.sum())
+
+        # ``discrete`` only feeds the scalar plotting path, which no
+        # multivariate distribution uses (``plot`` raises), so this is set to
+        # False to match Multinomial and MultivariateHypergeometric. ``pdf`` is
+        # a method below rather than a lambda, because there is no scipy
+        # negative multinomial to delegate to.
+        self.discrete = False
+
+    def pdf(self, x):
+        """Return the probability of a specific vector of counts.
+
+        Parameters
+        ----------
+        x : array-like of int
+            One count per category, in the same order as ``p``. Unlike the
+            ``Multinomial``, the counts do not have to add up to anything in
+            particular -- any vector of non-negative whole numbers is
+            possible. A 2-D array is also accepted, one vector of counts per
+            row.
+
+        Returns
+        -------
+        float or numpy.ndarray
+            The probability of those counts, or 0 for a vector that cannot
+            occur (a negative count, or a count that is not a whole number).
+            A 2-D input gives one probability per row.
+
+        Raises
+        ------
+        Exception
+            If ``x`` does not have one entry per category.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> round(NegativeMultinomial(r=3, p=[0.3, 0.2]).pdf([0, 0]), 4)
+        0.125
+        """
+        x_arr = np.asarray(x, dtype=float)
+        if x_arr.ndim == 0 or x_arr.shape[-1] != len(self.p):
+            raise Exception(
+                "pdf needs one count per category. This distribution has %d "
+                "categories, so pass a list of %d whole numbers, for example "
+                "pdf(%s)." % (len(self.p), len(self.p), [0] * len(self.p))
+            )
+
+        p_arr = np.asarray(self.p, dtype=float)
+        # Only whole, non-negative counts are possible; everything else has
+        # probability 0. Substitute a 0 for any impossible entry before taking
+        # logs so gammaln is never handed a negative number or a nan, then mask
+        # those rows back out at the end.
+        possible = np.all((x_arr >= 0) & (x_arr == np.floor(x_arr)), axis=-1)
+        x_safe = np.where(x_arr >= 0, x_arr, 0.0)
+
+        # Worked on the log scale: the count of trials can be large enough that
+        # the gamma functions and the products of probabilities overflow (or
+        # round to 0) if computed directly. xlogy handles a category with
+        # probability 0 correctly: it contributes nothing when its count is 0,
+        # and drives the whole probability to 0 when its count is positive.
+        total = x_safe.sum(axis=-1)
+        log_pdf = (
+            gammaln(self.r + total)
+            - gammaln(self.r)
+            - gammaln(x_safe + 1).sum(axis=-1)
+            + self.r * np.log(self.p0)
+            + xlogy(x_safe, p_arr).sum(axis=-1)
+        )
+
+        result = np.where(possible, np.exp(log_pdf), 0.0)
+        return float(result) if result.ndim == 0 else result
+
+    def mean(self):
+        """Return the mean count vector.
+
+        Each category is expected to occur ``r * p_i / p0`` times: the
+        stopping category occurs ``r`` times, and category ``i`` occurs
+        ``p_i / p0`` times as often as the stopping category does.
+
+        Returns
+        -------
+        Vector
+            The expected count of each category.
+        """
+        return Vector(self.r * np.asarray(self.p, dtype=float) / self.p0)
+
+    def cov(self):
+        """Return the covariance matrix.
+
+        The counts are *positively* correlated, the opposite of the
+        ``Multinomial``: nothing caps the total, so a run that happens to
+        take many trials to reach the ``r``-th stop inflates every count at
+        once. The diagonal entries are ``r * p_i * (p_i + p0) / p0 ** 2``
+        and the off-diagonal entries are ``r * p_i * p_j / p0 ** 2``.
+
+        Returns
+        -------
+        numpy.ndarray
+            The covariance matrix.
+        """
+        p_arr = np.asarray(self.p, dtype=float)
+        return (self.r / self.p0**2) * (
+            np.outer(p_arr, p_arr) + np.diag(p_arr * self.p0)
+        )
+
+    def draw(self):
+        """Draw a single random sample from the negative multinomial distribution.
+
+        Returns
+        -------
+        Vector
+            A vector of counts, one per category.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> NegativeMultinomial(r=3, p=[0.3, 0.2]).draw()  # doctest: +SKIP
+        (2, 0)
+        """
+        # Drawn as a Poisson-gamma mixture, which reproduces the negative
+        # multinomial exactly (and is the same trick that builds an ordinary
+        # negative binomial from a Poisson with a gamma-distributed rate, just
+        # with one Poisson per category). Simulating the trials one at a time
+        # would give the same answer but take a run's worth of draws instead of
+        # a fixed handful.
+        rate = rng.gamma(shape=self.r, scale=1.0)
+        p_arr = np.asarray(self.p, dtype=float)
+        return Vector(rng.poisson(rate * p_arr / self.p0))
 
 
 class Dirichlet(MultivariateDistribution):
