@@ -99,6 +99,8 @@ from .gaussian_process import (
     GaussianProcessProbabilitySpace,
     BrownianMotion,
     BrownianMotionProbabilitySpace,
+    OrnsteinUhlenbeck,
+    OrnsteinUhlenbeckProbabilitySpace,
 )
 from .poisson_process import PoissonProcess, PoissonProcessProbabilitySpace
 from .markov_chains import (
