@@ -4182,9 +4182,97 @@ class TestMultivariateNormal(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
-    def test_MultivariateNormal_plot_raises(self):
+    def test_MultivariateNormal_plots_joint_density(self):
+        # Two variables: one joint distribution, so no arguments needed.
+        X = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
+        X.plot()
+        self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
+        self.assertEqual(plt.gca().get_xlabel(), "X1")
+        self.assertEqual(plt.gca().get_ylabel(), "X2")
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_contour(self):
+        X = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
+        X.plot(contour=True)
+        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_3d_requires_dims(self):
+        # Above two variables there is no single natural default, so plot()
+        # asks which pair to show instead of silently choosing one.
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
+        with self.assertRaises(Exception) as cm:
+            X.plot()
+        self.assertIn("dims", str(cm.exception))
+        X.plot(dims=(0, 2))
+        self.assertEqual(plt.gca().get_xlabel(), "X1")
+        self.assertEqual(plt.gca().get_ylabel(), "X3")
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_pairs_lower_triangle(self):
+        # n diagonal panels plus n(n-1)/2 lower-triangle panels, and no
+        # upper triangle: 4 variables -> 4 + 6 = 10 panels.
+        X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4).tolist())
+        X.plot(pairs=True)
+        self.assertEqual(len(plt.gcf().axes), 10)
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_pairs_subset_of_dims(self):
+        X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4).tolist())
+        X.plot(pairs=True, dims=(0, 2))
+        # 2 diagonal panels plus the one pair between them.
+        self.assertEqual(len(plt.gcf().axes), 3)
+        plt.close("all")
+
+    def test_MultivariateNormal_marginal_1d_is_exact(self):
+        # A single variable of a multivariate normal is normal, with that
+        # variable's own mean and variance.
+        X = MultivariateNormal(mean=[1, 2], cov=[[4, 0.5], [0.5, 9]])
+        self.assertAlmostEqual(float(X._marginal_1d(1).mean()), 2)
+        self.assertAlmostEqual(float(X._marginal_1d(1).sd()), 3)
+
+    def test_MultivariateNormal_joint_func_is_exact_submatrix(self):
+        # The pair's density is the bivariate normal built from those two
+        # entries of the mean vector and the matching 2x2 block of cov --
+        # not an approximation of it.
+        cov = [[4, 0.5, 0.2], [0.5, 1, 0.0], [0.2, 0.0, 2]]
+        X = MultivariateNormal(mean=[1, 2, 3], cov=cov)
+        pair = stats.multivariate_normal([1, 3], [[4, 0.2], [0.2, 2]])
+        points = np.array([[0.5, 2.0], [1.0, 3.0], [3.0, 4.5]])
+        computed = X._joint_func(0, 2)(points[:, 0], points[:, 1])
+        for got, expected in zip(computed, pair.pdf(points)):
+            self.assertAlmostEqual(float(got), float(expected))
+
+    def test_MultivariateNormal_plot_rejects_cdf_and_type(self):
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
-        self.assertRaises(Exception, X.plot)
+        self.assertRaises(ValueError, lambda: X.plot(cdf=True))
+        self.assertRaises(ValueError, lambda: X.plot(type="hist"))
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_bad_dims(self):
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
+        # Wrong number of variables, out of range, repeated, not a number.
+        self.assertRaises(Exception, lambda: X.plot(dims=(0, 1, 2)))
+        self.assertRaises(Exception, lambda: X.plot(dims=(0, 7)))
+        self.assertRaises(Exception, lambda: X.plot(dims=(1, 1)))
+        self.assertRaises(Exception, lambda: X.plot(dims=(0, "a")))
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_pairs_cannot_share_a_figure(self):
+        X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+        Normal(0, 1).plot()
+        self.assertRaises(ValueError, lambda: X.plot(pairs=True))
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_shade_explains_itself(self):
+        # A joint plot has no single curve to fill under, so .shade() gives
+        # an explanation rather than an AttributeError.
+        X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+        plot = X.plot()
+        with self.assertRaises(Exception) as cm:
+            plot.shade(lt=0)
+        self.assertIn("shade", str(cm.exception))
+        plt.close("all")
 
     def test_MultivariateNormal_is_multivariate_distribution(self):
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
@@ -4280,9 +4368,29 @@ class TestMultivariateT(unittest.TestCase):
         for pt in [[0, 0], [1, 1], [2, -1]]:
             self.assertAlmostEqual(float(mvt.pdf(pt)), float(mvn.pdf(pt)), places=3)
 
-    def test_MultivariateT_plot_raises(self):
-        X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=5)
-        self.assertRaises(Exception, X.plot)
+    def test_MultivariateT_plots_joint_density(self):
+        X = MultivariateT(mean=[0, 0], cov=[[1, 0.3], [0.3, 2]], df=4)
+        X.plot()
+        self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
+        plt.close("all")
+
+    def test_MultivariateT_plots_when_moments_are_undefined(self):
+        # df = 1 has no mean and no covariance, but the density -- and so
+        # the plot -- is perfectly well defined.
+        X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=1)
+        X.plot()
+        plt.close("all")
+
+    def test_MultivariateT_joint_func_keeps_df(self):
+        # The pair's distribution is a bivariate t with the *same* degrees
+        # of freedom and the matching 2x2 block of the scale matrix.
+        cov = [[1, 0.4, 0.0], [0.4, 2, 0.1], [0.0, 0.1, 1]]
+        X = MultivariateT(mean=[0, 1, 2], cov=cov, df=5)
+        pair = stats.multivariate_t(loc=[1, 2], shape=[[2, 0.1], [0.1, 1]], df=5)
+        points = np.array([[1.0, 2.0], [0.5, 1.0]])
+        computed = X._joint_func(1, 2)(points[:, 0], points[:, 1])
+        for got, expected in zip(computed, pair.pdf(points)):
+            self.assertAlmostEqual(float(got), float(expected))
 
     def test_MultivariateT_mean_is_location(self):
         X = MultivariateT(mean=[3, 7], cov=[[4, 0], [0, 9]], df=5)
@@ -4622,9 +4730,73 @@ class TestMultinomial(unittest.TestCase):
             self.assertAlmostEqual(float(sims.mean()), expected_mean, delta=0.15)
             self.assertAlmostEqual(float(sims.var()), expected_var, delta=0.15)
 
-    def test_Multinomial_plot_raises(self):
+    def test_Multinomial_two_categories_plot_points_to_Binomial(self):
+        # Two counts that must add to n vary in only one direction, so
+        # there is no joint plot to draw -- it is a Binomial.
         X = Multinomial(n=10, p=[0.5, 0.5])
-        self.assertRaises(Exception, X.plot)
+        with self.assertRaises(Exception) as cm:
+            X.plot()
+        self.assertIn("Binomial", str(cm.exception))
+
+    def test_Multinomial_three_categories_plots_joint_pmf(self):
+        # Three categories vary in two directions (the third count is
+        # whatever is left), so this is the single-joint-plot case.
+        X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
+        X.plot()
+        self.assertEqual(plt.gca().get_title(), "Joint PMF Plot")
+        plt.close("all")
+
+    def test_Multinomial_is_discrete(self):
+        # Counts are whole numbers, so the joint plot draws a probability at
+        # each possible pair rather than a smooth surface between them.
+        self.assertTrue(Multinomial(n=10, p=[0.5, 0.3, 0.2]).discrete)
+
+    def test_Multinomial_joint_func_totals_one_over_the_grid(self):
+        # The joint probabilities of two counts cover every possible pair,
+        # so they add to 1 -- including the impossible pairs, which get 0.
+        X = Multinomial(n=12, p=[0.5, 0.3, 0.2])
+        counts = np.arange(13)
+        xs, ys = np.meshgrid(counts, counts)
+        total = X._joint_func(0, 1)(xs.ravel(), ys.ravel()).sum()
+        self.assertAlmostEqual(float(total), 1.0)
+
+    def test_Multinomial_joint_func_matches_pooled_multinomial(self):
+        # Pooling the other categories into one gives a three-category
+        # multinomial exactly.
+        X = Multinomial(n=12, p=[0.5, 0.3, 0.2])
+        expected = stats.multinomial(12, [0.5, 0.3, 0.2]).pmf([5, 4, 3])
+        got = X._joint_func(0, 1)(np.array([5]), np.array([4]))[0]
+        self.assertAlmostEqual(float(got), float(expected))
+
+    def test_Multinomial_joint_func_zero_for_impossible_pairs(self):
+        # Two counts can't add up to more than the number of trials.
+        X = Multinomial(n=5, p=[0.5, 0.3, 0.2])
+        got = X._joint_func(0, 1)(np.array([4]), np.array([4]))[0]
+        self.assertEqual(float(got), 0.0)
+
+    def test_Multinomial_marginal_1d_is_Binomial(self):
+        X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
+        marginal = X._marginal_1d(1)
+        self.assertIsInstance(marginal, Binomial)
+        self.assertAlmostEqual(float(marginal.mean()), 3.0)
+
+    def test_Multinomial_plot_window_zooms_when_counts_range_too_far(self):
+        # A small number of trials shows every count, so the triangular
+        # shape of the joint support is visible; a large one would need
+        # more cells than are readable, so it falls back to the window
+        # holding most of the probability.
+        small = Multinomial(n=10, p=[0.5, 0.3, 0.2])
+        self.assertEqual(len(small._plot_values(0)), 11)
+        large = Multinomial(n=1000, p=[0.5, 0.3, 0.2])
+        self.assertLess(len(large._plot_values(0)), 1001)
+        large.plot()
+        plt.close("all")
+
+    def test_Multinomial_plot_pairs(self):
+        X = Multinomial(n=12, p=[0.4, 0.3, 0.2, 0.1])
+        X.plot(pairs=True)
+        self.assertEqual(len(plt.gcf().axes), 10)
+        plt.close("all")
 
     def test_Multinomial_pdf(self):
         X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
@@ -4804,10 +4976,64 @@ class TestDirichlet(unittest.TestCase):
             pval = stats.kstest(sims, cdf).pvalue
             self.assertTrue(pval > 0.01)
 
-    def test_Dirichlet_plots_without_error(self):
-        # draw / RV / sim / plot all wired through, marginals overlaid.
+    def test_Dirichlet_plots_joint_density(self):
+        # Three proportions add to 1, so two of them vary freely: this is
+        # the single-joint-plot case, drawn over the simplex.
         Dirichlet(alpha=[2, 3, 5]).draw()
         Dirichlet(alpha=[2, 3, 5]).plot()
+        self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
+        plt.close("all")
+
+    def test_Dirichlet_plot_window_is_full_proportion_range(self):
+        # Framed on [0, 1] on both axes, so the triangle a pair of
+        # proportions lives on stays fully in view.
+        X = Dirichlet(alpha=[2, 3, 5])
+        X.plot()
+        self.assertEqual(plt.gca().get_xlim(), (0.0, 1.0))
+        self.assertEqual(plt.gca().get_ylim(), (0.0, 1.0))
+        plt.close("all")
+
+    def test_Dirichlet_two_categories_plot_points_to_Beta(self):
+        X = Dirichlet(alpha=[2, 3])
+        with self.assertRaises(Exception) as cm:
+            X.plot()
+        self.assertIn("Beta", str(cm.exception))
+
+    def test_Dirichlet_marginal_1d_is_Beta(self):
+        alpha = [2, 3, 5]
+        X = Dirichlet(alpha=alpha)
+        marginal = X._marginal_1d(1)
+        self.assertIsInstance(marginal, Beta)
+        self.assertAlmostEqual(float(marginal.mean()), 3 / 10)
+
+    def test_Dirichlet_joint_func_integrates_to_one(self):
+        # The joint density of two proportions is a real density over the
+        # triangle where they sum to at most 1, so it integrates to 1.
+        X = Dirichlet(alpha=[2, 3, 5])
+        n = 600
+        edges = np.linspace(0, 1, n + 1)
+        centers = (edges[:-1] + edges[1:]) / 2
+        xs, ys = np.meshgrid(centers, centers)
+        total = X._joint_func(0, 1)(xs.ravel(), ys.ravel()).sum() * (1.0 / n) ** 2
+        self.assertAlmostEqual(float(total), 1.0, places=2)
+
+    def test_Dirichlet_joint_func_zero_outside_the_simplex(self):
+        # Two proportions can't add up to more than 1.
+        X = Dirichlet(alpha=[2, 3, 5])
+        got = X._joint_func(0, 1)(np.array([0.7]), np.array([0.7]))[0]
+        self.assertEqual(float(got), 0.0)
+
+    def test_Dirichlet_plots_pairs_with_Beta_marginals_on_the_diagonal(self):
+        X = Dirichlet(alpha=[3, 2, 4, 5])
+        X.plot(pairs=True)
+        self.assertEqual(len(plt.gcf().axes), 10)
+        plt.close("all")
+
+    def test_Dirichlet_plots_with_concentration_below_one(self):
+        # Concentrations below 1 push the density to infinity at the edge of
+        # the simplex; the surface is still drawn, scaled by its largest
+        # finite value.
+        Dirichlet(alpha=[0.5, 0.5, 0.5]).plot()
         plt.close("all")
 
 
