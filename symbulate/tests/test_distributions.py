@@ -4181,6 +4181,15 @@ class TestMultivariateT(unittest.TestCase):
             X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=df)
             self.assertRaises(Exception, X.cov)
 
+    def test_MultivariateT_mean_undefined_for_low_df(self):
+        # The mean exists only for df > 1 (like the univariate Student's t).
+        for df in [0.5, 1]:
+            X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=df)
+            self.assertRaises(Exception, X.mean)
+        # For df > 1 the mean is the location vector.
+        X = MultivariateT(mean=[3, 7], cov=[[1, 0], [0, 1]], df=1.5)
+        np.testing.assert_allclose(np.array(X.mean()), [3, 7])
+
     def test_MultivariateT_is_multivariate_distribution(self):
         X = MultivariateT(mean=[0, 0], cov=[[1, 0], [0, 1]], df=5)
         self.assertIsInstance(X, MultivariateDistribution)
