@@ -2085,6 +2085,134 @@ class TruncatedNormal(Distribution):
         self.xlim = (lower, upper)
 
 
+class SkewNormal(Distribution):
+    """Probability space for a skew-normal distribution.
+
+    A bell curve that has been tilted to one side. It is the
+    :class:`Normal` distribution with one extra parameter, ``shape``,
+    which leans the curve left or right: the peak slides toward one side
+    and the tail on the other side stretches out. Setting ``shape = 0``
+    tilts it not at all and gives back an ordinary
+    ``Normal(loc, scale)``. It is used wherever data is bell-shaped but
+    visibly lopsided -- test scores, growth measurements, financial
+    returns -- and as a model that lets the skewness be estimated instead
+    of assumed away.
+
+    Parameters
+    ----------
+    loc : float, optional
+        Location parameter (the center the curve is tilted around).
+        Default is 0. This is not the mean of the distribution unless
+        ``shape`` is 0 -- see Notes.
+    scale : float, optional
+        Scale parameter (controls the spread). Must be a positive number.
+        Default is 1. This is not the standard deviation of the
+        distribution unless ``shape`` is 0 -- see Notes.
+    shape : float, optional
+        Shape parameter (usually written alpha), which sets the direction
+        and amount of the tilt. Any number is allowed. Default is 0,
+        which gives the normal distribution. Positive values stretch the
+        right tail (skewed right), negative values the left tail (skewed
+        left).
+
+    Attributes
+    ----------
+    loc : float
+        Location parameter.
+    scale : float
+        Scale parameter.
+    shape : float
+        Shape parameter (alpha).
+
+    Notes
+    -----
+    Tilting the curve moves its center of mass, so ``loc`` and ``scale``
+    are *not* the mean and standard deviation once ``shape`` is nonzero.
+    Writing ``delta = shape / sqrt(1 + shape ** 2)`` for the tilt measured
+    on a 0-to-1 scale,
+
+    ``X.mean() == loc + scale * delta * sqrt(2 / pi)``  and
+    ``X.var() == scale ** 2 * (1 - 2 * delta ** 2 / pi)``.
+
+    So tilting to the right pulls the mean above ``loc`` and, at the same
+    time, makes the distribution *less* spread out than ``scale`` suggests.
+    The distribution covers every real number for any ``shape``: the tilt
+    thins one tail but never cuts it off.
+
+    Reflecting the shape reflects the distribution. With ``loc = 0``,
+    ``shape`` and ``-shape`` give mirror images of each other, so a
+    left-skewed curve is just a right-skewed one flipped about its center.
+
+    The amount of skewness this family can produce is limited: as
+    ``shape`` grows the skewness rises toward about 0.995 and no further.
+    A more lopsided data set than that needs a different distribution
+    (:class:`LogNormal` or :class:`Gamma`, say), not a bigger ``shape``.
+
+    Both of its endpoints are familiar distributions. At ``shape = 0``
+    it is exactly ``Normal(loc, scale)``. As ``shape`` grows without
+    bound the left half is squeezed away entirely and what is left is a
+    half-normal: ``loc + scale * HalfNormal(scale=1)``, that is,
+    ``loc + scale * abs(Normal(0, 1))``. Between those extremes it is
+    built from the same two pieces mixed together --
+    ``loc + scale * (delta * abs(Z) + sqrt(1 - delta ** 2) * W)`` for
+    independent standard normals ``Z`` and ``W`` -- which is a handy way
+    to see where the one-sided tail comes from.
+
+    This wraps ``scipy.stats.skewnorm``, whose shape parameter ``a`` is
+    the same alpha, so it is passed straight through as ``a = shape``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = SkewNormal(loc=0, scale=1, shape=4)
+    >>> round(float(X.mean()), 4)  # tilted right, so above loc = 0
+    0.7741
+    >>> round(float(X.var()), 4)  # and narrower than scale = 1 suggests
+    0.4008
+    >>> round(float(X.pdf(1)), 4)
+    0.4839
+    >>> Y = SkewNormal(loc=0, scale=1, shape=0)  # no tilt: a Normal(0, 1)
+    >>> round(float(Y.pdf(1)), 4)
+    0.242
+    >>> X.draw()  # doctest: +SKIP
+    0.63
+    """
+
+    def __init__(self, loc=0, scale=1, shape=0):
+        """Initialize a skew-normal distribution.
+
+        Raises
+        ------
+        Exception
+            If ``loc`` or ``shape`` is not a number, or ``scale`` is not a
+            positive number.
+        """
+        _validate(
+            (not isinstance(loc, numbers.Real), "loc must be a number"),
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+            (
+                not isinstance(shape, numbers.Real),
+                "shape must be a number. Use shape = 0 for no tilt (a normal "
+                "distribution), a positive shape to stretch the right tail, "
+                "or a negative shape to stretch the left tail.",
+            ),
+        )
+        self.loc = loc
+        self.scale = scale
+        self.shape = shape
+
+        # scipy's skewnorm uses the same shape parameter alpha, under the name a.
+        params = {"a": shape, "loc": loc, "scale": scale}
+        super().__init__(params, stats.skewnorm, False)
+        # Unbounded on both sides, like Laplace and Gumbel, so the base
+        # equal-tailed ppf(.001, .999) window is used as-is; the HDI trim needs
+        # a bounded side to work from. Even at a large shape the thin tail is
+        # only ever thin, never absent, so the window stays reasonable.
+
+
 class Exponential(Distribution):
     """Probability space for an exponential distribution.
 
