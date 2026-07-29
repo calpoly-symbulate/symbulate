@@ -6187,6 +6187,154 @@ class Dirichlet(MultivariateDistribution):
         return Vector(rng.dirichlet(self.alpha))
 
 
+class DirichletMultinomial(MultivariateDistribution):
+    """Probability space for a Dirichlet-multinomial distribution.
+
+    The compound of a :class:`Dirichlet` and a :class:`Multinomial`: draw a
+    probability vector from a ``Dirichlet(alpha)``, then draw counts from a
+    ``Multinomial(n, that vector)``. Equivalently, it is the multinomial with
+    its probability vector integrated out against a Dirichlet prior. Each draw
+    is a vector of counts, one per category, that sums to ``n``.
+
+    Because the category probabilities are themselves random, the counts are
+    **overdispersed** relative to an ordinary multinomial -- more spread out
+    for the same mean -- which makes this the standard model for
+    overdispersed count data in Bayesian text and topic modeling. It is the
+    multivariate analogue of the :class:`BetaBinomial`, exactly as the
+    ``Dirichlet`` is of the ``Beta``.
+
+    Parameters
+    ----------
+    n : int
+        Number of trials. Must be a non-negative integer.
+    alpha : array-like of float
+        The Dirichlet concentration parameters, one per category. Must
+        contain at least two strictly positive values. Their relative sizes
+        set the average category probabilities; their total sets how much the
+        probabilities (and hence the counts) vary.
+
+    Attributes
+    ----------
+    n : int
+        Number of trials.
+    alpha : list of float
+        The Dirichlet concentration parameters.
+
+    Methods
+    -------
+    mean()
+        The mean count vector, as a :class:`Vector`.
+    cov()
+        The covariance matrix, as a NumPy 2-D array.
+    var(), sd()
+        The per-category variances and standard deviations, as ``Vector``\\ s.
+    corr()
+        The correlation matrix, as a NumPy 2-D array.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+    >>> [float(v) for v in X.mean()]
+    [2.0, 3.0, 5.0]
+    >>> X.draw()  # doctest: +SKIP
+    (1, 4, 5)
+
+    See Also
+    --------
+    Multinomial : The distribution this compounds, with a fixed probability vector.
+    Dirichlet : The prior placed on the probability vector.
+    BetaBinomial : The univariate analogue.
+    """
+
+    def __init__(self, n, alpha):
+        """Initialize a Dirichlet-multinomial distribution.
+
+        Raises
+        ------
+        Exception
+            If ``n`` is not a non-negative integer, or ``alpha`` is not a
+            list of at least two strictly positive numbers.
+        """
+        # ``alpha`` is array-like, so guard the conversion and checks the same
+        # way ``Dirichlet`` does: a non-numeric, empty, too-short, or
+        # non-positive ``alpha`` reports the helpful message.
+        try:
+            alpha_arr = np.asarray(alpha, dtype=float)
+            bad_alpha = (
+                alpha_arr.ndim != 1
+                or len(alpha_arr) < 2
+                or not np.all(np.isfinite(alpha_arr))
+                or np.any(alpha_arr <= 0)
+            )
+        except (TypeError, ValueError):
+            bad_alpha = True
+
+        _validate(
+            (
+                not isinstance(n, numbers.Integral) or n < 0,
+                "n must be a non-negative integer",
+            ),
+            (
+                bad_alpha,
+                "alpha must be a list of at least two positive numbers "
+                "(the Dirichlet concentration parameters).",
+            ),
+        )
+        self.n = n
+        self.alpha = list(alpha)
+
+        self.discrete = False
+        self.pdf = lambda x: stats.dirichlet_multinomial(self.alpha, self.n).pmf(x)
+
+    def mean(self):
+        """Return the mean count vector.
+
+        Returns
+        -------
+        Vector
+            The expected count of each category, ``n * alpha / sum(alpha)``.
+        """
+        return Vector(stats.dirichlet_multinomial(self.alpha, self.n).mean())
+
+    def cov(self):
+        """Return the covariance matrix.
+
+        The counts are negatively correlated (they must sum to ``n``) and
+        overdispersed relative to a multinomial: every variance is inflated by
+        the factor ``(n + alpha0) / (1 + alpha0)``, where ``alpha0`` is the
+        sum of the concentration parameters.
+
+        Returns
+        -------
+        numpy.ndarray
+            The covariance matrix.
+        """
+        return np.asarray(
+            stats.dirichlet_multinomial(self.alpha, self.n).cov(), dtype=float
+        )
+
+    def draw(self):
+        """Draw a single random sample from the Dirichlet-multinomial distribution.
+
+        Draws a probability vector from the ``Dirichlet(alpha)`` prior, then
+        draws counts from a ``Multinomial(n, ...)`` with that vector.
+
+        Returns
+        -------
+        Vector
+            A vector of counts, one per category, summing to ``n``.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> DirichletMultinomial(n=10, alpha=[2, 3, 5]).draw()  # doctest: +SKIP
+        (1, 4, 5)
+        """
+        probabilities = rng.dirichlet(self.alpha)
+        return Vector(rng.multinomial(self.n, probabilities))
+
+
 class MultivariateLogNormal(MultivariateDistribution):
     """Probability space for a multivariate log-normal distribution.
 

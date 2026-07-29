@@ -81,6 +81,7 @@ from .distributions import (
     Multinomial,
     MultivariateHypergeometric,
     Dirichlet,
+    DirichletMultinomial,
 )
 from .independence import AssumeIndependent
 from .index_sets import Naturals, Integers, Reals, DiscreteTimeSequence
