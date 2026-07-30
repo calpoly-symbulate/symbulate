@@ -567,5 +567,76 @@ class TestMMQueues(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
 
+class TestYuleProcess(unittest.TestCase):
+
+    def test_is_rv(self):
+        self.assertIsInstance(YuleProcess(birth_rate=0.5), RV)
+
+    def test_draw_returns_continuous_time_function(self):
+        seed()
+        path = YuleProcess(birth_rate=0.5).draw()
+        self.assertIsInstance(path, ContinuousTimeFunction)
+        self.assertIsInstance(path, DiscreteValued)
+
+    def test_path_starts_at_initial(self):
+        seed()
+        self.assertEqual(YuleProcess(birth_rate=0.5).draw()(0), 1)
+        self.assertEqual(YuleProcess(birth_rate=0.5, initial=3).draw()(0), 3)
+
+    def test_path_is_nondecreasing(self):
+        # A pure-birth process only ever grows.
+        seed()
+        path = YuleProcess(birth_rate=0.5).draw()
+        values = [path(t) for t in [0, 1, 2, 4, 6, 8]]
+        self.assertEqual(values, sorted(values))
+
+    def test_interarrival_times_are_positive(self):
+        seed()
+        path = YuleProcess(birth_rate=0.5).draw()
+        for k in range(5):
+            self.assertGreater(path.interarrival_times[k], 0)
+
+    def test_error_nonpositive_birth_rate(self):
+        self.assertRaises(Exception, lambda: YuleProcess(birth_rate=0))
+        self.assertRaises(Exception, lambda: YuleProcess(birth_rate=-1))
+
+    def test_error_bad_initial(self):
+        self.assertRaises(Exception, lambda: YuleProcess(birth_rate=0.5, initial=0))
+        self.assertRaises(Exception, lambda: YuleProcess(birth_rate=0.5, initial=1.5))
+
+    def test_marginal_is_geometric(self):
+        # Started from 1, N(t) is Geometric with parameter exp(-birth_rate * t).
+        seed()
+        lam, t = 0.5, 2.0
+        p = np.exp(-lam * t)
+        X = YuleProcess(birth_rate=lam)
+        sims = [X.draw()(t) for _ in range(4000)]
+        th = stats.geom(p)
+        obs, exp = [], []
+        for k in range(1, 12):
+            e = len(sims) * th.pmf(k)
+            if e > 5:
+                exp.append(e)
+                obs.append(sum(1 for s in sims if s == k))
+        pval = stats.chisquare(obs, np.array(exp) * sum(obs) / sum(exp)).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_mean_grows_exponentially(self):
+        # E[N(t)] = initial * exp(birth_rate * t).
+        seed()
+        lam, t, initial = 0.5, 3.0, 2
+        X = YuleProcess(birth_rate=lam, initial=initial)
+        sims = [X.draw()(t) for _ in range(3000)]
+        self.assertAlmostEqual(np.mean(sims), initial * np.exp(lam * t), delta=0.5)
+
+    def test_reproducible_under_same_seed(self):
+        X = YuleProcess(birth_rate=0.5)
+        seed(7)
+        first = [X.draw()(t) for t in [1.0, 3.0, 5.0]]
+        seed(7)
+        second = [X.draw()(t) for t in [1.0, 3.0, 5.0]]
+        self.assertEqual(first, second)
+
+
 if __name__ == "__main__":
     unittest.main()
