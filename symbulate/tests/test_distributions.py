@@ -4605,9 +4605,65 @@ class TestMultivariateLogNormal(unittest.TestCase):
         X = MultivariateLogNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
         self.assertIsInstance(X, MultivariateDistribution)
 
-    def test_MVLogNormal_plot_raises(self):
-        X = MultivariateLogNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
-        self.assertRaises(Exception, X.plot)
+    def test_MVLogNormal_two_variables_is_one_joint_plot(self):
+        X = MultivariateLogNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
+        self.assertEqual(X._free_dim(), 2)
+        X.plot()
+        plt.close("all")
+
+    def test_MVLogNormal_marginal_is_lognormal(self):
+        # One variable of the underlying normal is a Normal, so one
+        # variable here is an ordinary LogNormal.
+        X = MultivariateLogNormal(mean=[0.3, -0.2], cov=[[1.0, 0.5], [0.5, 0.8]])
+        marginal = X._marginal_1d(1)
+        self.assertIsInstance(marginal, LogNormal)
+        expected = LogNormal(mu=-0.2, sigma=np.sqrt(0.8))
+        for v in [0.25, 1.0, 2.5, 6.0]:
+            self.assertAlmostEqual(float(marginal.pdf(v)), float(expected.pdf(v)))
+
+    def test_MVLogNormal_joint_func_matches_transformed_normal(self):
+        # The pair's density is the underlying bivariate normal's, read at
+        # the logarithms and divided by the x * y Jacobian.
+        mean = [0.3, -0.2, 1.0]
+        cov = [[1.0, 0.5, 0.2], [0.5, 0.8, 0.1], [0.2, 0.1, 0.6]]
+        X = MultivariateLogNormal(mean=mean, cov=cov)
+        index = [0, 2]
+        pair = stats.multivariate_normal(
+            np.asarray(mean)[index], np.asarray(cov)[np.ix_(index, index)]
+        )
+        func = X._joint_func(0, 2)
+        for x in [0.4, 1.0, 3.0]:
+            for y in [0.5, 2.0, 7.0]:
+                expected = float(pair.pdf([np.log(x), np.log(y)])) / (x * y)
+                self.assertAlmostEqual(
+                    float(func(np.array([x]), np.array([y]))[0]), expected
+                )
+
+    def test_MVLogNormal_joint_func_zero_outside_positive_quadrant(self):
+        # A log-normal value is always strictly positive.
+        X = MultivariateLogNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
+        func = X._joint_func(0, 1)
+        xs = np.array([-1.0, 0.0, 2.0, 2.0])
+        ys = np.array([2.0, 2.0, -1.0, 0.0])
+        for value in func(xs, ys):
+            self.assertEqual(float(value), 0.0)
+
+    def test_MVLogNormal_joint_func_integrates_to_one(self):
+        X = MultivariateLogNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
+        func = X._joint_func(0, 1)
+        # A rectangle rule over the bulk of the support; the tail beyond it
+        # is negligible, so the total should be very close to 1.
+        step = 0.05
+        grid = np.arange(step / 2, 40, step)
+        xs, ys = np.meshgrid(grid, grid)
+        total = func(xs.ravel(), ys.ravel()).sum() * step * step
+        self.assertAlmostEqual(float(total), 1.0, places=3)
+
+    def test_MVLogNormal_plot_pairs(self):
+        MultivariateLogNormal(
+            mean=[0, 0, 0], cov=[[1, 0.5, 0], [0.5, 1, 0], [0, 0, 1]]
+        ).plot(pairs=True)
+        plt.close("all")
 
 
 class TestWishart(unittest.TestCase):
@@ -5054,9 +5110,57 @@ class TestMultivariateHypergeometric(unittest.TestCase):
         X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
         self.assertIsInstance(X, MultivariateDistribution)
 
-    def test_MVHypergeom_plot_raises(self):
+    def test_MVHypergeom_is_discrete(self):
+        # Every draw is a vector of whole counts.
+        self.assertTrue(MultivariateHypergeometric(m=[10, 8, 6], n=6).discrete)
+
+    def test_MVHypergeom_three_types_is_one_joint_plot(self):
+        # The counts add up to n, so three types vary in only two
+        # directions -- the single-joint-plot case, needing no dims.
         X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
-        self.assertRaises(Exception, X.plot)
+        self.assertEqual(X._free_dim(), 2)
+        X.plot()
+        plt.close("all")
+
+    def test_MVHypergeom_marginal_is_hypergeometric(self):
+        # Lumping the other types together leaves an ordinary
+        # hypergeometric for one type's count.
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        marginal = X._marginal_1d(1)
+        self.assertIsInstance(marginal, Hypergeometric)
+        expected = Hypergeometric(n=6, N0=16, N1=8)
+        for k in range(7):
+            self.assertAlmostEqual(float(marginal.pdf(k)), float(expected.pdf(k)))
+
+    def test_MVHypergeom_joint_func_totals_one_over_the_grid(self):
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        counts = np.arange(7)
+        xs, ys = np.meshgrid(counts, counts)
+        total = X._joint_func(0, 1)(xs.ravel(), ys.ravel()).sum()
+        self.assertAlmostEqual(float(total), 1.0)
+
+    def test_MVHypergeom_joint_func_matches_pooled(self):
+        # Pooling the other types into one gives a three-type multivariate
+        # hypergeometric exactly.
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        pooled = stats.multivariate_hypergeom([10, 8, 6], 6)
+        func = X._joint_func(0, 1)
+        for x in range(7):
+            for y in range(7 - x):
+                self.assertAlmostEqual(
+                    float(func(np.array([x]), np.array([y]))[0]),
+                    float(pooled.pmf([x, y, 6 - x - y])),
+                )
+
+    def test_MVHypergeom_joint_func_zero_for_impossible_pairs(self):
+        # Two counts cannot use more than the n items drawn.
+        X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
+        func = X._joint_func(0, 1)
+        self.assertEqual(float(func(np.array([4]), np.array([5]))[0]), 0.0)
+
+    def test_MVHypergeom_plot_pairs(self):
+        MultivariateHypergeometric(m=[10, 8, 6, 4], n=6).plot(pairs=True)
+        plt.close("all")
 
 
 class TestDirichlet(unittest.TestCase):
@@ -5279,9 +5383,53 @@ class TestDirichletMultinomial(unittest.TestCase):
         X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
         self.assertIsInstance(X, MultivariateDistribution)
 
-    def test_DirichletMultinomial_plot_raises(self):
+    def test_DirichletMultinomial_is_discrete(self):
+        self.assertTrue(DirichletMultinomial(n=10, alpha=[2, 3, 5]).discrete)
+
+    def test_DirichletMultinomial_three_categories_is_one_joint_plot(self):
         X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
-        self.assertRaises(Exception, X.plot)
+        self.assertEqual(X._free_dim(), 2)
+        X.plot()
+        plt.close("all")
+
+    def test_DirichletMultinomial_marginal_is_betabinomial(self):
+        # One count on its own is the univariate analogue, the
+        # beta-binomial, with the other alphas pooled into the second shape.
+        X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+        marginal = X._marginal_1d(0)
+        self.assertIsInstance(marginal, BetaBinomial)
+        expected = BetaBinomial(n=10, shape1=2, shape2=8)
+        for k in range(11):
+            self.assertAlmostEqual(float(marginal.pdf(k)), float(expected.pdf(k)))
+
+    def test_DirichletMultinomial_joint_func_totals_one_over_the_grid(self):
+        X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+        counts = np.arange(11)
+        xs, ys = np.meshgrid(counts, counts)
+        total = X._joint_func(0, 1)(xs.ravel(), ys.ravel()).sum()
+        self.assertAlmostEqual(float(total), 1.0)
+
+    def test_DirichletMultinomial_joint_func_matches_pooled(self):
+        # Pooling the other categories adds up their alphas and gives a
+        # three-category Dirichlet-multinomial exactly.
+        X = DirichletMultinomial(n=8, alpha=[2, 3, 5, 4])
+        pooled = stats.dirichlet_multinomial([2.0, 3.0, 9.0], 8)
+        func = X._joint_func(0, 1)
+        for x in range(9):
+            for y in range(9 - x):
+                self.assertAlmostEqual(
+                    float(func(np.array([x]), np.array([y]))[0]),
+                    float(pooled.pmf([x, y, 8 - x - y])),
+                )
+
+    def test_DirichletMultinomial_joint_func_zero_for_impossible_pairs(self):
+        X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
+        func = X._joint_func(0, 1)
+        self.assertEqual(float(func(np.array([7]), np.array([6]))[0]), 0.0)
+
+    def test_DirichletMultinomial_plot_pairs(self):
+        DirichletMultinomial(n=10, alpha=[2, 3, 5, 4]).plot(pairs=True)
+        plt.close("all")
 
 
 class TestNegativeMultinomial(unittest.TestCase):
@@ -5449,9 +5597,65 @@ class TestNegativeMultinomial(unittest.TestCase):
         X = NegativeMultinomial(r=3, p=[0.3, 0.2])
         self.assertIsInstance(X, MultivariateDistribution)
 
-    def test_NegativeMultinomial_plot_raises(self):
+    def test_NegativeMultinomial_is_discrete(self):
+        self.assertTrue(NegativeMultinomial(r=3, p=[0.3, 0.2]).discrete)
+
+    def test_NegativeMultinomial_is_not_sum_constrained(self):
+        # Unlike the Multinomial, nothing fixes a total here -- the number
+        # of draws varies -- so every count varies freely.
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2, 0.25])
+        self.assertEqual(X._free_dim(), 3)
+        self.assertEqual(X._n_components(), 3)
+
+    def test_NegativeMultinomial_two_categories_is_one_joint_plot(self):
         X = NegativeMultinomial(r=3, p=[0.3, 0.2])
-        self.assertRaises(Exception, X.plot)
+        self.assertEqual(X._free_dim(), 2)
+        X.plot()
+        plt.close("all")
+
+    def test_NegativeMultinomial_marginal_is_pascal(self):
+        # Watching one category and the stopping category, and ignoring the
+        # rest, leaves Pascal(r, p0 / (p0 + p_i)).
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2])
+        marginal = X._marginal_1d(0)
+        self.assertIsInstance(marginal, Pascal)
+        expected = Pascal(r=3, p=0.5 / 0.8)
+        for k in range(15):
+            self.assertAlmostEqual(float(marginal.pdf(k)), float(expected.pdf(k)))
+
+    def test_NegativeMultinomial_joint_func_totals_one_over_the_grid(self):
+        # The support is unbounded, so this only approaches 1; a wide grid
+        # gets close enough to show no probability has gone missing.
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2, 0.25])
+        counts = np.arange(220)
+        xs, ys = np.meshgrid(counts, counts)
+        total = X._joint_func(0, 1)(xs.ravel(), ys.ravel()).sum()
+        self.assertAlmostEqual(float(total), 1.0, places=6)
+
+    def test_NegativeMultinomial_joint_func_matches_renormalized_pair(self):
+        # Ignoring the other categories rescales the three probabilities
+        # still in play to add up to 1 -- without that rescaling the answer
+        # is wrong, so this pins the rule down.
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2, 0.25])
+        total = 0.25 + 0.3 + 0.2
+        expected = NegativeMultinomial(r=3, p=[0.3 / total, 0.2 / total])
+        func = X._joint_func(0, 1)
+        for x in range(6):
+            for y in range(6):
+                self.assertAlmostEqual(
+                    float(func(np.array([x]), np.array([y]))[0]),
+                    float(expected.pdf([x, y])),
+                )
+
+    def test_NegativeMultinomial_joint_func_has_no_impossible_pairs(self):
+        # No total is fixed, so even a large pair of counts is possible.
+        X = NegativeMultinomial(r=3, p=[0.3, 0.2, 0.25])
+        func = X._joint_func(0, 1)
+        self.assertGreater(float(func(np.array([30]), np.array([30]))[0]), 0.0)
+
+    def test_NegativeMultinomial_plot_pairs(self):
+        NegativeMultinomial(r=3, p=[0.3, 0.2, 0.25]).plot(pairs=True)
+        plt.close("all")
 
 
 # ===========================================================================
