@@ -6903,6 +6903,13 @@ class MultivariateHypergeometric(MultivariateDistribution):
     (3, 2, 1)
     """
 
+    # Every draw takes exactly n items, so the counts always add up to n and
+    # the last one is whatever is left over: a three-type distribution varies
+    # in two directions, which makes it the natural single-joint-plot case
+    # (two types is just a Hypergeometric). See
+    # MultivariateDistribution._free_dim.
+    _sum_constrained = True
+
     def __init__(self, m, n):
         """Initialize a multivariate hypergeometric distribution.
 
@@ -6945,7 +6952,7 @@ class MultivariateHypergeometric(MultivariateDistribution):
         self.m = m
         self.n = n
 
-        self.discrete = False
+        self.discrete = True
         self.pdf = lambda x: stats.multivariate_hypergeom(self.m, self.n).pmf(x)
 
     def mean(self):
@@ -6972,6 +6979,72 @@ class MultivariateHypergeometric(MultivariateDistribution):
         return np.asarray(
             stats.multivariate_hypergeom(self.m, self.n).cov(), dtype=float
         )
+
+    def _marginal_1d(self, i):
+        """Return the distribution of type ``i``'s count on its own.
+
+        Ignoring which of the other types an item happened to be, every
+        item drawn either is of type ``i`` or is not -- so that one count
+        is an ordinary hypergeometric, drawing the same ``n`` items from a
+        collection split into the ``m[i]`` items of that type and all the
+        rest lumped together.
+
+        Parameters
+        ----------
+        i : int
+            Index of the type, counting from 0.
+
+        Returns
+        -------
+        Hypergeometric
+            The distribution of that type's count.
+        """
+        m = np.asarray(self.m, dtype=int)
+        return Hypergeometric(n=self.n, N0=int(m.sum() - m[i]), N1=int(m[i]))
+
+    def _joint_func(self, i, j):
+        """Return the joint probability function of counts ``i`` and ``j``.
+
+        Pooling every other type into a single "everything else" type gives
+        back a three-type multivariate hypergeometric exactly -- the same
+        aggregation property the ``Multinomial`` has -- so the joint
+        distribution of two counts is that smaller distribution's, read off
+        at ``(x, y, n - x - y)``. Pairs that would need more than ``n``
+        items between them are impossible and get probability 0, which is
+        what makes the triangular shape of the joint support visible.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two types, counting from 0.
+
+        Returns
+        -------
+        callable
+            The joint probability function, as a function of two
+            equal-length flat arrays of counts.
+        """
+        m = np.asarray(self.m, dtype=int)
+        rest = int(m.sum() - m[i] - m[j])
+        pair = stats.multivariate_hypergeom([int(m[i]), int(m[j]), rest], self.n)
+        n = self.n
+
+        def func(x, y):
+            x = np.ravel(x)
+            y = np.ravel(y)
+            pooled = n - x - y
+            out = np.zeros(len(x), dtype=float)
+            # Only ask scipy about pairs that leave a non-negative count for
+            # the pooled type; the rest are impossible, so they keep
+            # probability 0.
+            possible = pooled >= 0
+            if np.any(possible):
+                out[possible] = pair.pmf(
+                    np.column_stack([x[possible], y[possible], pooled[possible]])
+                )
+            return out
+
+        return func
 
     def draw(self):
         """Draw a single random sample from the multivariate hypergeometric distribution.
@@ -7113,12 +7186,12 @@ class NegativeMultinomial(MultivariateDistribution):
         self.p = list(p)
         self.p0 = float(1 - p_arr.sum())
 
-        # ``discrete`` only feeds the scalar plotting path, which no
-        # multivariate distribution uses (``plot`` raises), so this is set to
-        # False to match Multinomial and MultivariateHypergeometric. ``pdf`` is
-        # a method below rather than a lambda, because there is no scipy
-        # negative multinomial to delegate to.
-        self.discrete = False
+        # A draw is a vector of counts, so the distribution is discrete:
+        # plot() draws a probability at each possible pair of counts rather
+        # than a smooth surface between them. ``pdf`` is a method below
+        # rather than a lambda, because there is no scipy negative
+        # multinomial to delegate to.
+        self.discrete = True
 
     def pdf(self, x):
         """Return the probability of a specific vector of counts.
@@ -7215,6 +7288,66 @@ class NegativeMultinomial(MultivariateDistribution):
         return (self.r / self.p0**2) * (
             np.outer(p_arr, p_arr) + np.diag(p_arr * self.p0)
         )
+
+    def _marginal_1d(self, i):
+        """Return the distribution of category ``i``'s count on its own.
+
+        Watch category ``i`` and the stopping category, and ignore every
+        other draw. What is left is an ordinary wait for the ``r``-th stop,
+        so that one count is a ``Pascal`` -- the number of category-``i``
+        outcomes seen before the ``r``-th stopping outcome. Ignoring the
+        other categories rescales the two probabilities still in play to
+        add up to one, which is where ``p0 / (p0 + p[i])`` comes from.
+
+        Parameters
+        ----------
+        i : int
+            Index of the category, counting from 0.
+
+        Returns
+        -------
+        Pascal
+            The distribution of that category's count.
+        """
+        p = np.asarray(self.p, dtype=float)
+        return Pascal(r=self.r, p=self.p0 / (self.p0 + float(p[i])))
+
+    def _joint_func(self, i, j):
+        """Return the joint probability function of counts ``i`` and ``j``.
+
+        The same argument as :meth:`_marginal_1d`, one category wider:
+        ignoring every category except ``i``, ``j``, and the stopping one
+        leaves a two-category negative multinomial with the same ``r``,
+        whose probabilities are the three still in play rescaled to add up
+        to one. Unlike the ``Multinomial``, there is no upper limit on the
+        counts -- the number of draws is what varies here -- so no pair is
+        impossible and the support fills the whole quarter-plane.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two categories, counting from 0.
+
+        Returns
+        -------
+        callable
+            The joint probability function, as a function of two
+            equal-length flat arrays of counts.
+        """
+        p = np.asarray(self.p, dtype=float)
+        # Rescale over the three probabilities still in play: the two
+        # categories being plotted and the stopping category.
+        total = self.p0 + float(p[i]) + float(p[j])
+        pair = NegativeMultinomial(
+            r=self.r, p=[float(p[i]) / total, float(p[j]) / total]
+        )
+
+        def func(x, y):
+            return np.asarray(
+                pair.pdf(np.column_stack([np.ravel(x), np.ravel(y)])), dtype=float
+            )
+
+        return func
 
     def draw(self):
         """Draw a single random sample from the negative multinomial distribution.
@@ -7542,6 +7675,12 @@ class DirichletMultinomial(MultivariateDistribution):
     BetaBinomial : The univariate analogue.
     """
 
+    # The counts always add up to n, so the last one is whatever is left
+    # over: a three-category distribution varies in two directions, which
+    # makes it the natural single-joint-plot case (two categories is just a
+    # BetaBinomial). See MultivariateDistribution._free_dim.
+    _sum_constrained = True
+
     def __init__(self, n, alpha):
         """Initialize a Dirichlet-multinomial distribution.
 
@@ -7579,7 +7718,10 @@ class DirichletMultinomial(MultivariateDistribution):
         self.n = n
         self.alpha = list(alpha)
 
-        self.discrete = False
+        # A draw is a vector of counts, so the distribution is discrete:
+        # plot() draws a probability at each possible pair of counts rather
+        # than a smooth surface between them.
+        self.discrete = True
         self.pdf = lambda x: stats.dirichlet_multinomial(self.alpha, self.n).pmf(x)
 
     def mean(self):
@@ -7608,6 +7750,77 @@ class DirichletMultinomial(MultivariateDistribution):
         return np.asarray(
             stats.dirichlet_multinomial(self.alpha, self.n).cov(), dtype=float
         )
+
+    def _marginal_1d(self, i):
+        """Return the distribution of category ``i``'s count on its own.
+
+        Lumping every other category together turns the Dirichlet prior
+        into a two-part ``Beta`` and the counts into a two-outcome draw, so
+        one count on its own is a beta-binomial -- the univariate analogue
+        of this distribution, exactly as one count of a ``Multinomial`` is
+        the ``Binomial``.
+
+        Parameters
+        ----------
+        i : int
+            Index of the category, counting from 0.
+
+        Returns
+        -------
+        BetaBinomial
+            The distribution of that category's count.
+        """
+        alpha = np.asarray(self.alpha, dtype=float)
+        return BetaBinomial(
+            n=self.n, shape1=float(alpha[i]), shape2=float(alpha.sum() - alpha[i])
+        )
+
+    def _joint_func(self, i, j):
+        """Return the joint probability function of counts ``i`` and ``j``.
+
+        Pooling every other category into a single "everything else"
+        category adds up their concentration parameters and gives back a
+        three-category Dirichlet-multinomial exactly -- the same
+        aggregation property the ``Multinomial`` and ``Dirichlet`` have --
+        so the joint distribution of two counts is that smaller
+        distribution's, read off at ``(x, y, n - x - y)``. Pairs adding up
+        to more than ``n`` are impossible and get probability 0, which is
+        what makes the triangular shape of the joint support visible.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two categories, counting from 0.
+
+        Returns
+        -------
+        callable
+            The joint probability function, as a function of two
+            equal-length flat arrays of counts.
+        """
+        alpha = np.asarray(self.alpha, dtype=float)
+        rest = float(alpha.sum() - alpha[i] - alpha[j])
+        pair = stats.dirichlet_multinomial(
+            [float(alpha[i]), float(alpha[j]), rest], self.n
+        )
+        n = self.n
+
+        def func(x, y):
+            x = np.ravel(x)
+            y = np.ravel(y)
+            pooled = n - x - y
+            out = np.zeros(len(x), dtype=float)
+            # Only ask scipy about pairs that leave a non-negative count for
+            # the pooled category; the rest are impossible, so they keep
+            # probability 0.
+            possible = pooled >= 0
+            if np.any(possible):
+                out[possible] = pair.pmf(
+                    np.column_stack([x[possible], y[possible], pooled[possible]])
+                )
+            return out
+
+        return func
 
     def draw(self):
         """Draw a single random sample from the Dirichlet-multinomial distribution.
@@ -7737,6 +7950,75 @@ class MultivariateLogNormal(MultivariateDistribution):
         return np.exp(np.add.outer(mu, mu) + np.add.outer(variances, variances) / 2) * (
             np.exp(sigma) - 1
         )
+
+    def _marginal_1d(self, i):
+        """Return the distribution of variable ``i`` on its own.
+
+        Taking the logarithm of a multivariate log-normal gives back a
+        multivariate normal, one variable of which is an ordinary
+        ``Normal`` -- so one variable of this distribution is an ordinary
+        ``LogNormal``, built from that variable's own entry of the
+        underlying mean vector and covariance matrix.
+
+        Parameters
+        ----------
+        i : int
+            Index of the variable, counting from 0.
+
+        Returns
+        -------
+        LogNormal
+            The distribution of that one variable.
+        """
+        mu = np.asarray(self._normal.mean(), dtype=float)
+        cov = np.asarray(self._normal.cov(), dtype=float)
+        return LogNormal(mu=float(mu[i]), sigma=float(np.sqrt(cov[i, i])))
+
+    def _joint_func(self, i, j):
+        """Return the joint density of variables ``i`` and ``j``.
+
+        Two variables of the underlying normal are themselves a bivariate
+        normal -- those two entries of its mean vector and the matching 2x2
+        block of its covariance matrix -- so the pair here is a bivariate
+        log-normal. Its density is that bivariate normal's, evaluated at
+        the logarithms and divided by ``x * y``, the Jacobian of the
+        exponential change of variables.
+
+        The density is 0 anywhere outside the positive quarter-plane, since
+        a log-normal value can never be zero or negative.
+
+        Parameters
+        ----------
+        i, j : int
+            Indices of the two variables, counting from 0.
+
+        Returns
+        -------
+        callable
+            The joint density, as a function of two equal-length flat
+            arrays of coordinates.
+        """
+        mu = np.asarray(self._normal.mean(), dtype=float)
+        cov = np.asarray(self._normal.cov(), dtype=float)
+        index = [i, j]
+        pair = stats.multivariate_normal(mu[index], cov[np.ix_(index, index)])
+
+        def func(x, y):
+            x = np.ravel(x)
+            y = np.ravel(y)
+            out = np.zeros(len(x), dtype=float)
+            # Only take logarithms where both coordinates are strictly
+            # positive; everywhere else is outside the support and stays 0.
+            inside = (x > 0) & (y > 0)
+            if np.any(inside):
+                xs = x[inside]
+                ys = y[inside]
+                out[inside] = pair.pdf(np.column_stack([np.log(xs), np.log(ys)])) / (
+                    xs * ys
+                )
+            return out
+
+        return func
 
     def draw(self):
         """Draw a single random sample from the multivariate log-normal distribution.
