@@ -1018,3 +1018,180 @@ class MMInfinity(BirthDeathProcess):
             death_rates=lambda n: n * service_rate,
             num_states=num_states,
         )
+
+
+class YuleProcessResult(ContinuousTimeFunction, DiscreteValued):
+    """One simulated sample path of a Yule (pure-birth) process.
+
+    Stores enough to evaluate the population size at any time: the starting
+    population, the per-individual birth rate, and a lazy sequence of
+    Exponential(1) draws that set the (rescaled) holding times. New births
+    are generated on demand as you evaluate the path at later and later
+    times, so the path is unbounded -- there is no truncation.
+
+    Parameters
+    ----------
+    initial : int
+        The starting population size.
+    birth_rate : float
+        The rate at which each individual gives birth.
+    unscaled_holding_times : InfiniteVector
+        Exponential(1) random variables; the actual time spent at population
+        ``initial + k`` is the ``k``-th of these divided by that population's
+        total birth rate.
+
+    Attributes
+    ----------
+    initial : int
+        The starting population size.
+    birth_rate : float
+        The per-individual birth rate.
+    interarrival_times : InfiniteVector
+        The actual time between successive births.
+
+    Examples
+    --------
+    >>> process = YuleProcess(birth_rate=0.5)
+    >>> path = process.draw()
+    >>> path(3.0)  # doctest: +SKIP
+    4
+    """
+
+    def __init__(self, initial, birth_rate, unscaled_holding_times):
+        """Create one simulated sample path of a Yule process."""
+        self.initial = initial
+        self.birth_rate = birth_rate
+        self.times = unscaled_holding_times
+
+        # With ``m`` individuals present, each gives birth at ``birth_rate``,
+        # so the next birth happens at total rate ``m * birth_rate``. The time
+        # spent at population ``initial + k`` is therefore an Exponential(1)
+        # draw divided by ``(initial + k) * birth_rate``.
+        self.interarrival_times = InfiniteVector(
+            lambda k: self.times[k] / ((self.initial + k) * self.birth_rate)
+        )
+
+        def _func(t):
+            total_time = 0
+            n = 0
+            while True:
+                total_time += self.interarrival_times[n]
+                if total_time > t:
+                    return self.initial + n
+                n += 1
+
+        super().__init__(_func)
+
+
+class YuleProcessProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying a Yule (pure-birth) process.
+
+    Each draw from this space produces one simulated sample path of the
+    process.
+
+    Parameters
+    ----------
+    birth_rate : float
+        The rate at which each individual gives birth. Must be positive.
+    initial : int, optional
+        The starting population size. Must be a positive integer. Default 1.
+
+    Attributes
+    ----------
+    birth_rate : float
+        The per-individual birth rate.
+    initial : int
+        The starting population size.
+
+    Examples
+    --------
+    >>> space = YuleProcessProbabilitySpace(birth_rate=0.5)
+    >>> path = space.draw()
+    >>> path(0.0)
+    1
+    """
+
+    def __init__(self, birth_rate, initial=1):
+        """Initialize the probability space for a Yule process.
+
+        Raises
+        ------
+        Exception
+            If ``birth_rate`` is not a positive number, or ``initial`` is not
+            a positive integer.
+        """
+        if not isinstance(birth_rate, numbers.Real) or birth_rate <= 0:
+            raise Exception("birth_rate must be a positive number.")
+        if not isinstance(initial, numbers.Integral) or initial < 1:
+            raise Exception(
+                "initial must be a positive integer: at least one individual "
+                "is needed for a birth to happen."
+            )
+        self.birth_rate = birth_rate
+        self.initial = initial
+
+        # Built once; each `.draw()` on it yields a fresh, independent
+        # sequence of Exponential(1) holding times.
+        unscaled_holding_times = Exponential(1) ** inf
+
+        def _draw():
+            return YuleProcessResult(initial, birth_rate, unscaled_holding_times.draw())
+
+        super().__init__(_draw)
+
+
+class YuleProcess(RV):
+    """A Yule process (pure birth), treated as a random variable.
+
+    The Yule process -- also called the Yule-Furry or linear pure-birth
+    process -- is a continuous-time model of a growing population. Each of the
+    individuals currently alive independently gives birth at rate
+    ``birth_rate``, and nothing ever dies, so with ``n`` individuals present
+    the next birth arrives at total rate ``n * birth_rate``. It is one of the
+    two canonical first examples in a stochastic-processes course (alongside
+    the Poisson process) and the pure-birth ancestor of the birth-death
+    chains used for queues.
+
+    Each time you simulate this object you get a random sample path -- the
+    population size as a (right-continuous, increasing) step function of
+    continuous time. The path is generated lazily and is unbounded: because
+    the population only ever grows, there is no state-space truncation.
+
+    Parameters
+    ----------
+    birth_rate : float
+        The rate at which each individual gives birth. Must be positive.
+    initial : int, optional
+        The starting population size. Must be a positive integer. Default 1.
+
+    Attributes
+    ----------
+    birth_rate : float
+        The per-individual birth rate.
+    initial : int
+        The starting population size.
+    prob_space : YuleProcessProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Notes
+    -----
+    Starting from a single individual, the population size at time ``t`` is
+    geometrically distributed with parameter ``exp(-birth_rate * t)``, and its
+    mean grows exponentially: ``E[N(t)] = initial * exp(birth_rate * t)``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> process = YuleProcess(birth_rate=0.5)
+    >>> path = process.draw()
+    >>> path(0.0)
+    1
+    >>> path(5.0)  # doctest: +SKIP
+    7
+    """
+
+    def __init__(self, birth_rate, initial=1):
+        """Initialize a Yule process."""
+        self.birth_rate = birth_rate
+        self.initial = initial
+        super().__init__(YuleProcessProbabilitySpace(birth_rate, initial))

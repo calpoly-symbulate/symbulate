@@ -125,6 +125,8 @@ from .markov_chains import (
     MMss,
     MMsKN,
     MMInfinity,
+    YuleProcess,
+    YuleProcessProbabilitySpace,
 )
 from .plot import figure, xlabel, ylabel, xlim, ylim, plot
 from .math import *
