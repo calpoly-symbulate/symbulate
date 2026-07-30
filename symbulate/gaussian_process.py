@@ -2,7 +2,7 @@ import numbers
 
 import numpy as np
 
-from .index_sets import DiscreteTimeSequence, Reals
+from .index_sets import DiscreteTimeSequence, Reals, TimeInterval
 from .probability_space import ProbabilitySpace
 from .result import (
     DiscreteTimeFunction,
@@ -123,7 +123,7 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
                     if t not in index_set:
                         raise KeyError(
                             f"Gaussian process is not defined at time {t}. "
-                            f"Time must be in the index set ({type(index_set).__name__})."
+                            f"Time must be in the index set ({index_set!r})."
                         )
 
                 # Create an object to store the results
@@ -690,6 +690,201 @@ class OrnsteinUhlenbeck(RandomProcess, RV):
             mean=mean,
             scale=scale,
             initial_value=initial_value,
+        )
+        RandomProcess.__init__(self, prob_space)
+        RV.__init__(self, prob_space)
+
+
+def _validate_brownian_bridge(end_time, initial_value, final_value, scale):
+    """Check the parameters of a Brownian bridge.
+
+    Raises
+    ------
+    TypeError
+        If any parameter is not a number.
+    ValueError
+        If ``end_time`` or ``scale`` is not positive.
+    """
+    for name, value, example in [
+        ("end_time", end_time, "end_time=1"),
+        ("initial_value", initial_value, "initial_value=0"),
+        ("final_value", final_value, "final_value=0"),
+        ("scale", scale, "scale=1"),
+    ]:
+        if not isinstance(value, numbers.Real):
+            raise TypeError(
+                f"{name} must be a number, got {type(value).__name__}. "
+                f"For example, {example}."
+            )
+    if end_time <= 0:
+        raise ValueError(
+            f"end_time must be positive, got {end_time}. It is when the "
+            f"bridge finishes, and it starts at time 0, so it needs a "
+            f"stretch of time to cross."
+        )
+    if scale <= 0:
+        raise ValueError(
+            f"scale must be positive, got {scale}. A scale of 0 would give a "
+            "straight line from initial_value to final_value with no "
+            "randomness."
+        )
+
+
+# Define convenience class for the Brownian bridge
+class BrownianBridgeProbabilitySpace(GaussianProcessProbabilitySpace):
+    """The probability space underlying a Brownian bridge.
+
+    Each draw from this space produces one simulated sample path of the
+    Brownian bridge. Paths are generated lazily, exactly as for any other
+    Gaussian process.
+
+    Parameters
+    ----------
+    end_time : float, optional
+        When the bridge finishes. Must be positive. Default is 1.
+    initial_value : float, optional
+        The value the bridge starts at, at time 0. Default is 0.
+    final_value : float, optional
+        The value the bridge is tied down to at ``end_time``. Default is 0.
+    scale : float, optional
+        How much the path wanders between the two ends. Must be positive.
+        Default is 1.
+
+    Attributes
+    ----------
+    end_time : float
+        When the bridge finishes.
+    initial_value : float
+        The value the bridge starts at.
+    final_value : float
+        The value the bridge ends at.
+    scale : float
+        How much the path wanders between the two ends.
+
+    Raises
+    ------
+    TypeError
+        If any parameter is not a number.
+    ValueError
+        If ``end_time`` or ``scale`` is not positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = BrownianBridgeProbabilitySpace(end_time=1)
+    >>> path = P.draw()
+    >>> float(path(0)), float(path(1))
+    (0.0, 0.0)
+    """
+
+    def __init__(self, end_time=1, initial_value=0, final_value=0, scale=1):
+        """Create a probability space for a Brownian bridge."""
+        _validate_brownian_bridge(end_time, initial_value, final_value, scale)
+
+        self.end_time = end_time
+        self.initial_value = initial_value
+        self.final_value = final_value
+        self.scale = scale
+
+        def mean_func(t):
+            # A straight line from initial_value to final_value.
+            return initial_value + (final_value - initial_value) * t / end_time
+
+        def cov_func(s, t):
+            # Brownian motion's min(s, t), minus the part that pinning down
+            # the far end removes. This is 0 whenever s or t is 0 or
+            # end_time, which is what nails the path to both ends.
+            return scale**2 * (min(s, t) - s * t / end_time)
+
+        # The bridge exists only between its two ends. Outside that stretch
+        # this covariance would be negative, which is not a variance at all,
+        # so the index set turns an out-of-range time into a clear error
+        # instead of a meaningless number.
+        super().__init__(
+            mean_func=mean_func,
+            cov_func=cov_func,
+            index_set=TimeInterval(0, end_time),
+        )
+
+
+class BrownianBridge(RandomProcess, RV):
+    """A Brownian bridge, a random variable over sample paths.
+
+    A Brownian bridge is Brownian motion that already knows where it has to
+    end up. Ordinary Brownian motion starts at 0 and wanders off wherever it
+    likes. A bridge is tied down at *both* ends -- it starts at
+    ``initial_value`` and must arrive at ``final_value`` at time
+    ``end_time`` -- so it wanders in between but always lands on target.
+
+    Because both ends are fixed, the path has nowhere to wander at the very
+    start or the very finish, and the most freedom in the middle. Its spread
+    at time ``t`` is ``scale ** 2 * t * (end_time - t) / end_time``, which is
+    0 at each end and largest halfway across.
+
+    It shows up whenever the end of a random path is already known: the
+    standard example in a statistics course is the Kolmogorov-Smirnov
+    statistic, which measures the gap between a sample's ECDF and the true
+    CDF, and behaves like a Brownian bridge because that gap is pinned at 0
+    at both ends by construction.
+
+    Parameters
+    ----------
+    end_time : float, optional
+        When the bridge finishes. Must be positive. The process is only
+        defined between time 0 and this time. Default is 1.
+    initial_value : float, optional
+        The value the bridge starts at, at time 0. Default is 0.
+    final_value : float, optional
+        The value the bridge is tied down to at ``end_time``. Default is 0.
+    scale : float, optional
+        How much the path wanders between the two ends. Must be positive.
+        Default is 1.
+
+    Attributes
+    ----------
+    prob_space : BrownianBridgeProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Notes
+    -----
+    Asking for a time before 0 or after ``end_time`` raises a ``KeyError``,
+    because the bridge simply does not exist there. This is unlike
+    :class:`BrownianMotion`, which runs forever.
+
+    A bridge is exactly what Brownian motion looks like once you are told
+    where it ended: subtracting the straight line ``t / end_time * B(end_time)``
+    from a Brownian motion ``B`` gives a standard Brownian bridge.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = BrownianBridge(end_time=1)
+    >>> path = X.draw()
+    >>> # Both ends are exact, every time
+    >>> float(path(0)), float(path(1))
+    (0.0, 0.0)
+    >>> # Tie the far end down somewhere else
+    >>> Y = BrownianBridge(end_time=4, initial_value=2, final_value=10)
+    >>> path = Y.draw()
+    >>> float(path(0)), float(path(4))
+    (2.0, 10.0)
+    >>> # The spread is widest halfway across
+    >>> X[0.5].sim(1000).var()   # doctest: +SKIP
+    0.24
+
+    See Also
+    --------
+    BrownianMotion : The same process without the far end tied down.
+    TimeInterval : The index set that limits the bridge to its own stretch of time.
+    """
+
+    def __init__(self, end_time=1, initial_value=0, final_value=0, scale=1):
+        """Create a Brownian bridge."""
+        prob_space = BrownianBridgeProbabilitySpace(
+            end_time=end_time,
+            initial_value=initial_value,
+            final_value=final_value,
+            scale=scale,
         )
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)

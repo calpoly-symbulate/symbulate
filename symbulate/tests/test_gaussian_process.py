@@ -583,5 +583,286 @@ class TestOrnsteinUhlenbeckErrors(unittest.TestCase):
             OrnsteinUhlenbeckProbabilitySpace(scale=-1)
 
 
+class TestBrownianBridgeConstruction(unittest.TestCase):
+
+    def test_is_random_process(self):
+        self.assertIsInstance(BrownianBridge(), RandomProcess)
+
+    def test_is_rv(self):
+        self.assertIsInstance(BrownianBridge(), RV)
+
+    def test_probability_space_type(self):
+        X = BrownianBridge()
+        self.assertIsInstance(X.prob_space, BrownianBridgeProbabilitySpace)
+
+    def test_is_gaussian_process_probability_space(self):
+        X = BrownianBridge()
+        self.assertIsInstance(X.prob_space, GaussianProcessProbabilitySpace)
+
+    def test_parameters_stored_on_probability_space(self):
+        P = BrownianBridgeProbabilitySpace(
+            end_time=4, initial_value=2, final_value=10, scale=1.5
+        )
+        self.assertEqual(P.end_time, 4)
+        self.assertEqual(P.initial_value, 2)
+        self.assertEqual(P.final_value, 10)
+        self.assertEqual(P.scale, 1.5)
+
+
+class TestBrownianBridgeEndpoints(unittest.TestCase):
+    """Both ends are pinned exactly, which is what makes it a bridge."""
+
+    def test_starts_and_ends_at_zero_by_default(self):
+        seed()
+        X = BrownianBridge()
+        for _ in range(10):
+            path = X.draw()
+            self.assertEqual(path(0), 0)
+            self.assertEqual(path(1), 0)
+
+    def test_hits_both_given_endpoints_exactly(self):
+        seed()
+        X = BrownianBridge(end_time=4, initial_value=2, final_value=10)
+        for _ in range(10):
+            path = X.draw()
+            self.assertEqual(path(0), 2)
+            self.assertEqual(path(4), 10)
+
+    def test_endpoints_exact_even_after_visiting_other_times(self):
+        # Pinning must survive conditioning on interior points.
+        seed()
+        path = BrownianBridge(end_time=2, final_value=5).draw()
+        path(0.5)
+        path(1.0)
+        path(1.5)
+        self.assertEqual(path(0), 0)
+        self.assertEqual(path(2), 5)
+
+    def test_endpoints_have_no_randomness(self):
+        seed()
+        X = BrownianBridge(end_time=3, initial_value=1, final_value=7)
+        self.assertEqual({X.draw()(0) for _ in range(10)}, {1})
+        self.assertEqual({X.draw()(3) for _ in range(10)}, {7})
+
+    def test_interior_is_random(self):
+        seed()
+        X = BrownianBridge()
+        self.assertGreater(len({X.draw()(0.5) for _ in range(10)}), 1)
+
+
+class TestBrownianBridgeStatistics(unittest.TestCase):
+
+    def setUp(self):
+        seed()
+        self.end_time = 4.0
+        self.initial_value = 2.0
+        self.final_value = 10.0
+        self.scale = 1.5
+        self.X = BrownianBridge(
+            end_time=self.end_time,
+            initial_value=self.initial_value,
+            final_value=self.final_value,
+            scale=self.scale,
+        )
+
+    def _expected_mean(self, t):
+        slope = (self.final_value - self.initial_value) / self.end_time
+        return self.initial_value + slope * t
+
+    def _expected_var(self, t):
+        return self.scale**2 * t * (self.end_time - t) / self.end_time
+
+    def test_mean_is_a_straight_line_between_the_ends(self):
+        for t in [0.5, 2.0, 3.5]:
+            self.assertAlmostEqual(
+                self.X[t].sim(Nsim).mean(), self._expected_mean(t), delta=0.15
+            )
+
+    def test_variance_matches_closed_form(self):
+        for t in [0.5, 2.0, 3.5]:
+            self.assertAlmostEqual(
+                self.X[t].sim(Nsim).var(), self._expected_var(t), delta=0.3
+            )
+
+    def test_variance_is_widest_in_the_middle(self):
+        middle = self.X[2.0].sim(Nsim).var()
+        near_start = self.X[0.5].sim(Nsim).var()
+        near_end = self.X[3.5].sim(Nsim).var()
+        self.assertGreater(middle, near_start)
+        self.assertGreater(middle, near_end)
+
+    def test_variance_is_symmetric_about_the_middle(self):
+        # t and end_time - t have the same spread.
+        self.assertAlmostEqual(
+            self.X[0.5].sim(Nsim).var(), self.X[3.5].sim(Nsim).var(), delta=0.3
+        )
+
+    def test_covariance_matches_closed_form(self):
+        for s, t in [(1.0, 3.0), (0.5, 1.0)]:
+            expected = self.scale**2 * (min(s, t) - s * t / self.end_time)
+            self.assertAlmostEqual(
+                (self.X[s] & self.X[t]).sim(5000).cov(), expected, delta=0.2
+            )
+
+    def test_scale_widens_the_middle(self):
+        seed()
+        narrow = BrownianBridge(scale=1)[0.5].sim(Nsim).var()
+        wide = BrownianBridge(scale=3)[0.5].sim(Nsim).var()
+        self.assertGreater(wide, narrow)
+
+
+class TestBrownianBridgeDomain(unittest.TestCase):
+    """The bridge exists only between its two ends."""
+
+    def test_index_set_is_the_bridge_interval(self):
+        X = BrownianBridge(end_time=3)
+        self.assertEqual(X.draw().index_set, TimeInterval(0, 3))
+
+    def test_time_after_end_raises_key_error(self):
+        seed()
+        path = BrownianBridge(end_time=1).draw()
+        with self.assertRaises(KeyError):
+            path(1.5)
+
+    def test_time_before_start_raises_key_error(self):
+        seed()
+        path = BrownianBridge(end_time=1).draw()
+        with self.assertRaises(KeyError):
+            path(-0.5)
+
+    def test_error_message_names_the_interval(self):
+        seed()
+        path = BrownianBridge(end_time=1).draw()
+        with self.assertRaisesRegex(KeyError, r"TimeInterval\(0, 1\)"):
+            path(1.5)
+
+    def test_the_two_ends_themselves_are_allowed(self):
+        seed()
+        path = BrownianBridge(end_time=1).draw()
+        self.assertEqual(path(0), 0)
+        self.assertEqual(path(1), 0)
+
+
+class TestBrownianBridgeRelationships(unittest.TestCase):
+
+    def test_is_brownian_motion_with_the_far_end_subtracted(self):
+        # B(t) - (t / T) * B(T) is a standard Brownian bridge, so its
+        # variance at t must match the bridge's t * (T - t) / T.
+        seed()
+        end_time = 2.0
+        B = BrownianMotion()
+        bridge_like = B[1.0] - (1.0 / end_time) * B[end_time]
+        expected = 1.0 * (end_time - 1.0) / end_time
+        self.assertAlmostEqual(bridge_like.sim(2000).var(), expected, delta=0.15)
+
+    def test_standard_bridge_marginal_is_normal(self):
+        seed()
+        X = BrownianBridge()
+        sims = X[0.5].sim(2000)
+        # Var at the midpoint of a standard bridge is 0.5 * 0.5 / 1 = 0.25.
+        cdf = stats.norm(0, np.sqrt(0.25)).cdf
+        self.assertGreater(stats.kstest(list(sims), cdf).pvalue, 0.01)
+
+
+class TestBrownianBridgeErrors(unittest.TestCase):
+
+    def test_non_numeric_end_time_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            BrownianBridge(end_time="later")
+
+    def test_non_numeric_initial_value_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            BrownianBridge(initial_value="low")
+
+    def test_non_numeric_final_value_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            BrownianBridge(final_value="high")
+
+    def test_non_numeric_scale_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            BrownianBridge(scale="wide")
+
+    def test_zero_end_time_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            BrownianBridge(end_time=0)
+
+    def test_negative_end_time_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            BrownianBridge(end_time=-1)
+
+    def test_zero_scale_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            BrownianBridge(scale=0)
+
+    def test_negative_scale_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            BrownianBridge(scale=-1)
+
+    def test_negative_endpoint_values_are_valid(self):
+        # Only end_time and scale are restricted in sign.
+        seed()
+        path = BrownianBridge(initial_value=-5, final_value=-2).draw()
+        self.assertEqual(path(0), -5)
+        self.assertEqual(path(1), -2)
+
+    def test_probability_space_validates_too(self):
+        with self.assertRaises(ValueError):
+            BrownianBridgeProbabilitySpace(end_time=0)
+
+
+class TestTimeInterval(unittest.TestCase):
+    """The index set backing the Brownian bridge."""
+
+    def test_contains_interior_and_both_ends(self):
+        times = TimeInterval(0, 1)
+        for t in [0, 0.5, 1]:
+            self.assertIn(t, times)
+
+    def test_excludes_times_outside(self):
+        times = TimeInterval(0, 1)
+        for t in [-0.5, 1.5, float("inf")]:
+            self.assertNotIn(t, times)
+
+    def test_excludes_non_numeric(self):
+        self.assertNotIn("half", TimeInterval(0, 1))
+
+    def test_is_continuous_time(self):
+        # Subclassing Reals is what makes a process over it continuous-time.
+        self.assertIsInstance(TimeInterval(0, 1), Reals)
+
+    def test_equality_compares_bounds(self):
+        self.assertEqual(TimeInterval(0, 1), TimeInterval(0, 1))
+        self.assertNotEqual(TimeInterval(0, 1), TimeInterval(0, 2))
+        self.assertNotEqual(TimeInterval(0, 1), Reals())
+
+    def test_repr_shows_bounds(self):
+        self.assertEqual(repr(TimeInterval(0, 2)), "TimeInterval(0, 2)")
+
+    def test_base_repr_is_the_class_name(self):
+        self.assertEqual(repr(Reals()), "Reals")
+
+    def test_non_numeric_bounds_raise_type_error(self):
+        with self.assertRaises(TypeError):
+            TimeInterval("a", 1)
+        with self.assertRaises(TypeError):
+            TimeInterval(0, "b")
+
+    def test_end_not_after_start_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            TimeInterval(1, 1)
+        with self.assertRaises(ValueError):
+            TimeInterval(2, 1)
+
+    def test_usable_directly_with_gaussian_process(self):
+        seed()
+        X = GaussianProcess(
+            lambda t: 0, lambda s, t: min(s, t), index_set=TimeInterval(0, 5)
+        )
+        path = X.draw()
+        self.assertIsInstance(path(2.0), float)
+        with self.assertRaises(KeyError):
+            path(6.0)
+
+
 if __name__ == "__main__":
     unittest.main()
