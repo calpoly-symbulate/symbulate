@@ -455,5 +455,117 @@ class TestBirthDeathProcess(unittest.TestCase):
         self.assertEqual(first, second)
 
 
+class TestMMQueues(unittest.TestCase):
+    """The M/M/... queue wrappers over BirthDeathProcess."""
+
+    def test_all_are_birth_death_processes(self):
+        for X in [
+            MM1(1, 1.5),
+            MMs(3, 2, 2),
+            MMsK(4, 1, 2, 5),
+            MMss(3, 1, 3),
+            MMsKN(0.1, 1, 2, 6, 6),
+            MMInfinity(5, 1),
+        ]:
+            self.assertIsInstance(X, BirthDeathProcess)
+            self.assertIsInstance(X, RV)
+
+    def test_mm1_rates(self):
+        X = MM1(1, 1.5, num_states=5)
+        np.testing.assert_allclose(X.birth_rates, [1, 1, 1, 1, 0])
+        np.testing.assert_allclose(X.death_rates, [0, 1.5, 1.5, 1.5, 1.5])
+
+    def test_mms_service_rate_is_state_dependent(self):
+        # min(n, s) * mu, with s = 2, mu = 2.
+        X = MMs(3, 2, servers=2, num_states=6)
+        np.testing.assert_allclose(X.death_rates, [0, 2, 4, 4, 4, 4])
+
+    def test_mmsk_is_finite_and_blocks_at_capacity(self):
+        X = MMsK(4, 1, servers=2, capacity=5)
+        self.assertEqual(X.num_states, 6)  # states 0..5
+        self.assertEqual(X.birth_rates[-1], 0.0)  # blocked at capacity
+
+    def test_mmss_is_special_case_of_mmsk(self):
+        X = MMss(3, 1, servers=3)
+        self.assertIsInstance(X, MMsK)
+        self.assertEqual(X.capacity, 3)
+        self.assertEqual(X.num_states, 4)
+
+    def test_mmskn_arrival_rate_is_state_dependent(self):
+        # (population - n) * lambda, with N = 6, lambda = 0.1; top zeroed.
+        X = MMsKN(0.1, 1, servers=2, capacity=6, population=6)
+        np.testing.assert_allclose(X.birth_rates, [0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.0])
+
+    def test_mminfinity_service_rate_is_state_dependent(self):
+        # n * mu, with mu = 1.
+        X = MMInfinity(5, 1, num_states=6)
+        np.testing.assert_allclose(X.death_rates, [0, 1, 2, 3, 4, 5])
+
+    # --- validation ---
+
+    def test_error_nonpositive_rate(self):
+        self.assertRaises(Exception, lambda: MM1(0, 1.5))
+        self.assertRaises(Exception, lambda: MM1(1, -2))
+
+    def test_error_bad_servers(self):
+        self.assertRaises(Exception, lambda: MMs(3, 2, servers=0))
+        self.assertRaises(Exception, lambda: MMs(3, 2, servers=2.5))
+
+    def test_error_capacity_exceeds_population(self):
+        self.assertRaises(
+            Exception,
+            lambda: MMsKN(0.1, 1, servers=2, capacity=7, population=5),
+        )
+
+    # --- distributional checks against the characteristic formulas ---
+
+    def test_mm1_stationary_is_geometric(self):
+        # M/M/1 (lambda=1, mu=2, rho=0.5): P(N=n) = (1-rho) rho^n.
+        seed()
+        rho = 0.5
+        X = MM1(1, 2, num_states=40)
+        sims = [X.draw()(40.0) for _ in range(1500)]
+        obs, exp = [], []
+        for n in range(0, 10):
+            e = len(sims) * (1 - rho) * rho**n
+            if e > 5:
+                exp.append(e)
+                obs.append(sum(1 for s in sims if s == n))
+        pval = stats.chisquare(obs, np.array(exp) * sum(obs) / sum(exp)).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_mmss_blocking_matches_erlang_b(self):
+        # Erlang loss: long-run P(all servers busy) is the Erlang B formula.
+        seed()
+        from math import factorial
+
+        lam, mu, s = 3.0, 1.0, 3
+        a = lam / mu
+        X = MMss(lam, mu, s)
+        sims = [X.draw()(50.0) for _ in range(1500)]
+        empirical = sum(x == s for x in sims) / len(sims)
+        erlang_b = (a**s / factorial(s)) / sum(
+            a**k / factorial(k) for k in range(s + 1)
+        )
+        self.assertAlmostEqual(empirical, erlang_b, delta=0.03)
+
+    def test_mminfinity_stationary_is_poisson(self):
+        # M/M/infinity: long-run number in system is Poisson(lambda/mu).
+        # Use a chi-square goodness-of-fit (the counts are discrete).
+        seed()
+        lam, mu = 3.0, 1.0
+        X = MMInfinity(lam, mu, num_states=30)
+        sims = [X.draw()(30.0) for _ in range(1500)]
+        pmf = stats.poisson(lam / mu).pmf
+        obs, exp = [], []
+        for n in range(0, 11):
+            e = len(sims) * pmf(n)
+            if e > 5:
+                exp.append(e)
+                obs.append(sum(1 for s in sims if s == n))
+        pval = stats.chisquare(obs, np.array(exp) * sum(obs) / sum(exp)).pvalue
+        self.assertTrue(pval > 0.01)
+
+
 if __name__ == "__main__":
     unittest.main()

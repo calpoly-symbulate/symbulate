@@ -662,3 +662,359 @@ class BirthDeathProcess(ContinuousTimeMarkovChain):
         self.num_states = num_states
 
         super().__init__(generator_matrix, initial_dist, state_labels)
+
+
+def _require_positive(value, name):
+    """Raise a friendly error unless ``value`` is a positive number."""
+    if not isinstance(value, numbers.Real) or value <= 0:
+        raise Exception("%s must be a positive number." % name)
+
+
+def _require_positive_integer(value, name):
+    """Raise a friendly error unless ``value`` is a positive whole number."""
+    if not isinstance(value, numbers.Integral) or value <= 0:
+        raise Exception("%s must be a positive integer." % name)
+
+
+# --------------------------------------------------------------------------
+# M/M/... queues
+#
+# Each of these is a birth-death process with particular arrival ("birth")
+# and service ("death") rates, so they are thin wrappers over
+# BirthDeathProcess. They are named in Kendall's notation: M/M/s/K/N means
+# Markovian (Poisson) arrivals, Markovian (exponential) service, s servers,
+# capacity K, and a calling population of N. The state is the number of
+# customers in the system (waiting plus in service), and each draw is a
+# sample path -- the number in the system as a function of continuous time.
+# --------------------------------------------------------------------------
+
+
+class MM1(BirthDeathProcess):
+    """An M/M/1 queue: a single server, unlimited waiting room.
+
+    Customers arrive as a Poisson process at rate ``arrival_rate`` and are
+    served one at a time by a single server, each service taking an
+    Exponential time with rate ``service_rate``. The state is the number of
+    customers in the system. This is the canonical first queueing example.
+
+    As a birth-death process the arrival (birth) rate is a constant
+    ``arrival_rate`` in every state and the service (death) rate is a
+    constant ``service_rate`` in every state ``n >= 1``.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which the server completes a customer. Must be
+        positive. The queue is stable only when ``arrival_rate <
+        service_rate``.
+    num_states : int, optional
+        Truncation of the (unbounded) state space for simulation: the states
+        are ``0, 1, ..., num_states - 1``. Choose it large enough that the
+        queue essentially never reaches the top. Default 100.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and service rates.
+    servers : int
+        The number of servers (always 1 for this model).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> queue = MM1(arrival_rate=1, service_rate=1.5)
+    >>> queue.draw()(5.0)  # doctest: +SKIP
+    2
+    """
+
+    def __init__(self, arrival_rate, service_rate, num_states=100):
+        """Initialize an M/M/1 queue."""
+        _require_positive(arrival_rate, "arrival_rate")
+        _require_positive(service_rate, "service_rate")
+        self.arrival_rate = arrival_rate
+        self.service_rate = service_rate
+        self.servers = 1
+        super().__init__(
+            birth_rates=arrival_rate,
+            death_rates=service_rate,
+            num_states=num_states,
+        )
+
+
+class MMs(BirthDeathProcess):
+    """An M/M/s queue: ``s`` servers, unlimited waiting room.
+
+    Like the :class:`MM1` queue but with ``servers`` identical servers, so up
+    to ``servers`` customers are served at once. The service (death) rate is
+    therefore state-dependent: with ``n`` customers in the system,
+    ``min(n, servers)`` of them are being served, so the total service rate
+    is ``min(n, servers) * service_rate``. Standard model for call centers,
+    banks, and other multi-server service systems.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each busy server completes a customer. Must
+        be positive. The queue is stable only when
+        ``arrival_rate < servers * service_rate``.
+    servers : int
+        The number of servers ``s``. Must be a positive integer.
+    num_states : int, optional
+        Truncation of the (unbounded) state space for simulation. Default 100.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and per-server service rates.
+    servers : int
+        The number of servers.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> queue = MMs(arrival_rate=3, service_rate=2, servers=2)
+    >>> queue.draw()(5.0)  # doctest: +SKIP
+    1
+    """
+
+    def __init__(self, arrival_rate, service_rate, servers, num_states=100):
+        """Initialize an M/M/s queue."""
+        _require_positive(arrival_rate, "arrival_rate")
+        _require_positive(service_rate, "service_rate")
+        _require_positive_integer(servers, "servers")
+        self.arrival_rate = arrival_rate
+        self.service_rate = service_rate
+        self.servers = servers
+        super().__init__(
+            birth_rates=arrival_rate,
+            death_rates=lambda n: min(n, servers) * service_rate,
+            num_states=num_states,
+        )
+
+
+class MMsK(BirthDeathProcess):
+    """An M/M/s/K queue: ``s`` servers and a finite capacity ``K``.
+
+    Like the :class:`MMs` queue, but the system holds at most ``capacity``
+    customers (those in service plus those waiting); a customer who arrives
+    to a full system is turned away ("blocked"). Because the state space is
+    genuinely finite (``0, 1, ..., capacity``), this is an *exact* chain, not
+    a truncation -- there is no accuracy caveat. The long-run fraction of
+    blocked customers is the standard quantity of interest.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each busy server completes a customer. Must
+        be positive.
+    servers : int
+        The number of servers ``s``. Must be a positive integer.
+    capacity : int
+        The maximum number of customers ``K`` allowed in the system. Must be
+        a positive integer.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and per-server service rates.
+    servers : int
+        The number of servers.
+    capacity : int
+        The system capacity ``K``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> queue = MMsK(arrival_rate=4, service_rate=1, servers=2, capacity=5)
+    >>> queue.draw()(5.0)  # doctest: +SKIP
+    4
+    """
+
+    def __init__(self, arrival_rate, service_rate, servers, capacity):
+        """Initialize an M/M/s/K queue."""
+        _require_positive(arrival_rate, "arrival_rate")
+        _require_positive(service_rate, "service_rate")
+        _require_positive_integer(servers, "servers")
+        _require_positive_integer(capacity, "capacity")
+        self.arrival_rate = arrival_rate
+        self.service_rate = service_rate
+        self.servers = servers
+        self.capacity = capacity
+        # States 0, 1, ..., capacity. The birth rate at the top state is
+        # automatically 0 (BirthDeathProcess), which is exactly the blocking.
+        super().__init__(
+            birth_rates=arrival_rate,
+            death_rates=lambda n: min(n, servers) * service_rate,
+            num_states=capacity + 1,
+        )
+
+
+class MMss(MMsK):
+    """An M/M/s/s queue (Erlang loss system): ``s`` servers, no waiting room.
+
+    The special case of :class:`MMsK` with capacity equal to the number of
+    servers, so there is no room to wait: a customer who arrives while all
+    ``servers`` servers are busy is lost. This is the classic telecom
+    trunking model, and the long-run fraction of lost customers is given by
+    the Erlang B formula.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each busy server completes a customer. Must
+        be positive.
+    servers : int
+        The number of servers ``s`` (which is also the capacity). Must be a
+        positive integer.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and per-server service rates.
+    servers : int
+        The number of servers (and the capacity).
+    capacity : int
+        The system capacity, equal to ``servers``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> loss = MMss(arrival_rate=3, service_rate=1, servers=3)
+    >>> loss.draw()(5.0)  # doctest: +SKIP
+    2
+    """
+
+    def __init__(self, arrival_rate, service_rate, servers):
+        """Initialize an M/M/s/s (Erlang loss) queue."""
+        super().__init__(arrival_rate, service_rate, servers, capacity=servers)
+
+
+class MMsKN(BirthDeathProcess):
+    """An M/M/s/K/N queue: finite capacity ``K`` and finite population ``N``.
+
+    The finite-population ("machine repair" or "repairman") model. There are
+    ``population`` customers (e.g. machines); each one that is *not* currently
+    in the system generates an arrival (e.g. breaks down) at rate
+    ``arrival_rate``, so with ``n`` customers already in the system the total
+    arrival rate is ``(population - n) * arrival_rate`` -- it *slows down* as
+    the system fills, because fewer customers remain outside. Up to ``servers``
+    customers are served (repaired) at once, so the service rate is
+    ``min(n, servers) * service_rate``. The system holds at most ``capacity``.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which each customer *outside* the system
+        generates an arrival. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each busy server completes a customer. Must
+        be positive.
+    servers : int
+        The number of servers ``s``. Must be a positive integer.
+    capacity : int
+        The maximum number ``K`` of customers in the system. Must be a
+        positive integer no larger than ``population``.
+    population : int
+        The total number ``N`` of customers in the calling population. Must
+        be a positive integer. For the classic repairman problem, set
+        ``capacity`` equal to ``population``.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The per-customer arrival rate and per-server service rate.
+    servers : int
+        The number of servers.
+    capacity : int
+        The system capacity ``K``.
+    population : int
+        The calling-population size ``N``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> repair = MMsKN(
+    ...     arrival_rate=0.1, service_rate=1, servers=2, capacity=6, population=6
+    ... )
+    >>> repair.draw()(5.0)  # doctest: +SKIP
+    1
+    """
+
+    def __init__(self, arrival_rate, service_rate, servers, capacity, population):
+        """Initialize an M/M/s/K/N (machine-repair) queue."""
+        _require_positive(arrival_rate, "arrival_rate")
+        _require_positive(service_rate, "service_rate")
+        _require_positive_integer(servers, "servers")
+        _require_positive_integer(capacity, "capacity")
+        _require_positive_integer(population, "population")
+        if capacity > population:
+            raise Exception(
+                "capacity (%d) cannot exceed population (%d): the system "
+                "cannot hold more customers than exist." % (capacity, population)
+            )
+        self.arrival_rate = arrival_rate
+        self.service_rate = service_rate
+        self.servers = servers
+        self.capacity = capacity
+        self.population = population
+        super().__init__(
+            birth_rates=lambda n: (population - n) * arrival_rate,
+            death_rates=lambda n: min(n, servers) * service_rate,
+            num_states=capacity + 1,
+        )
+
+
+class MMInfinity(BirthDeathProcess):
+    """An M/M/infinity queue: infinitely many servers (no waiting, ever).
+
+    Every customer begins service immediately upon arrival, because there is
+    always a free server. With ``n`` customers in the system, all ``n`` are
+    in service at once, so the service (death) rate is ``n * service_rate``.
+    Standard model for self-service systems and for transient or short-lived
+    populations. Its long-run number in the system is Poisson with mean
+    ``arrival_rate / service_rate``.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each customer completes service. Must be
+        positive.
+    num_states : int, optional
+        Truncation of the (unbounded) state space for simulation. Choose it
+        comfortably above ``arrival_rate / service_rate`` so the top is
+        essentially never reached. Default 100.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and per-customer service rates.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> queue = MMInfinity(arrival_rate=5, service_rate=1)
+    >>> queue.draw()(5.0)  # doctest: +SKIP
+    6
+    """
+
+    def __init__(self, arrival_rate, service_rate, num_states=100):
+        """Initialize an M/M/infinity queue."""
+        _require_positive(arrival_rate, "arrival_rate")
+        _require_positive(service_rate, "service_rate")
+        self.arrival_rate = arrival_rate
+        self.service_rate = service_rate
+        super().__init__(
+            birth_rates=arrival_rate,
+            death_rates=lambda n: n * service_rate,
+            num_states=num_states,
+        )
