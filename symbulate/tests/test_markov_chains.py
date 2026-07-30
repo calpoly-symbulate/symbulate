@@ -324,5 +324,136 @@ class TestContinuousTimeMarkovChain(unittest.TestCase):
         self.assertEqual(first, second)
 
 
+class TestBirthDeathProcess(unittest.TestCase):
+
+    def test_is_continuous_time_markov_chain(self):
+        X = BirthDeathProcess(birth_rates=1, death_rates=1.5, num_states=5)
+        self.assertIsInstance(X, ContinuousTimeMarkovChain)
+        self.assertIsInstance(X, RV)
+
+    def test_generator_matrix_constant_rates(self):
+        # Constant birth 2, death 3, over 4 states. Births on the super-
+        # diagonal (0 at the top), deaths on the sub-diagonal (0 at state 0),
+        # diagonals make each row sum to 0.
+        X = BirthDeathProcess(birth_rates=2, death_rates=3, num_states=4)
+        Q = X.prob_space.generator_matrix
+        expected = np.array(
+            [
+                [-2, 2, 0, 0],
+                [3, -5, 2, 0],
+                [0, 3, -5, 2],
+                [0, 0, 3, -3],
+            ],
+            dtype=float,
+        )
+        np.testing.assert_allclose(Q, expected)
+        # Rows sum to 0.
+        np.testing.assert_allclose(Q.sum(axis=1), np.zeros(4), atol=1e-12)
+
+    def test_boundary_rates_zeroed(self):
+        # Top state's birth and state 0's death are forced to 0.
+        X = BirthDeathProcess(birth_rates=2, death_rates=3, num_states=4)
+        self.assertEqual(X.birth_rates[-1], 0.0)
+        self.assertEqual(X.death_rates[0], 0.0)
+
+    def test_rate_forms_agree(self):
+        # A constant, a list, and a callable specifying the same rates should
+        # all build the same generator matrix.
+        const = BirthDeathProcess(birth_rates=2, death_rates=3, num_states=4)
+        lst = BirthDeathProcess(
+            birth_rates=[2, 2, 2, 2], death_rates=[3, 3, 3, 3], num_states=4
+        )
+        fun = BirthDeathProcess(
+            birth_rates=lambda n: 2, death_rates=lambda n: 3, num_states=4
+        )
+        np.testing.assert_allclose(
+            const.prob_space.generator_matrix, lst.prob_space.generator_matrix
+        )
+        np.testing.assert_allclose(
+            const.prob_space.generator_matrix, fun.prob_space.generator_matrix
+        )
+
+    def test_state_dependent_death_rate_mms(self):
+        # M/M/s with s = 2: death rate min(n, 2) * mu.
+        mu = 1.5
+        X = BirthDeathProcess(
+            birth_rates=1, death_rates=lambda n: min(n, 2) * mu, num_states=5
+        )
+        np.testing.assert_allclose(
+            X.death_rates, [0.0, 1.5, 3.0, 3.0, 3.0]
+        )  # state 0 zeroed
+
+    def test_error_num_states_too_small(self):
+        self.assertRaises(
+            Exception,
+            lambda: BirthDeathProcess(birth_rates=1, death_rates=1, num_states=1),
+        )
+
+    def test_error_negative_rate(self):
+        self.assertRaises(
+            Exception,
+            lambda: BirthDeathProcess(birth_rates=-1, death_rates=1, num_states=5),
+        )
+
+    def test_error_rate_list_wrong_length(self):
+        self.assertRaises(
+            Exception,
+            lambda: BirthDeathProcess(birth_rates=[1, 1], death_rates=1, num_states=5),
+        )
+
+    def test_error_initial_out_of_range(self):
+        self.assertRaises(
+            Exception,
+            lambda: BirthDeathProcess(
+                birth_rates=1, death_rates=1, num_states=5, initial=5
+            ),
+        )
+
+    def test_error_pure_birth_has_dead_end(self):
+        # All death rates 0 -> the top state has no way out -> rejected.
+        self.assertRaises(
+            Exception,
+            lambda: BirthDeathProcess(birth_rates=1, death_rates=0, num_states=5),
+        )
+
+    def test_path_starts_at_initial(self):
+        seed()
+        X = BirthDeathProcess(birth_rates=1, death_rates=2, num_states=10, initial=3)
+        self.assertEqual(X.draw()(0), 3)
+
+    def test_path_values_are_valid_states(self):
+        seed()
+        X = BirthDeathProcess(birth_rates=1, death_rates=1.5, num_states=20)
+        path = X.draw()
+        for t in [0.0, 1.0, 5.0, 10.0]:
+            v = path(t)
+            self.assertIn(v, range(20))
+
+    def test_mm1_stationary_is_geometric(self):
+        # An M/M/1 queue (lambda=1, mu=2, rho=0.5) has stationary distribution
+        # P(N=n) = (1-rho) rho^n. Simulate the queue length at a large time,
+        # started empty, and check it against that geometric.
+        seed()
+        lam, mu, rho = 1.0, 2.0, 0.5
+        X = BirthDeathProcess(birth_rates=lam, death_rates=mu, num_states=40)
+        sims = [X.draw()(60.0) for _ in range(4000)]
+        obs, exp = [], []
+        for n in range(0, 12):
+            e = len(sims) * (1 - rho) * rho**n
+            if e > 5:
+                exp.append(e)
+                obs.append(sum(1 for s in sims if s == n))
+        pval = stats.chisquare(obs, np.array(exp) * sum(obs) / sum(exp)).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_reproducible_under_same_seed(self):
+        X = BirthDeathProcess(birth_rates=1, death_rates=1.5, num_states=20)
+        seed(7)
+        first = [X.draw()(t) for t in [0.5, 1.0, 2.0]]
+        seed(7)
+        second = [X.draw()(t) for t in [0.5, 1.0, 2.0]]
+        self.assertEqual(first, second)
+
+
 if __name__ == "__main__":
     unittest.main()

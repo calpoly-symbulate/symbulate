@@ -381,6 +381,53 @@ DENSITY2D_CBAR_TICKS = 8  # evenly spaced colorbar ticks (including
 # both endpoints, 0 and the peak density) for the continuous density
 # plot; the contour plot instead ticks its discrete band edges
 
+# Joint plot of a theoretical multivariate distribution (the 2-D case of
+# MultivariateDistribution.plot()). The theoretical counterpart of the
+# density2d/tile plots above: those estimate a surface from simulated
+# values, these evaluate the distribution's own pdf/pmf on a grid. The
+# colormap comes from image.cmap (viridis) in symbulate.mplstyle.
+JOINT_PDF_GRID_POINTS = 200  # points per axis for the continuous surface.
+# Lower than DENSITY2D_GRID_POINTS (300) because every grid point is an
+# exact pdf evaluation rather than one KDE lookup, and 200 matches the
+# number of points the univariate Distribution.plot() curve uses.
+JOINT_PDF_LEVELS = 8  # discrete color bands for contour=True; matches
+# DENSITY2D_LEVELS so a theoretical contour plot bands like a simulated one
+JOINT_PDF_CONTINUOUS_LEVELS = 256  # matches DENSITY2D_CONTINUOUS_LEVELS --
+# enough bands that the default surface reads as a smooth gradient
+JOINT_CONTOUR_LINE_COLOR = "white"  # matches DENSITY2D_CONTOUR_LINE_COLOR
+JOINT_CONTOUR_LINEWIDTH = 0.3  # matches DENSITY2D_CONTOUR_LINEWIDTH
+JOINT_CONTOUR_LINE_ALPHA = 0.4  # matches DENSITY2D_CONTOUR_LINE_ALPHA
+JOINT_CBAR_SIZE = "5%"  # matches DENSITY2D/TILE/HIST2D colorbar geometry
+JOINT_CBAR_PAD = 0.1
+JOINT_CBAR_TICKS = 8
+JOINT_CBAR_DECIMALS = 3
+# A discrete joint pmf is drawn as one cell per possible pair of values, so
+# the grid grows with the product of the two windows. Past this many cells
+# the cells are too small to read (and the pmf evaluation slow), so the
+# plot reports the problem instead of rendering an unreadable mesh.
+JOINT_PMF_MAX_CELLS = 40000
+JOINT_OVERLAY_WARNING = (
+    "Warning: you drew a second joint plot on the same plot. The new surface "
+    "covers the first one and the two color scales compete, so the result may "
+    "be hard to read. Consider plotting them in separate cells."
+)
+# A pairs=True matrix builds an n-by-n GridSpec layout, so it can neither be
+# drawn onto existing axes nor overlaid afterwards -- same hard-error tier as
+# MARGINAL_OVERLAY_ERROR, for the same reason.
+JOINT_PAIRS_OVERLAY_ERROR = (
+    "You can't combine a pairs=True plot with another plot in the same "
+    "figure. The pairs layout fills the figure with its own grid of panels, "
+    "which a second plot can't share. Plot it in its own cell."
+)
+# Above this many variables a pairs matrix has more panels than screen (9
+# variables is 36 pair panels), so it asks for a subset instead of
+# rendering one unreadably.
+JOINT_PAIRS_MAX_DIM = 8
+JOINT_PAIRS_PANEL_SIZE = 2.2  # width and height, in inches, of one panel of
+# a pairs matrix. The figure is sized to the grid rather than left at the
+# single-plot figure.figsize from symbulate.mplstyle, which would shrink
+# every panel as the number of variables grows.
+
 # Tile plot. The colormap comes from image.cmap (viridis) in
 # symbulate.mplstyle.
 TILE_DEFAULT_BINS = 30  # equal-width bins for a continuous axis;
@@ -716,6 +763,61 @@ class DistributionPlot(SymbulatePlot):
             )
 
         return self
+
+
+class JointDistributionPlot(SymbulatePlot):
+    """Plot object returned by ``MultivariateDistribution.plot()``.
+
+    The joint counterpart of :class:`DistributionPlot`. A joint plot shows
+    a surface (or a grid of probabilities) over two variables rather than a
+    curve over one, so there is no single curve to fill under: this class
+    replaces :meth:`DistributionPlot.shade` with an explanation instead of
+    letting the missing method surface as an ``AttributeError``.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes the joint plot was drawn on. For a ``pairs=True`` matrix
+        this is the bottom-left panel; every panel is reachable through
+        ``ax.get_figure().axes``.
+    dist : MultivariateDistribution
+        The distribution that was plotted.
+    dims : tuple of int
+        The indices of the variables that were plotted, in axis order --
+        ``(x, y)`` for a single joint plot, or every variable included for
+        a ``pairs=True`` matrix.
+
+    Attributes
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes the joint plot was drawn on.
+    dist : MultivariateDistribution
+        The distribution that was plotted.
+    dims : tuple of int
+        The indices of the variables that were plotted.
+    """
+
+    def __init__(self, ax, dist, dims):
+        super().__init__(ax)
+        self.dist = dist
+        self.dims = dims
+
+    def shade(self, *args, **kwargs):
+        """Shading is not available for a joint plot.
+
+        Raises
+        ------
+        Exception
+            Always raised. ``.shade()`` fills the region under a single
+            curve, which a joint plot of two variables does not have.
+        """
+        raise Exception(
+            "You can't shade a joint plot. Shading fills the region under a "
+            "single curve, and this plot shows how two variables vary "
+            "together, so there is no one curve to fill under. To shade a "
+            "region, plot one variable at a time -- for example, "
+            "Normal(0, 1).plot().shade(lt=-1.96)."
+        )
 
 
 def configure_axes(
@@ -5837,3 +5939,338 @@ def make_density2D(x, y, ax, contour=False, levels=None, colorbar=True, **kwargs
         plt.sca(ax)
 
     return filled
+
+
+def _count_joint_plot(ax):
+    """Record a joint plot on ``ax`` and report whether it is the first.
+
+    A filled surface completely hides whatever was drawn under it, and two
+    color scales can't share one colorbar, so a second joint plot on the
+    same axes prints the readability warning and skips its colorbar --
+    which would otherwise land on top of the first one and garble both sets
+    of labels. This is the "warn but still draw" tier of the overlay policy,
+    the same one two tile plots or two 2-D histograms fall into. The count
+    lives on the axes object, the way ``get_next_color`` keeps the color
+    cycle there.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes being drawn on.
+
+    Returns
+    -------
+    bool
+        True if this is the first joint plot on these axes.
+    """
+    n_prior = getattr(ax, "_joint_plot_count", 0)
+    ax._joint_plot_count = n_prior + 1
+    if n_prior:
+        print(JOINT_OVERLAY_WARNING)
+    return n_prior == 0
+
+
+def _joint_colorbar(mappable, ax, label, ticks):
+    """Attach a colorbar for a joint theoretical plot.
+
+    Shared by :func:`make_joint_pdf` and :func:`make_joint_pmf` so both
+    place and label their color scale identically. Uses
+    ``make_axes_locatable`` (an approved layout helper) so the bar tracks
+    the axes it belongs to, and restores the data axes afterwards so a
+    later call draws on the plot rather than the colorbar.
+
+    Parameters
+    ----------
+    mappable : matplotlib.cm.ScalarMappable
+        The surface or mesh the color scale describes.
+    ax : matplotlib.axes.Axes
+        The axes the joint plot was drawn on.
+    label : str
+        Label for the colorbar ("Density" or "Probability").
+    ticks : array-like
+        Tick positions, running from 0 to the peak value so both ends of
+        the scale are labeled.
+    """
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size=JOINT_CBAR_SIZE, pad=JOINT_CBAR_PAD)
+    cbar = plt.colorbar(mappable, cax=cax)
+    cbar.set_label(label)
+    cbar.set_ticks(ticks)
+    # A formatter rather than fixed labels, so matplotlib keeps thinning
+    # ticks automatically when there are many band edges.
+    cbar.ax.yaxis.set_major_formatter(
+        FuncFormatter(lambda value, _pos: f"{value:.{JOINT_CBAR_DECIMALS}f}")
+    )
+    plt.sca(ax)
+
+
+def make_joint_pdf(
+    func,
+    xlim,
+    ylim,
+    ax,
+    contour=False,
+    colorbar=True,
+    xlabel="Variable 1",
+    ylabel="Variable 2",
+    title=True,
+    **kwargs,
+):
+    """Draw the joint density surface of a continuous 2-D distribution.
+
+    The theoretical counterpart of :func:`make_density2D`: instead of
+    estimating a surface from simulated values with a KDE, this evaluates
+    the distribution's own joint pdf on a
+    ``JOINT_PDF_GRID_POINTS``-by-``JOINT_PDF_GRID_POINTS`` grid and shades
+    it with ``ax.contourf``. It is the two-dimensional extension of the
+    curve the univariate ``Distribution.plot()`` draws, and it takes the
+    same two forms ``make_density2D`` does:
+
+    - ``contour=False`` (default): a smoothly shaded surface, drawn with
+      ``JOINT_PDF_CONTINUOUS_LEVELS`` bands so no banding is visible.
+    - ``contour=True``: a topographic contour plot -- ``JOINT_PDF_LEVELS``
+      discrete bands with thin white outlines, so each band can be matched
+      to the colorbar by eye.
+
+    The color scale runs from 0 to the peak density, so the colorbar starts
+    at 0. A density that is unbounded at the edge of its support (a
+    ``Dirichlet`` with a concentration below 1, for example) has
+    non-finite grid values; those are held at the largest finite density on
+    the grid rather than being allowed to flatten the whole surface into a
+    single color.
+
+    Parameters
+    ----------
+    func : callable
+        The joint density. Called as ``func(x, y)`` with two equal-length
+        flat arrays of coordinates, returning the density at each of those
+        points as a flat array.
+    xlim, ylim : tuple of float
+        The ``(low, high)`` window to evaluate the density over, one per
+        axis.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    contour : bool, default False
+        If False (default), draw a smoothly shaded surface. If True, draw
+        discrete contour bands with white outlines between them.
+    colorbar : bool, default True
+        If True, add a colorbar to the right of the axes. A panel of a
+        pairs matrix passes False, since one small color scale per panel
+        would crowd out the panels themselves.
+    xlabel, ylabel : str, optional
+        Axis labels, naming the two variables being plotted.
+    title : bool, default True
+        Whether to title the axes. A panel of a pairs matrix passes False,
+        since the whole figure carries one title instead.
+    **kwargs
+        Additional keyword arguments passed to ``ax.contourf``.
+
+    Returns
+    -------
+    matplotlib.contour.QuadContourSet
+        The object returned by ``ax.contourf``, so the caller can inspect
+        or further style the surface.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> from scipy import stats
+    >>> import numpy as np
+    >>> f = stats.multivariate_normal([0, 0], [[1, 0.5], [0.5, 1]])
+    >>> pdf = lambda x, y: f.pdf(np.column_stack([x, y]))
+    >>> make_joint_pdf(pdf, (-3, 3), (-3, 3), plt.gca())  # doctest: +SKIP
+    """
+    # A second surface on these axes hides the first, so warn and let it
+    # keep the one colorbar already there.
+    first = _count_joint_plot(ax)
+    colorbar = colorbar and first
+
+    Xgrid, Ygrid = np.meshgrid(
+        np.linspace(xlim[0], xlim[1], JOINT_PDF_GRID_POINTS),
+        np.linspace(ylim[0], ylim[1], JOINT_PDF_GRID_POINTS),
+    )
+    Z = np.asarray(func(Xgrid.ravel(), Ygrid.ravel()), dtype=float).reshape(Xgrid.shape)
+
+    # A density can be unbounded at the boundary of its support, so scale
+    # the colors by the largest *finite* value on the grid and hold the
+    # non-finite points there -- the same "ignore non-finite heights when
+    # scaling" rule the univariate plot() uses for its y-limit.
+    finite = np.isfinite(Z)
+    zmax = Z[finite].max() if finite.any() else 1.0
+    if zmax <= 0:
+        # A grid that never leaves 0 (a window off the support) still needs
+        # a well-formed, increasing set of color bands.
+        zmax = 1.0
+    Z = np.where(finite, np.minimum(Z, zmax), zmax)
+
+    levels = JOINT_PDF_LEVELS if contour else JOINT_PDF_CONTINUOUS_LEVELS
+    # contourf reads the level values as band *boundaries* (N boundaries ->
+    # N - 1 colors), so build levels + 1 edges to get exactly `levels`
+    # colors. No cmap argument: the sequential colormap comes from
+    # image.cmap in symbulate.mplstyle.
+    level_edges = np.linspace(0, zmax, levels + 1)
+
+    filled = ax.contourf(Xgrid, Ygrid, Z, levels=level_edges, **kwargs)
+    if contour:
+        ax.contour(
+            Xgrid,
+            Ygrid,
+            Z,
+            levels=level_edges,
+            colors=JOINT_CONTOUR_LINE_COLOR,
+            linewidths=JOINT_CONTOUR_LINEWIDTH,
+            alpha=JOINT_CONTOUR_LINE_ALPHA,
+        )
+
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if title:
+        ax.set_title("Joint Contour Plot" if contour else "Joint PDF Plot")
+    # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
+    # y); like the 1-D and 2-D density plots, this one reads better with
+    # both directions, so override it for this plot type.
+    ax.grid(True, axis="both")
+
+    if colorbar:
+        ticks = level_edges if contour else np.linspace(0, zmax, JOINT_CBAR_TICKS)
+        _joint_colorbar(filled, ax, "Density", ticks)
+
+    return filled
+
+
+def make_joint_pmf(
+    func,
+    xvalues,
+    yvalues,
+    ax,
+    colorbar=True,
+    xlabel="Variable 1",
+    ylabel="Variable 2",
+    title=True,
+    **kwargs,
+):
+    """Draw the joint probability grid of a discrete 2-D distribution.
+
+    The discrete counterpart of :func:`make_joint_pdf`, and the
+    theoretical counterpart of :func:`make_tile`: one cell per possible
+    pair of values, colored by the probability of that pair. This is the
+    same discrete/continuous split the univariate ``Distribution.plot()``
+    already makes -- masses at the values a discrete distribution can
+    actually take, rather than a smooth surface through the gaps.
+
+    Cells are drawn as a seamless ``imshow`` mesh centered on the values
+    themselves (each cell spans half a unit either side), so the axis reads
+    in real units and a pair's probability can be read off the colorbar.
+    Impossible pairs simply have probability 0 and take the colormap's
+    zero color, so the shape of the joint support is visible.
+
+    Parameters
+    ----------
+    func : callable
+        The joint probability mass function. Called as ``func(x, y)`` with
+        two equal-length flat arrays of values, returning the probability
+        of each of those pairs as a flat array.
+    xvalues, yvalues : array-like of int
+        The values each variable can take, in increasing order -- one grid
+        column per ``xvalues`` entry and one row per ``yvalues`` entry.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    colorbar : bool, default True
+        If True, add a colorbar to the right of the axes. A panel of a
+        pairs matrix passes False.
+    xlabel, ylabel : str, optional
+        Axis labels, naming the two variables being plotted.
+    title : bool, default True
+        Whether to title the axes. A panel of a pairs matrix passes False.
+    **kwargs
+        Additional keyword arguments passed to ``ax.imshow``.
+
+    Returns
+    -------
+    matplotlib.image.AxesImage
+        The image from ``ax.imshow``, so the caller can inspect or further
+        style the mesh.
+
+    Raises
+    ------
+    ValueError
+        If the grid would have more than ``JOINT_PMF_MAX_CELLS`` cells,
+        where the cells are too small to read.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> from scipy import stats
+    >>> f = stats.multinomial(10, [0.5, 0.3, 0.2])
+    >>> pmf = lambda x, y: f.pmf(np.column_stack([x, y, 10 - x - y]))
+    >>> make_joint_pmf(pmf, np.arange(11), np.arange(11), plt.gca())  # doctest: +SKIP
+    """
+    xvalues = np.asarray(xvalues)
+    yvalues = np.asarray(yvalues)
+
+    n_cells = len(xvalues) * len(yvalues)
+
+    if n_cells > JOINT_PMF_MAX_CELLS:
+        raise ValueError(
+            "This joint plot would need %d cells (%d values across by %d "
+            "up), which is too many to read -- each cell would be a "
+            "fraction of a pixel. This happens when the counts range over "
+            "many values, which a large number of trials produces. Try a "
+            "smaller number of trials, or plot one variable at a time (for "
+            "example, Binomial(n, p).plot() for a single count)."
+            % (n_cells, len(xvalues), len(yvalues))
+        )
+
+    # A second mesh on these axes hides the first, so warn and let it keep
+    # the one colorbar already there. Counted after the budget check above,
+    # so a plot that never draws isn't counted as one that did.
+    first = _count_joint_plot(ax)
+    colorbar = colorbar and first
+
+    Xgrid, Ygrid = np.meshgrid(xvalues, yvalues)
+    Z = np.asarray(func(Xgrid.ravel(), Ygrid.ravel()), dtype=float).reshape(Xgrid.shape)
+
+    # imshow centers each cell on its value, so the extent runs half a unit
+    # past the outermost values on every side -- the cells then tile the
+    # axes seamlessly and every tick lands on a cell center. aspect="auto"
+    # lets the grid fill the axes instead of forcing square cells, matching
+    # make_tile. No cmap argument: viridis comes from image.cmap in
+    # symbulate.mplstyle, so probability 0 reads as its dark end.
+    kwargs.setdefault("interpolation", "nearest")
+    mesh = ax.imshow(
+        Z,
+        origin="lower",
+        aspect="auto",
+        extent=(
+            xvalues[0] - 0.5,
+            xvalues[-1] + 0.5,
+            yvalues[0] - 0.5,
+            yvalues[-1] + 0.5,
+        ),
+        vmin=0,
+        **kwargs,
+    )
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if title:
+        ax.set_title("Joint PMF Plot")
+    # Counts are whole numbers, so only whole-number ticks make sense; cap
+    # how many appear so the labels can't crowd into each other.
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+    # A filled mesh covers the axes, so a grid would only show at the
+    # spines; turn it off entirely rather than leave stray ticks of it,
+    # matching make_tile.
+    ax.grid(False)
+
+    if colorbar:
+        zmax = Z.max() if Z.size else 1.0
+        if zmax <= 0:
+            zmax = 1.0
+        _joint_colorbar(mesh, ax, "Probability", np.linspace(0, zmax, JOINT_CBAR_TICKS))
+
+    return mesh

@@ -76,6 +76,11 @@ from symbulate.plot import (
     make_segmented_density,
     make_segmented_hist,
     make_tile,
+    make_joint_pdf,
+    make_joint_pmf,
+    JOINT_OVERLAY_WARNING,
+    JOINT_PDF_GRID_POINTS,
+    JOINT_PMF_MAX_CELLS,
     make_segmented_rug,
     make_grouped_boxplot,
     _thin_discrete_ticks,
@@ -3117,15 +3122,15 @@ class TestDistributionPlotDiscrete(PlotTestCase):
         ys = np.asarray(line.get_ydata())
         self.assertTrue(np.all(ys >= 0))
 
-    def test_multivariate_normal_plot_raises(self):
-        """MultivariateNormal.plot() raises (not yet implemented)."""
-        with self.assertRaises(Exception):
-            MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]]).plot()
+    def test_multivariate_normal_plots_joint_density(self):
+        """MultivariateNormal.plot() draws the joint density of two variables."""
+        MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
+        self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
 
-    def test_multinomial_plot_raises(self):
-        """Multinomial.plot() raises (not yet implemented)."""
-        with self.assertRaises(Exception):
-            Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot()
+    def test_multinomial_plots_joint_pmf(self):
+        """Multinomial.plot() draws a probability per pair of counts."""
+        Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot()
+        self.assertEqual(plt.gca().get_title(), "Joint PMF Plot")
 
 
 # ===========================================================================
@@ -3705,6 +3710,96 @@ class TestSuggestionPolicy(unittest.TestCase):
     def test_true_marks_session_so_later_none_stays_quiet(self):
         self.assertTrue(should_show_suggestion(True))
         self.assertFalse(should_show_suggestion(None))
+
+
+class TestJointTheoreticalPlots(PlotTestCase):
+    """The joint pdf/pmf helpers behind MultivariateDistribution.plot()."""
+
+    def test_make_joint_pdf_evaluates_on_a_grid(self):
+        # The surface is the pdf itself, evaluated on a
+        # JOINT_PDF_GRID_POINTS square grid over the given window.
+        seen = {}
+
+        def pdf(x, y):
+            seen["n"] = len(x)
+            return np.exp(-(x**2 + y**2) / 2)
+
+        ax = plt.gca()
+        make_joint_pdf(pdf, (-3, 3), (-3, 3), ax)
+        self.assertEqual(seen["n"], JOINT_PDF_GRID_POINTS**2)
+        self.assertEqual(ax.get_xlim(), (-3, 3))
+        self.assertEqual(ax.get_ylim(), (-3, 3))
+        self.assertEqual(ax.get_title(), "Joint PDF Plot")
+
+    def test_make_joint_pdf_contour_titles_and_bands(self):
+        pdf = lambda x, y: np.exp(-(x**2 + y**2) / 2)
+        ax = plt.gca()
+        make_joint_pdf(pdf, (-3, 3), (-3, 3), ax, contour=True)
+        self.assertEqual(ax.get_title(), "Joint Contour Plot")
+
+    def test_make_joint_pdf_survives_an_unbounded_density(self):
+        # A density that runs to infinity at the edge of its support is
+        # scaled by its largest finite value instead of collapsing the
+        # whole surface into one color.
+        def pdf(x, y):
+            with np.errstate(divide="ignore"):
+                return 1.0 / np.maximum(x, 0)
+
+        ax = plt.gca()
+        make_joint_pdf(pdf, (0, 1), (0, 1), ax)
+        self.assertTrue(np.isfinite(ax.collections[0].get_array().max()))
+
+    def test_make_joint_pdf_labels_and_no_colorbar_for_a_panel(self):
+        pdf = lambda x, y: np.exp(-(x**2 + y**2) / 2)
+        ax = plt.gca()
+        n_axes_before = len(plt.gcf().axes)
+        make_joint_pdf(
+            pdf,
+            (-3, 3),
+            (-3, 3),
+            ax,
+            colorbar=False,
+            xlabel="X1",
+            ylabel="X3",
+            title=False,
+        )
+        # No extra axes: a colorbar would have added one.
+        self.assertEqual(len(plt.gcf().axes), n_axes_before)
+        self.assertEqual(ax.get_xlabel(), "X1")
+        self.assertEqual(ax.get_ylabel(), "X3")
+        self.assertEqual(ax.get_title(), "")
+
+    def test_make_joint_pmf_one_cell_per_pair_of_values(self):
+        # Cells are centered on the values, so the mesh spans half a unit
+        # past the outermost value on every side.
+        pmf = lambda x, y: np.full(len(x), 1 / 16)
+        ax = plt.gca()
+        mesh = make_joint_pmf(pmf, np.arange(4), np.arange(4), ax)
+        self.assertEqual(mesh.get_array().shape, (4, 4))
+        self.assertEqual(ax.get_xlim(), (-0.5, 3.5))
+        self.assertEqual(ax.get_ylim(), (-0.5, 3.5))
+        self.assertEqual(ax.get_title(), "Joint PMF Plot")
+
+    def test_second_joint_plot_warns_and_keeps_one_colorbar(self):
+        # The "warn but still draw" tier of the overlay policy, the same one
+        # two tile plots or two 2-D histograms fall into.
+        pdf = lambda x, y: np.exp(-(x**2 + y**2) / 2)
+        ax = plt.gca()
+        make_joint_pdf(pdf, (-3, 3), (-3, 3), ax)
+        n_axes = len(plt.gcf().axes)
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            make_joint_pdf(pdf, (-3, 3), (-3, 3), ax)
+        self.assertIn("second joint plot", printed.getvalue())
+        # No second colorbar: it would land on top of the first one.
+        self.assertEqual(len(plt.gcf().axes), n_axes)
+
+    def test_make_joint_pmf_refuses_an_unreadable_grid(self):
+        pmf = lambda x, y: np.zeros(len(x))
+        side = int(np.sqrt(JOINT_PMF_MAX_CELLS)) + 10
+        with self.assertRaises(ValueError) as cm:
+            make_joint_pmf(pmf, np.arange(side), np.arange(side), plt.gca())
+        self.assertIn("too many to read", str(cm.exception))
 
 
 if __name__ == "__main__":

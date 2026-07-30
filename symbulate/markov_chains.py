@@ -1,3 +1,5 @@
+import numbers
+
 import numpy as np
 
 from .distributions import Exponential
@@ -8,6 +10,56 @@ from .result import InfiniteVector, ContinuousTimeFunction, DiscreteValued
 
 EPS = 1e-15
 rng = np.random.default_rng()
+
+
+def _as_rate_array(spec, num_states, name):
+    """Turn a birth- or death-rate specification into a per-state array.
+
+    Accepts three convenient forms and returns a NumPy array with one rate
+    per state:
+
+    - a single number -- the same rate in every state,
+    - a callable ``rate(n)`` -- evaluated at each state index ``n``,
+    - a list or array -- one rate per state (must have ``num_states`` entries).
+
+    Parameters
+    ----------
+    spec : number, callable, or array-like
+        The rate specification, in one of the forms above.
+    num_states : int
+        The number of states in the process.
+    name : str
+        The parameter name (``"birth_rates"`` or ``"death_rates"``), used in
+        error messages.
+
+    Returns
+    -------
+    numpy.ndarray
+        The rate in each state, as a length-``num_states`` array of floats.
+
+    Raises
+    ------
+    Exception
+        If a list is the wrong length, or any rate is negative or not a
+        finite number.
+    """
+    if callable(spec):
+        values = [spec(n) for n in range(num_states)]
+    elif np.ndim(spec) == 0:
+        values = [spec] * num_states
+    else:
+        values = list(spec)
+        if len(values) != num_states:
+            raise Exception(
+                "%s must have one rate per state: expected %d values, got %d. "
+                "Pass a single number for a constant rate, a function of the "
+                "state, or a list with one entry per state."
+                % (name, num_states, len(values))
+            )
+    arr = np.asarray(values, dtype=float)
+    if not np.all(np.isfinite(arr)) or np.any(arr < 0):
+        raise Exception("%s must all be non-negative numbers." % name)
+    return arr
 
 
 class MarkovChainResult(InfiniteVector, DiscreteValued):
@@ -465,3 +517,148 @@ class ContinuousTimeMarkovChain(RV):
             generator_matrix, initial_dist, state_labels
         )
         super().__init__(prob_space)
+
+
+class BirthDeathProcess(ContinuousTimeMarkovChain):
+    """A birth-death process, treated as a random variable.
+
+    A birth-death process is a continuous-time Markov chain on the states
+    ``0, 1, 2, ..., num_states - 1`` that can only move up by one ("a birth")
+    or down by one ("a death") at a time. From state ``n`` it moves to
+    ``n + 1`` at the birth rate and to ``n - 1`` at the death rate. Each draw
+    is a sample path -- a function of continuous time giving the population
+    (or queue length, count, ...) at each moment.
+
+    This is a convenience wrapper that builds the generator matrix for you
+    from the birth and death rates and hands it to
+    :class:`ContinuousTimeMarkovChain`; it adds no new simulation logic. A
+    great many classic models are just birth-death processes with particular
+    rates, so they are all reachable through this one class -- see the
+    examples below for the ``M/M/1``, ``M/M/s``, finite-capacity, Erlang-loss,
+    and machine-repair queues.
+
+    Parameters
+    ----------
+    birth_rates : number, callable, or array-like
+        The rate of moving up one state ("a birth"). May be a single number
+        (the same rate in every state), a function ``birth_rate(n)`` of the
+        state, or a list with one entry per state.
+    death_rates : number, callable, or array-like
+        The rate of moving down one state ("a death"), in the same three
+        forms as ``birth_rates``.
+    num_states : int
+        The number of states, so the state space is
+        ``0, 1, ..., num_states - 1``. Must be at least 2. For a process with
+        no natural upper limit (such as an ``M/M/1`` queue) choose a
+        ``num_states`` large enough that the top state is almost never
+        reached -- this truncates the (infinite) state space so it can be
+        simulated.
+    initial : int, optional
+        The starting state. Must be between 0 and ``num_states - 1``.
+        Default is 0.
+    state_labels : array-like of length num_states, optional
+        Names to use for each state. Defaults to the state numbers
+        ``0, 1, ..., num_states - 1``, so a path returns the count directly.
+
+    Attributes
+    ----------
+    birth_rates : numpy.ndarray
+        The birth rate in each state (with the top state's birth rate set
+        to 0, since there is no higher state).
+    death_rates : numpy.ndarray
+        The death rate in each state (with state 0's death rate set to 0,
+        since there is no lower state).
+    num_states : int
+        The number of states.
+    prob_space : ContinuousTimeMarkovChainProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Notes
+    -----
+    The birth rate of the top state and the death rate of state 0 are
+    automatically set to 0, because there is no state to move to -- so, for a
+    finite-capacity queue, simply capping ``num_states`` gives the correct
+    "blocking" behavior with no extra work.
+
+    Every state must have some way out (a positive birth or death rate);
+    otherwise the process could get stuck there forever, which a
+    continuous-time Markov chain does not support. This means a pure-birth
+    process (all death rates 0) is not expressible this way, since its top
+    state would be a dead end.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> # M/M/1 queue: arrivals at rate 1, service at rate 1.5, truncated at 40.
+    >>> queue = BirthDeathProcess(birth_rates=1, death_rates=1.5, num_states=41)
+    >>> path = queue.draw()
+    >>> path(5.0)  # doctest: +SKIP
+    2
+    >>> # M/M/s queue with s = 3 servers: service rate is min(n, s) * mu.
+    >>> mu = 1.5
+    >>> mms = BirthDeathProcess(
+    ...     birth_rates=1, death_rates=lambda n: min(n, 3) * mu, num_states=41
+    ... )
+    """
+
+    def __init__(
+        self, birth_rates, death_rates, num_states, initial=0, state_labels=None
+    ):
+        """Initialize a birth-death process.
+
+        Raises
+        ------
+        Exception
+            If ``num_states`` is not an integer of at least 2; if a rate is
+            negative or the wrong length; if ``initial`` is not a state index
+            between 0 and ``num_states - 1``; or if some state has no way out
+            (both its birth and death rates are 0).
+        """
+        if not isinstance(num_states, numbers.Integral) or num_states < 2:
+            raise Exception(
+                "num_states must be a whole number that is at least 2 (the "
+                "states are 0, 1, ..., num_states - 1)."
+            )
+
+        births = _as_rate_array(birth_rates, num_states, "birth_rates")
+        deaths = _as_rate_array(death_rates, num_states, "death_rates")
+
+        # There is no state above the top one or below 0, so those moves are
+        # impossible regardless of what the user supplied.
+        births[num_states - 1] = 0.0
+        deaths[0] = 0.0
+
+        # A continuous-time Markov chain cannot have a state with no way out.
+        stuck = np.where(births + deaths == 0)[0]
+        if len(stuck) > 0:
+            raise Exception(
+                "State %d has no way out: its birth and death rates are both "
+                "0, so the process would stay there forever. Give it a "
+                "positive birth or death rate. (A pure-birth or pure-death "
+                "process cannot be built this way.)" % int(stuck[0])
+            )
+
+        if not isinstance(initial, numbers.Integral) or not (0 <= initial < num_states):
+            raise Exception(
+                "initial must be a starting state between 0 and %d "
+                "(num_states - 1)." % (num_states - 1)
+            )
+
+        # Assemble the generator matrix: births on the super-diagonal, deaths
+        # on the sub-diagonal, and each row's diagonal set so the row sums to 0.
+        generator_matrix = np.zeros((num_states, num_states))
+        for n in range(num_states):
+            if n + 1 < num_states:
+                generator_matrix[n, n + 1] = births[n]
+            if n - 1 >= 0:
+                generator_matrix[n, n - 1] = deaths[n]
+            generator_matrix[n, n] = -(births[n] + deaths[n])
+
+        initial_dist = [0.0] * num_states
+        initial_dist[initial] = 1.0
+
+        self.birth_rates = births
+        self.death_rates = deaths
+        self.num_states = num_states
+
+        super().__init__(generator_matrix, initial_dist, state_labels)
