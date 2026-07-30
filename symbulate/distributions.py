@@ -6114,6 +6114,23 @@ class MultivariateT(MultivariateDistribution):
             )
         return Vector(self._mean)
 
+    def _n_components(self):
+        """Return how many components each draw has.
+
+        Overridden because the base class counts the entries of ``mean()``,
+        and this distribution's mean does not exist for ``df <= 1``. The
+        location vector always does, and has exactly one entry per
+        component, so the count is read from it instead -- letting a
+        heavy-tailed ``df = 1`` distribution still be plotted, whose density
+        is perfectly well defined even where its moments are not.
+
+        Returns
+        -------
+        int
+            The number of variables the distribution describes.
+        """
+        return len(self._mean)
+
     def cov(self):
         """Return the covariance matrix.
 
@@ -6769,7 +6786,10 @@ class Multinomial(MultivariateDistribution):
         n_values = int(high) - int(low) + 1
         if n_values * n_values <= JOINT_PMF_MAX_CELLS:
             return (low, high)
-        return marginal._hdi_window()
+        # `_zoom_xlim` is the tight, most-of-the-probability window -- the
+        # replacement for the highest-density helper this line was originally
+        # written against, in a branch that predated that helper's removal.
+        return marginal._zoom_xlim()
 
     def _joint_func(self, i, j):
         """Return the joint probability function of counts ``i`` and ``j``.

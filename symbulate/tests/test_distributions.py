@@ -4952,6 +4952,11 @@ class TestMultinomial(unittest.TestCase):
         plt.close("all")
 
     def test_Multinomial_plot_pairs(self):
+        # A pairs plot fills the whole figure, so it refuses to draw into one
+        # that already has axes. Start from a clean figure so the test does
+        # not depend on whether an earlier test left one open -- without this
+        # it passes alone and fails in a full run.
+        plt.close("all")
         X = Multinomial(n=12, p=[0.4, 0.3, 0.2, 0.1])
         X.plot(pairs=True)
         self.assertEqual(len(plt.gcf().axes), 10)
