@@ -3269,6 +3269,56 @@ class TestLognormal(unittest.TestCase):
         for value in sims:
             self.assertAlmostEqual(value, 1.0)
 
+    # --- the degenerate (sigma = 0) point mass supports the full API ---
+    # Regression tests: this branch used to define only pdf/cdf/mean/var/sd/
+    # median, so `quantile` and `** n` raised a bare AttributeError and `plot`
+    # raised a bare TypeError (its scalar-only pdf could not take an array).
+
+    def test_LogNormal_sigma_zero_quantile(self):
+        X = LogNormal(mu=0, sigma=0)
+        # Every quantile of a point mass is the point itself.
+        for q in [0.0, 0.25, 0.5, 0.99, 1.0]:
+            self.assertAlmostEqual(float(X.quantile(q)), 1.0)
+        np.testing.assert_allclose(
+            np.asarray(X.quantile(np.array([0.1, 0.5, 0.9])), dtype=float),
+            [1.0, 1.0, 1.0],
+        )
+        # Outside [0, 1] scipy's ppf gives nan, so this does too.
+        self.assertTrue(np.isnan(float(X.quantile(1.5))))
+
+    def test_LogNormal_sigma_zero_power_draws(self):
+        X = LogNormal(mu=2, sigma=0)
+        values = list((X**5).draw())
+        self.assertEqual(len(values), 5)
+        for value in values:
+            self.assertAlmostEqual(float(value), np.exp(2))
+
+    def test_LogNormal_sigma_zero_pdf_cdf_accept_arrays(self):
+        X = LogNormal(mu=0, sigma=0)
+        np.testing.assert_allclose(
+            np.asarray(X.pdf(np.array([0.5, 1.0, 2.0])), dtype=float), [0.0, 1.0, 0.0]
+        )
+        np.testing.assert_allclose(
+            np.asarray(X.cdf(np.array([0.5, 1.0, 2.0])), dtype=float), [0.0, 1.0, 1.0]
+        )
+        # A single number still comes back as a plain float, not an array.
+        self.assertIsInstance(X.pdf(1.0), float)
+        self.assertIsInstance(X.cdf(1.0), float)
+
+    def test_LogNormal_sigma_zero_plot_does_not_raise(self):
+        with warnings.catch_warnings():
+            # A point mass has zero height on a continuous grid, so matplotlib
+            # warns about identical y-limits. Rendering a point mass nicely is a
+            # separate question; this test only pins that plot() no longer
+            # raises a TypeError from a scalar-only pdf.
+            warnings.simplefilter("ignore")
+            plt.figure()
+            try:
+                LogNormal(mu=0, sigma=0).plot()
+                LogNormal(mu=0, sigma=0).plot(cdf=True)
+            finally:
+                plt.close("all")
+
 
 class TestPareto(unittest.TestCase):
 
@@ -3817,6 +3867,31 @@ class TestMakeham(unittest.TestCase):
     def test_Makeham_cdf_sf_endpoints(self):
         X = Makeham(shape=1.5, makeham=0.3, scale=2)
         self.assertAlmostEqual(float(X.cdf(0)), 0.0, places=9)
+
+    def test_Makeham_hazard_matches_documented_formula(self):
+        # The force of mortality is (makeham + shape * e**(x/scale)) / scale:
+        # the scale divides the WHOLE hazard, so the constant term contributes
+        # makeham / scale. The docstring used to divide only the exponential
+        # term, which is what this pins down.
+        shape, makeham, scale = 1.5, 0.3, 2.0
+        X = Makeham(shape=shape, makeham=makeham, scale=scale)
+        x = np.array([0.1, 0.5, 1.0, 2.0])
+        hazard = np.asarray(X.pdf(x), dtype=float) / (
+            1 - np.asarray(X.cdf(x), dtype=float)
+        )
+        expected = (makeham + shape * np.exp(x / scale)) / scale
+        np.testing.assert_allclose(hazard, expected, rtol=1e-9)
+
+    def test_Makeham_hazard_at_zero_is_shape_plus_makeham_over_scale(self):
+        # At x = 0 the exponential term is 1, so the hazard is
+        # (makeham + shape) / scale.
+        for shape, makeham, scale in [
+            (1.5, 0.3, 2.0),
+            (2.0, 0.0, 1.0),
+            (0.5, 1.0, 4.0),
+        ]:
+            X = Makeham(shape=shape, makeham=makeham, scale=scale)
+            self.assertAlmostEqual(float(X.pdf(0)), (makeham + shape) / scale, places=9)
 
     def test_Makeham_draw_is_scalar_in_support(self):
         distributions.rng = np.random.default_rng(0)
@@ -4483,6 +4558,30 @@ class TestMultivariateLogNormal(unittest.TestCase):
             expected = normal.pdf(np.log(pt)) / np.prod(pt)
             self.assertAlmostEqual(float(X.pdf(pt)), float(expected), places=12)
 
+    def test_MVLogNormal_pdf_batch_uses_per_row_jacobian(self):
+        # Regression test: the Jacobian divisor used to be np.prod(x) over the
+        # whole array, so a 2-D input divided every row by the product of every
+        # entry instead of by its own row's product -- silently wrong densities
+        # with no error raised. A batch must agree with row-by-row evaluation.
+        mean = [0.0, 0.5]
+        cov = [[0.4, 0.1], [0.1, 0.3]]
+        X = MultivariateLogNormal(mean=mean, cov=cov)
+        batch = np.array([[1.0, 1.0], [2.0, 0.5], [0.5, 3.0]])
+        expected = np.array([float(X.pdf(row)) for row in batch])
+        got = np.asarray(X.pdf(batch), dtype=float)
+        self.assertEqual(got.shape, (3,))
+        np.testing.assert_allclose(got, expected, rtol=1e-12)
+
+    def test_MVLogNormal_pdf_batch_three_dimensional(self):
+        # Same check with three components, where the whole-array product and
+        # the per-row product differ by more.
+        X = MultivariateLogNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
+        batch = np.array([[1.0, 2.0, 3.0], [0.5, 0.5, 0.5]])
+        expected = np.array([float(X.pdf(row)) for row in batch])
+        np.testing.assert_allclose(
+            np.asarray(X.pdf(batch), dtype=float), expected, rtol=1e-12
+        )
+
     def test_MVLogNormal_marginal_is_lognormal(self):
         # Each component is a univariate LogNormal with the underlying
         # component's mean and sd.
@@ -4555,6 +4654,36 @@ class TestWishart(unittest.TestCase):
         sims = [X.draw()[0][0] for _ in range(Nsim)]
         self.assertAlmostEqual(np.mean(sims), df * scale[0][0], delta=0.5)
 
+    def test_Wishart_mean_method_returns_df_times_scale(self):
+        # Regression test: `mean()` did not exist at all and raised a bare
+        # AttributeError, even though the docstring documents the mean as
+        # df * scale. It returns the matrix shaped the way `draw()` does.
+        df, scale = 5, [[2, 0.5], [0.5, 3]]
+        X = Wishart(df=df, scale=scale)
+        got = np.array([list(row) for row in X.mean()], dtype=float)
+        np.testing.assert_allclose(got, df * np.asarray(scale, dtype=float))
+
+    def test_Wishart_mean_shape_matches_draw(self):
+        distributions.rng = np.random.default_rng(42)
+        X = Wishart(df=6, scale=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        mean, draw = X.mean(), X.draw()
+        self.assertIsInstance(mean, Vector)
+        self.assertEqual(len(mean), len(draw))
+        self.assertEqual(len(mean[0]), len(draw[0]))
+
+    def test_Wishart_vector_summaries_raise_friendly(self):
+        # Regression test: these raised a bare AttributeError. A matrix-valued
+        # draw has no per-component vector of variances, so each must explain
+        # that and point at `mean()` instead of leaking an AttributeError.
+        X = Wishart(df=5, scale=[[1, 0], [0, 1]])
+        for name in ["var", "sd", "cov", "corr"]:
+            with self.assertRaises(Exception) as caught:
+                getattr(X, name)()
+            message = str(caught.exception)
+            self.assertNotIsInstance(caught.exception, AttributeError)
+            self.assertIn(name, message)
+            self.assertIn("mean()", message)
+
     def test_Wishart_diagonal_is_scaled_chisquare(self):
         # With an identity scale, each diagonal entry is chi-square(df).
         distributions.rng = np.random.default_rng(42)
@@ -4615,6 +4744,36 @@ class TestInverseWishart(unittest.TestCase):
         sims = [X.draw()[0][0] for _ in range(Nsim)]
         expected = scale[0][0] / (df - 2 - 1)
         self.assertAlmostEqual(np.mean(sims), expected, delta=0.05)
+
+    def test_InverseWishart_mean_method_returns_formula(self):
+        # Regression test: `mean()` did not exist and raised a bare
+        # AttributeError, though the docstring documents scale / (df - p - 1).
+        df, scale = 8, [[2, 0.5], [0.5, 3]]
+        X = InverseWishart(df=df, scale=scale)
+        got = np.array([list(row) for row in X.mean()], dtype=float)
+        np.testing.assert_allclose(got, np.asarray(scale, dtype=float) / (df - 2 - 1))
+
+    def test_InverseWishart_mean_undefined_raises_friendly(self):
+        # The mean exists only for df > p + 1. Below that it must say so
+        # rather than return a nonsense (negative) matrix.
+        X = InverseWishart(df=3, scale=[[1, 0], [0, 1]])
+        with self.assertRaises(Exception) as caught:
+            X.mean()
+        self.assertIn("df > p + 1", str(caught.exception))
+        # ...and the distribution is still perfectly usable otherwise.
+        distributions.rng = np.random.default_rng(42)
+        self.assertEqual(len(X.draw()), 2)
+
+    def test_InverseWishart_vector_summaries_raise_friendly(self):
+        # Regression test: these raised a bare AttributeError.
+        X = InverseWishart(df=6, scale=[[1, 0], [0, 1]])
+        for name in ["var", "sd", "cov", "corr"]:
+            with self.assertRaises(Exception) as caught:
+                getattr(X, name)()
+            message = str(caught.exception)
+            self.assertNotIsInstance(caught.exception, AttributeError)
+            self.assertIn(name, message)
+            self.assertIn("mean()", message)
 
     def test_InverseWishart_inverse_is_wishart(self):
         # If X ~ InverseWishart(df, scale), then inv(X) ~ Wishart(df, inv(scale)).
@@ -4793,6 +4952,11 @@ class TestMultinomial(unittest.TestCase):
         plt.close("all")
 
     def test_Multinomial_plot_pairs(self):
+        # A pairs plot fills the whole figure, so it refuses to draw into one
+        # that already has axes. Start from a clean figure so the test does
+        # not depend on whether an earlier test left one open -- without this
+        # it passes alone and fails in a full run.
+        plt.close("all")
         X = Multinomial(n=12, p=[0.4, 0.3, 0.2, 0.1])
         X.plot(pairs=True)
         self.assertEqual(len(plt.gcf().axes), 10)
@@ -5301,6 +5465,48 @@ class TestNegativeMultinomial(unittest.TestCase):
 # ===========================================================================
 
 
+class TestDrawReturnsScalar(unittest.TestCase):
+    """Every scalar distribution's ``draw()`` returns a ``Scalar``.
+
+    Regression tests: ``NegativeBinomial``, ``Cauchy``, and ``Pareto`` override
+    ``draw`` to sample through numpy rather than scipy, and used to return a
+    plain ``int``/``float`` while every other distribution returned a
+    ``Scalar``. ``Int`` and ``Float`` subclass ``int`` and ``float``, so the
+    values stay usable in arithmetic either way -- this pins the type so the
+    overrides cannot drift from the base class again.
+    """
+
+    def test_overridden_draws_return_scalar(self):
+        distributions.rng = np.random.default_rng(42)
+        for X in [
+            NegativeBinomial(r=3, p=0.5),
+            Cauchy(loc=0, scale=1),
+            Pareto(shape=2, scale=1),
+        ]:
+            self.assertIsInstance(X.draw(), Scalar)
+
+    def test_base_class_draws_return_scalar(self):
+        distributions.rng = np.random.default_rng(42)
+        for X in [Normal(0, 1), Poisson(3), Binomial(10, 0.5), Gamma(2)]:
+            self.assertIsInstance(X.draw(), Scalar)
+
+    def test_overridden_draws_still_behave_as_numbers(self):
+        distributions.rng = np.random.default_rng(42)
+        self.assertIsInstance(NegativeBinomial(r=3, p=0.5).draw(), int)
+        self.assertIsInstance(Cauchy(loc=0, scale=1).draw(), float)
+        self.assertIsInstance(Pareto(shape=2, scale=1).draw(), float)
+        # Arithmetic and comparison keep working on the wrapped values.
+        self.assertGreaterEqual(Pareto(shape=2, scale=3).draw() + 0, 3)
+
+    def test_overridden_draws_respect_support(self):
+        distributions.rng = np.random.default_rng(42)
+        for _ in range(200):
+            # NegativeBinomial counts total trials, so it starts at r.
+            self.assertGreaterEqual(NegativeBinomial(r=3, p=0.5).draw(), 3)
+            # Pareto is bounded below by its scale.
+            self.assertGreaterEqual(Pareto(shape=2, scale=3).draw(), 3)
+
+
 class TestNonNumericInputs(unittest.TestCase):
 
     def test_Bernoulli_p_non_numeric(self):
@@ -5375,12 +5581,43 @@ class TestNonNumericInputs(unittest.TestCase):
 
     def test_DiscreteUniform_a_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "a must be a number", lambda: DiscreteUniform(a="x", b=5)
+            Exception, "a must be an integer", lambda: DiscreteUniform(a="x", b=5)
         )
 
     def test_DiscreteUniform_b_non_numeric(self):
         self.assertRaisesRegex(
-            Exception, "b must be a number", lambda: DiscreteUniform(a=0, b="x")
+            Exception, "b must be an integer", lambda: DiscreteUniform(a=0, b="x")
+        )
+
+    def test_DiscreteUniform_a_non_integer(self):
+        # A fractional bound used to be accepted and then made every pmf,
+        # mean, and quantile nan, with scipy raising nothing of its own.
+        self.assertRaisesRegex(
+            Exception, "a must be an integer", lambda: DiscreteUniform(a=0.5, b=5)
+        )
+
+    def test_DiscreteUniform_b_non_integer(self):
+        self.assertRaisesRegex(
+            Exception, "b must be an integer", lambda: DiscreteUniform(a=0, b=3.5)
+        )
+
+    def test_DiscreteUniform_accepts_whole_valued_floats(self):
+        # Only a *fractional* bound is rejected. A whole-valued float works
+        # fine in scipy's randint and reaches students easily -- out of a
+        # division, or from a NumPy array -- so it must keep working, and the
+        # bounds are stored as plain ints either way.
+        for a, b in [(1.0, 6.0), (0, 6.0), (0, 10 / 2), (np.float64(1), np.float64(6))]:
+            X = DiscreteUniform(a=a, b=b)
+            self.assertIsInstance(X.a, int)
+            self.assertIsInstance(X.b, int)
+            reference = DiscreteUniform(a=int(a), b=int(b))
+            self.assertAlmostEqual(float(X.mean()), float(reference.mean()))
+            self.assertAlmostEqual(float(X.pmf(int(b))), float(reference.pmf(int(b))))
+
+    def test_DiscreteUniform_whole_valued_float_bounds_compare(self):
+        # The b < a check still fires when the bounds arrive as floats.
+        self.assertRaisesRegex(
+            Exception, "b cannot be less than a", lambda: DiscreteUniform(a=6.0, b=3.0)
         )
 
     def test_Uniform_a_non_numeric(self):
