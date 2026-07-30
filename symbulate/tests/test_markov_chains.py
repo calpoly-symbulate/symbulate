@@ -638,5 +638,118 @@ class TestYuleProcess(unittest.TestCase):
         self.assertEqual(first, second)
 
 
+class TestSIR(unittest.TestCase):
+
+    def test_is_rv(self):
+        self.assertIsInstance(SIR(100, 0.3, 0.1), RV)
+
+    def test_draw_returns_continuous_time_function(self):
+        seed()
+        path = SIR(100, 0.3, 0.1).draw()
+        self.assertIsInstance(path, ContinuousTimeFunction)
+
+    def test_path_starts_at_initial_state(self):
+        seed()
+        path = SIR(100, 0.3, 0.1, initial_infected=5, initial_recovered=2).draw()
+        self.assertEqual(list(path(0)), [93, 5, 2])
+
+    def test_population_is_conserved(self):
+        seed()
+        path = SIR(500, 0.3, 0.1, initial_infected=5).draw()
+        for t in [0, 1, 5, 20, 100]:
+            self.assertEqual(sum(path(t)), 500)
+
+    def test_S_nonincreasing_R_nondecreasing(self):
+        seed()
+        path = SIR(500, 0.3, 0.1, initial_infected=5).draw()
+        arr = np.array(path.states)
+        self.assertTrue(np.all(np.diff(arr[:, 0]) <= 0))  # S only falls
+        self.assertTrue(np.all(np.diff(arr[:, 2]) >= 0))  # R only rises
+
+    def test_epidemic_terminates_with_no_infectives(self):
+        seed()
+        path = SIR(500, 0.3, 0.1, initial_infected=5).draw()
+        self.assertEqual(path.states[-1][1], 0)  # final I is 0
+
+    def test_compartments_exposed_as_time_functions(self):
+        seed()
+        path = SIR(100, 0.3, 0.1).draw()
+        for c in ["S", "I", "R"]:
+            self.assertIsInstance(getattr(path, c), ContinuousTimeFunction)
+
+    def test_supercritical_outbreak_larger_than_subcritical(self):
+        # R0 = infection_rate / recovery_rate. Above 1 a large outbreak is
+        # likely; below 1 the epidemic dies out quickly. Checks the rates are
+        # wired correctly (infection vs recovery).
+        seed()
+        big = np.mean(
+            [
+                SIR(1000, 0.3, 0.1, initial_infected=5).draw().states[-1][2]
+                for _ in range(150)
+            ]
+        )
+        small = np.mean(
+            [
+                SIR(1000, 0.05, 0.1, initial_infected=5).draw().states[-1][2]
+                for _ in range(150)
+            ]
+        )
+        self.assertGreater(big, 500)
+        self.assertLess(small, 100)
+
+    def test_validation(self):
+        self.assertRaises(Exception, lambda: SIR(0, 0.3, 0.1))  # population
+        self.assertRaises(Exception, lambda: SIR(100, 0, 0.1))  # infection_rate
+        self.assertRaises(Exception, lambda: SIR(100, 0.3, -1))  # recovery_rate
+        self.assertRaises(Exception, lambda: SIR(100, 0.3, 0.1, initial_infected=0))
+        self.assertRaises(
+            Exception,
+            lambda: SIR(10, 0.3, 0.1, initial_infected=8, initial_recovered=5),
+        )
+
+    def test_reproducible_under_same_seed(self):
+        X = SIR(500, 0.3, 0.1, initial_infected=5)
+        seed(7)
+        first = [list(X.draw()(t)) for t in [1.0, 5.0, 20.0]]
+        seed(7)
+        second = [list(X.draw()(t)) for t in [1.0, 5.0, 20.0]]
+        self.assertEqual(first, second)
+
+
+class TestSEIR(unittest.TestCase):
+
+    def test_is_rv(self):
+        self.assertIsInstance(SEIR(100, 0.4, 0.2, 0.1), RV)
+
+    def test_path_starts_at_initial_state(self):
+        seed()
+        path = SEIR(100, 0.4, 0.2, 0.1, initial_infected=5, initial_exposed=3).draw()
+        self.assertEqual(list(path(0)), [92, 3, 5, 0])  # order S, E, I, R
+
+    def test_population_is_conserved(self):
+        seed()
+        path = SEIR(500, 0.4, 0.2, 0.1, initial_infected=5).draw()
+        for t in [0, 1, 5, 20, 100]:
+            self.assertEqual(sum(path(t)), 500)
+
+    def test_epidemic_terminates_with_no_exposed_or_infectives(self):
+        seed()
+        final = SEIR(500, 0.4, 0.2, 0.1, initial_infected=5).draw().states[-1]
+        self.assertEqual(final[1], 0)  # E
+        self.assertEqual(final[2], 0)  # I
+
+    def test_compartments_exposed_as_time_functions(self):
+        seed()
+        path = SEIR(100, 0.4, 0.2, 0.1).draw()
+        for c in ["S", "E", "I", "R"]:
+            self.assertIsInstance(getattr(path, c), ContinuousTimeFunction)
+
+    def test_validation(self):
+        self.assertRaises(Exception, lambda: SEIR(100, 0.4, 0, 0.1))  # incubation
+        self.assertRaises(
+            Exception, lambda: SEIR(100, 0.4, 0.2, 0.1, initial_exposed=-1)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

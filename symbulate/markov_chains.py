@@ -6,7 +6,7 @@ from .distributions import Exponential
 from .math import inf
 from .probability_space import ProbabilitySpace
 from .random_variables import RV
-from .result import InfiniteVector, ContinuousTimeFunction, DiscreteValued
+from .result import InfiniteVector, ContinuousTimeFunction, DiscreteValued, Vector
 
 EPS = 1e-15
 rng = np.random.default_rng()
@@ -1195,3 +1195,445 @@ class YuleProcess(RV):
         self.birth_rate = birth_rate
         self.initial = initial
         super().__init__(YuleProcessProbabilitySpace(birth_rate, initial))
+
+
+# --------------------------------------------------------------------------
+# Compartmental epidemic models (SIR / SEIR)
+#
+# These are continuous-time Markov chains over compartment counts, but the
+# state (S, I, R) or (S, E, I, R) is a vector rather than a single number,
+# and an epidemic on a finite population always ends (once no one is
+# infectious there are no more possible events -- an absorbing state, which
+# the finite ContinuousTimeMarkovChain does not allow). So each path is
+# simulated to completion with Gillespie's algorithm and stored, rather than
+# built from a generator matrix. Each compartment is also exposed as its own
+# scalar function of time for plotting the epidemic curves.
+# --------------------------------------------------------------------------
+
+
+class _EpidemicResult(ContinuousTimeFunction):
+    """Base class for one simulated sample path of a compartmental model.
+
+    A subclass sets ``self.compartments`` (the labels, e.g. ``["S", "I",
+    "R"]``) and implements ``_transition_rates(counts)``, returning the list
+    of possible events as ``(rate, change)`` pairs. This class runs Gillespie's
+    algorithm to simulate the whole trajectory to completion (which is finite,
+    since a finite-population epidemic always ends), stores it, and evaluates
+    the state at any time by lookup. Each compartment is exposed as its own
+    scalar :class:`ContinuousTimeFunction` -- e.g. ``path.I`` -- for plotting
+    and analysis, and calling the path itself returns the whole state vector.
+
+    Attributes
+    ----------
+    event_times : list of float
+        The time of each event (``event_times[0]`` is 0, the start).
+    states : list of tuple
+        The compartment counts after each event; ``states[0]`` is the initial
+        state.
+    """
+
+    def __init__(self, initial_counts):
+        """Simulate the whole sample path with Gillespie's algorithm."""
+        counts = list(initial_counts)
+        self.event_times = [0.0]
+        self.states = [tuple(counts)]
+        t = 0.0
+        while True:
+            events = self._transition_rates(counts)
+            total_rate = sum(rate for rate, _ in events)
+            # Once no event is possible the epidemic is over (absorbing state).
+            if total_rate <= 0:
+                break
+            t += rng.exponential(1.0 / total_rate)
+            # Choose which event occurs, with probability proportional to rate.
+            threshold = rng.random() * total_rate
+            cumulative = 0.0
+            for rate, change in events:
+                cumulative += rate
+                if threshold < cumulative:
+                    counts = [c + d for c, d in zip(counts, change)]
+                    break
+            self.event_times.append(t)
+            self.states.append(tuple(counts))
+
+        super().__init__(self._state_at)
+
+        # Expose each compartment as its own scalar function of time, so the
+        # epidemic curves can be plotted one compartment at a time.
+        for i, label in enumerate(self.compartments):
+            setattr(self, label, ContinuousTimeFunction(lambda t, i=i: self(t)[i]))
+
+    def _state_at(self, t):
+        """Return the compartment counts at time ``t`` as a Vector."""
+        k = int(np.searchsorted(self.event_times, t, side="right")) - 1
+        return Vector(self.states[max(k, 0)])
+
+    def _transition_rates(self, counts):
+        """Return a list of ``(rate, change)`` pairs for the current counts.
+
+        ``change`` is a tuple added to the counts when that event fires. A
+        subclass must implement this.
+        """
+        raise NotImplementedError
+
+
+class SIRResult(_EpidemicResult):
+    """One simulated sample path of an SIR epidemic (S, I, R counts)."""
+
+    def __init__(self, initial_counts, infection_rate, recovery_rate, population):
+        """Create one SIR sample path."""
+        self.infection_rate = infection_rate
+        self.recovery_rate = recovery_rate
+        self.population = population
+        self.compartments = ["S", "I", "R"]
+        super().__init__(initial_counts)
+
+    def _transition_rates(self, counts):
+        """Infection (S -> I) at rate beta*S*I/N, recovery (I -> R) at gamma*I."""
+        S, I, R = counts
+        infection = self.infection_rate * S * I / self.population
+        recovery = self.recovery_rate * I
+        return [(infection, (-1, 1, 0)), (recovery, (0, -1, 1))]
+
+
+class SIRProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying an SIR epidemic model.
+
+    Each draw produces one simulated sample path.
+
+    Parameters
+    ----------
+    population : int
+        The total population size ``N``. Must be a positive integer.
+    infection_rate : float
+        The rate ``beta``: a susceptible and an infectious individual meet and
+        transmit at rate ``beta / N``, so infections happen at total rate
+        ``beta * S * I / N``. Must be positive.
+    recovery_rate : float
+        The rate ``gamma`` at which each infectious individual recovers. Must
+        be positive.
+    initial_infected : int, optional
+        The number infectious at time 0. Must be a positive integer. Default 1.
+    initial_recovered : int, optional
+        The number already recovered (immune) at time 0. Must be a
+        non-negative integer. Default 0.
+    """
+
+    def __init__(
+        self,
+        population,
+        infection_rate,
+        recovery_rate,
+        initial_infected=1,
+        initial_recovered=0,
+    ):
+        """Initialize the probability space for an SIR epidemic."""
+        _require_positive_integer(population, "population")
+        _require_positive(infection_rate, "infection_rate")
+        _require_positive(recovery_rate, "recovery_rate")
+        _require_positive_integer(initial_infected, "initial_infected")
+        if not isinstance(initial_recovered, numbers.Integral) or initial_recovered < 0:
+            raise Exception("initial_recovered must be a non-negative integer.")
+        if initial_infected + initial_recovered > population:
+            raise Exception(
+                "initial_infected + initial_recovered cannot exceed the " "population."
+            )
+        self.population = population
+        self.infection_rate = infection_rate
+        self.recovery_rate = recovery_rate
+        self.initial_infected = initial_infected
+        self.initial_recovered = initial_recovered
+
+        initial_counts = [
+            population - initial_infected - initial_recovered,
+            initial_infected,
+            initial_recovered,
+        ]
+
+        def _draw():
+            return SIRResult(initial_counts, infection_rate, recovery_rate, population)
+
+        super().__init__(_draw)
+
+
+class SIR(RV):
+    """An SIR epidemic model, treated as a random variable.
+
+    The standard stochastic epidemic on a closed population of ``population``
+    individuals, each of whom is **S**usceptible, **I**nfectious, or
+    **R**ecovered (immune). A susceptible individual becomes infectious
+    through contact with an infectious one, and an infectious individual
+    eventually recovers; recovered individuals never become susceptible
+    again. Two things happen at random:
+
+    - **Infection** ``S -> I`` at total rate ``infection_rate * S * I /
+      population`` (more susceptibles and more infectives means faster spread),
+    - **Recovery** ``I -> R`` at total rate ``recovery_rate * I``.
+
+    Each draw is a sample path: the counts ``(S, I, R)`` as a function of
+    continuous time, simulated until the epidemic ends (no one infectious
+    left). Calling the path at a time returns the ``(S, I, R)`` vector; each
+    compartment is also available on its own as ``path.S``, ``path.I``, and
+    ``path.R`` for plotting the epidemic curves.
+
+    Parameters
+    ----------
+    population : int
+        The total population size ``N``. Must be a positive integer.
+    infection_rate : float
+        The infection rate ``beta`` (see above). Must be positive. The basic
+        reproduction number is ``R0 = infection_rate / recovery_rate``: above 1
+        a large outbreak is possible, below 1 the epidemic dies out quickly.
+    recovery_rate : float
+        The recovery rate ``gamma``. Must be positive.
+    initial_infected : int, optional
+        The number infectious at time 0. Must be a positive integer. Default 1.
+    initial_recovered : int, optional
+        The number already immune at time 0. Must be a non-negative integer.
+        Default 0.
+
+    Attributes
+    ----------
+    population, infection_rate, recovery_rate : int or float
+        The model parameters.
+    initial_infected, initial_recovered : int
+        The initial counts.
+    prob_space : SIRProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> epidemic = SIR(population=1000, infection_rate=0.3, recovery_rate=0.1,
+    ...                initial_infected=5)
+    >>> path = epidemic.draw()
+    >>> list(path(0.0))   # (S, I, R) at the start
+    [995, 5, 0]
+    >>> path.I(20.0)      # number infectious at time 20  # doctest: +SKIP
+    287
+    """
+
+    def __init__(
+        self,
+        population,
+        infection_rate,
+        recovery_rate,
+        initial_infected=1,
+        initial_recovered=0,
+    ):
+        """Initialize an SIR epidemic model."""
+        self.population = population
+        self.infection_rate = infection_rate
+        self.recovery_rate = recovery_rate
+        self.initial_infected = initial_infected
+        self.initial_recovered = initial_recovered
+        super().__init__(
+            SIRProbabilitySpace(
+                population,
+                infection_rate,
+                recovery_rate,
+                initial_infected,
+                initial_recovered,
+            )
+        )
+
+
+class SEIRResult(_EpidemicResult):
+    """One simulated sample path of an SEIR epidemic (S, E, I, R counts)."""
+
+    def __init__(
+        self,
+        initial_counts,
+        infection_rate,
+        incubation_rate,
+        recovery_rate,
+        population,
+    ):
+        """Create one SEIR sample path."""
+        self.infection_rate = infection_rate
+        self.incubation_rate = incubation_rate
+        self.recovery_rate = recovery_rate
+        self.population = population
+        self.compartments = ["S", "E", "I", "R"]
+        super().__init__(initial_counts)
+
+    def _transition_rates(self, counts):
+        """S -> E at beta*S*I/N, E -> I at sigma*E, I -> R at gamma*I."""
+        S, E, I, R = counts
+        infection = self.infection_rate * S * I / self.population
+        incubation = self.incubation_rate * E
+        recovery = self.recovery_rate * I
+        return [
+            (infection, (-1, 1, 0, 0)),
+            (incubation, (0, -1, 1, 0)),
+            (recovery, (0, 0, -1, 1)),
+        ]
+
+
+class SEIRProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying an SEIR epidemic model.
+
+    Each draw produces one simulated sample path.
+
+    Parameters
+    ----------
+    population : int
+        The total population size ``N``. Must be a positive integer.
+    infection_rate : float
+        The rate ``beta`` at which contact produces exposures ``S -> E`` (total
+        rate ``beta * S * I / N``). Must be positive.
+    incubation_rate : float
+        The rate ``sigma`` at which each exposed individual becomes infectious
+        ``E -> I``. Must be positive. Its reciprocal is the mean latent period.
+    recovery_rate : float
+        The rate ``gamma`` at which each infectious individual recovers
+        ``I -> R``. Must be positive.
+    initial_infected : int, optional
+        The number infectious at time 0. Must be a positive integer. Default 1.
+    initial_exposed : int, optional
+        The number exposed (infected but not yet infectious) at time 0. Must be
+        a non-negative integer. Default 0.
+    initial_recovered : int, optional
+        The number already immune at time 0. Must be a non-negative integer.
+        Default 0.
+    """
+
+    def __init__(
+        self,
+        population,
+        infection_rate,
+        incubation_rate,
+        recovery_rate,
+        initial_infected=1,
+        initial_exposed=0,
+        initial_recovered=0,
+    ):
+        """Initialize the probability space for an SEIR epidemic."""
+        _require_positive_integer(population, "population")
+        _require_positive(infection_rate, "infection_rate")
+        _require_positive(incubation_rate, "incubation_rate")
+        _require_positive(recovery_rate, "recovery_rate")
+        _require_positive_integer(initial_infected, "initial_infected")
+        for name, value in [
+            ("initial_exposed", initial_exposed),
+            ("initial_recovered", initial_recovered),
+        ]:
+            if not isinstance(value, numbers.Integral) or value < 0:
+                raise Exception("%s must be a non-negative integer." % name)
+        if initial_infected + initial_exposed + initial_recovered > population:
+            raise Exception(
+                "initial_infected + initial_exposed + initial_recovered cannot "
+                "exceed the population."
+            )
+        self.population = population
+        self.infection_rate = infection_rate
+        self.incubation_rate = incubation_rate
+        self.recovery_rate = recovery_rate
+        self.initial_infected = initial_infected
+        self.initial_exposed = initial_exposed
+        self.initial_recovered = initial_recovered
+
+        initial_counts = [
+            population - initial_infected - initial_exposed - initial_recovered,
+            initial_exposed,
+            initial_infected,
+            initial_recovered,
+        ]
+
+        def _draw():
+            return SEIRResult(
+                initial_counts,
+                infection_rate,
+                incubation_rate,
+                recovery_rate,
+                population,
+            )
+
+        super().__init__(_draw)
+
+
+class SEIR(RV):
+    """An SEIR epidemic model, treated as a random variable.
+
+    Like the :class:`SIR` model, but with an added **E**xposed compartment for
+    individuals who have been infected but are not yet infectious (a latent
+    period). A susceptible first becomes exposed, then infectious, then
+    recovered:
+
+    - **Exposure** ``S -> E`` at total rate ``infection_rate * S * I /
+      population`` (only *infectious* individuals expose others),
+    - **Onset** ``E -> I`` at total rate ``incubation_rate * E``,
+    - **Recovery** ``I -> R`` at total rate ``recovery_rate * I``.
+
+    Each draw is a sample path: the counts ``(S, E, I, R)`` as a function of
+    continuous time, simulated until the epidemic ends (no one exposed or
+    infectious left). Each compartment is available as ``path.S``, ``path.E``,
+    ``path.I``, and ``path.R`` for plotting the epidemic curves.
+
+    Parameters
+    ----------
+    population : int
+        The total population size ``N``. Must be a positive integer.
+    infection_rate : float
+        The exposure rate ``beta``. Must be positive.
+    incubation_rate : float
+        The rate ``sigma`` of becoming infectious (``1 / sigma`` is the mean
+        latent period). Must be positive.
+    recovery_rate : float
+        The recovery rate ``gamma``. Must be positive.
+    initial_infected : int, optional
+        The number infectious at time 0. Must be a positive integer. Default 1.
+    initial_exposed : int, optional
+        The number exposed at time 0. Must be a non-negative integer. Default 0.
+    initial_recovered : int, optional
+        The number already immune at time 0. Must be a non-negative integer.
+        Default 0.
+
+    Attributes
+    ----------
+    population, infection_rate, incubation_rate, recovery_rate : int or float
+        The model parameters.
+    initial_infected, initial_exposed, initial_recovered : int
+        The initial counts.
+    prob_space : SEIRProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> epidemic = SEIR(population=1000, infection_rate=0.4, incubation_rate=0.2,
+    ...                 recovery_rate=0.1, initial_infected=5)
+    >>> path = epidemic.draw()
+    >>> list(path(0.0))   # (S, E, I, R) at the start
+    [995, 0, 5, 0]
+    """
+
+    def __init__(
+        self,
+        population,
+        infection_rate,
+        incubation_rate,
+        recovery_rate,
+        initial_infected=1,
+        initial_exposed=0,
+        initial_recovered=0,
+    ):
+        """Initialize an SEIR epidemic model."""
+        self.population = population
+        self.infection_rate = infection_rate
+        self.incubation_rate = incubation_rate
+        self.recovery_rate = recovery_rate
+        self.initial_infected = initial_infected
+        self.initial_exposed = initial_exposed
+        self.initial_recovered = initial_recovered
+        super().__init__(
+            SEIRProbabilitySpace(
+                population,
+                infection_rate,
+                incubation_rate,
+                recovery_rate,
+                initial_infected,
+                initial_exposed,
+                initial_recovered,
+            )
+        )
