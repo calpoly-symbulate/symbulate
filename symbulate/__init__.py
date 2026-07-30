@@ -117,6 +117,12 @@ from .markov_chains import (
     ContinuousTimeMarkovChain,
     ContinuousTimeMarkovChainProbabilitySpace,
     BirthDeathProcess,
+    MM1,
+    MMs,
+    MMsK,
+    MMss,
+    MMsKN,
+    MMInfinity,
 )
 from .plot import figure, xlabel, ylabel, xlim, ylim, plot
 from .math import *
