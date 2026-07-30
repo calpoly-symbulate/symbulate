@@ -113,6 +113,10 @@ from .gaussian_process import (
     FractionalBrownianMotionProbabilitySpace,
 )
 from .poisson_process import PoissonProcess, PoissonProcessProbabilitySpace
+from .diffusion_process import (
+    DiffusionProcess,
+    DiffusionProcessProbabilitySpace,
+)
 from .markov_chains import (
     MarkovChain,
     MarkovChainProbabilitySpace,
