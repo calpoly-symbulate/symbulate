@@ -85,7 +85,13 @@ from .distributions import (
     DirichletMultinomial,
 )
 from .independence import AssumeIndependent
-from .index_sets import Naturals, Integers, Reals, DiscreteTimeSequence
+from .index_sets import (
+    Naturals,
+    Integers,
+    Reals,
+    DiscreteTimeSequence,
+    TimeInterval,
+)
 from .result import (
     Scalar,
     Vector,
@@ -101,6 +107,8 @@ from .gaussian_process import (
     BrownianMotionProbabilitySpace,
     OrnsteinUhlenbeck,
     OrnsteinUhlenbeckProbabilitySpace,
+    BrownianBridge,
+    BrownianBridgeProbabilitySpace,
 )
 from .poisson_process import PoissonProcess, PoissonProcessProbabilitySpace
 from .markov_chains import (
@@ -109,6 +117,12 @@ from .markov_chains import (
     ContinuousTimeMarkovChain,
     ContinuousTimeMarkovChainProbabilitySpace,
     BirthDeathProcess,
+    MM1,
+    MMs,
+    MMsK,
+    MMss,
+    MMsKN,
+    MMInfinity,
 )
 from .plot import figure, xlabel, ylabel, xlim, ylim, plot
 from .math import *
