@@ -41,9 +41,7 @@ class IndexSet:
         if t in self:
             return t
         else:
-            raise KeyError(
-                f"{type(self).__name__} does not contain {t!r}."
-            )
+            raise KeyError(f"{type(self).__name__} does not contain {t!r}.")
 
     def __contains__(self, value):
         """Check whether a value belongs to the index set.
@@ -92,6 +90,25 @@ class IndexSet:
         """
         return type(other) is type(self)
 
+    def __repr__(self):
+        """Return the name of the index set.
+
+        Used in the error message a process raises when it is asked for a
+        time outside its index set, so subclasses that carry parameters
+        (bounds, a sampling frequency) should override this to show them.
+
+        Returns
+        -------
+        str
+            The name of the index set.
+
+        Examples
+        --------
+        >>> repr(Reals())
+        'Reals'
+        """
+        return type(self).__name__
+
 
 class Reals(IndexSet):
     """The index set of all finite real numbers.
@@ -127,6 +144,140 @@ class Reals(IndexSet):
             return -float("inf") < value < float("inf")
         except Exception:
             return False
+
+
+class TimeInterval(Reals):
+    """The index set of all times between ``start`` and ``end``, inclusive.
+
+    Use this for a process that only exists over a limited stretch of time,
+    rather than forever. A :class:`BrownianBridge` is the main example: it is
+    pinned down at both ends, so it is only defined between them, and asking
+    for a time outside that stretch is a mistake worth catching rather than
+    answering with a meaningless number.
+
+    Like :class:`Reals`, this is continuous time -- every time in the range
+    counts, not just whole numbers.
+
+    Parameters
+    ----------
+    start : numeric
+        The first time in the interval.
+    end : numeric
+        The last time in the interval. Must be greater than ``start``.
+
+    Attributes
+    ----------
+    start : numeric
+        The first time in the interval.
+    end : numeric
+        The last time in the interval.
+
+    Raises
+    ------
+    TypeError
+        If ``start`` or ``end`` is not a number.
+    ValueError
+        If ``end`` is not greater than ``start``.
+
+    Examples
+    --------
+    >>> times = TimeInterval(0, 1)
+    >>> 0.5 in times
+    True
+    >>> 1 in times
+    True
+    >>> 1.5 in times
+    False
+    >>> repr(times)
+    'TimeInterval(0, 1)'
+    """
+
+    def __init__(self, start, end):
+        """Initialize a TimeInterval running from start to end."""
+        if not isinstance(start, numbers.Real):
+            raise TypeError(
+                f"start must be a number, got {type(start).__name__}. It is "
+                f"the first time in the interval, for example start=0."
+            )
+        if not isinstance(end, numbers.Real):
+            raise TypeError(
+                f"end must be a number, got {type(end).__name__}. It is the "
+                f"last time in the interval, for example end=1."
+            )
+        if not end > start:
+            raise ValueError(
+                f"end must be greater than start, got start={start} and "
+                f"end={end}. The interval needs to cover a stretch of time, "
+                f"so end cannot come before start (or land on it)."
+            )
+        self.start = start
+        self.end = end
+
+    def __contains__(self, value):
+        """Check whether a value lies between start and end, inclusive.
+
+        Parameters
+        ----------
+        value : any
+            The value to check.
+
+        Returns
+        -------
+        bool
+            True if ``start <= value <= end``, False otherwise.
+
+        Examples
+        --------
+        >>> 0.25 in TimeInterval(0, 1)
+        True
+        >>> -0.25 in TimeInterval(0, 1)
+        False
+        """
+        try:
+            return self.start <= value <= self.end
+        except Exception:
+            return False
+
+    def __eq__(self, other):
+        """Check whether two TimeInterval objects cover the same times.
+
+        Parameters
+        ----------
+        other : object
+            The object to compare with.
+
+        Returns
+        -------
+        bool
+            True if other is a TimeInterval with the same start and end.
+
+        Examples
+        --------
+        >>> TimeInterval(0, 1) == TimeInterval(0, 1)
+        True
+        >>> TimeInterval(0, 1) == TimeInterval(0, 2)
+        False
+        """
+        return (
+            isinstance(other, TimeInterval)
+            and self.start == other.start
+            and self.end == other.end
+        )
+
+    def __repr__(self):
+        """Return the index set with its bounds, e.g. ``TimeInterval(0, 1)``.
+
+        Returns
+        -------
+        str
+            The name of the index set and the two times it runs between.
+
+        Examples
+        --------
+        >>> repr(TimeInterval(0, 2))
+        'TimeInterval(0, 2)'
+        """
+        return f"{type(self).__name__}({self.start}, {self.end})"
 
 
 class Naturals(IndexSet):
@@ -197,9 +348,7 @@ class DiscreteTimeSequence(IndexSet):
     def __init__(self, fs):
         """Initialize a DiscreteTimeSequence with a given sampling frequency."""
         if not isinstance(fs, (int, float)):
-            raise TypeError(
-                f"fs must be a positive number, got {type(fs).__name__}."
-            )
+            raise TypeError(f"fs must be a positive number, got {type(fs).__name__}.")
         if fs <= 0:
             raise ValueError(
                 f"fs must be positive, got {fs}. "
