@@ -2,9 +2,13 @@
 
 Covers GaussianProcess (construction, path evaluation, lazy caching,
 statistical properties), BrownianMotion (deterministic start, mean,
-variance, drift, and scale parameters), and OrnsteinUhlenbeck (both
+variance, drift, and scale parameters), OrnsteinUhlenbeck (both
 initial-value parameterizations, mean reversion, the long-run
-distribution, and the Brownian-motion limit).
+distribution, and the Brownian-motion limit), BrownianBridge (both
+endpoints pinned, the widest-in-the-middle spread, and the limited time
+domain), FractionalBrownianMotion (variance growth, self-similarity, the
+sign of the increment correlation either side of hurst=0.5), and the
+TimeInterval index set the bridge is defined over.
 """
 
 import unittest
@@ -862,6 +866,206 @@ class TestTimeInterval(unittest.TestCase):
         self.assertIsInstance(path(2.0), float)
         with self.assertRaises(KeyError):
             path(6.0)
+
+
+class TestFractionalBrownianMotionConstruction(unittest.TestCase):
+
+    def test_is_random_process(self):
+        self.assertIsInstance(FractionalBrownianMotion(), RandomProcess)
+
+    def test_is_rv(self):
+        self.assertIsInstance(FractionalBrownianMotion(), RV)
+
+    def test_probability_space_type(self):
+        X = FractionalBrownianMotion()
+        self.assertIsInstance(X.prob_space, FractionalBrownianMotionProbabilitySpace)
+
+    def test_is_gaussian_process_probability_space(self):
+        X = FractionalBrownianMotion()
+        self.assertIsInstance(X.prob_space, GaussianProcessProbabilitySpace)
+
+    def test_parameters_stored_on_probability_space(self):
+        P = FractionalBrownianMotionProbabilitySpace(hurst=0.8, scale=2.0)
+        self.assertEqual(P.hurst, 0.8)
+        self.assertEqual(P.scale, 2.0)
+
+
+class TestFractionalBrownianMotionPaths(unittest.TestCase):
+
+    def test_starts_at_zero(self):
+        # cov(0, 0) = 0 for every hurst, so time 0 is deterministic.
+        seed()
+        for hurst in [0.2, 0.5, 0.9]:
+            X = FractionalBrownianMotion(hurst=hurst)
+            for _ in range(5):
+                self.assertEqual(X.draw()(0), 0)
+
+    def test_same_time_returns_cached_value(self):
+        seed()
+        path = FractionalBrownianMotion(hurst=0.8).draw()
+        self.assertEqual(path(1.0), path(1.0))
+
+    def test_cached_value_unchanged_after_new_time(self):
+        seed()
+        path = FractionalBrownianMotion(hurst=0.8).draw()
+        before = path(1.0)
+        path(2.0)
+        self.assertEqual(before, path(1.0))
+
+    def test_different_draws_produce_different_paths(self):
+        seed()
+        X = FractionalBrownianMotion(hurst=0.7)
+        self.assertGreater(len({X.draw()(1.0) for _ in range(10)}), 1)
+
+
+class TestFractionalBrownianMotionStatistics(unittest.TestCase):
+
+    def test_variance_matches_closed_form(self):
+        # Var(X(t)) = scale**2 * t**(2 * hurst).
+        scale = 1.5
+        for hurst in [0.3, 0.5, 0.8]:
+            seed()
+            X = FractionalBrownianMotion(hurst=hurst, scale=scale)
+            for t in [0.5, 2.0]:
+                expected = scale**2 * t ** (2 * hurst)
+                self.assertAlmostEqual(
+                    X[t].sim(Nsim).var(), expected, delta=0.15 + 0.1 * expected
+                )
+
+    def test_mean_is_zero(self):
+        seed()
+        X = FractionalBrownianMotion(hurst=0.8)
+        self.assertAlmostEqual(X[2.0].sim(Nsim).mean(), 0.0, delta=0.3)
+
+    def test_larger_hurst_spreads_faster(self):
+        seed()
+        low = FractionalBrownianMotion(hurst=0.3)[4.0].sim(Nsim).var()
+        high = FractionalBrownianMotion(hurst=0.8)[4.0].sim(Nsim).var()
+        self.assertGreater(high, low)
+
+    def test_covariance_matches_closed_form(self):
+        seed()
+        hurst, scale = 0.7, 1.0
+        X = FractionalBrownianMotion(hurst=hurst, scale=scale)
+        for s, t in [(1.0, 2.0), (0.5, 1.5)]:
+            expected = (scale**2 / 2) * (
+                abs(s) ** (2 * hurst)
+                + abs(t) ** (2 * hurst)
+                - abs(s - t) ** (2 * hurst)
+            )
+            self.assertAlmostEqual((X[s] & X[t]).sim(5000).cov(), expected, delta=0.25)
+
+    def test_self_similar(self):
+        # Stretching time by a scales the spread by a**(2 * hurst).
+        seed()
+        hurst = 0.7
+        X = FractionalBrownianMotion(hurst=hurst)
+        at_one = X[1.0].sim(Nsim).var()
+        at_four = X[4.0].sim(Nsim).var()
+        self.assertAlmostEqual(at_four / at_one, 4 ** (2 * hurst), delta=0.6)
+
+    def test_defined_at_negative_times(self):
+        # The absolute values in the covariance keep it valid below 0.
+        seed()
+        X = FractionalBrownianMotion(hurst=0.7)
+        self.assertAlmostEqual(X[-2.0].sim(Nsim).var(), 2 ** (2 * 0.7), delta=0.5)
+
+
+class TestFractionalBrownianMotionMemory(unittest.TestCase):
+    """The Hurst parameter is exactly the sign of the increment correlation."""
+
+    def _increment_cov(self, hurst):
+        seed()
+        X = FractionalBrownianMotion(hurst=hurst)
+        return (X[1.0] & (X[2.0] - X[1.0])).sim(5000).cov()
+
+    def test_hurst_above_half_keeps_going_the_same_way(self):
+        self.assertGreater(self._increment_cov(0.8), 0.1)
+
+    def test_hurst_below_half_reverses(self):
+        self.assertLess(self._increment_cov(0.3), -0.1)
+
+    def test_hurst_half_has_independent_increments(self):
+        self.assertAlmostEqual(self._increment_cov(0.5), 0.0, delta=0.1)
+
+    def test_increment_covariance_matches_closed_form(self):
+        # Cov(X(1), X(2) - X(1)) = scale**2 * (2**(2 * hurst - 1) - 1).
+        for hurst in [0.3, 0.8]:
+            expected = 2 ** (2 * hurst - 1) - 1
+            self.assertAlmostEqual(self._increment_cov(hurst), expected, delta=0.2)
+
+
+class TestFractionalBrownianMotionRelationships(unittest.TestCase):
+
+    def test_hurst_half_is_brownian_motion_covariance(self):
+        # At hurst = 0.5 the covariance is exactly scale**2 * min(s, t).
+        P = FractionalBrownianMotionProbabilitySpace(hurst=0.5, scale=2.0)
+        cov_func = P.cov_func
+        for s, t in [(1.0, 2.0), (0.5, 3.0), (2.0, 2.0)]:
+            self.assertAlmostEqual(cov_func(s, t), 4.0 * min(s, t), places=12)
+
+    def test_hurst_half_matches_brownian_motion_variance(self):
+        seed()
+        X = FractionalBrownianMotion(hurst=0.5)
+        self.assertAlmostEqual(X[3.0].sim(Nsim).var(), 3.0, delta=0.5)
+
+    def test_marginal_is_normal(self):
+        seed()
+        hurst = 0.7
+        X = FractionalBrownianMotion(hurst=hurst)
+        sims = X[2.0].sim(2000)
+        sd = np.sqrt(2 ** (2 * hurst))
+        pvalue = stats.kstest(list(sims), stats.norm(0, sd).cdf).pvalue
+        self.assertGreater(pvalue, 0.01)
+
+
+class TestFractionalBrownianMotionErrors(unittest.TestCase):
+
+    def test_non_numeric_hurst_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            FractionalBrownianMotion(hurst="smooth")
+
+    def test_non_numeric_scale_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            FractionalBrownianMotion(scale="big")
+
+    def test_hurst_zero_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            FractionalBrownianMotion(hurst=0)
+
+    def test_hurst_one_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            FractionalBrownianMotion(hurst=1)
+
+    def test_hurst_above_one_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            FractionalBrownianMotion(hurst=1.5)
+
+    def test_negative_hurst_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            FractionalBrownianMotion(hurst=-0.2)
+
+    def test_hurst_error_message_explains_the_range(self):
+        with self.assertRaisesRegex(ValueError, "strictly between 0 and 1"):
+            FractionalBrownianMotion(hurst=2)
+
+    def test_zero_scale_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            FractionalBrownianMotion(scale=0)
+
+    def test_negative_scale_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            FractionalBrownianMotion(scale=-1)
+
+    def test_hurst_near_the_ends_is_valid(self):
+        seed()
+        for hurst in [0.01, 0.99]:
+            path = FractionalBrownianMotion(hurst=hurst).draw()
+            self.assertIsInstance(path(1.0), float)
+
+    def test_probability_space_validates_too(self):
+        with self.assertRaises(ValueError):
+            FractionalBrownianMotionProbabilitySpace(hurst=0)
 
 
 if __name__ == "__main__":

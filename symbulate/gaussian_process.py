@@ -255,6 +255,14 @@ class GaussianProcessProbabilitySpace(ProbabilitySpace):
                 f"got {type(index_set).__name__}."
             )
 
+        # Kept so the two functions describing the process can be read back
+        # off it, as this class's Attributes section documents. Subclasses
+        # such as BrownianMotion build these from their own parameters, so
+        # this is the only place they are recorded.
+        self.mean_func = mean_func
+        self.cov_func = cov_func
+        self.index_set = index_set
+
         def draw():
             return get_gaussian_process_result(mean_func, cov_func, index_set)
 
@@ -886,5 +894,179 @@ class BrownianBridge(RandomProcess, RV):
             final_value=final_value,
             scale=scale,
         )
+        RandomProcess.__init__(self, prob_space)
+        RV.__init__(self, prob_space)
+
+
+def _validate_fractional_brownian_motion(hurst, scale):
+    """Check the parameters of a fractional Brownian motion.
+
+    Raises
+    ------
+    TypeError
+        If ``hurst`` or ``scale`` is not a number.
+    ValueError
+        If ``hurst`` is not strictly between 0 and 1, or ``scale`` is not
+        positive.
+    """
+    if not isinstance(hurst, numbers.Real):
+        raise TypeError(
+            f"hurst must be a number, got {type(hurst).__name__}. It controls "
+            f"how much the path remembers its past, for example hurst=0.5 for "
+            f"ordinary Brownian motion."
+        )
+    if not isinstance(scale, numbers.Real):
+        raise TypeError(
+            f"scale must be a number, got {type(scale).__name__}. It is the "
+            f"overall size of the wiggles, for example scale=1."
+        )
+    if not 0 < hurst < 1:
+        raise ValueError(
+            f"hurst must be strictly between 0 and 1, got {hurst}. Below 0.5 "
+            f"the path reverses itself often, 0.5 is ordinary Brownian "
+            f"motion, and above 0.5 it keeps heading the same way. The "
+            f"process is not defined at 0 or 1."
+        )
+    if scale <= 0:
+        raise ValueError(
+            f"scale must be positive, got {scale}. A scale of 0 would give a "
+            "flat line at 0 with no randomness."
+        )
+
+
+# Define convenience class for fractional Brownian motion
+class FractionalBrownianMotionProbabilitySpace(GaussianProcessProbabilitySpace):
+    """The probability space underlying a fractional Brownian motion.
+
+    Each draw from this space produces one simulated sample path. Paths are
+    generated lazily, exactly as for any other Gaussian process.
+
+    Parameters
+    ----------
+    hurst : float, optional
+        The Hurst parameter, strictly between 0 and 1. Default is 0.5, which
+        gives ordinary Brownian motion.
+    scale : float, optional
+        The overall size of the wiggles. Must be positive. Default is 1.
+
+    Attributes
+    ----------
+    hurst : float
+        The Hurst parameter.
+    scale : float
+        The overall size of the wiggles.
+
+    Raises
+    ------
+    TypeError
+        If ``hurst`` or ``scale`` is not a number.
+    ValueError
+        If ``hurst`` is not strictly between 0 and 1, or ``scale`` is not
+        positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = FractionalBrownianMotionProbabilitySpace(hurst=0.7)
+    >>> float(P.draw()(0))
+    0.0
+    """
+
+    def __init__(self, hurst=0.5, scale=1):
+        """Create a probability space for a fractional Brownian motion."""
+        _validate_fractional_brownian_motion(hurst, scale)
+
+        self.hurst = hurst
+        self.scale = scale
+
+        def mean_func(t):
+            return 0
+
+        def cov_func(s, t):
+            # At hurst = 0.5 the powers are all 1 and this collapses to
+            # scale**2 * min(s, t) -- ordinary Brownian motion. Absolute
+            # values are used throughout, which keeps the covariance a valid
+            # one at negative times too.
+            return (scale**2 / 2) * (
+                abs(s) ** (2 * hurst)
+                + abs(t) ** (2 * hurst)
+                - abs(s - t) ** (2 * hurst)
+            )
+
+        super().__init__(mean_func=mean_func, cov_func=cov_func)
+
+
+class FractionalBrownianMotion(RandomProcess, RV):
+    """Fractional Brownian motion, a random variable over sample paths.
+
+    Ordinary Brownian motion has no memory: where it goes next has nothing
+    to do with where it has just been. Fractional Brownian motion adds a
+    memory, controlled by one number, ``hurst``:
+
+    - ``hurst > 0.5`` -- the path **keeps going the same way**. An upward
+      stretch tends to be followed by more upward movement, so paths look
+      smoother and show long trends. This is called *long-range dependence*,
+      and it is why the process turns up in finance and network-traffic
+      modeling.
+    - ``hurst = 0.5`` -- no memory at all. This is exactly
+      :class:`BrownianMotion`.
+    - ``hurst < 0.5`` -- the path **reverses itself**. An upward step tends
+      to be followed by a downward one, so paths look jagged and spiky.
+
+    Like Brownian motion it starts at 0, and it is still a Gaussian process,
+    so Symbulate simulates it exactly -- the same machinery with a different
+    covariance function.
+
+    Parameters
+    ----------
+    hurst : float, optional
+        The Hurst parameter, strictly between 0 and 1. Default is 0.5, which
+        gives ordinary Brownian motion.
+    scale : float, optional
+        The overall size of the wiggles. Must be positive. Default is 1.
+
+    Attributes
+    ----------
+    prob_space : FractionalBrownianMotionProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Notes
+    -----
+    The spread at time ``t`` is ``scale ** 2 * abs(t) ** (2 * hurst)``, so a
+    larger ``hurst`` means the path spreads out faster. The process is also
+    *self-similar*: stretching time by a factor ``a`` scales the path by
+    ``a ** hurst``, which is the property the Hurst parameter is named for.
+
+    **Speed.** Every new time a path is asked about is drawn conditional on
+    every time already drawn, which means solving a linear system that grows
+    with each point (see :func:`get_gaussian_process_result`). That cost
+    grows quickly, so evaluating one path at many hundreds of times is slow.
+    It is the price of exact simulation, and it applies to every Gaussian
+    process here -- but it bites hardest for a large ``hurst``, where the
+    long memory is the whole point and distant points genuinely cannot be
+    ignored.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = FractionalBrownianMotion(hurst=0.8)
+    >>> # Like Brownian motion, it starts at 0
+    >>> float(X.draw()(0))
+    0.0
+    >>> path = X.draw()              # doctest: +SKIP
+    >>> path(0.5), path(1.0)         # doctest: +SKIP
+    (0.36, 0.71)
+    >>> # Variance at t is scale**2 * t**(2 * hurst)
+    >>> X[2.0].sim(1000).var()       # doctest: +SKIP
+    3.42
+
+    See Also
+    --------
+    BrownianMotion : The special case ``hurst=0.5``, with no memory.
+    """
+
+    def __init__(self, hurst=0.5, scale=1):
+        """Create a fractional Brownian motion process."""
+        prob_space = FractionalBrownianMotionProbabilitySpace(hurst=hurst, scale=scale)
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
