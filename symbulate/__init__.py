@@ -126,6 +126,11 @@ from .random_walk import (
     RandomWalkProbabilitySpace,
     RandomWalkResult,
 )
+from .time_series import (
+    MA,
+    MAProbabilitySpace,
+    MAResult,
+)
 from .renewal_process import (
     RenewalProcess,
     RenewalProcessProbabilitySpace,
@@ -145,6 +150,8 @@ from .queues import (
 from .diffusion_process import (
     DiffusionProcess,
     DiffusionProcessProbabilitySpace,
+    CIR,
+    CIRProbabilitySpace,
 )
 from .markov_chains import (
     MarkovChain,

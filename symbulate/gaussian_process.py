@@ -7,6 +7,7 @@ from .probability_space import ProbabilitySpace
 from .result import (
     DiscreteTimeFunction,
     ContinuousTimeFunction,
+    _BoundedTimeFunction,
 )
 from .random_variables import RV
 from .random_processes import RandomProcess
@@ -55,9 +56,14 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
     0.43
     """
 
-    # Determine whether the process is discrete-time or continous-time
+    # Determine whether the process is discrete-time or continous-time. A
+    # bounded TimeInterval (e.g. a Brownian bridge) uses a base class whose
+    # plot() defaults its x-limits to that interval instead of 0 to 10. Check
+    # it before Reals, since TimeInterval is a subclass of Reals.
     if isinstance(index_set, DiscreteTimeSequence):
         base_class = DiscreteTimeFunction
+    elif isinstance(index_set, TimeInterval):
+        base_class = _BoundedTimeFunction
     elif isinstance(index_set, Reals):
         base_class = ContinuousTimeFunction
     else:
