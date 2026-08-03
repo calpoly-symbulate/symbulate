@@ -1311,6 +1311,15 @@ class YuleProcess(RV):
 # --------------------------------------------------------------------------
 
 
+# Full compartment names, keyed by short label, for plot legends.
+_COMPARTMENT_NAMES = {
+    "S": "Susceptible",
+    "E": "Exposed",
+    "I": "Infectious",
+    "R": "Recovered",
+}
+
+
 class _EpidemicResult(ContinuousTimeFunction):
     """Base class for one simulated sample path of a compartmental model.
 
@@ -1374,6 +1383,65 @@ class _EpidemicResult(ContinuousTimeFunction):
         """Return the compartment counts at time ``t`` as a Vector."""
         k = int(np.searchsorted(self.event_times, t, side="right")) - 1
         return Vector(self.states[max(k, 0)])
+
+    def plot(self, tmin=None, tmax=None, **kwargs):
+        """Plot every compartment of this outbreak on one set of axes.
+
+        Calling ``.plot()`` on an epidemic sample path draws all of its
+        compartment curves at once -- for SIR that is ``path.S``,
+        ``path.I``, ``path.R``; for SEIR ``path.E`` is added -- each
+        labeled by compartment and given its own fixed color, over a time
+        axis that runs to the end of the outbreak. To draw a single
+        compartment on its own instead, plot it directly, e.g.
+        ``path.I.plot()``.
+
+        Each compartment keeps the **same** color from outbreak to
+        outbreak, so overlaying several outbreaks -- as ``.sim(n).plot()``
+        does -- reads as one color band per compartment, and each
+        compartment is added to the legend only once no matter how many
+        outbreaks share the axes. (This is why the plot fixes its colors
+        by compartment rather than advancing the shared color cycle the
+        way the single-line sample-path plots do.)
+
+        Parameters
+        ----------
+        tmin : float, optional
+            Starting time. Defaults to 0 (the start of the outbreak).
+        tmax : float, optional
+            Ending time. Defaults to when the epidemic ends.
+        **kwargs
+            Additional keyword arguments passed through to each
+            compartment's ``plot`` (e.g. ``alpha``).
+
+        Returns
+        -------
+        SymbulatePlot
+            A wrapper around the matplotlib axes the curves were drawn on.
+        """
+        import matplotlib.pyplot as plt
+
+        # When called through RVResults.plot() (i.e. .sim(n).plot()), the
+        # generic ensemble plotter injects a single shared `color` and a
+        # `label` meant for one-line-per-path scalar paths. An epidemic path
+        # is several labeled compartments, so ignore those: give each
+        # compartment its own fixed color instead, and add each to the legend
+        # only once (so k overlaid outbreaks share one clean legend).
+        kwargs.pop("color", None)
+        kwargs.pop("label", None)
+        ax = plt.gca()
+        palette = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        already_labeled = {line.get_label() for line in ax.get_lines()}
+        plot = None
+        for i, short in enumerate(self.compartments):
+            name = _COMPARTMENT_NAMES.get(short, short)
+            plot = getattr(self, short).plot(
+                tmin=tmin,
+                tmax=tmax,
+                color=palette[i % len(palette)],
+                label="_nolegend_" if name in already_labeled else name,
+                **kwargs,
+            )
+        return plot
 
     def _transition_rates(self, counts):
         """Return a list of ``(rate, change)`` pairs for the current counts.
