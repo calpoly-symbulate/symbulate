@@ -294,6 +294,81 @@ Pollaczek-Khinchine check exact.
 
 ---
 
+## Decision: G/G/s — Multi-Server Queues
+
+**Status:** Implemented — `GGs`, `GGsProbabilitySpace`, and `GGsResult` in
+`symbulate/queues.py`, tested in `symbulate/tests/test_queues.py`, demo in
+`team/models-and-sim-design/ggs_queue_demo.ipynb`, exported from
+`symbulate/__init__.py`. Closes the roadmap's "G/G/s (multi-server
+general-service queue)" row.
+
+**Decision**
+> Simulate by tracking **when each server next comes free**, not by
+> generalizing Lindley's leftover arithmetic. Customer `n` arrives at `A[n]`,
+> takes the server that frees up soonest, and waits
+> `max(earliest free time - A[n], 0)`; that server is then busy until
+> `A[n] + W[n] + S[n]`. The free times live in a `heapq`, so the earliest is
+> always at position 0 — the only one the recursion asks about. This is the
+> Kiefer–Wolfowitz vector recursion in the form that is cheapest to read.
+>
+> `GG1` is **not** reimplemented as `GGs(servers=1)`, and `GGs` does not
+> subclass `GG1`. Instead both subclass a new private `_QueueResult`, which
+> owns the two input sequences, the lazily-extended `waits` list, and the
+> derived `arrival_times` / `sojourn_times` / `departure_times`; each concrete
+> class supplies only `_wait_at(n)`. `GGs(servers=1)` is verified to reproduce
+> `GG1`'s waits value-for-value on identical inputs.
+>
+> `servers` is a required argument (no default), validated as an integer `>= 1`
+> by `_validate_servers`. `utilization` becomes
+> `mean service / (servers * mean interarrival)`.
+>
+> No `MGs` / `GMs` classes — pass an `Exponential` on the Markovian side, the
+> way `GG1(Exponential(...), ...)` already serves as `M/G/1`.
+
+**Rationale**
+> The roadmap called this "harder... needs order statistics over `s` servers'
+> completion times," and it is harder *as a generalization of the leftover
+> form* of Lindley's recursion. Reframed in clock time it is barely harder at
+> all: the state is the multiset of free times, and only its minimum matters,
+> which a heap gives in `O(log s)`. Choosing the *earliest* free server rather
+> than an arbitrary idle one is without loss of generality — later arrivals
+> come no earlier, so whichever idle server is picked, the remaining free times
+> stay below the next arrival and no future wait changes.
+>
+> `MMs` in `markov_chains.py` already covers the exponential case as a queue
+> *length*; this covers the general case as a *wait*, and the two are worth
+> comparing in a course. Keeping `GG1` untouched preserves the pedagogically
+> central Lindley formula as its own readable recursion, and follows the same
+> reasoning as leaving `PoissonProcess` alone rather than folding it into
+> `RenewalProcess`.
+
+**Alternatives Considered**
+> *`GGsResult(GG1Result)`, overriding the recursion* — rejected: a multi-server
+> queue is not a kind of single-server queue, and the inheritance would assert
+> otherwise for the sake of code reuse. The shared private base says what is
+> actually shared. *Folding `GG1` into `GGs` with `servers=1`* — rejected;
+> it would churn tested code and demote Lindley's recursion to a special case
+> of a general routine, when it is the thing a course teaches first. *Per-server
+> `service_dist` (heterogeneous servers)* — deferred; every server serving from
+> one distribution is the standard `G/G/s`, and heterogeneous servers need a
+> different assignment rule (fastest free? first free?) that should be decided
+> deliberately rather than implied by an argument shape.
+
+**Verified against exact theory:** the Erlang C formula for `M/M/2` and
+`M/M/3` (mean wait and `P(wait > 0)`, at `rho` of 0.5, 0.667, and 0.75), plus
+the classic equal-utilization comparison — two servers of rate `mu` keep the
+*line* shorter than one server of rate `2mu` (1/3 vs 1/2) while making the
+*visit* longer (4/3 vs 1), which is exactly the tradeoff a course asks
+students to find.
+
+**Known consequence, documented not fixed:** with `s > 1`,
+`departure_times` is no longer increasing, since a short service can overtake
+a long one on the next server. The single-server test asserting monotone
+departures is therefore scoped to `GG1`, and `GGsResult` has a test asserting
+the overtaking *does* happen.
+
+---
+
 ## Decision: Non-Homogeneous Poisson Process — Time-Change, Not Thinning
 
 **Status:** Implemented — `NonHomogeneousPoissonProcess`,
@@ -402,6 +477,57 @@ its own roadmap row rather than smuggled in here.
 (`MM1`, `MMs`) set a precedent for abbreviations *when the abbreviation is
 the standard textbook name*; "NHPP" is standard in reliability courses but
 not in intro probability. Not added — one name for now.
+
+---
+
+## Decision: Hitting Times — Tier B First (recorded after the fact)
+
+**Status:** Implemented in PR #272 — `hitting_time` in
+`symbulate/hitting_times.py`, tested in `symbulate/tests/test_hitting_times.py`,
+demo in `team/models-and-sim-design/hitting_times_demo.ipynb`, exported from
+`symbulate/__init__.py`.
+
+**This entry is a transcription, not the author's own.** It was written from
+the shipped module's docstrings and tests so the log has a record of what
+landed and what did not; whoever wrote the feature should correct or expand the
+rationale below.
+
+**What was built**
+> `hitting_time(process, level, max_time=100.0, start_time=0.0, step=None,
+> tol=1e-6)`, covering the **Gaussian-process family only**: `BrownianMotion`,
+> `BrownianBridge`, `OrnsteinUhlenbeck`, `FractionalBrownianMotion`,
+> `GeometricBrownianMotion`, and a hand-built `GaussianProcess`. Given a
+> process it returns a random variable; given a drawn path it returns a number.
+>
+> Between two evaluated times a path can cross the level and return unseen, so
+> the crossing is decided by a Bernoulli draw with the reflection-principle
+> probability `exp(-2 (level - x0)(level - x1) / (rate * (t1 - t0)))` and then
+> localized by bisection. *Whether* a crossing happened is exact for Brownian
+> motion and Brownian bridges at any `step`, approximate for other Gaussian
+> processes; *exactly when* is accurate to about one `step` for all of them.
+> Geometric Brownian motion is exact via the log scale, since a price reaching
+> a level is its log reaching the log level.
+>
+> Everything else — random walks, Markov chains, the `GG1`/`GGs` queues,
+> `DiffusionProcess` — raises `NotImplementedError` with a message naming
+> itself and saying what it would need instead.
+
+**Ordering note, worth a team decision:** the roadmap's build order puts
+**Tier A** (discrete-time and pure-jump processes) at step 7 and Tier B at step
+10, on the grounds that Tier A is both easier and *exact* — it just walks
+`path[0], path[1], ...` or the jump-time sequence with a cutoff, since nothing
+is hidden between queried points. PR #272 built Tier B first and left Tier A
+unbuilt, so the cheap-and-exact half of the utility is still missing while the
+subtle half exists. Nothing is wrong with the code; the gap is that
+`RandomWalk`, `MarkovChain`, `RenewalProcess`, the birth-death queues, and the
+`GG1`/`GGs` queues — most of the processes in the package — cannot answer a
+hitting-time question at all. One Tier A implementation would cover all of
+them, e.g. "which customer is the first to wait more than 10 minutes?"
+
+**Seeding:** the module draws from its own `hitting_times.rng`, so
+`np.random.seed` does nothing to it — the same trap `diffusion_process.rng`
+already documents. Its test file reseeds both `gaussian_process.rng` and
+`hitting_times.rng`.
 
 ---
 

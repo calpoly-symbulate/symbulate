@@ -83,6 +83,14 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
             Maps each previously evaluated time to its simulated value.
         index_set : DiscreteTimeSequence or Reals
             The set of times over which this path is defined.
+        mean_func : callable
+            The mean function this path was generated from.
+        cov_func : callable
+            The covariance function this path was generated from. Kept so
+            that code working with a finished path can still ask about the
+            process it came from -- the hitting-time utility needs it to work
+            out how far the path might have strayed between two times it was
+            actually evaluated at.
 
         Examples
         --------
@@ -184,6 +192,8 @@ def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):
 
             super().__init__(func=_func)
             self.index_set = index_set
+            self.mean_func = mean_func
+            self.cov_func = cov_func
 
     return GaussianProcessResult(mean_func, cov_func)
 
@@ -1172,6 +1182,12 @@ def get_geometric_brownian_motion_result(initial_value, growth_rate, scale):
             because it is where the randomness actually lives.
         index_set : Reals
             The times the path is defined over.
+        initial_value, growth_rate, scale : float
+            The parameters this path was generated from. Kept so that code
+            working with a finished path can undo the exponential -- the
+            hitting-time utility does exactly that, turning a question about
+            a price into the same question about the Brownian motion
+            underneath, where it can be answered exactly.
         """
 
         def __init__(self):
@@ -1189,6 +1205,9 @@ def get_geometric_brownian_motion_result(initial_value, growth_rate, scale):
             super().__init__(func=_func)
             self.index_set = Reals()
             self.brownian_path = brownian_path
+            self.initial_value = initial_value
+            self.growth_rate = growth_rate
+            self.scale = scale
 
     return GeometricBrownianMotionResult()
 

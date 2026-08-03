@@ -53,9 +53,10 @@ must be understandable by a general audience without assuming prior knowledge.
 | `gaussian_process.py` | `GaussianProcess`, `BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`, `FractionalBrownianMotion` |
 | `poisson_process.py` | `PoissonProcess` and `NonHomogeneousPoissonProcess` (time-varying rate) |
 | `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution |
-| `queues.py` | `GG1`, `MG1`, `GM1` — general-service queues via Lindley's recursion (see "Queues" below) |
+| `queues.py` | `GG1`, `MG1`, `GM1`, `GGs` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `time_series.py` | `MA` — moving-average process; home for the AR/ARMA/GARCH family as it lands |
+| `hitting_times.py` | `hitting_time` — when a path first reaches a level; Gaussian-process family only so far (see "Hitting Times" below) |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
@@ -259,12 +260,21 @@ Queues live in **two** files, split by whether the model is Markovian:
   these are thin generator-matrix wrappers over `BirthDeathProcess`. Each path
   is a queue **length** over continuous time, and the unbounded ones need a
   `num_states` truncation.
-- `queues.py` — `GG1`, `MG1`, `GM1`. Once service is not exponential the
+- `queues.py` — `GG1`, `MG1`, `GM1`, `GGs`. Once service is not exponential the
   number in the system is *not* a Markov chain (remaining service depends on
   elapsed service), so there is no generator matrix to build. Each path is
   instead the **waiting time of customer `n`**, indexed by customer number,
   built by Lindley's recursion `W[n+1] = max(W[n] + S[n] - A[n+1], 0)` — exact
-  for any nonnegative distributions, with no truncation.
+  for any nonnegative distributions, with no truncation. `GGs` generalizes that
+  to `s` servers by tracking when each next comes free (`heapq`, earliest at
+  position 0), which is the same recursion in clock time.
+
+All four share `_QueueResult`, which owns the input sequences, the lazily
+extended `waits` list, and the derived `arrival_times` / `sojourn_times` /
+`departure_times`. A new queue discipline subclasses it and implements only
+`_wait_at(n)` — do not duplicate the sequence plumbing. Note `departure_times`
+is increasing only for a single server; with `s > 1` a short service can
+overtake a long one.
 
 Do not try to express a general-service queue as a `ContinuousTimeMarkovChain`,
 and do not add `GG1`-family classes to `markov_chains.py`. Both nonnegativity
@@ -272,8 +282,29 @@ checks reuse `renewal_process._smallest_possible_time` / `_is_always_zero`
 (the arrival stream of a `GG1` genuinely *is* a renewal process); a service
 distribution that is always 0 is accepted, an interarrival one is not. A
 utilization of `rho >= 1` is not an error — an unstable queue is a legitimate
-thing to simulate. See `MODEL-DECISIONS.md`, "Decision: G/G/1 Queue via
-Lindley's Recursion."
+thing to simulate. There are no `MGs`/`GMs` classes: pass an `Exponential` on
+whichever side is Markovian. See `MODEL-DECISIONS.md`, "Decision: G/G/1 Queue
+via Lindley's Recursion" and "Decision: G/G/s — Multi-Server Queues."
+
+## Hitting Times
+
+`hitting_time(process, level, ...)` in `hitting_times.py` answers "when does the
+path first reach `level`?" — added by PR #272. Two things to know before
+extending it:
+
+- **It covers the Gaussian-process family only** (`BrownianMotion`,
+  `BrownianBridge`, `OrnsteinUhlenbeck`, `FractionalBrownianMotion`,
+  `GeometricBrownianMotion`, hand-built `GaussianProcess`). Anything else —
+  random walks, Markov chains, queues, `DiffusionProcess` — raises
+  `NotImplementedError` naming itself. This is the roadmap's **Tier B**; Tier A
+  (discrete-time and jump processes, which is *easier and exact*) is **not
+  built**, so it is the open gap, not a Tier-C-style approximation problem.
+- Between two evaluated times a path can cross and come back, so the crossing
+  is decided by a Bernoulli draw using the reflection-principle probability and
+  then localized by bisection. Exact for Brownian motion and bridges at any
+  `step`; approximate for other Gaussian processes. It draws from
+  `hitting_times.rng`, so seed **that**, not `np.random.seed` — same trap as
+  `diffusion_process.rng`.
 
 ## Suggestion Messages
 
@@ -348,9 +379,10 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_gaussian_process.py` | Gaussian processes (incl. Ornstein-Uhlenbeck, Brownian bridge, fractional Brownian motion) |
 | `test_poisson_process.py` | Poisson process and non-homogeneous Poisson process |
 | `test_renewal_process.py` | Renewal process |
-| `test_queues.py` | `GG1`, `MG1`, `GM1` (general-service queues) |
+| `test_queues.py` | `GG1`, `MG1`, `GM1`, `GGs` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
 | `test_time_series.py` | `MA` (and the rest of the time-series family as it lands) |
+| `test_hitting_times.py` | `hitting_time` |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
