@@ -53,6 +53,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `gaussian_process.py` | `GaussianProcess`, `BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`, `FractionalBrownianMotion` |
 | `poisson_process.py` | `PoissonProcess` and `NonHomogeneousPoissonProcess` (time-varying rate) |
 | `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution |
+| `queues.py` | `GG1`, `MG1`, `GM1` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `time_series.py` | `MA` — moving-average process; home for the AR/ARMA/GARCH family as it lands |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
@@ -249,6 +250,31 @@ Three things that are easy to get wrong:
   slightly below 0 even in a model that should stay positive, and one `nan`
   poisons the rest of the path.
 
+## Queues
+
+Queues live in **two** files, split by whether the model is Markovian:
+
+- `markov_chains.py` — `MM1`, `MMs`, `MMsK`, `MMss`, `MMsKN`, `MMInfinity`.
+  Exponential service makes the *number in the system* a birth-death CTMC, so
+  these are thin generator-matrix wrappers over `BirthDeathProcess`. Each path
+  is a queue **length** over continuous time, and the unbounded ones need a
+  `num_states` truncation.
+- `queues.py` — `GG1`, `MG1`, `GM1`. Once service is not exponential the
+  number in the system is *not* a Markov chain (remaining service depends on
+  elapsed service), so there is no generator matrix to build. Each path is
+  instead the **waiting time of customer `n`**, indexed by customer number,
+  built by Lindley's recursion `W[n+1] = max(W[n] + S[n] - A[n+1], 0)` — exact
+  for any nonnegative distributions, with no truncation.
+
+Do not try to express a general-service queue as a `ContinuousTimeMarkovChain`,
+and do not add `GG1`-family classes to `markov_chains.py`. Both nonnegativity
+checks reuse `renewal_process._smallest_possible_time` / `_is_always_zero`
+(the arrival stream of a `GG1` genuinely *is* a renewal process); a service
+distribution that is always 0 is accepted, an interarrival one is not. A
+utilization of `rho >= 1` is not an error — an unstable queue is a legitimate
+thing to simulate. See `MODEL-DECISIONS.md`, "Decision: G/G/1 Queue via
+Lindley's Recursion."
+
 ## Suggestion Messages
 
 Print a message after **every** plot renders — this fires whether or not
@@ -322,6 +348,7 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_gaussian_process.py` | Gaussian processes (incl. Ornstein-Uhlenbeck, Brownian bridge, fractional Brownian motion) |
 | `test_poisson_process.py` | Poisson process and non-homogeneous Poisson process |
 | `test_renewal_process.py` | Renewal process |
+| `test_queues.py` | `GG1`, `MG1`, `GM1` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
 | `test_time_series.py` | `MA` (and the rest of the time-series family as it lands) |
 | `test_diffusion_process.py` | Diffusion processes |
