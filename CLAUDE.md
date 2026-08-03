@@ -55,6 +55,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution |
 | `queues.py` | `GG1`, `MG1`, `GM1`, `GGs` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
+| `hitting_times.py` | `hitting_time` — when a path first reaches a level; Gaussian-process family only so far (see "Hitting Times" below) |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
@@ -284,6 +285,26 @@ thing to simulate. There are no `MGs`/`GMs` classes: pass an `Exponential` on
 whichever side is Markovian. See `MODEL-DECISIONS.md`, "Decision: G/G/1 Queue
 via Lindley's Recursion" and "Decision: G/G/s — Multi-Server Queues."
 
+## Hitting Times
+
+`hitting_time(process, level, ...)` in `hitting_times.py` answers "when does the
+path first reach `level`?" — added by PR #272. Two things to know before
+extending it:
+
+- **It covers the Gaussian-process family only** (`BrownianMotion`,
+  `BrownianBridge`, `OrnsteinUhlenbeck`, `FractionalBrownianMotion`,
+  `GeometricBrownianMotion`, hand-built `GaussianProcess`). Anything else —
+  random walks, Markov chains, queues, `DiffusionProcess` — raises
+  `NotImplementedError` naming itself. This is the roadmap's **Tier B**; Tier A
+  (discrete-time and jump processes, which is *easier and exact*) is **not
+  built**, so it is the open gap, not a Tier-C-style approximation problem.
+- Between two evaluated times a path can cross and come back, so the crossing
+  is decided by a Bernoulli draw using the reflection-principle probability and
+  then localized by bisection. Exact for Brownian motion and bridges at any
+  `step`; approximate for other Gaussian processes. It draws from
+  `hitting_times.rng`, so seed **that**, not `np.random.seed` — same trap as
+  `diffusion_process.rng`.
+
 ## Suggestion Messages
 
 Print a message after **every** plot renders — this fires whether or not
@@ -359,6 +380,7 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_renewal_process.py` | Renewal process |
 | `test_queues.py` | `GG1`, `MG1`, `GM1`, `GGs` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
+| `test_hitting_times.py` | `hitting_time` |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |

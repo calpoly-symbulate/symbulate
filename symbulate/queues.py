@@ -1,4 +1,4 @@
-"""Queues whose service times are not exponential (the G/G/1 family).
+"""Queues whose service times are not exponential (``GG1`` and ``GGs``).
 
 The Markovian queues -- ``M/M/1``, ``M/M/s``, and their finite-capacity and
 finite-population relatives -- live in ``markov_chains.py``, because the
@@ -322,8 +322,19 @@ class _QueueResult(InfiniteVector):
 
         # Derived sequences, each generated on demand from the two input
         # sequences and the waiting times above.
+        #
+        # Each arrival time is the one before it plus the next gap, rather than
+        # a fresh sum from customer 0. An InfiniteVector fills its cache in
+        # order, so entry n - 1 is always ready by the time entry n is worked
+        # out. Re-summing instead makes reading a long stretch of the path cost
+        # a multiple of its length: arrival_times[2000] took 3.3 seconds that
+        # way, against 0.007 seconds like this.
         self.arrival_times = InfiniteVector(
-            lambda n: float(sum(self.interarrival_times[i] for i in range(n + 1)))
+            lambda n: float(
+                self.interarrival_times[0]
+                if n == 0
+                else self.arrival_times[n - 1] + self.interarrival_times[n]
+            )
         )
         self.sojourn_times = InfiniteVector(
             lambda n: float(self[n] + self.service_times[n])
@@ -547,6 +558,7 @@ class GG1Result(_QueueResult):
     See Also
     --------
     GG1 : The queue these paths are drawn from.
+    GGsResult : The same path with several servers.
     RenewalProcessResult : The arrival stream on its own, as a count over time.
     """
 
@@ -736,6 +748,7 @@ class GG1(RV):
     --------
     MG1 : Poisson arrivals and general service (the M/G/1 queue).
     GM1 : General arrivals and exponential service (the G/M/1 queue).
+    GGs : The same queue with several servers sharing one line.
     MM1 : The same queue when both are exponential, tracked as a queue length
         over continuous time instead.
     RenewalProcess : The arrival stream on its own.
@@ -824,6 +837,7 @@ class MG1(GG1):
     GG1 : The general single-server queue this specializes.
     GM1 : The other half of the relaxation -- general arrivals, exponential
         service.
+    GGs : Several servers sharing one line, for any distributions.
     """
 
     def __init__(self, arrival_rate, service_dist):
@@ -900,6 +914,7 @@ class GM1(GG1):
     GG1 : The general single-server queue this specializes.
     MG1 : The other half of the relaxation -- Poisson arrivals, general
         service.
+    GGs : Several servers sharing one line, for any distributions.
     """
 
     def __init__(self, interarrival_dist, service_rate):
@@ -987,27 +1002,23 @@ class GGsResult(_QueueResult):
         # heapq keeps the earliest of them at position 0 -- the only one the
         # recursion ever asks about.
         self._free_times = [0.0] * servers
-        # The arrival time of the last customer served so far, kept as a
-        # running total so the recursion does not re-add the interarrival times
-        # from the start on every customer.
-        self._arrival_clock = 0.0
         super().__init__(interarrival_times, service_times)
 
     def _wait_at(self, n):
         """Serve up to customer ``n``, and return how long they waited."""
         while len(self.waits) <= n:
             i = len(self.waits)
-            self._arrival_clock += self.interarrival_times[i]
+            # This recursion works in clock time, so it reads the arrival times
+            # the path already keeps rather than accumulating its own copy --
+            # the two could otherwise drift apart.
+            arrival = self.arrival_times[i]
             # Whatever is left of the wait for the soonest free server. A plain
             # float is stored rather than whatever numpy type the draws came
             # back as, so a student reading a stretch of the path sees times,
             # not type names.
-            wait = float(max(self._free_times[0] - self._arrival_clock, 0.0))
+            wait = float(max(self._free_times[0] - arrival, 0.0))
             # That server takes this customer, and is busy until they leave.
-            heapq.heapreplace(
-                self._free_times,
-                self._arrival_clock + wait + self.service_times[i],
-            )
+            heapq.heapreplace(self._free_times, arrival + wait + self.service_times[i])
             self.waits.append(wait)
         return self.waits[n]
 

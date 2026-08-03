@@ -480,6 +480,57 @@ not in intro probability. Not added — one name for now.
 
 ---
 
+## Decision: Hitting Times — Tier B First (recorded after the fact)
+
+**Status:** Implemented in PR #272 — `hitting_time` in
+`symbulate/hitting_times.py`, tested in `symbulate/tests/test_hitting_times.py`,
+demo in `team/models-and-sim-design/hitting_times_demo.ipynb`, exported from
+`symbulate/__init__.py`.
+
+**This entry is a transcription, not the author's own.** It was written from
+the shipped module's docstrings and tests so the log has a record of what
+landed and what did not; whoever wrote the feature should correct or expand the
+rationale below.
+
+**What was built**
+> `hitting_time(process, level, max_time=100.0, start_time=0.0, step=None,
+> tol=1e-6)`, covering the **Gaussian-process family only**: `BrownianMotion`,
+> `BrownianBridge`, `OrnsteinUhlenbeck`, `FractionalBrownianMotion`,
+> `GeometricBrownianMotion`, and a hand-built `GaussianProcess`. Given a
+> process it returns a random variable; given a drawn path it returns a number.
+>
+> Between two evaluated times a path can cross the level and return unseen, so
+> the crossing is decided by a Bernoulli draw with the reflection-principle
+> probability `exp(-2 (level - x0)(level - x1) / (rate * (t1 - t0)))` and then
+> localized by bisection. *Whether* a crossing happened is exact for Brownian
+> motion and Brownian bridges at any `step`, approximate for other Gaussian
+> processes; *exactly when* is accurate to about one `step` for all of them.
+> Geometric Brownian motion is exact via the log scale, since a price reaching
+> a level is its log reaching the log level.
+>
+> Everything else — random walks, Markov chains, the `GG1`/`GGs` queues,
+> `DiffusionProcess` — raises `NotImplementedError` with a message naming
+> itself and saying what it would need instead.
+
+**Ordering note, worth a team decision:** the roadmap's build order puts
+**Tier A** (discrete-time and pure-jump processes) at step 7 and Tier B at step
+10, on the grounds that Tier A is both easier and *exact* — it just walks
+`path[0], path[1], ...` or the jump-time sequence with a cutoff, since nothing
+is hidden between queried points. PR #272 built Tier B first and left Tier A
+unbuilt, so the cheap-and-exact half of the utility is still missing while the
+subtle half exists. Nothing is wrong with the code; the gap is that
+`RandomWalk`, `MarkovChain`, `RenewalProcess`, the birth-death queues, and the
+`GG1`/`GGs` queues — most of the processes in the package — cannot answer a
+hitting-time question at all. One Tier A implementation would cover all of
+them, e.g. "which customer is the first to wait more than 10 minutes?"
+
+**Seeding:** the module draws from its own `hitting_times.rng`, so
+`np.random.seed` does nothing to it — the same trap `diffusion_process.rng`
+already documents. Its test file reseeds both `gaussian_process.rng` and
+`hitting_times.rng`.
+
+---
+
 ## Decision: Phase 1 Scope — Process Roadmap & Distribution Additions
 
 **Status:** Proposed
