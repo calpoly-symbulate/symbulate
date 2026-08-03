@@ -199,6 +199,117 @@ its own passing tests and docs for no user-visible gain.
 
 ---
 
+## Decision: Non-Homogeneous Poisson Process — Time-Change, Not Thinning
+
+**Status:** Implemented — `NonHomogeneousPoissonProcess`,
+`NonHomogeneousPoissonProcessProbabilitySpace`, and
+`NonHomogeneousPoissonProcessResult` live in `symbulate/poisson_process.py`,
+tested in `symbulate/tests/test_poisson_process.py`, exported from
+`symbulate/__init__.py`. This is roadmap step 13, the prerequisite for the
+Cox process (step 14), the Hawkes process (step 17), and the
+Weibull/power-law (Crow-AMSAA) reliability framing.
+
+**Decision**
+> Simulate by **time change**, not thinning. Events are drawn at a steady
+> rate of 1 on the "expected count" scale (i.i.d. `Exponential(rate=1)`
+> gaps, exactly as `PoissonProcess` draws clock-time gaps) and read back
+> onto the clock through the cumulative rate `Λ(t) = ∫₀ᵗ rate(s) ds`.
+> Counting is then the *same* cumulative-sum walk `PoissonProcessResult`
+> already does, with one substitution: the running total is compared
+> against `Λ(t)` instead of against `t`. `N(t) ≤ k` iff the `k`-th rate-1
+> arrival exceeds `Λ(t)`, so no numerical *inversion* of `Λ` is needed
+> anywhere — only its forward evaluation.
+>
+> `rate=` accepts a function of time, or a positive number (which gives an
+> ordinary Poisson process — useful for a side-by-side comparison). `Λ` is
+> exposed publicly as `.cumulative_rate`, since it is both the theoretical
+> mean to check a simulation against and the object the Weibull/power-law
+> framing is defined in terms of.
+
+**Rationale**
+> Thinning needs an upper bound on the rate over the region being
+> simulated. That bound is either an extra required argument — against
+> CLAUDE.md's "no required arguments beyond what is mathematically
+> necessary" — or numerically guessed from a grid, which is silently wrong
+> whenever the rate spikes between grid points. Time change needs nothing
+> from the user beyond the rate function itself, is exact for *any*
+> nonnegative rate, and reuses the existing counting machinery instead of
+> introducing a second, parallel one. It also composes with the lazy
+> infinite-vector design already in place: `N(t)` only ever needs rate-1
+> arrivals up to `Λ(t)`, so nothing is generated speculatively and there is
+> no simulation horizon to pick.
+
+**Alternatives Considered**
+> **Thinning (Lewis-Shedler)** — rejected as the default for the reasons
+> above, and *deliberately not implemented at all yet*, even though the
+> roadmap describes Cox and Hawkes as building on "non-homogeneous Poisson
+> thinning." That description is right about those two and does not
+> generalize backwards: Hawkes needs thinning (Ogata's method) because its
+> intensity depends on the process's own past events, so `Λ` isn't known in
+> advance, and a Cox process thinning against a rough realized intensity
+> path (a diffusion, say) can't be integrated reliably either. Both are
+> path-dependent-intensity problems. Building thinning speculatively now,
+> with no such intensity to thin against, would mean shipping a second
+> algorithm with a bound argument no current caller needs. It should be
+> added when Cox/Hawkes land, and can then sit behind the same public class
+> or its own.
+> **Inversion of `Λ` by root-finding** to get explicit arrival times —
+> rejected as unnecessary: it costs a root-find per event and buys nothing
+> the count needs (see Decision above). Worth revisiting only if arrival
+> times are exposed as a user-facing sequence.
+> **A separate module** `nonhomogeneous_poisson_process.py` — rejected in
+> favor of grouping the Poisson family in one module, matching how
+> `markov_chains.py` holds `MarkovChain`, `ContinuousTimeMarkovChain`, the
+> birth-death queues, and SIR/SEIR, and `gaussian_process.py` holds
+> Brownian motion, Ornstein-Uhlenbeck, and the rest. Compound Poisson and
+> Cox are expected to join it.
+
+**Numerical policy (the one genuinely new risk this feature adds):**
+> `Λ` is a numerical integral of a function Symbulate has never seen, so
+> quadrature can return a confidently wrong number. Two real cases:
+> `rate=lambda t: 1/t` integrates to a finite 41.7 over `(0, 1)` with a
+> huge error estimate, and `rate=lambda t: t**-2` integrates to **-1.0**.
+> Policy, in `_CumulativeRate`:
+> - Every evaluation of the user's rate function is checked (nonnegative,
+>   finite, numeric) — including the ones quadrature makes internally, so a
+>   rate that goes negative only partway through is caught at the time it
+>   does, naming that time.
+> - An integral is trusted only if it is finite, nonnegative, and its
+>   estimated error is within `_QUAD_TOL` (1e-3, relative). Otherwise it is
+>   retried over 32, then 512, then 4096 pieces — which rescues a genuinely
+>   hard but integrable rate (a rate oscillating 1000 times per unit time
+>   integrates exactly this way) — and if it still fails, **raises** rather
+>   than returning a number nobody should rely on.
+> - `Λ` is cached on the probability space, and each new time is integrated
+>   forward from the nearest earlier known time, so a `.sim(10000)` at one
+>   time integrates once for all 10000 paths, and plotting over a grid pays
+>   only for each new step.
+> - scipy's `IntegrationWarning` is suppressed: it describes a subdivision
+>   detail, and the checks above turn it into either a retry or a
+>   student-readable error.
+>
+> **Accepted limitation:** a spike far narrower than the interval being
+> integrated (width 1e-3 somewhere in the first 100 time units) can be
+> stepped over by adaptive quadrature and its events missed, with a small
+> error estimate that gives no hint. This is the one place thinning would
+> be strictly more faithful (at a large efficiency cost). Documented in the
+> class `Notes`; rates that vary on a scale near the times being asked
+> about — daily cycles, wear, a shift change — are unaffected.
+
+**Follow-on this unblocks, not done here:** the Weibull/power-law
+(Crow-AMSAA) process is now purely a naming exercise —
+`rate=lambda t: (shape / scale) * (t / scale) ** (shape - 1)` — and the
+roadmap wants it exposed under its reliability-engineering name. Left as
+its own roadmap row rather than smuggled in here.
+
+**Open:** whether to add a short alias (`NHPP`) alongside
+`NonHomogeneousPoissonProcess`. The queueing wrappers in `markov_chains.py`
+(`MM1`, `MMs`) set a precedent for abbreviations *when the abbreviation is
+the standard textbook name*; "NHPP" is standard in reliability courses but
+not in intro probability. Not added — one name for now.
+
+---
+
 ## Decision: Phase 1 Scope — Process Roadmap & Distribution Additions
 
 **Status:** Proposed
