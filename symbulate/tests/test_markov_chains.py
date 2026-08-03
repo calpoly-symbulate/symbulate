@@ -22,6 +22,11 @@ import unittest
 import numpy as np
 import scipy.stats as stats
 
+import matplotlib
+
+matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
+import matplotlib.pyplot as plt
+
 from symbulate import *
 from symbulate import markov_chains as mc
 from symbulate import distributions
@@ -864,6 +869,24 @@ class TestSIR(unittest.TestCase):
         path = SIR(100, 0.3, 0.1).draw()
         for c in ["S", "I", "R"]:
             self.assertIsInstance(getattr(path, c), ContinuousTimeFunction)
+
+    def test_compartment_plot_defaults_to_epidemic_end(self):
+        seed()
+        path = SIR(1000, 0.3, 0.1, initial_infected=5).draw()
+        plt.figure()
+        path.I.plot()
+        xs = plt.gca().lines[-1].get_xdata()
+        self.assertAlmostEqual(xs[0], 0)
+        self.assertAlmostEqual(xs[-1], path.event_times[-1])
+        plt.close("all")
+
+    def test_compartment_plot_explicit_tmax_overrides(self):
+        seed()
+        path = SIR(1000, 0.3, 0.1, initial_infected=5).draw()
+        plt.figure()
+        path.I.plot(tmax=30)
+        self.assertAlmostEqual(plt.gca().lines[-1].get_xdata()[-1], 30)
+        plt.close("all")
 
     def test_supercritical_outbreak_larger_than_subcritical(self):
         # R0 = infection_rate / recovery_rate. Above 1 a large outbreak is

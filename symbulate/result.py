@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 import symbulate
 from .base import Arithmetic, Transformable, Statistical, Filterable, _build_mv_filter
-from .index_sets import DiscreteTimeSequence, Reals, Naturals
+from .index_sets import DiscreteTimeSequence, Reals, Naturals, TimeInterval
 from .plot import SymbulatePlot, get_next_color, make_sample_path
 
 
@@ -1585,6 +1585,33 @@ class ContinuousTimeFunction(TimeFunction):
             color = get_next_color(ax)
         make_sample_path(ts, ys, ax, color, **kwargs)
         return SymbulatePlot(ax)
+
+
+class _BoundedTimeFunction(ContinuousTimeFunction):
+    """A continuous-time function that lives on a bounded stretch of time.
+
+    Behaves exactly like :class:`ContinuousTimeFunction`, except that when its
+    ``index_set`` is a bounded :class:`~symbulate.index_sets.TimeInterval`,
+    ``plot()`` defaults its x-limits to that stretch -- from ``start`` to
+    ``end`` -- rather than the generic 0 to 10. This is for processes with a
+    natural endpoint: a Brownian bridge (pinned down at ``end_time``) or an
+    epidemic curve (which stops changing once the outbreak ends). Passing
+    ``tmin`` or ``tmax`` explicitly still overrides the default.
+    """
+
+    def plot(self, tmin=None, tmax=None, **kwargs):
+        """Plot over the bounded domain by default; see ``ContinuousTimeFunction.plot``."""
+        domain = getattr(self, "index_set", None)
+        if isinstance(domain, TimeInterval):
+            if tmin is None:
+                tmin = domain.start
+            if tmax is None:
+                tmax = domain.end
+        return super().plot(
+            tmin=0 if tmin is None else tmin,
+            tmax=10 if tmax is None else tmax,
+            **kwargs,
+        )
 
 
 class DiscreteValued:

@@ -17,6 +17,11 @@ import unittest
 import numpy as np
 import scipy.stats as stats
 
+import matplotlib
+
+matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
+import matplotlib.pyplot as plt
+
 from symbulate import *
 from symbulate import gaussian_process
 from symbulate.index_sets import DiscreteTimeSequence
@@ -747,6 +752,37 @@ class TestBrownianBridgeDomain(unittest.TestCase):
         path = BrownianBridge(end_time=1).draw()
         self.assertEqual(path(0), 0)
         self.assertEqual(path(1), 0)
+
+
+class TestBrownianBridgePlot(unittest.TestCase):
+    """The plot's time axis defaults to the bridge's own interval."""
+
+    def _last_xdata(self):
+        return plt.gca().lines[-1].get_xdata()
+
+    def test_plot_defaults_to_the_bridge_interval(self):
+        seed()
+        plt.figure()
+        BrownianBridge(end_time=3).draw().plot()
+        xs = self._last_xdata()
+        self.assertAlmostEqual(xs[0], 0)
+        self.assertAlmostEqual(xs[-1], 3)
+        plt.close("all")
+
+    def test_plot_does_not_raise_key_error(self):
+        # Regression: the old default tmax=10 evaluated past the bridge's
+        # domain and raised KeyError.
+        seed()
+        plt.figure()
+        BrownianBridge(end_time=2).draw().plot()  # must not raise
+        plt.close("all")
+
+    def test_explicit_tmax_overrides_the_default(self):
+        seed()
+        plt.figure()
+        BrownianBridge(end_time=3).draw().plot(tmax=1.5)
+        self.assertAlmostEqual(self._last_xdata()[-1], 1.5)
+        plt.close("all")
 
 
 class TestBrownianBridgeRelationships(unittest.TestCase):
