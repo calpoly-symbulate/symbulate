@@ -1,4 +1,4 @@
-"""Queues whose service times are not exponential (the G/G/1 family).
+"""Queues whose service times are not exponential (``GG1`` and ``GGs``).
 
 The Markovian queues -- ``M/M/1``, ``M/M/s``, and their finite-capacity and
 finite-population relatives -- live in ``markov_chains.py``, because the
@@ -10,9 +10,12 @@ generator matrix describes it.
 
 What is still simple is the *waiting time* of each customer in turn. Lindley's
 recursion gives it exactly, one customer at a time, for any interarrival and
-service distributions -- which is what this module implements.
+service distributions -- which is what this module implements. With several
+servers the same idea works on the times at which each of them next comes
+free, so ``GGs`` joins ``GG1`` here rather than needing machinery of its own.
 """
 
+import heapq
 import numbers
 
 import numpy as np
@@ -193,15 +196,45 @@ def _validate_rate(rate, name, meaning):
         )
 
 
-def _traffic_intensity(interarrival_dist, service_dist):
+def _validate_servers(servers):
+    """Check that a queue's server count is a positive whole number.
+
+    Parameters
+    ----------
+    servers : int
+        The candidate number of servers.
+
+    Raises
+    ------
+    TypeError
+        If ``servers`` is not a whole number.
+    ValueError
+        If ``servers`` is not at least 1.
+    """
+    if isinstance(servers, bool) or not isinstance(servers, numbers.Integral):
+        raise TypeError(
+            f"servers must be a whole number, got {type(servers).__name__}. It "
+            "is how many customers can be served at once, for example "
+            "servers=3. (There is no such thing as half a server -- if you "
+            "meant a server that works at some other speed, change "
+            "service_dist instead.)"
+        )
+    if servers < 1:
+        raise ValueError(
+            f"servers must be at least 1, got {servers}. A queue with no "
+            "server would never serve anybody, so the line would grow forever."
+        )
+
+
+def _traffic_intensity(interarrival_dist, service_dist, servers=1):
     """The traffic intensity (utilization) of a queue, or ``None`` if unknown.
 
     The traffic intensity ``rho`` is the average service time divided by the
-    average time between arrivals -- the long-run fraction of time the server
-    is busy. It decides whether the queue settles down: when ``rho < 1`` the
-    waiting times have a steady-state distribution, and when ``rho >= 1`` work
-    arrives at least as fast as the server can clear it, so the queue grows
-    without bound.
+    average time between arrivals, shared out over the servers -- the long-run
+    fraction of time a server is busy. It decides whether the queue settles
+    down: when ``rho < 1`` the waiting times have a steady-state distribution,
+    and when ``rho >= 1`` work arrives at least as fast as the servers can
+    clear it, so the queue grows without bound.
 
     Parameters
     ----------
@@ -209,6 +242,8 @@ def _traffic_intensity(interarrival_dist, service_dist):
         The distribution of time between arrivals.
     service_dist : Distribution
         The distribution of one service time.
+    servers : int, optional
+        How many customers can be served at once. Default 1.
 
     Returns
     -------
@@ -226,33 +261,19 @@ def _traffic_intensity(interarrival_dist, service_dist):
         return None
     if mean_interarrival == 0:
         return None
-    return mean_service / mean_interarrival
+    return mean_service / (servers * mean_interarrival)
 
 
-class GG1Result(InfiniteVector):
-    """One simulated sample path of a single-server queue.
+class _QueueResult(InfiniteVector):
+    """Shared machinery for one sample path of a single-line queue.
 
     The path is the sequence of *waiting times*: ``path[n]`` is how long
     customer ``n`` stands in line before their service begins, not counting
-    the service itself. Customers are numbered ``0, 1, 2, ...`` in the order
-    they arrive, and customer 0 arrives to an empty system, so ``path[0]`` is
-    always 0.
-
-    Each waiting time is worked out from the one before it by **Lindley's
-    recursion**::
-
-        W[n + 1] = max(W[n] + S[n] - A[n + 1], 0)
-
-    In words: when customer ``n + 1`` shows up, customer ``n`` still has
-    ``W[n] + S[n]`` worth of waiting and service to finish, of which
-    ``A[n + 1]`` has already elapsed during the gap between the two arrivals.
-    Whatever is left over is the new customer's wait -- and if the leftover is
-    negative the server went idle in between, so the new customer walks
-    straight up and waits 0.
-
-    Waiting times are generated on demand as you index further into the path,
-    and cached once generated, so reading ``path[100]`` and then ``path[10]``
-    describes one single queue rather than two unrelated ones.
+    the service itself. This class holds the two i.i.d. input sequences, the
+    waiting times worked out so far, and the sequences derived from them --
+    everything except the recursion that turns arrivals and services into
+    waits, which is what distinguishes one queue from another and is supplied
+    by a subclass's ``_wait_at``.
 
     Parameters
     ----------
@@ -261,7 +282,7 @@ class GG1Result(InfiniteVector):
         customer ``n - 1`` and customer ``n``; entry 0 is the time until
         customer 0 arrives.
     service_times : InfiniteVector or iterable of float
-        The service times. Entry ``n`` is how long the server takes with
+        The service times. Entry ``n`` is how long a server takes with
         customer ``n``.
 
     Attributes
@@ -279,79 +300,54 @@ class GG1Result(InfiniteVector):
     departure_times : InfiniteVector
         When each customer leaves, ``arrival_times[n] + sojourn_times[n]``.
     waits : list
-        The waiting times generated so far, starting with customer 0's wait
-        of 0.
-
-    Examples
-    --------
-    >>> from symbulate import *
-    >>> # Customers arrive every 1 unit of time; each service takes 1.5.
-    >>> path = GG1Result([1.0] * 5, [1.5] * 5)
-    >>> path[0]  # the first customer walks straight up to the server
-    0.0
-    >>> path[1]  # arrives 1.0 later, but the service takes 1.5
-    0.5
-    >>> path[3]  # the server falls half a unit further behind each customer
-    1.5
-
-    The queue this path came from is usually the more convenient way in.
-
-    >>> queue = GG1(Exponential(rate=1), Exponential(rate=2))
-    >>> queue.draw()[10]  # doctest: +SKIP
-    0.317
+        The waiting times generated so far.
 
     See Also
     --------
-    GG1 : The queue these paths are drawn from.
-    RenewalProcessResult : The arrival stream on its own, as a count over time.
+    GG1Result : One server, via Lindley's recursion.
+    GGsResult : Several servers, via their next-free times.
     """
 
     def __init__(self, interarrival_times, service_times):
-        """Create one simulated sample path of a single-server queue."""
+        """Set up one sample path from its arrival and service sequences."""
         self.interarrival_times = interarrival_times
         self.service_times = service_times
-        # waits[n] is customer n's waiting time. Customer 0 arrives to an
-        # empty system, so their wait is known with no randomness and the
-        # path always starts out one entry long.
-        self.waits = [0.0]
+        # waits[n] is customer n's waiting time. Customers are served only as
+        # far into the queue as has actually been asked about, and each wait is
+        # kept once worked out -- the same lazily-extending, self-caching
+        # pattern RandomWalkResult uses for its positions.
+        self.waits = []
 
-        def _func(n):
-            # Serve only as far into the queue as has actually been asked
-            # about, picking up from the last customer already handled -- the
-            # same lazily-extending, self-caching pattern RandomWalkResult
-            # uses for its positions.
-            m = len(self.waits)
-            if n >= m:
-                wait = self.waits[m - 1]
-                for i in range(m, n + 1):
-                    # Lindley's recursion: what is left of customer i-1's
-                    # wait and service when customer i arrives. A plain float
-                    # is stored rather than whatever numpy type the draws
-                    # came back as, so a student reading a stretch of the
-                    # path sees times rather than type names.
-                    wait = float(
-                        max(
-                            wait
-                            + self.service_times[i - 1]
-                            - self.interarrival_times[i],
-                            0.0,
-                        )
-                    )
-                    self.waits.append(wait)
-            return self.waits[n]
-
-        super().__init__(_func)
+        super().__init__(self._wait_at)
 
         # Derived sequences, each generated on demand from the two input
         # sequences and the waiting times above.
+        #
+        # Each arrival time is the one before it plus the next gap, rather than
+        # a fresh sum from customer 0. An InfiniteVector fills its cache in
+        # order, so entry n - 1 is always ready by the time entry n is worked
+        # out. Re-summing instead makes reading a long stretch of the path cost
+        # a multiple of its length: arrival_times[2000] took 3.3 seconds that
+        # way, against 0.007 seconds like this.
         self.arrival_times = InfiniteVector(
-            lambda n: float(sum(self.interarrival_times[i] for i in range(n + 1)))
+            lambda n: float(
+                self.interarrival_times[0]
+                if n == 0
+                else self.arrival_times[n - 1] + self.interarrival_times[n]
+            )
         )
         self.sojourn_times = InfiniteVector(
             lambda n: float(self[n] + self.service_times[n])
         )
         self.departure_times = InfiniteVector(
             lambda n: float(self.arrival_times[n] + self.sojourn_times[n])
+        )
+
+    def _wait_at(self, n):
+        """Return customer ``n``'s waiting time, serving that far if needed."""
+        raise NotImplementedError(
+            "A queue path has to say how a customer's wait is worked out. Use "
+            "GG1Result (one server) or GGsResult (several servers)."
         )
 
     def get_waiting_times(self):
@@ -362,7 +358,7 @@ class GG1Result(InfiniteVector):
 
         Returns
         -------
-        GG1Result
+        _QueueResult
             This path, whose entry ``n`` is customer ``n``'s waiting time.
 
         Examples
@@ -380,7 +376,7 @@ class GG1Result(InfiniteVector):
         Returns
         -------
         InfiniteVector or iterable of float
-            Entry ``n`` is how long the server takes with customer ``n``.
+            Entry ``n`` is how long a server takes with customer ``n``.
 
         Examples
         --------
@@ -486,6 +482,109 @@ class GG1Result(InfiniteVector):
         2
         """
         return RenewalProcessResult(self.interarrival_times)
+
+
+class GG1Result(_QueueResult):
+    """One simulated sample path of a single-server queue.
+
+    The path is the sequence of *waiting times*: ``path[n]`` is how long
+    customer ``n`` stands in line before their service begins, not counting
+    the service itself. Customers are numbered ``0, 1, 2, ...`` in the order
+    they arrive, and customer 0 arrives to an empty system, so ``path[0]`` is
+    always 0.
+
+    Each waiting time is worked out from the one before it by **Lindley's
+    recursion**::
+
+        W[n + 1] = max(W[n] + S[n] - A[n + 1], 0)
+
+    In words: when customer ``n + 1`` shows up, customer ``n`` still has
+    ``W[n] + S[n]`` worth of waiting and service to finish, of which
+    ``A[n + 1]`` has already elapsed during the gap between the two arrivals.
+    Whatever is left over is the new customer's wait -- and if the leftover is
+    negative the server went idle in between, so the new customer walks
+    straight up and waits 0.
+
+    Waiting times are generated on demand as you index further into the path,
+    and cached once generated, so reading ``path[100]`` and then ``path[10]``
+    describes one single queue rather than two unrelated ones.
+
+    Parameters
+    ----------
+    interarrival_times : InfiniteVector or iterable of float
+        The times between successive arrivals. Entry ``n`` is the gap between
+        customer ``n - 1`` and customer ``n``; entry 0 is the time until
+        customer 0 arrives.
+    service_times : InfiniteVector or iterable of float
+        The service times. Entry ``n`` is how long the server takes with
+        customer ``n``.
+
+    Attributes
+    ----------
+    interarrival_times : InfiniteVector or iterable of float
+        The times between successive arrivals.
+    service_times : InfiniteVector or iterable of float
+        The service times.
+    arrival_times : InfiniteVector
+        When each customer arrives -- the running total of the interarrival
+        times.
+    sojourn_times : InfiniteVector
+        How long each customer spends in the system altogether: waiting plus
+        being served, ``W[n] + S[n]``.
+    departure_times : InfiniteVector
+        When each customer leaves, ``arrival_times[n] + sojourn_times[n]``.
+    waits : list
+        The waiting times generated so far, starting with customer 0's wait
+        of 0.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> # Customers arrive every 1 unit of time; each service takes 1.5.
+    >>> path = GG1Result([1.0] * 5, [1.5] * 5)
+    >>> path[0]  # the first customer walks straight up to the server
+    0.0
+    >>> path[1]  # arrives 1.0 later, but the service takes 1.5
+    0.5
+    >>> path[3]  # the server falls half a unit further behind each customer
+    1.5
+
+    The queue this path came from is usually the more convenient way in.
+
+    >>> queue = GG1(Exponential(rate=1), Exponential(rate=2))
+    >>> queue.draw()[10]  # doctest: +SKIP
+    0.317
+
+    See Also
+    --------
+    GG1 : The queue these paths are drawn from.
+    GGsResult : The same path with several servers.
+    RenewalProcessResult : The arrival stream on its own, as a count over time.
+    """
+
+    def _wait_at(self, n):
+        """Serve up to customer ``n`` by Lindley's recursion, and return
+        their wait."""
+        while len(self.waits) <= n:
+            i = len(self.waits)
+            if i == 0:
+                # Customer 0 arrives to an empty system.
+                wait = 0.0
+            else:
+                # What is left of customer i-1's wait and service when
+                # customer i arrives. A plain float is stored rather than
+                # whatever numpy type the draws came back as, so a student
+                # reading a stretch of the path sees times, not type names.
+                wait = float(
+                    max(
+                        self.waits[i - 1]
+                        + self.service_times[i - 1]
+                        - self.interarrival_times[i],
+                        0.0,
+                    )
+                )
+            self.waits.append(wait)
+        return self.waits[n]
 
 
 class GG1ProbabilitySpace(ProbabilitySpace):
@@ -649,6 +748,7 @@ class GG1(RV):
     --------
     MG1 : Poisson arrivals and general service (the M/G/1 queue).
     GM1 : General arrivals and exponential service (the G/M/1 queue).
+    GGs : The same queue with several servers sharing one line.
     MM1 : The same queue when both are exponential, tracked as a queue length
         over continuous time instead.
     RenewalProcess : The arrival stream on its own.
@@ -737,6 +837,7 @@ class MG1(GG1):
     GG1 : The general single-server queue this specializes.
     GM1 : The other half of the relaxation -- general arrivals, exponential
         service.
+    GGs : Several servers sharing one line, for any distributions.
     """
 
     def __init__(self, arrival_rate, service_dist):
@@ -813,6 +914,7 @@ class GM1(GG1):
     GG1 : The general single-server queue this specializes.
     MG1 : The other half of the relaxation -- Poisson arrivals, general
         service.
+    GGs : Several servers sharing one line, for any distributions.
     """
 
     def __init__(self, interarrival_dist, service_rate):
@@ -825,3 +927,268 @@ class GM1(GG1):
         )
         self.service_rate = service_rate
         super().__init__(interarrival_dist, Exponential(rate=service_rate))
+
+
+class GGsResult(_QueueResult):
+    """One simulated sample path of a queue with several servers.
+
+    Like :class:`GG1Result`, ``path[n]`` is how long customer ``n`` waits in
+    line before their service begins. The difference is what they are waiting
+    for: with ``servers`` servers sharing one line, a customer waits only until
+    the *first* of them comes free, so nobody waits at all while any server is
+    idle.
+
+    That is all the recursion needs to track -- the times at which each server
+    next comes free. Customer ``n`` arrives at ``A[n]``, takes the server that
+    frees up soonest, and waits::
+
+        W[n] = max(earliest free time - A[n], 0)
+
+    and that server is then busy until ``A[n] + W[n] + S[n]``. It is the
+    multi-server generalization of Lindley's recursion (the vector recursion of
+    Kiefer and Wolfowitz), and with ``servers=1`` it *is* Lindley's recursion,
+    written in clock time instead of in leftovers.
+
+    Waiting times are generated on demand as you index further into the path,
+    and cached once generated, so reading ``path[100]`` and then ``path[10]``
+    describes one single queue rather than two unrelated ones.
+
+    Parameters
+    ----------
+    interarrival_times : InfiniteVector or iterable of float
+        The times between successive arrivals. Entry ``n`` is the gap between
+        customer ``n - 1`` and customer ``n``; entry 0 is the time until
+        customer 0 arrives.
+    service_times : InfiniteVector or iterable of float
+        The service times. Entry ``n`` is how long a server takes with
+        customer ``n``.
+    servers : int
+        How many customers can be served at once.
+
+    Attributes
+    ----------
+    servers : int
+        How many customers can be served at once.
+
+    Notes
+    -----
+    Customers leave in the order they were *served*, which with more than one
+    server need not be the order they arrived: a customer with a short service
+    can overtake a slower one being served beside them. So
+    ``departure_times`` is not necessarily increasing, unlike in the
+    single-server case.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> # A customer every 1 unit of time, each service taking 1.5, 2 servers.
+    >>> path = GGsResult([1.0] * 6, [1.5] * 6, servers=2)
+    >>> [path[n] for n in range(5)]  # two servers keep up; nobody waits
+    [0.0, 0.0, 0.0, 0.0, 0.0]
+    >>> # The same queue with one server falls behind (Lindley's recursion).
+    >>> [GGsResult([1.0] * 6, [1.5] * 6, servers=1)[n] for n in range(5)]
+    [0.0, 0.5, 1.0, 1.5, 2.0]
+
+    See Also
+    --------
+    GGs : The queue these paths are drawn from.
+    GG1Result : The single-server path, via Lindley's recursion.
+    """
+
+    def __init__(self, interarrival_times, service_times, servers):
+        """Create one simulated sample path of a queue with several servers."""
+        self.servers = servers
+        # When each server next comes free. They all start free at time 0, and
+        # heapq keeps the earliest of them at position 0 -- the only one the
+        # recursion ever asks about.
+        self._free_times = [0.0] * servers
+        super().__init__(interarrival_times, service_times)
+
+    def _wait_at(self, n):
+        """Serve up to customer ``n``, and return how long they waited."""
+        while len(self.waits) <= n:
+            i = len(self.waits)
+            # This recursion works in clock time, so it reads the arrival times
+            # the path already keeps rather than accumulating its own copy --
+            # the two could otherwise drift apart.
+            arrival = self.arrival_times[i]
+            # Whatever is left of the wait for the soonest free server. A plain
+            # float is stored rather than whatever numpy type the draws came
+            # back as, so a student reading a stretch of the path sees times,
+            # not type names.
+            wait = float(max(self._free_times[0] - arrival, 0.0))
+            # That server takes this customer, and is busy until they leave.
+            heapq.heapreplace(self._free_times, arrival + wait + self.service_times[i])
+            self.waits.append(wait)
+        return self.waits[n]
+
+
+class GGsProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying a queue with several servers.
+
+    Each draw from this space produces one simulated sample path of the
+    queue -- the waiting times of customer 0, 1, 2, ... in turn.
+
+    Parameters
+    ----------
+    interarrival_dist : Distribution
+        The distribution of the (i.i.d.) time between customer arrivals.
+    service_dist : Distribution
+        The distribution of the (i.i.d.) time to serve one customer.
+    servers : int
+        How many customers can be served at once. Must be at least 1.
+
+    Attributes
+    ----------
+    interarrival_dist : Distribution
+        The interarrival-time distribution.
+    service_dist : Distribution
+        The service-time distribution.
+    servers : int
+        How many customers can be served at once.
+
+    Raises
+    ------
+    TypeError
+        If either distribution is not a Symbulate ``Distribution`` over single
+        numbers, or ``servers`` is not a whole number.
+    ValueError
+        If either distribution can produce a negative time, if
+        ``interarrival_dist`` produces a time of 0 on every draw, or if
+        ``servers`` is less than 1.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> space = GGsProbabilitySpace(Exponential(rate=1), Exponential(rate=1), 2)
+    >>> space.draw()[5]  # doctest: +SKIP
+    0.118
+    """
+
+    def __init__(self, interarrival_dist, service_dist, servers):
+        """Create a probability space for a queue with several servers."""
+        _validate_interarrival_dist(interarrival_dist)
+        _validate_service_dist(service_dist)
+        _validate_servers(servers)
+        self.interarrival_dist = interarrival_dist
+        self.service_dist = service_dist
+        self.servers = servers
+
+        # Build the two i.i.d. sequences once, not once per draw: neither
+        # distribution ever changes, and each `.draw()` on them already
+        # yields a fresh, independent sequence.
+        interarrivals = self.interarrival_dist**inf
+        services = self.service_dist**inf
+
+        def draw():
+            return GGsResult(interarrivals.draw(), services.draw(), self.servers)
+
+        super().__init__(draw)
+
+
+class GGs(RV):
+    """A G/G/s queue: ``s`` servers sharing one line, any distributions.
+
+    Customers arrive one after another and join a single line, and the customer
+    at its head goes to whichever of the ``servers`` servers comes free first.
+    ``X[n]`` is how long customer ``n`` waits in line before their service
+    begins.
+
+    This is the multi-server generalization of :class:`GG1` -- the bank with
+    several tellers and one queue, the call center with several agents -- and
+    the realistic version of :class:`~symbulate.markov_chains.MMs`, since it
+    does not need the service times to be exponential. Waiting times come from
+    the times at which the servers next come free; see :class:`GGsResult`.
+
+    Parameters
+    ----------
+    interarrival_dist : Distribution
+        The distribution of the time between one arrival and the next. Must be
+        a Symbulate ``Distribution`` over single nonnegative numbers (e.g.
+        ``Exponential(rate=1)``, ``Gamma(shape=2, rate=1)``,
+        ``Uniform(a=0, b=2)``).
+    service_dist : Distribution
+        The distribution of the time one server takes with one customer. Same
+        requirements, except that a service time of 0 is allowed. Every server
+        is identical: they all serve from this one distribution.
+    servers : int
+        How many customers can be served at once. Must be at least 1.
+
+    Attributes
+    ----------
+    interarrival_dist : Distribution
+        The interarrival-time distribution.
+    service_dist : Distribution
+        The service-time distribution.
+    servers : int
+        How many customers can be served at once.
+    utilization : float or None
+        The traffic intensity ``rho`` -- the average service time divided by
+        the average time between arrivals, shared out over the servers, which
+        is the long-run fraction of time a server is busy. ``None`` when either
+        average is unavailable.
+    prob_space : GGsProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Raises
+    ------
+    TypeError
+        If either distribution is not a Symbulate ``Distribution`` over single
+        numbers, or ``servers`` is not a whole number.
+    ValueError
+        If either distribution can produce a negative time, if
+        ``interarrival_dist`` produces a time of 0 on every draw, or if
+        ``servers`` is less than 1.
+
+    Notes
+    -----
+    Adding servers divides the load: ``utilization`` is
+    ``mean service / (servers * mean interarrival)``, so a queue that is
+    unstable with one server can be perfectly calm with two. Stability is
+    again ``utilization < 1``.
+
+    Two servers of a given speed are not the same as one server twice as fast,
+    and a course usually asks students to compare them. The pair of slow
+    servers keeps the *line* shorter, because a customer can be served while
+    the other server is stuck on a long job; the single fast server gets each
+    customer out of the *system* sooner, because the service itself is half as
+    long. Simulating both settles which matters for a given question.
+
+    ``M/G/s`` and ``G/M/s`` are not separate classes -- pass an ``Exponential``
+    on whichever side is Markovian, exactly as ``GG1(Exponential(...), ...)``
+    is the ``M/G/1`` queue.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> # Three tellers, a customer every 2 minutes, services averaging 5.
+    >>> bank = GGs(Exponential(rate=1 / 2), Gamma(shape=2, rate=2 / 5), servers=3)
+    >>> round(bank.utilization, 3)
+    0.833
+    >>> bank[50].sim(1000).mean()  # doctest: +SKIP
+    5.42
+
+    A second server can rescue a queue that one server cannot keep up with.
+
+    >>> GGs(Exponential(rate=1), Exponential(rate=0.8), servers=1).utilization
+    1.25
+    >>> GGs(Exponential(rate=1), Exponential(rate=0.8), servers=2).utilization
+    0.625
+
+    See Also
+    --------
+    GG1 : The single-server queue, whose recursion this generalizes.
+    MMs : The same queue when both distributions are exponential, tracked as a
+        queue length over continuous time instead.
+    """
+
+    def __init__(self, interarrival_dist, service_dist, servers):
+        """Create a G/G/s queue."""
+        prob_space = GGsProbabilitySpace(interarrival_dist, service_dist, servers)
+        self.interarrival_dist = prob_space.interarrival_dist
+        self.service_dist = prob_space.service_dist
+        self.servers = prob_space.servers
+        self.utilization = _traffic_intensity(
+            self.interarrival_dist, self.service_dist, self.servers
+        )
+        super().__init__(prob_space)

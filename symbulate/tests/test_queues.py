@@ -11,6 +11,8 @@ checked against:
 - M/G/1: the Pollaczek-Khinchine formula
   lambda * E[S^2] / (2 * (1 - rho)), checked for two service distributions
   with the same mean but very different variance;
+- M/M/s (the multi-server GGs queue with both distributions exponential):
+  the Erlang C formula, for both the mean wait and P(wait > 0);
 - a queue with rho >= 1 has waiting times that grow without bound.
 
 Reproducibility is obtained by reseeding the distributions module's
@@ -18,14 +20,34 @@ generator (``distributions.rng``), matching test_renewal_process.py.
 """
 
 import unittest
+from math import factorial
 
 import numpy as np
 
 from symbulate import *
 from symbulate import distributions
-from symbulate.queues import GG1, GG1ProbabilitySpace, GG1Result, MG1, GM1
+from symbulate.queues import (
+    GG1,
+    GG1ProbabilitySpace,
+    GG1Result,
+    GGs,
+    GGsProbabilitySpace,
+    GGsResult,
+    MG1,
+    GM1,
+)
 from symbulate.renewal_process import RenewalProcessResult
 from symbulate.result import InfiniteVector
+
+
+def erlang_c(servers, arrival_rate, service_rate):
+    """P(an M/M/s arrival has to wait), the Erlang C formula."""
+    offered = arrival_rate / service_rate
+    rho = offered / servers
+    tail = offered**servers / (factorial(servers) * (1 - rho))
+    idle = sum(offered**k / factorial(k) for k in range(servers))
+    return tail / (idle + tail)
+
 
 # Waiting times converge to their steady-state distribution geometrically
 # fast, so customer 50 is already (well within simulation error of) a draw
@@ -472,6 +494,278 @@ class TestQueueValidation(unittest.TestCase):
             GM1(interarrival_dist=2, service_rate=1)
         with self.assertRaises(ValueError):
             GM1(interarrival_dist=Normal(mean=5, sd=1), service_rate=1)
+
+
+class TestGGsResult(unittest.TestCase):
+
+    def test_is_infinite_vector(self):
+        path = GGs(Exponential(rate=1), Exponential(rate=1), servers=2).draw()
+        self.assertIsInstance(path, InfiniteVector)
+
+    def test_servers_stored(self):
+        self.assertEqual(GGsResult([1.0] * 3, [1.0] * 3, servers=4).servers, 4)
+
+    def test_one_server_reproduces_lindley_exactly(self):
+        # Same inputs, so GGsResult with one server and GG1Result must agree
+        # value for value -- including the idle stretch in the middle.
+        interarrival = [1.0, 1.0, 5.0, 1.0, 2.0, 1.0]
+        service = [3.0, 1.0, 1.0, 1.0, 4.0, 1.0]
+        lindley = [GG1Result(interarrival, service)[n] for n in range(6)]
+        servers = [GGsResult(interarrival, service, servers=1)[n] for n in range(6)]
+        self.assertEqual(lindley, servers)
+
+    def test_second_server_removes_the_wait(self):
+        # A customer every 1.0 with each service taking 1.5: one server falls
+        # steadily behind, two keep up and nobody waits at all.
+        interarrival, service = [1.0] * 6, [1.5] * 6
+        one = [GGsResult(interarrival, service, servers=1)[n] for n in range(5)]
+        two = [GGsResult(interarrival, service, servers=2)[n] for n in range(5)]
+        self.assertEqual(one, [0.0, 0.5, 1.0, 1.5, 2.0])
+        self.assertEqual(two, [0.0] * 5)
+
+    def test_waits_by_hand_when_servers_are_overtaken(self):
+        # Two servers, a customer every 1.0. Services 4, 4, 1, 1: customers 0
+        # and 1 take both servers until times 5 and 6, so customer 2 (arriving
+        # at 3.0) waits until 5.0 and customer 3 (arriving at 4.0) until 6.0.
+        path = GGsResult([1.0] * 4, [4.0, 4.0, 1.0, 1.0], servers=2)
+        self.assertEqual([path[n] for n in range(4)], [0.0, 0.0, 2.0, 2.0])
+
+    def test_third_customer_takes_whichever_server_frees_first(self):
+        # Two servers: customer 0 is served until 1.5, customer 1 until 4.0.
+        # Customer 2 arrives at 3.0 and takes the server that is already free.
+        path = GGsResult([1.0, 1.0, 1.0], [0.5, 2.0, 1.0], servers=2)
+        self.assertEqual([path[n] for n in range(3)], [0.0, 0.0, 0.0])
+
+    def test_waits_are_nonnegative(self):
+        seed()
+        path = GGs(Exponential(rate=2), Exponential(rate=1.2), servers=2).draw()
+        for n in range(30):
+            self.assertGreaterEqual(path[n], 0)
+
+    def test_path_is_cached_and_stable(self):
+        seed()
+        path = GGs(Exponential(rate=2), Exponential(rate=1), servers=2).draw()
+        first = [path[n] for n in range(20)]
+        self.assertEqual(first, [path[n] for n in range(20)])
+
+    def test_reading_far_ahead_keeps_earlier_values(self):
+        seed()
+        path = GGs(Exponential(rate=2), Exponential(rate=1), servers=2).draw()
+        early = [path[n] for n in range(5)]
+        path[60]
+        self.assertEqual([path[n] for n in range(5)], early)
+
+    def test_derived_sequences_are_inherited(self):
+        path = GGsResult([1.0] * 4, [1.5] * 4, servers=2)
+        self.assertEqual(path.arrival_times[2], 3.0)
+        self.assertAlmostEqual(path.sojourn_times[1], path[1] + 1.5)
+        self.assertAlmostEqual(
+            path.departure_times[1], path.arrival_times[1] + path.sojourn_times[1]
+        )
+        self.assertIs(path.get_waiting_times(), path)
+        self.assertIsInstance(path.get_arrival_process(), RenewalProcessResult)
+
+    def test_departures_can_be_out_of_order_with_two_servers(self):
+        # Customer 0 takes 5.0 while customer 1 takes 0.5 beside them, so
+        # customer 1 leaves first -- something a single server cannot do.
+        path = GGsResult([1.0, 1.0, 1.0], [5.0, 0.5, 0.5], servers=2)
+        self.assertGreater(path.departure_times[0], path.departure_times[1])
+
+
+class TestGGsProbabilitySpace(unittest.TestCase):
+
+    def test_parameters_stored(self):
+        interarrival, service = Exponential(rate=2), Gamma(shape=2, rate=2)
+        space = GGsProbabilitySpace(interarrival, service, 3)
+        self.assertIs(space.interarrival_dist, interarrival)
+        self.assertIs(space.service_dist, service)
+        self.assertEqual(space.servers, 3)
+
+    def test_draw_returns_result_with_the_servers(self):
+        seed()
+        path = GGsProbabilitySpace(Exponential(rate=2), Exponential(rate=1), 3).draw()
+        self.assertIsInstance(path, GGsResult)
+        self.assertEqual(path.servers, 3)
+
+    def test_successive_draws_are_independent(self):
+        seed()
+        space = GGsProbabilitySpace(Exponential(rate=2), Exponential(rate=1), 2)
+        first, second = space.draw(), space.draw()
+        self.assertNotEqual(
+            [first[n] for n in range(20)], [second[n] for n in range(20)]
+        )
+
+
+class TestGGs(unittest.TestCase):
+
+    def test_is_rv(self):
+        self.assertIsInstance(
+            GGs(Exponential(rate=1), Exponential(rate=1), servers=2), RV
+        )
+
+    def test_parameters_stored(self):
+        interarrival, service = Exponential(rate=2), Gamma(shape=2, rate=2)
+        queue = GGs(interarrival, service, servers=3)
+        self.assertIs(queue.interarrival_dist, interarrival)
+        self.assertIs(queue.service_dist, service)
+        self.assertEqual(queue.servers, 3)
+
+    def test_accepts_keyword_arguments(self):
+        queue = GGs(
+            interarrival_dist=Exponential(rate=1),
+            service_dist=Exponential(rate=1),
+            servers=2,
+        )
+        self.assertEqual(queue.servers, 2)
+
+    def test_utilization_is_shared_out_over_the_servers(self):
+        # Mean service 1, mean gap 1: one server is saturated, two are half busy.
+        for servers, expected in [(1, 1.0), (2, 0.5), (4, 0.25)]:
+            with self.subTest(servers=servers):
+                queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=servers)
+                self.assertAlmostEqual(queue.utilization, expected)
+
+    def test_second_server_can_make_an_unstable_queue_stable(self):
+        overloaded = GGs(Exponential(rate=1), Exponential(rate=0.8), servers=1)
+        rescued = GGs(Exponential(rate=1), Exponential(rate=0.8), servers=2)
+        self.assertGreater(overloaded.utilization, 1)
+        self.assertLess(rescued.utilization, 1)
+
+    def test_getitem_returns_rv(self):
+        queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
+        self.assertIsInstance(queue[5], RV)
+
+    def test_reproducible_under_same_seed(self):
+        queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
+        seed(123)
+        first = [queue.draw()[10] for _ in range(20)]
+        seed(123)
+        self.assertEqual(first, [queue.draw()[10] for _ in range(20)])
+
+    def test_sim_gives_independent_paths(self):
+        seed()
+        queue = GGs(Exponential(rate=2), Exponential(rate=1.1), servers=2)
+        paths = list(queue.sim(2))
+        self.assertNotEqual(
+            [paths[0][n] for n in range(20)], [paths[1][n] for n in range(20)]
+        )
+
+    def test_one_server_matches_gg1_distributionally(self):
+        # The two consume the RNG in a different order, so the check is on the
+        # mean rather than value by value: M/M/1 with rho = 0.5 waits 0.5.
+        seed()
+        queue = GGs(Exponential(rate=1), Exponential(rate=2), servers=1)
+        self.assertAlmostEqual(np.mean(waits_at(queue)), 0.5, delta=0.12)
+
+
+class TestGGsTheory(unittest.TestCase):
+    """The multi-server simulation against exact M/M/s results."""
+
+    def test_erlang_c_mean_wait_two_servers(self):
+        # M/M/2 with lambda = mu = 1: mean wait in line is
+        # C / (s * mu - lambda) = (1/3) / 1 = 1/3.
+        seed()
+        expected = erlang_c(2, 1, 1) / (2 * 1 - 1)
+        queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
+        self.assertAlmostEqual(np.mean(waits_at(queue)), expected, delta=0.12)
+
+    def test_erlang_c_probability_of_waiting_two_servers(self):
+        seed()
+        queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
+        waited = np.mean([wait > 0 for wait in waits_at(queue)])
+        self.assertAlmostEqual(waited, erlang_c(2, 1, 1), delta=0.07)
+
+    def test_erlang_c_mean_wait_three_servers(self):
+        # M/M/3 with lambda = 2, mu = 1: rho = 2/3, mean wait 4/9.
+        seed()
+        expected = erlang_c(3, 2, 1) / (3 * 1 - 2)
+        queue = GGs(Exponential(rate=2), Exponential(rate=1), servers=3)
+        self.assertAlmostEqual(np.mean(waits_at(queue)), expected, delta=0.12)
+
+    def test_erlang_c_holds_for_a_saturated_queue(self):
+        # M/M/2 with lambda = 3, mu = 2: rho = 0.75, a busier system.
+        seed()
+        expected = erlang_c(2, 3, 2) / (2 * 2 - 3)
+        queue = GGs(Exponential(rate=3), Exponential(rate=2), servers=2)
+        self.assertAlmostEqual(np.mean(waits_at(queue)), expected, delta=0.2)
+
+    def test_two_slow_servers_shorten_the_line_but_not_the_visit(self):
+        # The classic comparison at equal utilization: two servers of rate 1
+        # against one server of rate 2. Exact M/M/ values are 1/3 vs 1/2 for
+        # the wait in line, and 4/3 vs 1 for the time in system.
+        seed()
+        fast = GG1(Exponential(rate=1), Exponential(rate=2))
+        pair = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
+        self.assertAlmostEqual(fast.utilization, pair.utilization)
+
+        fast_line, pair_line = np.mean(waits_at(fast)), np.mean(waits_at(pair))
+        fast_visit = np.mean([fast.draw().sojourn_times[CUSTOMER] for _ in range(Nsim)])
+        pair_visit = np.mean([pair.draw().sojourn_times[CUSTOMER] for _ in range(Nsim)])
+        self.assertLess(pair_line, fast_line)  # shorter line with two servers
+        self.assertGreater(pair_visit, fast_visit)  # but a longer visit
+
+    def test_more_servers_never_lengthen_the_wait(self):
+        seed()
+        means = []
+        for servers in [1, 2, 3]:
+            queue = GGs(Exponential(rate=1), Exponential(rate=1.2), servers=servers)
+            means.append(np.mean(waits_at(queue, nsim=200)))
+        self.assertLess(means[1], means[0])
+        self.assertLessEqual(means[2], means[1])
+
+    def test_unstable_multi_server_queue_grows_without_bound(self):
+        seed()
+        queue = GGs(Exponential(rate=3), Exponential(rate=1), servers=2)
+        self.assertGreater(queue.utilization, 1)
+        path = queue.draw()
+        self.assertLess(path[20], path[200])
+
+
+class TestGGsValidation(unittest.TestCase):
+
+    def test_non_integer_servers_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            GGs(Exponential(rate=1), Exponential(rate=1), servers=2.5)
+
+    def test_string_servers_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            GGs(Exponential(rate=1), Exponential(rate=1), servers="two")
+
+    def test_servers_error_names_the_parameter(self):
+        with self.assertRaises(TypeError) as context:
+            GGs(Exponential(rate=1), Exponential(rate=1), servers=2.5)
+        self.assertIn("servers", str(context.exception))
+
+    def test_zero_servers_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            GGs(Exponential(rate=1), Exponential(rate=1), servers=0)
+
+    def test_negative_servers_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            GGs(Exponential(rate=1), Exponential(rate=1), servers=-2)
+
+    def test_distributions_are_still_validated(self):
+        with self.assertRaises(TypeError):
+            GGs(1, Exponential(rate=1), servers=2)
+        with self.assertRaises(TypeError):
+            GGs(Exponential(rate=1), 2, servers=2)
+        with self.assertRaises(ValueError):
+            GGs(Normal(mean=5, sd=1), Exponential(rate=1), servers=2)
+        with self.assertRaises(ValueError):
+            GGs(Exponential(rate=1), Normal(mean=1, sd=1), servers=2)
+
+    def test_probability_space_also_validates(self):
+        with self.assertRaises(ValueError):
+            GGsProbabilitySpace(Exponential(rate=1), Exponential(rate=1), 0)
+        with self.assertRaises(TypeError):
+            GGsProbabilitySpace(1, Exponential(rate=1), 2)
+
+    def test_base_result_class_cannot_be_used_on_its_own(self):
+        """The shared machinery has no recursion of its own."""
+        from symbulate.queues import _QueueResult
+
+        with self.assertRaises(NotImplementedError):
+            _QueueResult([1.0] * 3, [1.0] * 3)[0]
 
 
 if __name__ == "__main__":
