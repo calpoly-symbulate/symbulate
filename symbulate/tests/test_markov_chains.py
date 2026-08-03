@@ -6,6 +6,12 @@ backward cached lookups), state labels, the embedded transition matrix
 of a continuous-time chain, sample-path evaluation, interarrival times,
 and the marginal/transition behavior of the chains.
 
+The ``*Arrivals`` classes cover reading a continuous-time path event by
+event -- ``states()``, ``interarrival_times()``, and ``arrival_times()``,
+the same trio a Poisson process path supports -- for the continuous-time
+chain, the birth-death wrapper, and the Yule process, including that the
+holding times come out Exponential with the right rate.
+
 Reproducibility: the discrete chain draws through ``markov_chains.rng``
 and the continuous chain additionally draws interarrival times through
 ``distributions.rng``, so the ``seed`` helper reseeds both.
@@ -202,6 +208,7 @@ class TestMarkovChain(unittest.TestCase):
 
 # Generator (Q) matrices for continuous-time tests.
 Q2 = [[-1.0, 1.0], [2.0, -2.0]]
+Q3 = [[-2.0, 1.0, 1.0], [1.0, -1.0, 0.0], [2.0, 2.0, -4.0]]
 
 
 class TestContinuousTimeMarkovChainProbabilitySpaceValidation(unittest.TestCase):
@@ -275,7 +282,6 @@ class TestContinuousTimeMarkovChainProbabilitySpace(unittest.TestCase):
         np.testing.assert_allclose(space.transition_matrix, [[0.0, 1.0], [1.0, 0.0]])
 
     def test_embedded_transition_matrix_three_state(self):
-        Q3 = [[-2.0, 1.0, 1.0], [1.0, -1.0, 0.0], [2.0, 2.0, -4.0]]
         space = ContinuousTimeMarkovChainProbabilitySpace(Q3, [1.0, 0.0, 0.0])
         expected = [[0.0, 0.5, 0.5], [1.0, 0.0, 0.0], [0.5, 0.5, 0.0]]
         np.testing.assert_allclose(space.transition_matrix, expected)
@@ -322,6 +328,87 @@ class TestContinuousTimeMarkovChain(unittest.TestCase):
         seed(7)
         second = [chain.draw()(t) for t in [0.5, 1.0, 2.0]]
         self.assertEqual(first, second)
+
+
+class TestContinuousTimeMarkovChainArrivals(unittest.TestCase):
+    """The states / interarrival-times / arrival-times trio on a drawn path.
+
+    This is the same interface a Poisson process sample path provides, so
+    the same ``states()``, ``interarrival_times()``, and ``arrival_times()``
+    functions have to work on a continuous-time Markov chain path.
+    """
+
+    def test_helpers_accept_a_path(self):
+        seed()
+        path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0]).draw()
+        self.assertIsInstance(states(path), InfiniteVector)
+        self.assertIsInstance(interarrival_times(path), InfiniteVector)
+        self.assertIsInstance(arrival_times(path), InfiniteVector)
+
+    def test_states_are_labels_not_indices(self):
+        # Regression: get_states() used to return the embedded chain's raw
+        # state indices (0, 1, ...), which disagreed with what evaluating
+        # the path returns. The states must be the labels.
+        seed()
+        path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0], state_labels=["A", "B"]).draw()
+        for n in range(6):
+            self.assertIn(states(path)[n], ["A", "B"])
+
+    def test_first_state_matches_path_at_time_zero(self):
+        seed()
+        path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0], state_labels=["A", "B"]).draw()
+        self.assertEqual(states(path)[0], path(0))
+
+    def test_states_agree_with_path_just_after_each_jump(self):
+        # The n-th state is the one the chain is in immediately after the
+        # (n-1)-th jump, so the two descriptions of the path must line up.
+        seed()
+        path = ContinuousTimeMarkovChain(Q3, [1.0, 0.0, 0.0]).draw()
+        jumps = arrival_times(path)
+        for n in range(5):
+            self.assertEqual(path(jumps[n] + 1e-9), states(path)[n + 1])
+
+    def test_arrival_times_are_the_running_total_of_interarrivals(self):
+        seed()
+        path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0]).draw()
+        waits = interarrival_times(path)
+        jumps = arrival_times(path)
+        for n in range(5):
+            self.assertAlmostEqual(jumps[n], sum(waits[i] for i in range(n + 1)))
+
+    def test_arrival_times_are_increasing(self):
+        seed()
+        path = ContinuousTimeMarkovChain(Q3, [1.0, 0.0, 0.0]).draw()
+        jumps = arrival_times(path)
+        for earlier, later in zip(
+            [jumps[n] for n in range(6)], [jumps[n] for n in range(1, 7)]
+        ):
+            self.assertLess(earlier, later)
+
+    def test_holding_time_is_exponential_with_the_states_rate(self):
+        # Q2 leaves state 0 at rate 1, so the first holding time is
+        # Exponential(1): mean 1 and variance 1.
+        seed()
+        chain = ContinuousTimeMarkovChain(Q2, [1.0, 0.0])
+        wait = chain.apply(interarrival_times)[0].sim(Nsim)
+        self.assertAlmostEqual(wait.mean(), 1.0, delta=0.05)
+        self.assertAlmostEqual(wait.var(), 1.0, delta=0.15)
+
+    def test_holding_time_scales_with_the_rate_of_leaving(self):
+        # Started in state 1, which Q2 leaves at rate 2: mean 1 / 2.
+        seed()
+        chain = ContinuousTimeMarkovChain(Q2, [0.0, 1.0])
+        wait = chain.apply(interarrival_times)[0].sim(Nsim)
+        self.assertAlmostEqual(wait.mean(), 0.5, delta=0.03)
+
+    def test_arrival_times_are_random_variables_that_simulate(self):
+        # The time of the second jump out of state 0 is the sum of two
+        # independent Exponential(1) waits (0 -> 1 -> 0), so it has mean
+        # 1 + 1 / 2 = 1.5 given Q2's rates of 1 and 2.
+        seed()
+        chain = ContinuousTimeMarkovChain(Q2, [1.0, 0.0])
+        second_jump = chain.apply(arrival_times)[1].sim(Nsim)
+        self.assertAlmostEqual(second_jump.mean(), 1.5, delta=0.06)
 
 
 class TestBirthDeathProcess(unittest.TestCase):
@@ -453,6 +540,80 @@ class TestBirthDeathProcess(unittest.TestCase):
         seed(7)
         second = [X.draw()(t) for t in [0.5, 1.0, 2.0]]
         self.assertEqual(first, second)
+
+
+class TestBirthDeathProcessArrivals(unittest.TestCase):
+    """A birth-death path read event by event, inherited from the CTMC."""
+
+    def test_helpers_accept_a_path(self):
+        seed()
+        path = BirthDeathProcess(birth_rates=1, death_rates=1.5, num_states=20).draw()
+        self.assertIsInstance(states(path), InfiniteVector)
+        self.assertIsInstance(interarrival_times(path), InfiniteVector)
+        self.assertIsInstance(arrival_times(path), InfiniteVector)
+
+    def test_states_are_counts_and_start_at_initial(self):
+        seed()
+        X = BirthDeathProcess(birth_rates=1, death_rates=2, num_states=10, initial=3)
+        path = X.draw()
+        self.assertEqual(states(path)[0], 3)
+        self.assertEqual(states(path)[0], path(0))
+
+    def test_states_step_by_one(self):
+        # Only a birth or a death can happen, so consecutive counts differ by 1.
+        seed()
+        path = BirthDeathProcess(
+            birth_rates=2, death_rates=2, num_states=30, initial=10
+        ).draw()
+        visited = [states(path)[n] for n in range(15)]
+        for earlier, later in zip(visited, visited[1:]):
+            self.assertEqual(abs(later - earlier), 1)
+
+    def test_states_honor_custom_labels(self):
+        # Regression: with custom state_labels the states used to come back
+        # as bare indices instead of the labels the path itself returns.
+        seed()
+        labels = ["empty", "low", "medium", "high"]
+        path = BirthDeathProcess(
+            birth_rates=1, death_rates=1.5, num_states=4, state_labels=labels
+        ).draw()
+        self.assertEqual(states(path)[0], "empty")
+        for n in range(6):
+            self.assertIn(states(path)[n], labels)
+
+    def test_holding_time_uses_the_combined_birth_and_death_rate(self):
+        # From count 4 (interior), a birth at rate 2 or a death at rate 3 ends
+        # the stay, so the wait is Exponential(5): mean 1 / 5.
+        seed()
+        X = BirthDeathProcess(birth_rates=2, death_rates=3, num_states=20, initial=4)
+        wait = X.apply(interarrival_times)[0].sim(Nsim)
+        self.assertAlmostEqual(wait.mean(), 1 / 5, delta=0.01)
+
+    def test_empty_queue_waits_only_for_an_arrival(self):
+        # At count 0 nothing can die, so the wait is Exponential(birth rate)
+        # alone: mean 1 / 2 for an arrival rate of 2.
+        seed()
+        X = BirthDeathProcess(birth_rates=2, death_rates=3, num_states=20, initial=0)
+        wait = X.apply(interarrival_times)[0].sim(Nsim)
+        self.assertAlmostEqual(wait.mean(), 0.5, delta=0.02)
+
+    def test_arrival_times_are_the_running_total_of_interarrivals(self):
+        seed()
+        path = BirthDeathProcess(
+            birth_rates=1, death_rates=1.5, num_states=20, initial=5
+        ).draw()
+        waits = interarrival_times(path)
+        jumps = arrival_times(path)
+        for n in range(5):
+            self.assertAlmostEqual(jumps[n], sum(waits[i] for i in range(n + 1)))
+
+    def test_mm1_queue_inherits_the_accessors(self):
+        # The M/M/... wrappers are birth-death processes, so they get this too.
+        seed()
+        path = MM1(arrival_rate=1, service_rate=2, num_states=30).draw()
+        self.assertEqual(states(path)[0], 0)
+        self.assertGreater(interarrival_times(path)[0], 0)
+        self.assertGreater(arrival_times(path)[1], arrival_times(path)[0])
 
 
 class TestMMQueues(unittest.TestCase):
@@ -595,6 +756,33 @@ class TestYuleProcess(unittest.TestCase):
         path = YuleProcess(birth_rate=0.5).draw()
         for k in range(5):
             self.assertGreater(path.interarrival_times[k], 0)
+
+    def test_states_climb_one_at_a_time_from_initial(self):
+        # Regression: a Yule path had interarrival and arrival times but no
+        # states, so states() raised instead of returning the populations.
+        seed()
+        path = YuleProcess(birth_rate=0.5, initial=2).draw()
+        self.assertEqual([states(path)[k] for k in range(5)], [2, 3, 4, 5, 6])
+        self.assertEqual(states(path)[0], path(0))
+
+    def test_waits_shrink_as_the_population_grows(self):
+        # With n individuals the next birth arrives at rate n * birth_rate, so
+        # the wait from population 1 averages 1 / 0.5 = 2 and the next one,
+        # from population 2, averages 1 / 1.0 = 1.
+        seed()
+        X = YuleProcess(birth_rate=0.5)
+        first = X.apply(interarrival_times)[0].sim(Nsim)
+        second = X.apply(interarrival_times)[1].sim(Nsim)
+        self.assertAlmostEqual(first.mean(), 2.0, delta=0.1)
+        self.assertAlmostEqual(second.mean(), 1.0, delta=0.05)
+
+    def test_arrival_times_are_the_running_total_of_interarrivals(self):
+        seed()
+        path = YuleProcess(birth_rate=0.5).draw()
+        waits = interarrival_times(path)
+        jumps = arrival_times(path)
+        for k in range(5):
+            self.assertAlmostEqual(jumps[k], sum(waits[i] for i in range(k + 1)))
 
     def test_error_nonpositive_birth_rate(self):
         self.assertRaises(Exception, lambda: YuleProcess(birth_rate=0))

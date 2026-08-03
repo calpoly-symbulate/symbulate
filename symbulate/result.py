@@ -1618,10 +1618,16 @@ class DiscreteValued:
         Examples
         --------
         >>> from symbulate import *
-        >>> X = MarkovChain(tpm=[[0.5, 0.5], [0.3, 0.7]], initial_dist=[1, 0])
-        >>> sim = X.sim(1)  # doctest: +SKIP
-        >>> sim[0].get_states()  # doctest: +SKIP
-        (0, 1, 0, ...)
+        >>> X = MarkovChain([[0.5, 0.5], [0.3, 0.7]], [1, 0])
+        >>> X.draw().get_states()  # doctest: +SKIP
+        (0, 1, 1, 0, 1, 0, ...)
+
+        The ``states`` function is the usual way to reach this, and it works
+        the same way on a continuous-time path.
+
+        >>> Y = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0])
+        >>> states(Y.draw())  # doctest: +SKIP
+        (0, 1, 0, 1, 0, 1, ...)
         """
         if not hasattr(self, "states"):
             raise AttributeError("States not defined for this function.")
@@ -1649,11 +1655,17 @@ class DiscreteValued:
         Examples
         --------
         >>> from symbulate import *
-        >>> T = Exponential(1)
-        >>> N = PoissonProcess(T)  # doctest: +SKIP
-        >>> sim = N.sim(1)  # doctest: +SKIP
-        >>> sim[0].get_interarrival_times()  # doctest: +SKIP
-        (0.23, 1.05, ...)
+        >>> N = PoissonProcess(rate=1)
+        >>> N.draw().get_interarrival_times()  # doctest: +SKIP
+        (0.23, 1.05, 0.47, ...)
+
+        The ``interarrival_times`` function is the usual way to reach this. On
+        a continuous-time Markov chain path it gives the time spent in each
+        state visited.
+
+        >>> X = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0])
+        >>> interarrival_times(X.draw())  # doctest: +SKIP
+        (0.51, 1.47, 0.30, ...)
         """
         if not hasattr(self, "interarrival_times"):
             raise AttributeError("Interarrival times not defined for this function.")
@@ -1684,11 +1696,16 @@ class DiscreteValued:
         Examples
         --------
         >>> from symbulate import *
-        >>> T = Exponential(1)
-        >>> N = PoissonProcess(T)  # doctest: +SKIP
-        >>> sim = N.sim(1)  # doctest: +SKIP
-        >>> sim[0].get_arrival_times()  # doctest: +SKIP
-        (0.23, 1.28, ...)
+        >>> N = PoissonProcess(rate=1)
+        >>> N.draw().get_arrival_times()  # doctest: +SKIP
+        (0.23, 1.28, 1.75, ...)
+
+        The ``arrival_times`` function is the usual way to reach this. On a
+        continuous-time Markov chain path it gives the time of each jump.
+
+        >>> X = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0])
+        >>> arrival_times(X.draw())  # doctest: +SKIP
+        (0.51, 1.97, 2.27, ...)
         """
         if not hasattr(self, "interarrival_times"):
             raise AttributeError("Interarrival times not defined for this function.")
