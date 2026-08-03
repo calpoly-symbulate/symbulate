@@ -52,6 +52,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `markov_chains.py` | Markov chain probability spaces |
 | `gaussian_process.py` | `GaussianProcess`, `BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`, `FractionalBrownianMotion` |
 | `poisson_process.py` | Poisson process |
+| `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
@@ -318,6 +319,7 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_markov_chains.py` | Markov chains |
 | `test_gaussian_process.py` | Gaussian processes (incl. Ornstein-Uhlenbeck, Brownian bridge, fractional Brownian motion) |
 | `test_poisson_process.py` | Poisson process |
+| `test_random_walk.py` | `RandomWalk` |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
