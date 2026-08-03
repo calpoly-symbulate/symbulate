@@ -118,6 +118,7 @@ from .random_walk import (
     RandomWalkProbabilitySpace,
     RandomWalkResult,
 )
+from .renewal_process import RenewalProcess, RenewalProcessProbabilitySpace
 from .diffusion_process import (
     DiffusionProcess,
     DiffusionProcessProbabilitySpace,
