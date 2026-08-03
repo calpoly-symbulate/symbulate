@@ -130,6 +130,9 @@ from .queues import (
     GG1Result,
     MG1,
     GM1,
+    GGs,
+    GGsProbabilitySpace,
+    GGsResult,
 )
 from .diffusion_process import (
     DiffusionProcess,

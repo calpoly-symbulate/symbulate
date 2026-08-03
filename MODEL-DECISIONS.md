@@ -294,6 +294,81 @@ Pollaczek-Khinchine check exact.
 
 ---
 
+## Decision: G/G/s — Multi-Server Queues
+
+**Status:** Implemented — `GGs`, `GGsProbabilitySpace`, and `GGsResult` in
+`symbulate/queues.py`, tested in `symbulate/tests/test_queues.py`, demo in
+`team/models-and-sim-design/ggs_queue_demo.ipynb`, exported from
+`symbulate/__init__.py`. Closes the roadmap's "G/G/s (multi-server
+general-service queue)" row.
+
+**Decision**
+> Simulate by tracking **when each server next comes free**, not by
+> generalizing Lindley's leftover arithmetic. Customer `n` arrives at `A[n]`,
+> takes the server that frees up soonest, and waits
+> `max(earliest free time - A[n], 0)`; that server is then busy until
+> `A[n] + W[n] + S[n]`. The free times live in a `heapq`, so the earliest is
+> always at position 0 — the only one the recursion asks about. This is the
+> Kiefer–Wolfowitz vector recursion in the form that is cheapest to read.
+>
+> `GG1` is **not** reimplemented as `GGs(servers=1)`, and `GGs` does not
+> subclass `GG1`. Instead both subclass a new private `_QueueResult`, which
+> owns the two input sequences, the lazily-extended `waits` list, and the
+> derived `arrival_times` / `sojourn_times` / `departure_times`; each concrete
+> class supplies only `_wait_at(n)`. `GGs(servers=1)` is verified to reproduce
+> `GG1`'s waits value-for-value on identical inputs.
+>
+> `servers` is a required argument (no default), validated as an integer `>= 1`
+> by `_validate_servers`. `utilization` becomes
+> `mean service / (servers * mean interarrival)`.
+>
+> No `MGs` / `GMs` classes — pass an `Exponential` on the Markovian side, the
+> way `GG1(Exponential(...), ...)` already serves as `M/G/1`.
+
+**Rationale**
+> The roadmap called this "harder... needs order statistics over `s` servers'
+> completion times," and it is harder *as a generalization of the leftover
+> form* of Lindley's recursion. Reframed in clock time it is barely harder at
+> all: the state is the multiset of free times, and only its minimum matters,
+> which a heap gives in `O(log s)`. Choosing the *earliest* free server rather
+> than an arbitrary idle one is without loss of generality — later arrivals
+> come no earlier, so whichever idle server is picked, the remaining free times
+> stay below the next arrival and no future wait changes.
+>
+> `MMs` in `markov_chains.py` already covers the exponential case as a queue
+> *length*; this covers the general case as a *wait*, and the two are worth
+> comparing in a course. Keeping `GG1` untouched preserves the pedagogically
+> central Lindley formula as its own readable recursion, and follows the same
+> reasoning as leaving `PoissonProcess` alone rather than folding it into
+> `RenewalProcess`.
+
+**Alternatives Considered**
+> *`GGsResult(GG1Result)`, overriding the recursion* — rejected: a multi-server
+> queue is not a kind of single-server queue, and the inheritance would assert
+> otherwise for the sake of code reuse. The shared private base says what is
+> actually shared. *Folding `GG1` into `GGs` with `servers=1`* — rejected;
+> it would churn tested code and demote Lindley's recursion to a special case
+> of a general routine, when it is the thing a course teaches first. *Per-server
+> `service_dist` (heterogeneous servers)* — deferred; every server serving from
+> one distribution is the standard `G/G/s`, and heterogeneous servers need a
+> different assignment rule (fastest free? first free?) that should be decided
+> deliberately rather than implied by an argument shape.
+
+**Verified against exact theory:** the Erlang C formula for `M/M/2` and
+`M/M/3` (mean wait and `P(wait > 0)`, at `rho` of 0.5, 0.667, and 0.75), plus
+the classic equal-utilization comparison — two servers of rate `mu` keep the
+*line* shorter than one server of rate `2mu` (1/3 vs 1/2) while making the
+*visit* longer (4/3 vs 1), which is exactly the tradeoff a course asks
+students to find.
+
+**Known consequence, documented not fixed:** with `s > 1`,
+`departure_times` is no longer increasing, since a short service can overtake
+a long one on the next server. The single-server test asserting monotone
+departures is therefore scoped to `GG1`, and `GGsResult` has a test asserting
+the overtaking *does* happen.
+
+---
+
 ## Decision: Non-Homogeneous Poisson Process — Time-Change, Not Thinning
 
 **Status:** Implemented — `NonHomogeneousPoissonProcess`,
