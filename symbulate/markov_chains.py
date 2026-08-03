@@ -3,10 +3,17 @@ import numbers
 import numpy as np
 
 from .distributions import Exponential
+from .index_sets import TimeInterval
 from .math import inf
 from .probability_space import ProbabilitySpace
 from .random_variables import RV
-from .result import InfiniteVector, ContinuousTimeFunction, DiscreteValued, Vector
+from .result import (
+    InfiniteVector,
+    ContinuousTimeFunction,
+    DiscreteValued,
+    Vector,
+    _BoundedTimeFunction,
+)
 
 EPS = 1e-15
 rng = np.random.default_rng()
@@ -1352,9 +1359,16 @@ class _EpidemicResult(ContinuousTimeFunction):
         super().__init__(self._state_at)
 
         # Expose each compartment as its own scalar function of time, so the
-        # epidemic curves can be plotted one compartment at a time.
+        # epidemic curves can be plotted one compartment at a time. Give each a
+        # bounded domain that ends when the epidemic does, so plotting a curve
+        # defaults its time axis to the length of the outbreak rather than the
+        # generic 0 to 10.
+        end = self.event_times[-1]
         for i, label in enumerate(self.compartments):
-            setattr(self, label, ContinuousTimeFunction(lambda t, i=i: self(t)[i]))
+            curve = _BoundedTimeFunction(lambda t, i=i: self(t)[i])
+            if end > 0:
+                curve.index_set = TimeInterval(0, end)
+            setattr(self, label, curve)
 
     def _state_at(self, t):
         """Return the compartment counts at time ``t`` as a Vector."""
