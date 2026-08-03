@@ -36,14 +36,19 @@ Note on base.py fix applied alongside these tests:
   accept the positional `op(self.array)` call inside RVResults._statistic_factory.
   Fixed to `lambda a, axis=None: np.quantile(a, q=q, axis=axis)`.
 """
+
 import math
 import unittest
 import numpy as np
 import scipy.stats as stats
 
 from symbulate import (
-    RV, Normal, Exponential, BivariateNormal,
-    BoxModel, ProbabilitySpace,
+    RV,
+    Normal,
+    Exponential,
+    BivariateNormal,
+    BoxModel,
+    ProbabilitySpace,
 )
 from symbulate import distributions
 from symbulate.probability_space import Event
@@ -55,6 +60,7 @@ Nsim = 10000
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def degenerate(value):
     """Return an RV that always draws *value* (single-element BoxModel)."""
     return RV(BoxModel([value]))
@@ -64,11 +70,12 @@ def degenerate(value):
 # Arithmetic mixin
 # ===========================================================================
 
+
 class TestArithmetic(unittest.TestCase):
     """Arithmetic mixin — all 13 operators via degenerate RV(BoxModel([5]))."""
 
     def setUp(self):
-        self.X = degenerate(5)   # always draws 5
+        self.X = degenerate(5)  # always draws 5
 
     # --- RV + scalar / scalar + RV ---
 
@@ -110,18 +117,18 @@ class TestArithmetic(unittest.TestCase):
     # --- RV ** scalar / scalar ** RV ---
 
     def test_pow_scalar(self):
-        self.assertEqual((self.X ** 2).draw(), 25)
+        self.assertEqual((self.X**2).draw(), 25)
 
     def test_rpow_scalar(self):
-        self.assertEqual((2 ** self.X).draw(), 32)
+        self.assertEqual((2**self.X).draw(), 32)
 
     # --- ^ is an alias for ** ---
 
     def test_xor_same_result_as_pow(self):
-        self.assertEqual((self.X ^ 2).draw(), (self.X ** 2).draw())
+        self.assertEqual((self.X ^ 2).draw(), (self.X**2).draw())
 
     def test_rxor_same_result_as_rpow(self):
-        self.assertEqual((2 ^ self.X).draw(), (2 ** self.X).draw())
+        self.assertEqual((2 ^ self.X).draw(), (2**self.X).draw())
 
     # --- RV + RV on the same probability space ---
 
@@ -136,6 +143,7 @@ class TestArithmetic(unittest.TestCase):
 # Comparable mixin
 # ===========================================================================
 
+
 class TestComparable(unittest.TestCase):
     """Comparable mixin — all 6 comparisons via RV.draw() on degenerate RV(BoxModel([5])).
 
@@ -144,7 +152,7 @@ class TestComparable(unittest.TestCase):
     """
 
     def setUp(self):
-        self.X = degenerate(5)   # always draws 5
+        self.X = degenerate(5)  # always draws 5
 
     def test_eq_true(self):
         self.assertTrue((self.X == 5).draw())
@@ -186,6 +194,7 @@ class TestComparable(unittest.TestCase):
 # ===========================================================================
 # Statistical mixin
 # ===========================================================================
+
 
 class TestStatistical(unittest.TestCase):
     """Statistical mixin — all 18 methods via RVResults from RV(Normal(0,1)).sim()."""
@@ -251,9 +260,7 @@ class TestStatistical(unittest.TestCase):
         self.assertAlmostEqual(float(self.sims.skew()), 0.0, delta=0.1)
 
     def test_skewness_alias_equals_skew(self):
-        self.assertAlmostEqual(
-            float(self.sims.skewness()), float(self.sims.skew())
-        )
+        self.assertAlmostEqual(float(self.sims.skewness()), float(self.sims.skew()))
 
     def test_kurtosis_normal_near_zero(self):
         # scipy.stats.kurtosis uses excess kurtosis; Normal ≈ 0
@@ -273,7 +280,7 @@ class TestStatistical(unittest.TestCase):
     def test_min_max_diff_equals_max_minus_min(self):
         self.assertAlmostEqual(
             float(self.sims.min_max_diff()),
-            float(self.sims.max()) - float(self.sims.min())
+            float(self.sims.max()) - float(self.sims.min()),
         )
 
     # --- cov, corr, corrcoef alias ---
@@ -312,6 +319,7 @@ class TestStatistical(unittest.TestCase):
 # ===========================================================================
 # Logical mixin
 # ===========================================================================
+
 
 class TestLogical(unittest.TestCase):
     """Logical mixin — &, |, ~ via Event and via boolean Results.
@@ -403,9 +411,7 @@ class TestLogical(unittest.TestCase):
         sims = RV(Normal(0, 1)).sim(Nsim)
         high = sims > 0.5
         not_high = ~high
-        self.assertEqual(
-            high.count(lambda x: x) + not_high.count(lambda x: x), Nsim
-        )
+        self.assertEqual(high.count(lambda x: x) + not_high.count(lambda x: x), Nsim)
 
     def test_results_and_non_boolean_raises_value_error(self):
         """Logical ops on non-boolean Results raise ValueError."""
@@ -425,6 +431,7 @@ class TestLogical(unittest.TestCase):
 # ===========================================================================
 # Filterable mixin
 # ===========================================================================
+
 
 class TestFilterable(unittest.TestCase):
     """Filterable mixin — all filter_* and count_* methods via RVResults.
@@ -448,21 +455,15 @@ class TestFilterable(unittest.TestCase):
 
     def test_count_lt_plus_count_geq_equals_N(self):
         v = self.threshold
-        self.assertEqual(
-            self.sims.count_lt(v) + self.sims.count_geq(v), self.N
-        )
+        self.assertEqual(self.sims.count_lt(v) + self.sims.count_geq(v), self.N)
 
     def test_count_leq_plus_count_gt_equals_N(self):
         v = self.threshold
-        self.assertEqual(
-            self.sims.count_leq(v) + self.sims.count_gt(v), self.N
-        )
+        self.assertEqual(self.sims.count_leq(v) + self.sims.count_gt(v), self.N)
 
     def test_count_eq_plus_count_neq_equals_N(self):
         v = self.threshold
-        self.assertEqual(
-            self.sims.count_eq(v) + self.sims.count_neq(v), self.N
-        )
+        self.assertEqual(self.sims.count_eq(v) + self.sims.count_neq(v), self.N)
 
     def test_count_no_arg_equals_N(self):
         """count() with no argument counts every outcome."""
@@ -472,7 +473,7 @@ class TestFilterable(unittest.TestCase):
         """count(lambda x: x > 0) == count_gt(0)."""
         self.assertEqual(
             self.sims.count(lambda x: x > self.threshold),
-            self.sims.count_gt(self.threshold)
+            self.sims.count_gt(self.threshold),
         )
 
     # --- content validity of filter results ---
@@ -544,6 +545,7 @@ class TestFilterable(unittest.TestCase):
 # Multivariate filter / count
 # ===========================================================================
 
+
 class TestMultivariateFilterCount(unittest.TestCase):
     """Multivariate count() and filter() via joint RV distributions.
 
@@ -569,9 +571,7 @@ class TestMultivariateFilterCount(unittest.TestCase):
             lambda x: x > tx,
             lambda y: y > ty,
         )
-        combined = self.sims.count(
-            lambda v: v[0] > tx and v[1] > ty
-        )
+        combined = self.sims.count(lambda v: v[0] > tx and v[1] > ty)
         self.assertEqual(per_component, combined)
 
     def test_count_callable_mode_none_skips_component(self):
@@ -586,7 +586,7 @@ class TestMultivariateFilterCount(unittest.TestCase):
     def test_count_op_tuple_mode_matches_callable_mode(self):
         """count(('>', t), ('>', u)) == count(lambda x: x>t, lambda y: y>u)."""
         tx, ty = 0.0, 0.5
-        via_tuples = self.sims.count(('>', tx), ('>', ty))
+        via_tuples = self.sims.count((">", tx), (">", ty))
         via_callables = self.sims.count(
             lambda x: x > tx,
             lambda y: y > ty,
@@ -597,10 +597,10 @@ class TestMultivariateFilterCount(unittest.TestCase):
         """Each operator string produces a result consistent with a direct lambda."""
         tx = 0.5
         for op_str, func in [
-            ('<',  lambda x, t=tx: x < t),
-            ('<=', lambda x, t=tx: x <= t),
-            ('>',  lambda x, t=tx: x > t),
-            ('>=', lambda x, t=tx: x >= t),
+            ("<", lambda x, t=tx: x < t),
+            ("<=", lambda x, t=tx: x <= t),
+            (">", lambda x, t=tx: x > t),
+            (">=", lambda x, t=tx: x >= t),
         ]:
             with self.subTest(op=op_str):
                 via_tuple = self.sims.count((op_str, tx), None)
@@ -610,14 +610,14 @@ class TestMultivariateFilterCount(unittest.TestCase):
     def test_count_op_tuple_none_skips_component(self):
         """count(None, ('>', v)) applies condition only to component 1."""
         ty = 0.5
-        via_none = self.sims.count(None, ('>', ty))
+        via_none = self.sims.count(None, (">", ty))
         direct = self.sims.count(lambda v: v[1] > ty)
         self.assertEqual(via_none, direct)
 
     def test_count_op_tuple_invalid_operator_raises_value_error(self):
         """An unrecognised operator string raises ValueError."""
         with self.assertRaises(ValueError):
-            self.sims.count(('??', 0), ('>', 0.3))
+            self.sims.count(("??", 0), (">", 0.3))
 
     # --- filter consistency ---
 
@@ -629,13 +629,13 @@ class TestMultivariateFilterCount(unittest.TestCase):
             self.sims.count(lambda x: x > tx, lambda y: y > ty),
         )
         self.assertEqual(
-            len(self.sims.filter(('>', tx), ('>', ty))),
-            self.sims.count(('>', tx), ('>', ty)),
+            len(self.sims.filter((">", tx), (">", ty))),
+            self.sims.count((">", tx), (">", ty)),
         )
 
     def test_filter_mv_content_validity(self):
         """Every outcome returned by filter(('>', 0), ('>', 0.5)) satisfies both conditions."""
-        filtered = self.sims.filter(('>', 0.0), ('>', 0.5))
+        filtered = self.sims.filter((">", 0.0), (">", 0.5))
         self.assertTrue(all(v[0] > 0.0 and v[1] > 0.5 for v in filtered))
 
     # --- type-error guard ---
@@ -643,12 +643,13 @@ class TestMultivariateFilterCount(unittest.TestCase):
     def test_count_mixed_callable_and_tuple_raises_type_error(self):
         """Mixing callables and op-tuples in a single count() call raises TypeError."""
         with self.assertRaises(TypeError):
-            self.sims.count(lambda x: x > 0, ('>', 3))
+            self.sims.count(lambda x: x > 0, (">", 3))
 
 
 # ===========================================================================
 # Transformable mixin
 # ===========================================================================
+
 
 class TestTransformable(unittest.TestCase):
     """Transformable mixin — abs, round, floor, ceil via degenerate RV.draw()."""

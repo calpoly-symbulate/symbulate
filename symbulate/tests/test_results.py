@@ -339,9 +339,9 @@ class TestResultsTabulate(unittest.TestCase):
         self.assertTrue(all(isinstance(key, str) for key in table.keys()))
 
     def test_tabulate_bin_normalize_sums_to_one(self):
-        table = make_results(
-            [float(i) for i in range(1, 101)]
-        ).tabulate(bin=True, normalize=True)
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(
+            bin=True, normalize=True
+        )
         self.assertAlmostEqual(sum(table.values()), 1.0)
 
     def test_tabulate_bin_equal_counts_for_uniform_data(self):
@@ -362,25 +362,35 @@ class TestResultsTabulate(unittest.TestCase):
         self.assertTrue(all(label.endswith(")") for label in labels[:-1]))
 
     def test_tabulate_nbins_creates_correct_number_of_bins(self):
-        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5)
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(
+            bin=True, nbins=5
+        )
         self.assertEqual(len(table), 5)
 
     def test_tabulate_nbins_total_equals_n(self):
-        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5)
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(
+            bin=True, nbins=5
+        )
         self.assertEqual(sum(table.values()), 100)
 
     def test_tabulate_binwidth_creates_correct_number_of_bins(self):
         # range is 1..100 = 99, binwidth=10 → ceil(99/10) = 10 bins
-        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, binwidth=10)
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(
+            bin=True, binwidth=10
+        )
         self.assertEqual(len(table), 10)
 
     def test_tabulate_binwidth_total_equals_n(self):
-        table = make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, binwidth=10)
+        table = make_results([float(i) for i in range(1, 101)]).tabulate(
+            bin=True, binwidth=10
+        )
         self.assertEqual(sum(table.values()), 100)
 
     def test_tabulate_nbins_and_binwidth_raises(self):
         with self.assertRaises(ValueError):
-            make_results([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5, binwidth=10)
+            make_results([float(i) for i in range(1, 101)]).tabulate(
+                bin=True, nbins=5, binwidth=10
+            )
 
     def test_tabulate_nbins_without_bin_warns(self):
         with self.assertWarns(UserWarning):
@@ -726,9 +736,9 @@ class TestRVResultsTabulate(unittest.TestCase):
         self.assertEqual(table.outcome_column, "Bin")
 
     def test_tabulate_bin_normalize_sums_to_one(self):
-        table = RVResults(
-            [float(i) for i in range(1, 101)]
-        ).tabulate(bin=True, normalize=True)
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(
+            bin=True, normalize=True
+        )
         self.assertAlmostEqual(sum(table.values()), 1.0)
 
     def test_tabulate_bin_equal_counts_for_uniform_data(self):
@@ -765,16 +775,22 @@ class TestRVResultsTabulate(unittest.TestCase):
 
     def test_tabulate_binwidth_creates_correct_number_of_bins(self):
         # range is 1..100 = 99, binwidth=10 → ceil(99/10) = 10 bins
-        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True, binwidth=10)
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(
+            bin=True, binwidth=10
+        )
         self.assertEqual(len(table), 10)
 
     def test_tabulate_binwidth_total_equals_n(self):
-        table = RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True, binwidth=10)
+        table = RVResults([float(i) for i in range(1, 101)]).tabulate(
+            bin=True, binwidth=10
+        )
         self.assertEqual(sum(table.values()), 100)
 
     def test_tabulate_nbins_and_binwidth_raises(self):
         with self.assertRaises(ValueError):
-            RVResults([float(i) for i in range(1, 101)]).tabulate(bin=True, nbins=5, binwidth=10)
+            RVResults([float(i) for i in range(1, 101)]).tabulate(
+                bin=True, nbins=5, binwidth=10
+            )
 
     def test_tabulate_nbins_without_bin_warns(self):
         with self.assertWarns(UserWarning):

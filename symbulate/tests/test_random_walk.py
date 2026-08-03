@@ -36,10 +36,10 @@ class TestRandomWalkResult(unittest.TestCase):
         seed()
         self.assertIsInstance(RandomWalk(p=0.5).draw(), InfiniteVector)
 
-    def test_starts_at_initial_value(self):
+    def test_starts_at_initial(self):
         seed()
         self.assertEqual(float(RandomWalk(p=0.5).draw()[0]), 0.0)
-        self.assertEqual(float(RandomWalk(p=0.5, initial_value=7).draw()[0]), 7.0)
+        self.assertEqual(float(RandomWalk(p=0.5, initial=7).draw()[0]), 7.0)
 
     def test_simple_walk_steps_are_plus_or_minus_one(self):
         seed()
@@ -74,7 +74,7 @@ class TestRandomWalkResult(unittest.TestCase):
     def test_position_is_initial_plus_cumulative_steps(self):
         # The defining property: X[n] is the running total of the steps.
         seed()
-        path = RandomWalk(p=0.5, initial_value=3).draw()
+        path = RandomWalk(p=0.5, initial=3).draw()
         steps = path.get_steps()
         for n in range(1, 25):
             expected = 3 + sum(float(steps[i]) for i in range(n))
@@ -90,16 +90,16 @@ class TestRandomWalkResult(unittest.TestCase):
         # The result object accumulates whatever steps it is handed, with no
         # assumption about where they came from.
         steps = InfiniteVector(lambda n: 2)
-        path = RandomWalkResult(steps, initial_value=1)
+        path = RandomWalkResult(steps, initial=1)
         self.assertEqual([float(path[n]) for n in range(4)], [1.0, 3.0, 5.0, 7.0])
 
 
 class TestRandomWalkProbabilitySpace(unittest.TestCase):
 
     def test_stores_parameters(self):
-        space = RandomWalkProbabilitySpace(p=0.3, initial_value=2)
+        space = RandomWalkProbabilitySpace(p=0.3, initial=2)
         self.assertEqual(space.p, 0.3)
-        self.assertEqual(space.initial_value, 2)
+        self.assertEqual(space.initial, 2)
 
     def test_p_builds_a_step_random_variable(self):
         # p is shorthand: the space turns it into a +/-1 random variable.
@@ -128,9 +128,9 @@ class TestRandomWalk(unittest.TestCase):
         self.assertIsInstance(RandomWalk(p=0.5)[3], RV)
 
     def test_stores_parameters(self):
-        X = RandomWalk(p=0.4, initial_value=5)
+        X = RandomWalk(p=0.4, initial=5)
         self.assertEqual(X.p, 0.4)
-        self.assertEqual(X.initial_value, 5)
+        self.assertEqual(X.initial, 5)
         self.assertIsNone(RandomWalk(step_dist=Normal(0, 1)).p)
 
     def test_reproducible_under_same_seed(self):
@@ -164,6 +164,40 @@ class TestRandomWalk(unittest.TestCase):
             self.assertEqual(abs(float(path[n + 1]) - float(path[n])), 1.0)
 
 
+class TestRandomWalkInitialNaming(unittest.TestCase):
+    """`initial` is the name; `initial_value` still works.
+
+    Every process in the package is standardising on `initial` for its
+    starting condition (MODEL-DECISIONS.md). The older spelling is kept as
+    an accepted alias so existing code and notebooks do not break.
+    """
+
+    def test_initial_value_alias_still_accepted(self):
+        seed()
+        self.assertEqual(float(RandomWalk(p=0.5, initial_value=7).draw()[0]), 7.0)
+
+    def test_both_names_agree(self):
+        self.assertEqual(
+            RandomWalk(p=0.5, initial=4).initial,
+            RandomWalk(p=0.5, initial_value=4).initial,
+        )
+
+    def test_initial_value_attribute_still_readable(self):
+        X = RandomWalk(p=0.5, initial=6)
+        self.assertEqual(X.initial_value, 6)
+        self.assertEqual(X.prob_space.initial_value, 6)
+
+    def test_defaults_to_zero_when_neither_given(self):
+        self.assertEqual(RandomWalk(p=0.5).initial, 0)
+
+    def test_giving_both_names_raises_value_error(self):
+        self.assertRaisesRegex(
+            ValueError,
+            "not both",
+            lambda: RandomWalk(p=0.5, initial=1, initial_value=2),
+        )
+
+
 class TestRandomWalkTheory(unittest.TestCase):
     """The two facts the random walk is normally introduced to demonstrate."""
 
@@ -187,9 +221,9 @@ class TestRandomWalkTheory(unittest.TestCase):
         values = RandomWalk(p=p)[n].sim(Nsim)
         self.assertAlmostEqual(float(values.mean()), n * (2 * p - 1), delta=0.4)
 
-    def test_initial_value_shifts_the_mean(self):
+    def test_initial_shifts_the_mean(self):
         seed()
-        values = RandomWalk(p=0.5, initial_value=10)[16].sim(Nsim)
+        values = RandomWalk(p=0.5, initial=10)[16].sim(Nsim)
         self.assertAlmostEqual(float(values.mean()), 10.0, delta=0.4)
 
     def test_normal_steps_give_variance_n(self):
@@ -209,7 +243,7 @@ class TestRandomWalkTheory(unittest.TestCase):
                 n += 1
             return 1 if path[n] >= high else 0
 
-        wins = RandomWalk(p=0.5, initial_value=10).apply(reached_top).sim(2000)
+        wins = RandomWalk(p=0.5, initial=10).apply(reached_top).sim(2000)
         self.assertAlmostEqual(float(wins.mean()), 0.5, delta=0.05)
 
 
@@ -244,11 +278,11 @@ class TestRandomWalkErrors(unittest.TestCase):
                 TypeError, "step_dist must be", lambda v=bad: RandomWalk(step_dist=v)
             )
 
-    def test_non_numeric_initial_value_raises_type_error(self):
+    def test_non_numeric_initial_raises_type_error(self):
         self.assertRaisesRegex(
             TypeError,
-            "initial_value must be a number",
-            lambda: RandomWalk(p=0.5, initial_value="x"),
+            "initial must be a number",
+            lambda: RandomWalk(p=0.5, initial="x"),
         )
 
 

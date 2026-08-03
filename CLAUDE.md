@@ -55,6 +55,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution |
 | `queues.py` | `GG1`, `MG1`, `GM1`, `GGs` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
+| `time_series.py` | `MA` — moving-average process; home for the AR/ARMA/GARCH family as it lands |
 | `hitting_times.py` | `hitting_time` — when a path first reaches a level; Gaussian-process family only so far (see "Hitting Times" below) |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
@@ -380,6 +381,7 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_renewal_process.py` | Renewal process |
 | `test_queues.py` | `GG1`, `MG1`, `GM1`, `GGs` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
+| `test_time_series.py` | `MA` (and the rest of the time-series family as it lands) |
 | `test_hitting_times.py` | `hitting_time` |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_random_processes.py` | Random processes |

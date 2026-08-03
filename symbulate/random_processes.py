@@ -157,3 +157,58 @@ class RandomProcess(RV):
         Results([0, 1, 0, 1, 1])
         """
         return RV(self.prob_space, lambda outcome: self.func(outcome)(t))
+
+
+def _resolve_initial(initial, older, older_name, default=0):
+    """Settle a process's starting condition from its current and older name.
+
+    Every process in the package names its starting condition ``initial``.
+    Several of them used to spell it something else -- ``initial_value``,
+    ``x0``, ``initial_dist`` -- and those spellings are still accepted so
+    existing code and notebooks keep working. This picks whichever was
+    given. See ``MODEL-DECISIONS.md``, "One Name for a Process's Starting
+    Condition".
+
+    Parameters
+    ----------
+    initial : object or None
+        What was passed as ``initial``.
+    older : object or None
+        What was passed under the process's older name.
+    older_name : str
+        That older name, used in the error message.
+    default : object, optional
+        What to use when neither was given. Default is 0.
+
+    Returns
+    -------
+    object
+        The starting condition to use.
+
+    Raises
+    ------
+    ValueError
+        If both names were given, since they mean the same thing and there
+        is no sensible way to combine them.
+
+    Examples
+    --------
+    >>> _resolve_initial(5, None, "initial_value")
+    5
+    >>> _resolve_initial(None, 7, "initial_value")
+    7
+    >>> _resolve_initial(None, None, "initial_value")
+    0
+    """
+    if initial is not None and older is not None:
+        raise ValueError(
+            f"Specify either initial or {older_name}, not both. They mean "
+            f"the same thing -- where the process starts -- and initial is "
+            f"the name to prefer; {older_name} is kept only so older code "
+            f"keeps working."
+        )
+    if initial is not None:
+        return initial
+    if older is not None:
+        return older
+    return default
