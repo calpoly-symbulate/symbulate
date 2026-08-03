@@ -137,6 +137,8 @@ from .queues import (
 from .diffusion_process import (
     DiffusionProcess,
     DiffusionProcessProbabilitySpace,
+    CIR,
+    CIRProbabilitySpace,
 )
 from .markov_chains import (
     MarkovChain,

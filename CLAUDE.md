@@ -55,7 +55,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution |
 | `queues.py` | `GG1`, `MG1`, `GM1` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
-| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
+| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` — named special case, simulated exactly (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
 | `math.py` | Math utility functions |
@@ -245,9 +245,22 @@ Three things that are easy to get wrong:
   in the module's demo; `test_diffusion_process.py` has a regression test that
   fails if the module ever switches back to the global generator.
 - **A `sqrt` in `diffusion` needs a floor**, e.g.
-  `lambda x, t: sigma * np.sqrt(max(x, 0))` for CIR. A forward step can land
-  slightly below 0 even in a model that should stay positive, and one `nan`
-  poisons the rest of the path.
+  `lambda x, t: sigma * np.sqrt(max(x, 0))`. A forward step can land slightly
+  below 0 even in a model that should stay positive, and one `nan` poisons the
+  rest of the path.
+
+`CIR(reversion_rate, mean, scale, initial_value)` lives in the same module as a
+named special case, the way `BrownianMotion` sits inside `gaussian_process.py`
+next to the general `GaussianProcess`. It does **not** go through
+`DiffusionProcess`: CIR has a known transition law — its value at any later
+time is a scaled noncentral chi-square, the same distribution
+`ChiSquare(df, noncentrality=)` wraps — so each new time is drawn in one shot,
+**exactly**, with no step size to tune. Do not reimplement it as a
+`DiffusionProcess` parameterization; that would reintroduce Euler–Maruyama
+error the team decision explicitly removed. `test_cir.py` pins this by checking
+that one jump to a time matches fifty steps to it. The one approximate corner
+is asking for a time *between* two already-computed times, since a CIR path
+pinned at both ends has no simple formula.
 
 ## Queues
 
@@ -350,6 +363,7 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_queues.py` | `GG1`, `MG1`, `GM1` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
 | `test_diffusion_process.py` | Diffusion processes |
+| `test_cir.py` | The `CIR` process |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
 | `test_index_sets.py` | Index sets |
