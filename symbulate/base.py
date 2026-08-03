@@ -891,9 +891,9 @@ class Logical:
 _OP_STR_MAP = {
     "==": _operator.eq,
     "!=": _operator.ne,
-    "<":  _operator.lt,
+    "<": _operator.lt,
     "<=": _operator.le,
-    ">":  _operator.gt,
+    ">": _operator.gt,
     ">=": _operator.ge,
 }
 
@@ -951,8 +951,7 @@ def _build_mv_filter(args):
         return _callable_filter
 
     if all(
-        isinstance(a, tuple) and len(a) == 2 and isinstance(a[0], str)
-        for a in non_none
+        isinstance(a, tuple) and len(a) == 2 and isinstance(a[0], str) for a in non_none
     ):
         conditions = []
         for i, a in enumerate(args):

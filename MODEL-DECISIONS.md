@@ -949,8 +949,108 @@ them.
 
 ---
 
+## Decision: MA(q) Pre-Sample Shocks
+
+**Status:** Implemented — `symbulate/time_series.py`,
+`symbulate/tests/test_time_series.py`, demo in
+`team/models-and-sim-design/ma_process_demo.ipynb`.
+
+An MA(q) is defined over all time and is stationary by construction, so
+every value has the same distribution. Simulating one has to start
+somewhere, though, and `X[0]` needs the `q` shocks from *before* time 0.
+
+**Decision**
+> Simulate those `q` shocks. No parameter, no setting — the process is
+> already running when the first value is read.
+
+Leaving them out would make `X[0]` carry no echoes and `X[1]` only one, so
+the first `q` values come out too small: for `coefs=[0.8, 0.5]`,
+`Var(X[0])` is 1.00 instead of the correct 1.89, and the lag-2 correlation
+measured from the start of a path reads 0.36 against a true 0.265. That
+lands on precisely the thing an MA(q) is taught to show — the sharp cutoff
+in correlation at lag `q` — so the transient is not a feature to preserve.
+
+Unlike AR, getting it right is free and exact here: `q` extra draws, no
+burn-in length to tune, and it works for any noise distribution.
+`test_time_series.py::test_first_value_has_full_variance` pins it, and
+fails if the pre-sample shocks are ever dropped.
+
+This is also why `MA` takes no `initial` argument — see the next decision.
+
+---
+
+## Decision: One Name for a Process's Starting Condition — `initial`
+
+**Status:** Agreed convention. New processes follow it from now on;
+retrofitting the existing ones is a separate, coordinated PR (see below).
+
+We currently spell "where does the process start" four different ways:
+`initial_value` (Ornstein-Uhlenbeck, Brownian bridge, geometric Brownian
+motion, random walk), `initial` (birth-death), `x0` (diffusion), and
+`initial_dist` (Markov chains, where it means something different again — a
+probability vector over states, not a value). Several processes that plainly
+have a starting state take no such argument at all, including every M/M/\*
+queue, whose parent `BirthDeathProcess` does.
+
+**Decision**
+> One parameter, named **`initial`**, accepting any of:
+> - **a number** — every path starts there;
+> - **a univariate distribution** — the starting value is drawn from it;
+> - **a multivariate distribution** — for a process needing several
+>   starting values at once, drawn jointly so their correlations are right;
+> - **a probability vector** — over a finite state space (Markov chains,
+>   until a `Categorical` distribution exists to replace it);
+> - **`"stationary"`** — the process's own long-run distribution, where
+>   that has a closed form.
+>
+> A process with no state does not take the argument at all. `MA` is the
+> case in point: it needs pre-sample *shocks*, not values, and there is
+> nothing for a student to point at, so it is handled silently (see
+> "Decision: MA(q) Pre-Sample Shocks").
+
+`initial` rather than `initial_value` or `initial_distribution` because it
+is the only one of the three that stays honest across all five forms — a
+number is just a degenerate distribution, and `initial_distribution=0` reads
+as badly as `initial_value=Normal(0, 1)`.
+
+**Why a univariate distribution is not enough on its own.** An AR(p) needs
+`p` starting values, and in the stationary distribution those values are
+*correlated with each other*. Simulating an AR(2) with `phi1=0.5, phi2=0.3`
+(stationary variance 2.244) from two i.i.d. `Normal(0, 1)` draws gives a
+variance of 1.34 at time 0, reaching 2.25 only after about 40 steps — a
+transient, just a different one. Drawing the pair jointly from the right
+`MultivariateNormal` gives 2.24 immediately. So a univariate distribution is
+exactly right for a one-value process (AR(1), geometric Brownian motion,
+random walk) and under-specified beyond that, which is what the multivariate
+form is for.
+
+**Where `"stationary"` works.** Exactly, via Yule-Walker plus
+`MultivariateNormal`, for Gaussian AR/ARMA. Not at all for non-Gaussian
+noise, where no closed form exists, or for explosive coefficients, where no
+stationary distribution exists — both should raise rather than quietly burn
+in.
+
+**Cost.** Cheap for the recursive processes (random walk, Markov chains,
+AR, GARCH), which just draw the first value. Real work for the
+Gaussian-process ones: `OrnsteinUhlenbeck` and `BrownianBridge` are built
+from a `mean_func`/`cov_func` pair that assumes a deterministic start, and a
+random starting value changes the covariance function itself.
+
+**Migration.** New processes adopt `initial` immediately. Existing ones keep
+their current spelling working as an accepted alias when they are retrofitted,
+so notebooks and tests do not break. The retrofit touches all four groups'
+code and should not ride along inside a feature branch.
+
+---
+
 ## Open Decisions
 
+- [ ] Who owns the `initial` retrofit, and when. Renaming
+      `initial_value`/`x0`/`initial_dist` across Ornstein-Uhlenbeck,
+      Brownian bridge, geometric Brownian motion, diffusion, and the Markov
+      chains touches all four groups, so it wants its own PR rather than
+      riding along inside a feature branch. Also whether every M/M/\* queue
+      should regain the `initial` its `BirthDeathProcess` parent already has.
 - [ ] Pandas as a new dependency for `LifeTable` — blocks Phase 1 merge
       until approved or the CSV-parsing is rewritten without it.
 - [ ] Where test fixture data (e.g. `synthetic_soa_table.csv`) lives under

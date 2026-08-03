@@ -179,7 +179,7 @@ class TestRVApply(unittest.TestCase):
     def test_apply_square_gives_chi2(self):
         seed()
         X = RV(Normal(mean=0, var=1))
-        sims = X.apply(lambda x: x ** 2).sim(Nsim)
+        sims = X.apply(lambda x: x**2).sim(Nsim)
         cdf = stats.chi2(df=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
@@ -317,7 +317,7 @@ class TestRVArithmetic(unittest.TestCase):
     def test_pow_rv_int_chi2(self):
         seed()
         X = RV(Normal(mean=0, var=1))
-        sims = (X ** 2).sim(Nsim)
+        sims = (X**2).sim(Nsim)
         cdf = stats.chi2(df=1).cdf
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
@@ -349,24 +349,28 @@ class TestRVComparison(unittest.TestCase):
 
     def test_gt_scalar_returns_event(self):
         from symbulate.probability_space import Event
+
         X = RV(Normal(mean=0, sd=1))
         event = X > 0
         self.assertIsInstance(event, Event)
 
     def test_lt_scalar_returns_event(self):
         from symbulate.probability_space import Event
+
         X = RV(Normal(mean=0, sd=1))
         event = X < 0
         self.assertIsInstance(event, Event)
 
     def test_eq_scalar_returns_event(self):
         from symbulate.probability_space import Event
+
         X = RV(Bernoulli(p=0.5))
         event = X == 1
         self.assertIsInstance(event, Event)
 
     def test_comparison_rv_rv_same_space(self):
         from symbulate.probability_space import Event
+
         X, Y = RV(Normal(mean=0, var=1) ** 2)
         event = X < Y
         self.assertIsInstance(event, Event)
@@ -420,14 +424,14 @@ class TestRVJoint(unittest.TestCase):
 
     def test_and_rv_timefunc_returns_rv(self):
         X = RV(Normal(mean=0, sd=1))
-        t = InfiniteVector(lambda n: n ** 2)
+        t = InfiniteVector(lambda n: n**2)
         Z = X & t
         self.assertIsInstance(Z, RV)
 
     def test_and_rv_timefunc_draw_length(self):
         seed()
         X = RV(Normal(mean=0, sd=1))
-        t = InfiniteVector(lambda n: n ** 2)
+        t = InfiniteVector(lambda n: n**2)
         Z = X & t
         val = Z.draw()
         self.assertEqual(len(val), 2)
@@ -435,7 +439,7 @@ class TestRVJoint(unittest.TestCase):
     def test_and_rv_timefunc_second_component_constant(self):
         seed()
         X = RV(Normal(mean=0, sd=1))
-        t = InfiniteVector(lambda n: n ** 2)
+        t = InfiniteVector(lambda n: n**2)
         Z = X & t
         sims = Z.sim(100)
         self.assertTrue(all(v[1] is t for v in sims))
@@ -443,7 +447,7 @@ class TestRVJoint(unittest.TestCase):
     def test_rand_timefunc_first_component_constant(self):
         seed()
         X = RV(Normal(mean=0, sd=1))
-        t = InfiniteVector(lambda n: n ** 2)
+        t = InfiniteVector(lambda n: n**2)
         Z = t & X
         sims = Z.sim(100)
         self.assertTrue(all(v[0] is t for v in sims))
@@ -451,7 +455,7 @@ class TestRVJoint(unittest.TestCase):
     def test_rand_timefunc_draw_length(self):
         seed()
         X = RV(Normal(mean=0, sd=1))
-        t = InfiniteVector(lambda n: n ** 2)
+        t = InfiniteVector(lambda n: n**2)
         Z = t & X
         val = Z.draw()
         self.assertEqual(len(val), 2)

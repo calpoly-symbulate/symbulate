@@ -10,6 +10,7 @@ Reproducibility is obtained by reseeding the distributions module's
 generator (``distributions.rng``), matching the convention used in
 test_distributions.py.
 """
+
 import unittest
 
 import numpy as np
