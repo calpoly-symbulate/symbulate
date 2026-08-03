@@ -199,6 +199,101 @@ its own passing tests and docs for no user-visible gain.
 
 ---
 
+## Decision: G/G/1 Queue via Lindley's Recursion
+
+**Status:** Implemented — `symbulate/queues.py`,
+`symbulate/tests/test_queues.py`, demo in
+`team/models-and-sim-design/gg1_queue_demo.ipynb`, exports for `GG1`,
+`GG1ProbabilitySpace`, `GG1Result`, `MG1`, and `GM1` in
+`symbulate/__init__.py`. This is item 12 of the process roadmap's suggested
+build order, and it is the branch the `RenewalProcess` decision above listed
+as unblocked.
+
+**Decision**
+> The G/G/1 family is a **waiting-time process indexed by customer number**,
+> not a queue-length process indexed by continuous time, and it lives in a
+> **new module** rather than in `markov_chains.py`.
+>
+> - `GG1Result(InfiniteVector)` holds one sample path: `path[n]` is customer
+>   `n`'s wait in line (not counting their own service), generated on demand
+>   by Lindley's recursion `W[n+1] = max(W[n] + S[n] - A[n+1], 0)` and cached
+>   in a `waits` list — the same lazily-extending pattern as
+>   `RandomWalkResult.positions` and `MarkovChainResult`'s states.
+> - `GG1ProbabilitySpace` validates both distributions, then builds the two
+>   `dist ** inf` sequences **once** (not per draw), as `RenewalProcess` and
+>   `PoissonProcess` do.
+> - `GG1(RV)` is the public class, with `MG1(arrival_rate, service_dist)` and
+>   `GM1(interarrival_dist, service_rate)` as thin subclasses that substitute
+>   an `Exponential` on one side — mirroring how `MMss` subclasses `MMsK`.
+> - Kendall-notation class names (`GG1`, `MG1`, `GM1`) to match the existing
+>   `MM1`/`MMs`/`MMsK`/`MMss`/`MMsKN`/`MMInfinity` wrappers.
+> - `interarrival_dist` is reused as the arrival-side parameter name,
+>   verbatim from `RenewalProcess`; `service_dist` is its service-side
+>   counterpart.
+> - `GG1.utilization` exposes the traffic intensity `rho` (mean service /
+>   mean interarrival). `rho >= 1` is **not** an error — an unstable queue is
+>   a legitimate thing to simulate deliberately, and the docstring says what
+>   to expect from one instead.
+
+**Rationale**
+> A general-service queue is the point where the birth-death machinery in
+> `markov_chains.py` genuinely stops applying: with non-exponential service,
+> the remaining service time depends on the elapsed service time, so the
+> number in the system is not a Markov chain and there is no generator matrix
+> to hand `ContinuousTimeMarkovChain`. Lindley's recursion sidesteps that
+> entirely by changing what is indexed — customers instead of clock time —
+> and is then exact for *any* pair of nonnegative distributions, with no
+> truncation of the state space and no `num_states` argument to pick. Putting
+> it in its own module keeps that boundary legible: `markov_chains.py` holds
+> what is a Markov chain, `queues.py` holds what is not.
+>
+> `M/G/1` and `G/M/1` really do fall out for free, as the roadmap predicted,
+> so they are subclasses rather than separate implementations.
+
+**Alternatives Considered**
+> *Making the G/G/1 result a continuous-time queue-length function `N(t)`
+> instead of a waiting-time sequence* — deferred, not rejected: it is its own
+> roadmap row (item 20) and needs departure/arrival event-stream merging.
+> `GG1Result` is built so that work is additive later; it already exposes
+> `arrival_times` and `departure_times`, which is exactly the pair such an
+> `N(t)` needs. *Adding the classes to `markov_chains.py`* — rejected; they
+> are the one queue family in the package that is not a Markov chain, and
+> filing them there would imply otherwise. *Erroring or warning when
+> `rho >= 1`* — rejected; watching an overloaded queue fail to settle down is
+> a standard exercise, and a warning would scroll past in a notebook while
+> the (correct, unbounded) numbers stayed on screen. *Free functions
+> `waiting_times(path)` / `service_times(path)` in `math.py`, matching
+> `arrival_times(path)`* — rejected: `math.py` is star-exported, and names
+> that generic are ones a student is likely to use as their own variables.
+> The sequences are attributes on the path instead, reachable as random
+> variables through the existing `.apply()` idiom.
+
+**Reuse of the `RenewalProcess` groundwork:** the arrival side is a renewal
+process, and this is made literal rather than reimplemented. Both
+nonnegativity checks call `renewal_process._smallest_possible_time` and
+`_is_always_zero`, so the "ask scipy's `support()` once" approach extends to
+service-time distributions with no new per-distribution code, and
+`GG1Result.get_arrival_process()` hands the arrival stream back as an actual
+`RenewalProcessResult` counting function.
+
+**One deliberate asymmetry between the two distributions:** a service time
+that is 0 on every draw is *accepted* (a server that finishes instantly is
+degenerate but harmless — nobody waits), while an interarrival time that is 0
+on every draw is *rejected*, exactly as in `RenewalProcess`, since every
+customer would arrive at the same instant.
+
+**Known limitation (accepted, inherited):** a point mass written as
+`Uniform(a=b)` reports a nan mean as well as a nan support, so
+`utilization` comes back `None` for it — the same degenerate-parameterization
+gap documented in the `RenewalProcess` decision above, seen through
+`mean()` instead of `support()`. The queue itself simulates correctly; only
+the reported `rho` is unavailable. Consequently the `M/D/1` (deterministic
+service) examples in the docstring and demo use a low-variance `Gamma`
+rather than a degenerate `Uniform`, which also makes the
+Pollaczek-Khinchine check exact.
+
+---
+
 ## Decision: Phase 1 Scope — Process Roadmap & Distribution Additions
 
 **Status:** Proposed
