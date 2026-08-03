@@ -115,6 +115,7 @@ from .gaussian_process import (
     GeometricBrownianMotionProbabilitySpace,
 )
 from .poisson_process import PoissonProcess, PoissonProcessProbabilitySpace
+from .hitting_times import hitting_time
 from .random_walk import (
     RandomWalk,
     RandomWalkProbabilitySpace,
