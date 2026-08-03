@@ -111,6 +111,8 @@ from .gaussian_process import (
     BrownianBridgeProbabilitySpace,
     FractionalBrownianMotion,
     FractionalBrownianMotionProbabilitySpace,
+    GeometricBrownianMotion,
+    GeometricBrownianMotionProbabilitySpace,
 )
 from .poisson_process import (
     PoissonProcess,
@@ -118,6 +120,7 @@ from .poisson_process import (
     NonHomogeneousPoissonProcess,
     NonHomogeneousPoissonProcessProbabilitySpace,
 )
+from .hitting_times import hitting_time
 from .random_walk import (
     RandomWalk,
     RandomWalkProbabilitySpace,
