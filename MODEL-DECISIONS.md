@@ -199,6 +199,212 @@ its own passing tests and docs for no user-visible gain.
 
 ---
 
+## Decision: G/G/1 Queue via Lindley's Recursion
+
+**Status:** Implemented — `symbulate/queues.py`,
+`symbulate/tests/test_queues.py`, demo in
+`team/models-and-sim-design/gg1_queue_demo.ipynb`, exports for `GG1`,
+`GG1ProbabilitySpace`, `GG1Result`, `MG1`, and `GM1` in
+`symbulate/__init__.py`. This is item 12 of the process roadmap's suggested
+build order, and it is the branch the `RenewalProcess` decision above listed
+as unblocked.
+
+**Decision**
+> The G/G/1 family is a **waiting-time process indexed by customer number**,
+> not a queue-length process indexed by continuous time, and it lives in a
+> **new module** rather than in `markov_chains.py`.
+>
+> - `GG1Result(InfiniteVector)` holds one sample path: `path[n]` is customer
+>   `n`'s wait in line (not counting their own service), generated on demand
+>   by Lindley's recursion `W[n+1] = max(W[n] + S[n] - A[n+1], 0)` and cached
+>   in a `waits` list — the same lazily-extending pattern as
+>   `RandomWalkResult.positions` and `MarkovChainResult`'s states.
+> - `GG1ProbabilitySpace` validates both distributions, then builds the two
+>   `dist ** inf` sequences **once** (not per draw), as `RenewalProcess` and
+>   `PoissonProcess` do.
+> - `GG1(RV)` is the public class, with `MG1(arrival_rate, service_dist)` and
+>   `GM1(interarrival_dist, service_rate)` as thin subclasses that substitute
+>   an `Exponential` on one side — mirroring how `MMss` subclasses `MMsK`.
+> - Kendall-notation class names (`GG1`, `MG1`, `GM1`) to match the existing
+>   `MM1`/`MMs`/`MMsK`/`MMss`/`MMsKN`/`MMInfinity` wrappers.
+> - `interarrival_dist` is reused as the arrival-side parameter name,
+>   verbatim from `RenewalProcess`; `service_dist` is its service-side
+>   counterpart.
+> - `GG1.utilization` exposes the traffic intensity `rho` (mean service /
+>   mean interarrival). `rho >= 1` is **not** an error — an unstable queue is
+>   a legitimate thing to simulate deliberately, and the docstring says what
+>   to expect from one instead.
+
+**Rationale**
+> A general-service queue is the point where the birth-death machinery in
+> `markov_chains.py` genuinely stops applying: with non-exponential service,
+> the remaining service time depends on the elapsed service time, so the
+> number in the system is not a Markov chain and there is no generator matrix
+> to hand `ContinuousTimeMarkovChain`. Lindley's recursion sidesteps that
+> entirely by changing what is indexed — customers instead of clock time —
+> and is then exact for *any* pair of nonnegative distributions, with no
+> truncation of the state space and no `num_states` argument to pick. Putting
+> it in its own module keeps that boundary legible: `markov_chains.py` holds
+> what is a Markov chain, `queues.py` holds what is not.
+>
+> `M/G/1` and `G/M/1` really do fall out for free, as the roadmap predicted,
+> so they are subclasses rather than separate implementations.
+
+**Alternatives Considered**
+> *Making the G/G/1 result a continuous-time queue-length function `N(t)`
+> instead of a waiting-time sequence* — deferred, not rejected: it is its own
+> roadmap row (item 20) and needs departure/arrival event-stream merging.
+> `GG1Result` is built so that work is additive later; it already exposes
+> `arrival_times` and `departure_times`, which is exactly the pair such an
+> `N(t)` needs. *Adding the classes to `markov_chains.py`* — rejected; they
+> are the one queue family in the package that is not a Markov chain, and
+> filing them there would imply otherwise. *Erroring or warning when
+> `rho >= 1`* — rejected; watching an overloaded queue fail to settle down is
+> a standard exercise, and a warning would scroll past in a notebook while
+> the (correct, unbounded) numbers stayed on screen. *Free functions
+> `waiting_times(path)` / `service_times(path)` in `math.py`, matching
+> `arrival_times(path)`* — rejected: `math.py` is star-exported, and names
+> that generic are ones a student is likely to use as their own variables.
+> The sequences are attributes on the path instead, reachable as random
+> variables through the existing `.apply()` idiom.
+
+**Reuse of the `RenewalProcess` groundwork:** the arrival side is a renewal
+process, and this is made literal rather than reimplemented. Both
+nonnegativity checks call `renewal_process._smallest_possible_time` and
+`_is_always_zero`, so the "ask scipy's `support()` once" approach extends to
+service-time distributions with no new per-distribution code, and
+`GG1Result.get_arrival_process()` hands the arrival stream back as an actual
+`RenewalProcessResult` counting function.
+
+**One deliberate asymmetry between the two distributions:** a service time
+that is 0 on every draw is *accepted* (a server that finishes instantly is
+degenerate but harmless — nobody waits), while an interarrival time that is 0
+on every draw is *rejected*, exactly as in `RenewalProcess`, since every
+customer would arrive at the same instant.
+
+**Known limitation (accepted, inherited):** a point mass written as
+`Uniform(a=b)` reports a nan mean as well as a nan support, so
+`utilization` comes back `None` for it — the same degenerate-parameterization
+gap documented in the `RenewalProcess` decision above, seen through
+`mean()` instead of `support()`. The queue itself simulates correctly; only
+the reported `rho` is unavailable. Consequently the `M/D/1` (deterministic
+service) examples in the docstring and demo use a low-variance `Gamma`
+rather than a degenerate `Uniform`, which also makes the
+Pollaczek-Khinchine check exact.
+
+---
+
+## Decision: Non-Homogeneous Poisson Process — Time-Change, Not Thinning
+
+**Status:** Implemented — `NonHomogeneousPoissonProcess`,
+`NonHomogeneousPoissonProcessProbabilitySpace`, and
+`NonHomogeneousPoissonProcessResult` live in `symbulate/poisson_process.py`,
+tested in `symbulate/tests/test_poisson_process.py`, exported from
+`symbulate/__init__.py`. This is roadmap step 13, the prerequisite for the
+Cox process (step 14), the Hawkes process (step 17), and the
+Weibull/power-law (Crow-AMSAA) reliability framing.
+
+**Decision**
+> Simulate by **time change**, not thinning. Events are drawn at a steady
+> rate of 1 on the "expected count" scale (i.i.d. `Exponential(rate=1)`
+> gaps, exactly as `PoissonProcess` draws clock-time gaps) and read back
+> onto the clock through the cumulative rate `Λ(t) = ∫₀ᵗ rate(s) ds`.
+> Counting is then the *same* cumulative-sum walk `PoissonProcessResult`
+> already does, with one substitution: the running total is compared
+> against `Λ(t)` instead of against `t`. `N(t) ≤ k` iff the `k`-th rate-1
+> arrival exceeds `Λ(t)`, so no numerical *inversion* of `Λ` is needed
+> anywhere — only its forward evaluation.
+>
+> `rate=` accepts a function of time, or a positive number (which gives an
+> ordinary Poisson process — useful for a side-by-side comparison). `Λ` is
+> exposed publicly as `.cumulative_rate`, since it is both the theoretical
+> mean to check a simulation against and the object the Weibull/power-law
+> framing is defined in terms of.
+
+**Rationale**
+> Thinning needs an upper bound on the rate over the region being
+> simulated. That bound is either an extra required argument — against
+> CLAUDE.md's "no required arguments beyond what is mathematically
+> necessary" — or numerically guessed from a grid, which is silently wrong
+> whenever the rate spikes between grid points. Time change needs nothing
+> from the user beyond the rate function itself, is exact for *any*
+> nonnegative rate, and reuses the existing counting machinery instead of
+> introducing a second, parallel one. It also composes with the lazy
+> infinite-vector design already in place: `N(t)` only ever needs rate-1
+> arrivals up to `Λ(t)`, so nothing is generated speculatively and there is
+> no simulation horizon to pick.
+
+**Alternatives Considered**
+> **Thinning (Lewis-Shedler)** — rejected as the default for the reasons
+> above, and *deliberately not implemented at all yet*, even though the
+> roadmap describes Cox and Hawkes as building on "non-homogeneous Poisson
+> thinning." That description is right about those two and does not
+> generalize backwards: Hawkes needs thinning (Ogata's method) because its
+> intensity depends on the process's own past events, so `Λ` isn't known in
+> advance, and a Cox process thinning against a rough realized intensity
+> path (a diffusion, say) can't be integrated reliably either. Both are
+> path-dependent-intensity problems. Building thinning speculatively now,
+> with no such intensity to thin against, would mean shipping a second
+> algorithm with a bound argument no current caller needs. It should be
+> added when Cox/Hawkes land, and can then sit behind the same public class
+> or its own.
+> **Inversion of `Λ` by root-finding** to get explicit arrival times —
+> rejected as unnecessary: it costs a root-find per event and buys nothing
+> the count needs (see Decision above). Worth revisiting only if arrival
+> times are exposed as a user-facing sequence.
+> **A separate module** `nonhomogeneous_poisson_process.py` — rejected in
+> favor of grouping the Poisson family in one module, matching how
+> `markov_chains.py` holds `MarkovChain`, `ContinuousTimeMarkovChain`, the
+> birth-death queues, and SIR/SEIR, and `gaussian_process.py` holds
+> Brownian motion, Ornstein-Uhlenbeck, and the rest. Compound Poisson and
+> Cox are expected to join it.
+
+**Numerical policy (the one genuinely new risk this feature adds):**
+> `Λ` is a numerical integral of a function Symbulate has never seen, so
+> quadrature can return a confidently wrong number. Two real cases:
+> `rate=lambda t: 1/t` integrates to a finite 41.7 over `(0, 1)` with a
+> huge error estimate, and `rate=lambda t: t**-2` integrates to **-1.0**.
+> Policy, in `_CumulativeRate`:
+> - Every evaluation of the user's rate function is checked (nonnegative,
+>   finite, numeric) — including the ones quadrature makes internally, so a
+>   rate that goes negative only partway through is caught at the time it
+>   does, naming that time.
+> - An integral is trusted only if it is finite, nonnegative, and its
+>   estimated error is within `_QUAD_TOL` (1e-3, relative). Otherwise it is
+>   retried over 32, then 512, then 4096 pieces — which rescues a genuinely
+>   hard but integrable rate (a rate oscillating 1000 times per unit time
+>   integrates exactly this way) — and if it still fails, **raises** rather
+>   than returning a number nobody should rely on.
+> - `Λ` is cached on the probability space, and each new time is integrated
+>   forward from the nearest earlier known time, so a `.sim(10000)` at one
+>   time integrates once for all 10000 paths, and plotting over a grid pays
+>   only for each new step.
+> - scipy's `IntegrationWarning` is suppressed: it describes a subdivision
+>   detail, and the checks above turn it into either a retry or a
+>   student-readable error.
+>
+> **Accepted limitation:** a spike far narrower than the interval being
+> integrated (width 1e-3 somewhere in the first 100 time units) can be
+> stepped over by adaptive quadrature and its events missed, with a small
+> error estimate that gives no hint. This is the one place thinning would
+> be strictly more faithful (at a large efficiency cost). Documented in the
+> class `Notes`; rates that vary on a scale near the times being asked
+> about — daily cycles, wear, a shift change — are unaffected.
+
+**Follow-on this unblocks, not done here:** the Weibull/power-law
+(Crow-AMSAA) process is now purely a naming exercise —
+`rate=lambda t: (shape / scale) * (t / scale) ** (shape - 1)` — and the
+roadmap wants it exposed under its reliability-engineering name. Left as
+its own roadmap row rather than smuggled in here.
+
+**Open:** whether to add a short alias (`NHPP`) alongside
+`NonHomogeneousPoissonProcess`. The queueing wrappers in `markov_chains.py`
+(`MM1`, `MMs`) set a precedent for abbreviations *when the abbreviation is
+the standard textbook name*; "NHPP" is standard in reliability courses but
+not in intro probability. Not added — one name for now.
+
+---
+
 ## Decision: Phase 1 Scope — Process Roadmap & Distribution Additions
 
 **Status:** Proposed

@@ -114,7 +114,12 @@ from .gaussian_process import (
     GeometricBrownianMotion,
     GeometricBrownianMotionProbabilitySpace,
 )
-from .poisson_process import PoissonProcess, PoissonProcessProbabilitySpace
+from .poisson_process import (
+    PoissonProcess,
+    PoissonProcessProbabilitySpace,
+    NonHomogeneousPoissonProcess,
+    NonHomogeneousPoissonProcessProbabilitySpace,
+)
 from .hitting_times import hitting_time
 from .random_walk import (
     RandomWalk,
@@ -122,6 +127,13 @@ from .random_walk import (
     RandomWalkResult,
 )
 from .renewal_process import RenewalProcess, RenewalProcessProbabilitySpace
+from .queues import (
+    GG1,
+    GG1ProbabilitySpace,
+    GG1Result,
+    MG1,
+    GM1,
+)
 from .diffusion_process import (
     DiffusionProcess,
     DiffusionProcessProbabilitySpace,
