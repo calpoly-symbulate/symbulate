@@ -7,8 +7,10 @@ initial-value parameterizations, mean reversion, the long-run
 distribution, and the Brownian-motion limit), BrownianBridge (both
 endpoints pinned, the widest-in-the-middle spread, and the limited time
 domain), FractionalBrownianMotion (variance growth, self-similarity, the
-sign of the increment correlation either side of hurst=0.5), and the
-TimeInterval index set the bridge is defined over.
+sign of the increment correlation either side of hurst=0.5),
+GeometricBrownianMotion (positivity, the log-normal marginal, and that it is
+exactly the exponential of its own Brownian path), and the TimeInterval index
+set the bridge is defined over.
 """
 
 import unittest
@@ -1066,6 +1068,220 @@ class TestFractionalBrownianMotionErrors(unittest.TestCase):
     def test_probability_space_validates_too(self):
         with self.assertRaises(ValueError):
             FractionalBrownianMotionProbabilitySpace(hurst=0)
+
+
+class TestGeometricBrownianMotionConstruction(unittest.TestCase):
+
+    def test_is_random_process(self):
+        self.assertIsInstance(GeometricBrownianMotion(), RandomProcess)
+
+    def test_is_rv(self):
+        self.assertIsInstance(GeometricBrownianMotion(), RV)
+
+    def test_probability_space_type(self):
+        X = GeometricBrownianMotion()
+        self.assertIsInstance(X.prob_space, GeometricBrownianMotionProbabilitySpace)
+
+    def test_is_not_a_gaussian_process(self):
+        # It is the exponential of one, which is log-normal, not normal.
+        X = GeometricBrownianMotion()
+        self.assertNotIsInstance(X.prob_space, GaussianProcessProbabilitySpace)
+
+    def test_parameters_stored_on_probability_space(self):
+        P = GeometricBrownianMotionProbabilitySpace(
+            initial_value=100, growth_rate=0.05, scale=0.2
+        )
+        self.assertEqual(P.initial_value, 100)
+        self.assertEqual(P.growth_rate, 0.05)
+        self.assertEqual(P.scale, 0.2)
+
+
+class TestGeometricBrownianMotionPaths(unittest.TestCase):
+
+    def test_starts_at_initial_value(self):
+        seed()
+        for initial_value in [1, 100, 0.5]:
+            X = GeometricBrownianMotion(initial_value=initial_value)
+            for _ in range(5):
+                self.assertAlmostEqual(float(X.draw()(0)), float(initial_value))
+
+    def test_same_time_returns_cached_value(self):
+        seed()
+        path = GeometricBrownianMotion(initial_value=100).draw()
+        self.assertEqual(path(1.0), path(1.0))
+
+    def test_cached_value_unchanged_after_zooming_in(self):
+        seed()
+        path = GeometricBrownianMotion(initial_value=100).draw()
+        before = float(path(1.0)), float(path(2.0))
+        for t in [1.1, 1.25, 1.5, 1.75, 1.9]:
+            path(t)
+        self.assertEqual((float(path(1.0)), float(path(2.0))), before)
+
+    def test_different_draws_produce_different_paths(self):
+        seed()
+        X = GeometricBrownianMotion(initial_value=100)
+        self.assertGreater(len({float(X.draw()(1.0)) for _ in range(10)}), 1)
+
+    def test_stays_positive(self):
+        # Multiplying by a positive factor can never reach 0.
+        seed()
+        X = GeometricBrownianMotion(initial_value=100, growth_rate=0, scale=0.8)
+        self.assertTrue(all(value > 0 for value in X[5.0].sim(500)))
+
+    def test_negative_time_raises_value_error(self):
+        seed()
+        path = GeometricBrownianMotion().draw()
+        with self.assertRaisesRegex(ValueError, "only defined for t >= 0"):
+            path(-1.0)
+
+
+class TestGeometricBrownianMotionStatistics(unittest.TestCase):
+
+    def setUp(self):
+        seed()
+        self.initial_value = 100.0
+        self.growth_rate = 0.05
+        self.scale = 0.3
+        self.X = GeometricBrownianMotion(
+            initial_value=self.initial_value,
+            growth_rate=self.growth_rate,
+            scale=self.scale,
+        )
+
+    def _expected_mean(self, t):
+        return self.initial_value * np.exp(self.growth_rate * t)
+
+    def test_mean_grows_exponentially_at_the_growth_rate(self):
+        for t in [1.0, 3.0]:
+            expected = self._expected_mean(t)
+            self.assertAlmostEqual(
+                self.X[t].sim(Nsim).mean(), expected, delta=0.05 * expected
+            )
+
+    def test_variance_matches_closed_form(self):
+        for t in [1.0, 3.0]:
+            expected = self._expected_mean(t) ** 2 * (np.exp(self.scale**2 * t) - 1)
+            self.assertAlmostEqual(
+                self.X[t].sim(Nsim).var(), expected, delta=0.35 * expected
+            )
+
+    def test_zero_growth_rate_keeps_the_mean_flat(self):
+        # growth_rate is the growth rate of the mean, so 0 means no growth.
+        seed()
+        X = GeometricBrownianMotion(initial_value=50, growth_rate=0, scale=0.2)
+        self.assertAlmostEqual(X[5.0].sim(Nsim).mean(), 50.0, delta=2.0)
+
+    def test_larger_scale_spreads_wider(self):
+        seed()
+        calm = GeometricBrownianMotion(initial_value=100, scale=0.1)
+        wild = GeometricBrownianMotion(initial_value=100, scale=0.5)
+        self.assertGreater(wild[3.0].sim(Nsim).var(), calm[3.0].sim(Nsim).var())
+
+
+class TestGeometricBrownianMotionRelationships(unittest.TestCase):
+
+    def test_log_of_the_path_is_normal(self):
+        # log(value(t) / initial_value) is Normal with mean
+        # (growth_rate - scale**2 / 2) * t and sd scale * sqrt(t).
+        seed()
+        initial_value, growth_rate, scale, t = 100.0, 0.05, 0.3, 2.0
+        X = GeometricBrownianMotion(
+            initial_value=initial_value, growth_rate=growth_rate, scale=scale
+        )
+        values = np.array(list(X[t].sim(2000)), dtype=float)
+        logs = np.log(values / initial_value)
+        cdf = stats.norm((growth_rate - scale**2 / 2) * t, scale * np.sqrt(t)).cdf
+        self.assertGreater(stats.kstest(logs, cdf).pvalue, 0.01)
+
+    def test_path_is_exactly_the_exponential_of_its_brownian_motion(self):
+        # Not an approximation: the value is the closed-form transform of the
+        # underlying Brownian path, to the last floating-point bit.
+        seed()
+        initial_value, growth_rate, scale = 100.0, 0.05, 0.3
+        path = GeometricBrownianMotion(
+            initial_value=initial_value, growth_rate=growth_rate, scale=scale
+        ).draw()
+        for t in [0.4, 1.7, 5.0]:
+            expected = initial_value * np.exp(
+                (growth_rate - scale**2 / 2) * t + scale * path.brownian_path(t)
+            )
+            self.assertEqual(float(path(t)), float(expected))
+
+    def test_underlying_brownian_path_starts_at_zero(self):
+        seed()
+        path = GeometricBrownianMotion(initial_value=100).draw()
+        path(1.0)
+        self.assertEqual(path.brownian_path(0), 0)
+
+    def test_median_falls_while_the_mean_rises(self):
+        # When growth_rate < scale**2 / 2 the mean still climbs, pulled up by
+        # rare very large values, while a typical path drifts toward 0.
+        #
+        # The two closed forms are checked directly, because at this much
+        # skew the *sample* mean is useless as evidence: the standard error of
+        # the mean here is around 8, so a simulated mean can easily land below
+        # the starting value even though the true mean is above it. The
+        # median is robust to the skew, so that is the half that is checked
+        # against simulation.
+        seed()
+        initial_value, growth_rate, scale, t = 100.0, 0.01, 0.5, 10.0
+        true_mean = initial_value * np.exp(growth_rate * t)
+        true_median = initial_value * np.exp((growth_rate - scale**2 / 2) * t)
+        self.assertGreater(true_mean, initial_value)
+        self.assertLess(true_median, initial_value)
+
+        X = GeometricBrownianMotion(
+            initial_value=initial_value, growth_rate=growth_rate, scale=scale
+        )
+        values = np.array(list(X[t].sim(2000)), dtype=float)
+        self.assertLess(np.median(values), initial_value)
+        self.assertAlmostEqual(np.median(values), true_median, delta=0.3 * true_median)
+
+
+class TestGeometricBrownianMotionErrors(unittest.TestCase):
+
+    def test_non_numeric_initial_value_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            GeometricBrownianMotion(initial_value="high")
+
+    def test_non_numeric_growth_rate_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            GeometricBrownianMotion(growth_rate="fast")
+
+    def test_non_numeric_scale_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            GeometricBrownianMotion(scale="wide")
+
+    def test_zero_initial_value_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            GeometricBrownianMotion(initial_value=0)
+
+    def test_negative_initial_value_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            GeometricBrownianMotion(initial_value=-5)
+
+    def test_initial_value_error_explains_why(self):
+        with self.assertRaisesRegex(ValueError, "initial_value must be positive"):
+            GeometricBrownianMotion(initial_value=0)
+
+    def test_zero_scale_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            GeometricBrownianMotion(scale=0)
+
+    def test_negative_scale_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            GeometricBrownianMotion(scale=-1)
+
+    def test_negative_growth_rate_is_valid(self):
+        # A shrinking price is perfectly meaningful.
+        seed()
+        X = GeometricBrownianMotion(initial_value=100, growth_rate=-0.1)
+        self.assertLess(X[5.0].sim(Nsim).mean(), 100)
+
+    def test_probability_space_validates_too(self):
+        with self.assertRaises(ValueError):
+            GeometricBrownianMotionProbabilitySpace(initial_value=0)
 
 
 if __name__ == "__main__":

@@ -111,6 +111,8 @@ from .gaussian_process import (
     BrownianBridgeProbabilitySpace,
     FractionalBrownianMotion,
     FractionalBrownianMotionProbabilitySpace,
+    GeometricBrownianMotion,
+    GeometricBrownianMotionProbabilitySpace,
 )
 from .poisson_process import PoissonProcess, PoissonProcessProbabilitySpace
 from .renewal_process import RenewalProcess, RenewalProcessProbabilitySpace
