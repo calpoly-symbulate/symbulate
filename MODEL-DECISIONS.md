@@ -105,7 +105,8 @@ Never remove an entry — mark it superseded instead.
 > - `renewal_process.py` has no guard against a negative-support
 >   `interarrival_dist` (e.g. `Normal`), which would silently violate the
 >   nondecreasing-counting-function invariant — a real correctness gap, not
->   just a documentation TODO.
+>   just a documentation TODO. **Resolved and merged** — see "Decision:
+>   `RenewalProcess` Interarrival-Distribution Validation" below.
 > - `diffusion_process_demo.py`'s `np.random.seed(42)` does **not** seed
 >   the module's actual `rng = np.random.default_rng()` generator — the
 >   real test file must reseed via `diffusion_process.rng = ...`, matching
@@ -118,6 +119,83 @@ Never remove an entry — mark it superseded instead.
 > - `test_table_distributions.py` is a sandbox artifact (absolute paths,
 >   non-relative import, hand-rolled pass/fail harness instead of
 >   `unittest.TestCase`) and must be rewritten, not copied.
+
+---
+
+## Decision: `RenewalProcess` Interarrival-Distribution Validation
+
+**Status:** Implemented — `symbulate/renewal_process.py`,
+`symbulate/tests/test_renewal_process.py`, exported from
+`symbulate/__init__.py`. Closes the Phase 1 file-level gap noted above and
+unblocks the Compound-Poisson → Cramér-Lundberg / Sparre Andersen and
+G/G/1 → M/G/1 / G/M/1 branches of the process roadmap.
+
+**Decision**
+> `RenewalProcessProbabilitySpace` validates `interarrival_dist` up front —
+> the renewal analogue of `PoissonProcessProbabilitySpace`'s `rate > 0`
+> check — and `RenewalProcess` inherits the check by building that space.
+> Four rejections, in this order:
+> 1. Not a Symbulate `Distribution` → `TypeError`. A number additionally
+>    gets a pointer to `PoissonProcess(rate=...)`, since passing a rate is
+>    the likely mistake.
+> 2. A `MultivariateDistribution` → `TypeError` (a vector per draw is not
+>    one waiting time; without this, the counting loop fails later with a
+>    raw numpy error).
+> 3. Smallest possible time `< 0` → `ValueError`. **This is the gap being
+>    fixed:** a negative interarrival time makes the counting function
+>    non-monotone, so `N(t)` can decrease.
+> 4. Every draw is certainly 0 (`Poisson(0)`, `DiscreteUniform(0, 0)`) →
+>    `ValueError`. Not part of the original gap, but the same invariant
+>    seen from the other side, and previously an **infinite hang** rather
+>    than an error: infinitely many events at time 0 means the cumulative
+>    sum never passes any `t`.
+>
+> The bound is read from scipy's own `support()` via
+> `Distribution._support()`, so a newly added distribution is validated with
+> no per-distribution code — the same "ask scipy once" approach
+> `Distribution._compute_xlim` already uses for the plotting window.
+> Parameter-level validation (`Gamma`'s shape must be positive, etc.) stays
+> with the distribution's own constructor; this resolves open question 1 in
+> `team/models-and-sim-design/renewal_process_notes.md` as well.
+
+**Rationale**
+> A renewal process's whole contract is a nondecreasing count of events over
+> time, so an interarrival distribution with negative support isn't a
+> questionable modeling choice — it produces output that is not a renewal
+> process at all, silently. Checking the support analytically (rather than
+> sampling draws to look for a negative one) keeps the check exact, free of
+> RNG consumption, and paid once per process construction rather than once
+> per draw — the same cost concern behind the lazy `xlim` property in
+> `distributions.py`.
+
+**Alternatives Considered**
+> Leaving it a documented assumption, on the grounds that Symbulate
+> generally trusts the user's distribution choice (option 2 in the
+> prototype's notes) — rejected: the failure is silent and produces a
+> plausible-looking path, which is exactly the case the CLAUDE.md error
+> standard exists for. A `warnings.warn` instead of raising — rejected for
+> the same reason; a warning scrolls off in a notebook while the wrong
+> numbers stay on screen. Sampling a few draws and rejecting on a negative
+> value — rejected: inexact (it can miss a rare negative tail), consumes
+> RNG draws at construction time, and would break seeded reproducibility.
+
+**Known limitation (accepted, not a TODO):**
+> A point-mass distribution written as `Uniform(a=2, b=2)` gives scipy a
+> degenerate parameterization, and scipy reports its support as `(nan, nan)`
+> — so nonnegativity cannot be verified and the distribution is accepted on
+> the assumption that the value is positive. Accepting is the right call
+> because the nan is not evidence of a problem: `Uniform(a=2, b=2)` is a
+> perfectly valid interarrival distribution. The one bad case this lets
+> through, `Uniform(a=0, b=0)`, still hangs — a degenerate-parameter
+> pathology in `Uniform` itself, better fixed there (require `a < b`) than
+> worked around here. `LogNormal(mu, 0)` is *not* affected: it has no scipy
+> object at all, so the check reads its hand-written `quantile` instead and
+> correctly sees the point mass at `exp(mu)`.
+
+**Deliberately not done:** `PoissonProcess` was left untouched, rather than
+reimplemented as `RenewalProcess(Exponential(rate=rate))`. It is
+mathematically the special case, but rewriting it would churn a module with
+its own passing tests and docs for no user-visible gain.
 
 ---
 

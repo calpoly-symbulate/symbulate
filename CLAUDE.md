@@ -50,10 +50,11 @@ must be understandable by a general audience without assuming prior knowledge.
 | `plot.py` | Plotting utilities |
 | `table.py` | Table display for simulation results |
 | `markov_chains.py` | Markov chain probability spaces |
-| `gaussian_process.py` | `GaussianProcess`, `BrownianMotion` |
+| `gaussian_process.py` | `GaussianProcess`, `BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`, `FractionalBrownianMotion` |
 | `poisson_process.py` | Poisson process |
+| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
-| `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence` |
+| `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
 | `math.py` | Math utility functions |
 
 ## Graphics Architecture — READ BEFORE TOUCHING ANY PLOT CODE
@@ -218,6 +219,33 @@ most distributions, and one still unreadable on the heavy-tailed ones it was
 meant to help. See `DECISIONS.md`, "Decision: Default Plotting Window (HDI
 Removed)" for the measurements.
 
+## Diffusion Processes
+
+`DiffusionProcess(drift, diffusion, x0, tol)` in `diffusion_process.py` solves
+a general Itô SDE `dX = drift(X,t) dt + diffusion(X,t) dW`. It was prototyped
+outside the package and merged in; the design write-up is
+`team/models-and-sim-design/gaussian_and_diffusion_processes.md`.
+
+Three things that are easy to get wrong:
+
+- **It is approximate**, unlike every other process here. The Gaussian
+  processes (`BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`,
+  `FractionalBrownianMotion`) are exact, because a Gaussian process has a
+  closed-form conditional distribution. A general diffusion does not, so this
+  uses bridge-corrected Euler–Maruyama refined by bisection, with `tol` as the
+  only accuracy knob. It **is** exact when `drift` and `diffusion` are
+  constant (i.e. Brownian motion). Say "approximate" in any docstring or demo
+  rather than implying otherwise.
+- **Seed `diffusion_process.rng`, not `np.random.seed`.** The module draws from
+  its own `np.random.default_rng()`, which does not read NumPy's legacy global
+  generator, so `np.random.seed(42)` silently does nothing. This was a real bug
+  in the module's demo; `test_diffusion_process.py` has a regression test that
+  fails if the module ever switches back to the global generator.
+- **A `sqrt` in `diffusion` needs a floor**, e.g.
+  `lambda x, t: sigma * np.sqrt(max(x, 0))` for CIR. A forward step can land
+  slightly below 0 even in a model that should stay positive, and one `nan`
+  poisons the rest of the path.
+
 ## Suggestion Messages
 
 Print a message after **every** plot renders — this fires whether or not
@@ -288,8 +316,9 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_plot.py` | Plotting utilities |
 | `test_table.py` | Table display |
 | `test_markov_chains.py` | Markov chains |
-| `test_gaussian_process.py` | Gaussian processes |
+| `test_gaussian_process.py` | Gaussian processes (incl. Ornstein-Uhlenbeck, Brownian bridge, fractional Brownian motion) |
 | `test_poisson_process.py` | Poisson process |
+| `test_diffusion_process.py` | Diffusion processes |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
 | `test_index_sets.py` | Index sets |

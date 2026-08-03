@@ -72,6 +72,22 @@ it against the real package:
   `N(4).sim(3000)` had an empirical mean of ~8.01, matching the
   theoretical `rate * t = 2 * 4 = 8`.
 
+## Status: merged
+
+Merged into the package as `symbulate/renewal_process.py`, with
+`symbulate/tests/test_renewal_process.py` and exports for `RenewalProcess`
+and `RenewalProcessProbabilitySpace` in `symbulate/__init__.py`. The draft
+in this directory is kept as the prototype record. Open questions 1 and 2
+below are resolved — validation now happens in
+`RenewalProcessProbabilitySpace`, reading the support from scipy via
+`Distribution._support()`, and rejects a negative-support distribution
+(plus a certainly-always-zero one, which used to hang instead of erroring).
+See `MODEL-DECISIONS.md`, "Decision: `RenewalProcess` Interarrival-
+Distribution Validation," for the full rationale and the one accepted
+limitation (`Uniform(a=b)` reports a nan support and so cannot be checked).
+Question 3 (`interarrival_dist` as the parameter name) was kept as drafted;
+question 4's test file now exists.
+
 ## Open design questions before merging
 
 1. **Validation scope.** `PoissonProcessProbabilitySpace` validates
