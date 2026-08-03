@@ -3,6 +3,7 @@
 Covers membership testing, item lookup, and equality for all four
 index set classes: Reals, Naturals, DiscreteTimeSequence, and Integers.
 """
+
 import unittest
 
 from symbulate.index_sets import (
@@ -28,13 +29,13 @@ class TestReals(unittest.TestCase):
         self.assertIn(5, Reals())
 
     def test_positive_infinity_not_contained(self):
-        self.assertNotIn(float('inf'), Reals())
+        self.assertNotIn(float("inf"), Reals())
 
     def test_negative_infinity_not_contained(self):
-        self.assertNotIn(float('-inf'), Reals())
+        self.assertNotIn(float("-inf"), Reals())
 
     def test_string_not_contained(self):
-        self.assertNotIn('hello', Reals())
+        self.assertNotIn("hello", Reals())
 
     def test_none_not_contained(self):
         self.assertNotIn(None, Reals())
@@ -44,7 +45,7 @@ class TestReals(unittest.TestCase):
 
     def test_getitem_raises_for_infinity(self):
         with self.assertRaises(KeyError):
-            Reals()[float('inf')]
+            Reals()[float("inf")]
 
     def test_equality_same_type(self):
         self.assertEqual(Reals(), Reals())
@@ -72,7 +73,7 @@ class TestNaturals(unittest.TestCase):
         self.assertNotIn(1.5, Naturals())
 
     def test_string_not_contained(self):
-        self.assertNotIn('3', Naturals())
+        self.assertNotIn("3", Naturals())
 
     def test_none_not_contained(self):
         self.assertNotIn(None, Naturals())
@@ -173,7 +174,7 @@ class TestIndexSetKeyError(unittest.TestCase):
     def test_reals_getitem_raises_for_infinity(self):
         """KeyError names the set type when the value is not in Reals."""
         with self.assertRaises(KeyError):
-            Reals()[float('inf')]
+            Reals()[float("inf")]
 
     def test_naturals_getitem_raises_for_negative(self):
         """KeyError names the set type when the value is not in Naturals."""
@@ -209,5 +210,5 @@ class TestIntegers(unittest.TestCase):
         self.assertEqual(Integers(), Integers())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
