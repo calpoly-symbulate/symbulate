@@ -52,6 +52,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `markov_chains.py` | Markov chain probability spaces |
 | `gaussian_process.py` | `GaussianProcess`, `BrownianMotion` |
 | `poisson_process.py` | Poisson process |
+| `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence` |
 | `math.py` | Math utility functions |
@@ -290,6 +291,7 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_markov_chains.py` | Markov chains |
 | `test_gaussian_process.py` | Gaussian processes |
 | `test_poisson_process.py` | Poisson process |
+| `test_random_walk.py` | `RandomWalk` |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
 | `test_index_sets.py` | Index sets |
