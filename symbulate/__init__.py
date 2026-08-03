@@ -120,6 +120,11 @@ from .random_walk import (
     RandomWalkProbabilitySpace,
     RandomWalkResult,
 )
+from .time_series import (
+    MA,
+    MAProbabilitySpace,
+    MAResult,
+)
 from .renewal_process import RenewalProcess, RenewalProcessProbabilitySpace
 from .diffusion_process import (
     DiffusionProcess,
