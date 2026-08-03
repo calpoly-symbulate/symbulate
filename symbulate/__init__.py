@@ -111,10 +111,13 @@ from .gaussian_process import (
     BrownianBridgeProbabilitySpace,
     FractionalBrownianMotion,
     FractionalBrownianMotionProbabilitySpace,
-    GeometricBrownianMotion,
-    GeometricBrownianMotionProbabilitySpace,
 )
-from .poisson_process import PoissonProcess, PoissonProcessProbabilitySpace
+from .poisson_process import (
+    PoissonProcess,
+    PoissonProcessProbabilitySpace,
+    NonHomogeneousPoissonProcess,
+    NonHomogeneousPoissonProcessProbabilitySpace,
+)
 from .random_walk import (
     RandomWalk,
     RandomWalkProbabilitySpace,
