@@ -935,7 +935,22 @@ def interarrival_times(continuous_time_function):
     --------
     >>> from symbulate import *
     >>> X = RV(PoissonProcessProbabilitySpace(rate=2))
-    >>> interarrival_times(X.draw())
+    >>> interarrival_times(X.draw())  # doctest: +SKIP
+    (0.12, 0.53, 0.24, 1.06, 0.31, 0.78, ...)
+
+    For a continuous-time Markov chain these are the times spent in each state
+    visited -- Exponential with that state's rate of leaving, so they need not
+    all have the same distribution.
+
+    >>> Y = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0])
+    >>> interarrival_times(Y.draw())  # doctest: +SKIP
+    (0.51, 1.47, 0.30, 0.14, 2.28, 0.04, ...)
+
+    Wrapping the function in ``.apply()`` makes it a random variable, so the
+    time spent in the first state can be simulated like any other.
+
+    >>> Y.apply(interarrival_times)[0].sim(1000).mean()  # doctest: +SKIP
+    0.997
     """
     if not (
         isinstance(continuous_time_function, ContinuousTimeFunction)
@@ -971,7 +986,15 @@ def arrival_times(continuous_time_function):
     --------
     >>> from symbulate import *
     >>> X = RV(PoissonProcessProbabilitySpace(rate=2))
-    >>> arrival_times(X.draw())
+    >>> arrival_times(X.draw())  # doctest: +SKIP
+    (0.12, 0.65, 0.89, 1.95, 2.26, 3.04, ...)
+
+    These are the running total of the interarrival times, so for a
+    continuous-time Markov chain they are the times at which the chain jumps.
+
+    >>> Y = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0])
+    >>> arrival_times(Y.draw())  # doctest: +SKIP
+    (0.51, 1.97, 2.27, 2.41, 4.69, 4.73, ...)
     """
     if not (
         isinstance(continuous_time_function, ContinuousTimeFunction)
@@ -1008,7 +1031,18 @@ def states(discrete_valued_function):
     >>> from symbulate import *
     >>> T = [[0.5, 0.5], [0.5, 0.5]]
     >>> X = RV(MarkovChainProbabilitySpace(transition_matrix=T, initial_dist=[1, 0]))
-    >>> states(X.draw())
+    >>> states(X.draw())  # doctest: +SKIP
+    (0, 1, 1, 0, 1, 0, ...)
+
+    For a continuous-time process these are the states visited in order,
+    ignoring how long the process stayed in each one. They come back as the
+    state *labels*, so they match what evaluating the path returns.
+
+    >>> Y = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0],
+    ...                               state_labels=['A', 'B'])
+    >>> path = Y.draw()
+    >>> states(path)[0] == path(0)
+    True
     """
     if not isinstance(discrete_valued_function, DiscreteValued):
         raise TypeError("States are only defined for discrete-valued " "functions.")

@@ -273,10 +273,27 @@ class ContinuousTimeMarkovChainResult(ContinuousTimeFunction, DiscreteValued):
     You can evaluate it at any time ``t`` to find which state the chain
     is in at that moment.
 
+    Three sequences describe the same path in a different way, and each is
+    generated lazily, on demand:
+
+    - ``states`` -- the states visited, in order, ignoring how long the
+      chain stayed in each one,
+    - ``interarrival_times`` -- how long the chain stayed in each of those
+      states before jumping (also called the *holding* times),
+    - ``get_arrival_times()`` -- the running total of those, i.e. the clock
+      time of each jump.
+
+    They line up index by index: the chain sits in ``states[n]`` for
+    ``interarrival_times[n]`` units of time, and jumps out of it at
+    ``get_arrival_times()[n]``. This is the same interface a
+    :class:`~symbulate.poisson_process.PoissonProcess` sample path provides,
+    and the ``states()``, ``interarrival_times()``, and ``arrival_times()``
+    functions work on either one.
+
     Parameters
     ----------
-    states : MarkovChainResult
-        The sequence of states visited (as state indices).
+    state_indices : MarkovChainResult
+        The sequence of states visited, as state indices.
     rates : array-like
         The rate of leaving each state (the negative diagonal of the
         generator matrix).
@@ -288,8 +305,12 @@ class ContinuousTimeMarkovChainResult(ContinuousTimeFunction, DiscreteValued):
 
     Attributes
     ----------
-    states : MarkovChainResult
-        The sequence of states visited (as state indices).
+    states : InfiniteVector
+        The sequence of states visited, as state *labels* -- the same values
+        the path itself returns, so ``path(0)`` and ``states[0]`` agree.
+    state_indices : MarkovChainResult
+        The same sequence as state indices (``0, 1, ..., n_states - 1``),
+        which is what the rates and labels are indexed by.
     rates : numpy.ndarray
         The rate of leaving each state (the negative of the diagonal
         of the generator matrix).
@@ -298,54 +319,50 @@ class ContinuousTimeMarkovChainResult(ContinuousTimeFunction, DiscreteValued):
     state_labels : range or list
         The names (labels) of each state.
     interarrival_times : InfiniteVector
-        The actual time spent in each state, scaled by the holding rate.
+        The actual time spent in each state visited, scaled by that state's
+        holding rate. The time spent in a state whose rate of leaving is
+        ``r`` is Exponential with rate ``r``, so it averages ``1 / r``.
 
     Examples
     --------
     >>> Q = [[-1, 1], [2, -2]]
-    >>> chain = ContinuousTimeMarkovChain(Q, [1.0, 0.0])
+    >>> chain = ContinuousTimeMarkovChain(Q, [1.0, 0.0], state_labels=['A', 'B'])
     >>> path = chain.draw()
     >>> path(2.5)  # doctest: +SKIP
     'A'
+    >>> path.states[0]
+    'A'
+    >>> path.interarrival_times[0]  # doctest: +SKIP
+    0.508
+    >>> path.get_arrival_times()[0]  # doctest: +SKIP
+    0.508
     """
 
-    def __init__(self, states, rates, unscaled_interarrival_times, state_labels):
+    def __init__(self, state_indices, rates, unscaled_interarrival_times, state_labels):
         """Create one simulated sample path of a continuous-time Markov chain."""
-        self.states = states
+        self.state_indices = state_indices
         self.rates = rates
         self.times = unscaled_interarrival_times
         self.state_labels = state_labels
 
-        # Define an InfiniteVector of the interarrival times.
-        def interarrival_times(n):
-            """Return the actual time spent in the n-th state.
+        # The states as the user sees them: the labels, matching what
+        # evaluating the path returns.
+        self.states = InfiniteVector(lambda n: self.state_labels[self.state_indices[n]])
 
-            Parameters
-            ----------
-            n : int
-                The index of the state visit (0-indexed).
-
-            Returns
-            -------
-            float
-                The time spent in state ``n``, equal to the unscaled
-                Exponential(1) draw divided by the holding rate of that state.
-            """
-            for i in range(n + 1):
-                state = self.states[i]
-                interarrival_time = self.times[i] / self.rates[state]
-            return interarrival_time
-
-        self.interarrival_times = InfiniteVector(interarrival_times)
+        # The time spent in the n-th state visited. Rescaling an
+        # Exponential(1) draw by that state's rate of leaving gives an
+        # Exponential(rate) holding time.
+        self.interarrival_times = InfiniteVector(
+            lambda n: self.times[n] / self.rates[self.state_indices[n]]
+        )
 
         def _func(t):
             total_time = 0
             n = 0
             while True:
-                state = self.states[n]
-                total_time += self.times[n] / self.rates[state]
+                total_time += self.interarrival_times[n]
                 if total_time > t:
-                    return self.state_labels[state]
+                    return self.states[n]
                 n += 1
 
         super().__init__(_func)
@@ -469,10 +486,12 @@ class ContinuousTimeMarkovChainProbabilitySpace(ProbabilitySpace):
         # A continuous-time Markov chain is specified by the
         # sequence of states and the unscaled interarrival times.
         def _draw():
-            states = MarkovChain(self.transition_matrix, self.initial_dist).draw()
+            state_indices = MarkovChain(
+                self.transition_matrix, self.initial_dist
+            ).draw()
             rates = -np.diag(self.generator_matrix)
             return ContinuousTimeMarkovChainResult(
-                states, rates, unscaled_interarrivals.draw(), self.state_labels
+                state_indices, rates, unscaled_interarrivals.draw(), self.state_labels
             )
 
         super().__init__(_draw)
@@ -501,13 +520,46 @@ class ContinuousTimeMarkovChain(RV):
     prob_space : ContinuousTimeMarkovChainProbabilitySpace
         The underlying probability space used to generate sample paths.
 
+    Notes
+    -----
+    A sample path can also be described by *when* it jumps rather than by
+    its value at each time. Three functions read that description off a
+    drawn path, exactly as they do for a Poisson process:
+
+    - ``states(path)`` -- the states visited, in order,
+    - ``interarrival_times(path)`` -- how long the chain stayed in each of
+      them (the holding times),
+    - ``arrival_times(path)`` -- the clock time of each jump.
+
+    The time the chain spends in a state is Exponential with that state's
+    rate of leaving (the negative diagonal entry of the generator matrix),
+    so from state ``i`` it averages ``-1 / generator_matrix[i][i]``. Because
+    each of these is a random sequence, ``.apply()`` turns it into a random
+    variable that can be simulated -- ``chain.apply(arrival_times)[0]`` is
+    the (random) time of the first jump.
+
     Examples
     --------
+    >>> from symbulate import *
     >>> Q = [[-1, 1], [2, -2]]
     >>> chain = ContinuousTimeMarkovChain(Q, [1.0, 0.0], state_labels=['A', 'B'])
     >>> path = chain.draw()
     >>> path(2.5)  # doctest: +SKIP
     'A'
+
+    The states visited, the time spent in each, and the times of the jumps.
+
+    >>> states(path)[0]
+    'A'
+    >>> interarrival_times(path)[0]  # doctest: +SKIP
+    0.508
+    >>> arrival_times(path)[0]  # doctest: +SKIP
+    0.508
+
+    The time of the first jump is a random variable, so it can be simulated.
+
+    >>> chain.apply(arrival_times)[0].sim(1000).mean()  # doctest: +SKIP
+    1.002
     """
 
     def __init__(self, generator_matrix, initial_dist, state_labels=None):
@@ -586,6 +638,15 @@ class BirthDeathProcess(ContinuousTimeMarkovChain):
     process (all death rates 0) is not expressible this way, since its top
     state would be a dead end.
 
+    Being a continuous-time Markov chain, a birth-death path can also be read
+    off event by event with ``states``, ``interarrival_times``, and
+    ``arrival_times`` -- the counts it passed through, how long it stayed at
+    each of them, and the clock time of each birth or death. Nothing but a
+    birth or a death can happen in state ``n``, and either one ends the stay,
+    so the time spent at count ``n`` is Exponential with rate
+    ``birth_rates[n] + death_rates[n]`` -- averaging
+    ``1 / (birth_rates[n] + death_rates[n])``. A busier state is left sooner.
+
     Examples
     --------
     >>> from symbulate import *
@@ -599,6 +660,14 @@ class BirthDeathProcess(ContinuousTimeMarkovChain):
     >>> mms = BirthDeathProcess(
     ...     birth_rates=1, death_rates=lambda n: min(n, 3) * mu, num_states=41
     ... )
+
+    An empty M/M/1 queue can only fill up, so the wait for the first event is
+    Exponential(1) -- the first arrival -- and averages 1.
+
+    >>> states(path)[0]
+    0
+    >>> queue.apply(interarrival_times)[0].sim(1000).mean()  # doctest: +SKIP
+    0.988
     """
 
     def __init__(
@@ -1046,6 +1115,10 @@ class YuleProcessResult(ContinuousTimeFunction, DiscreteValued):
         The starting population size.
     birth_rate : float
         The per-individual birth rate.
+    states : InfiniteVector
+        The population sizes passed through, in order: ``initial``,
+        ``initial + 1``, ``initial + 2``, ... -- since nothing ever dies,
+        the population climbs by one at every birth.
     interarrival_times : InfiniteVector
         The actual time between successive births.
 
@@ -1055,6 +1128,8 @@ class YuleProcessResult(ContinuousTimeFunction, DiscreteValued):
     >>> path = process.draw()
     >>> path(3.0)  # doctest: +SKIP
     4
+    >>> path.states[0], path.states[1]
+    (1, 2)
     """
 
     def __init__(self, initial, birth_rate, unscaled_holding_times):
@@ -1062,6 +1137,10 @@ class YuleProcessResult(ContinuousTimeFunction, DiscreteValued):
         self.initial = initial
         self.birth_rate = birth_rate
         self.times = unscaled_holding_times
+
+        # Nothing ever dies, so the population passes through every size from
+        # ``initial`` upward, one birth at a time.
+        self.states = InfiniteVector(lambda k: self.initial + k)
 
         # With ``m`` individuals present, each gives birth at ``birth_rate``,
         # so the next birth happens at total rate ``m * birth_rate``. The time
@@ -1077,7 +1156,7 @@ class YuleProcessResult(ContinuousTimeFunction, DiscreteValued):
             while True:
                 total_time += self.interarrival_times[n]
                 if total_time > t:
-                    return self.initial + n
+                    return self.states[n]
                 n += 1
 
         super().__init__(_func)
@@ -1179,6 +1258,13 @@ class YuleProcess(RV):
     geometrically distributed with parameter ``exp(-birth_rate * t)``, and its
     mean grows exponentially: ``E[N(t)] = initial * exp(birth_rate * t)``.
 
+    A drawn path can also be read off birth by birth with ``states``,
+    ``interarrival_times``, and ``arrival_times``, as for a Poisson process
+    or any continuous-time Markov chain. Here the wait for the next birth
+    shrinks as the population grows: with ``n`` individuals present it is
+    Exponential with rate ``n * birth_rate``, averaging
+    ``1 / (n * birth_rate)``.
+
     Examples
     --------
     >>> from symbulate import *
@@ -1188,6 +1274,13 @@ class YuleProcess(RV):
     1
     >>> path(5.0)  # doctest: +SKIP
     7
+
+    The population climbs one at a time, and each wait is shorter than the last.
+
+    >>> states(path)[0], states(path)[1]
+    (1, 2)
+    >>> arrival_times(path)[0]  # doctest: +SKIP
+    0.693
     """
 
     def __init__(self, birth_rate, initial=1):
