@@ -1070,3 +1070,264 @@ class FractionalBrownianMotion(RandomProcess, RV):
         prob_space = FractionalBrownianMotionProbabilitySpace(hurst=hurst, scale=scale)
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
+
+
+def _validate_geometric_brownian_motion(initial_value, growth_rate, scale):
+    """Check the parameters of a geometric Brownian motion.
+
+    Raises
+    ------
+    TypeError
+        If any parameter is not a number.
+    ValueError
+        If ``initial_value`` or ``scale`` is not positive.
+    """
+    for name, value, example in [
+        ("initial_value", initial_value, "initial_value=100"),
+        ("growth_rate", growth_rate, "growth_rate=0.05"),
+        ("scale", scale, "scale=0.2"),
+    ]:
+        if not isinstance(value, numbers.Real):
+            raise TypeError(
+                f"{name} must be a number, got {type(value).__name__}. "
+                f"For example, {example}."
+            )
+    if initial_value <= 0:
+        raise ValueError(
+            f"initial_value must be positive, got {initial_value}. A "
+            f"geometric Brownian motion multiplies its starting value by a "
+            f"positive number, so starting at 0 would stay at 0 forever and "
+            f"starting below 0 would stay negative forever."
+        )
+    if scale <= 0:
+        raise ValueError(
+            f"scale must be positive, got {scale}. A scale of 0 would give "
+            "smooth exponential growth with no randomness at all."
+        )
+
+
+def get_geometric_brownian_motion_result(initial_value, growth_rate, scale):
+    """Create one simulated sample path of a geometric Brownian motion.
+
+    Built by transforming a Brownian motion path rather than by simulating
+    small steps, so the path is **exact**: at every time ``t``,
+
+    ``value(t) = initial_value * exp((growth_rate - scale ** 2 / 2) * t
+    + scale * W(t))``
+
+    where ``W`` is a standard Brownian motion. Because the underlying
+    Brownian path fills itself in lazily and caches what it has drawn, the
+    result inherits both properties for free -- values are only computed at
+    the times asked for, and zooming in on a stretch of an already-drawn
+    path refines that same path.
+
+    Parameters
+    ----------
+    initial_value : float
+        The value at time 0. Must be positive.
+    growth_rate : float
+        The average exponential growth rate. The mean at time ``t`` is
+        ``initial_value * exp(growth_rate * t)``.
+    scale : float
+        The volatility -- how much the path swings around that average.
+        Must be positive.
+
+    Returns
+    -------
+    GeometricBrownianMotionResult
+        A sample path that can be evaluated at any time ``t >= 0``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> path = get_geometric_brownian_motion_result(100, 0.05, 0.2)
+    >>> float(path(0))
+    100.0
+    >>> path(1.0)  # doctest: +SKIP
+    104.3
+    """
+    # A standard Brownian motion, which does all of the actual simulating.
+    brownian_path = get_gaussian_process_result(
+        mean_func=lambda t: 0.0,
+        cov_func=lambda s, t: min(s, t),
+    )
+
+    # exp() of a normal has a larger mean than exp() of that normal's mean, so
+    # subtracting scale ** 2 / 2 here is what makes growth_rate come out as
+    # the growth rate of the *mean* rather than of the exponent.
+    log_drift = growth_rate - scale**2 / 2
+
+    class GeometricBrownianMotionResult(ContinuousTimeFunction):
+        """One simulated sample path of a geometric Brownian motion.
+
+        Evaluating this object at a time ``t`` returns the value of the path
+        at that moment. Re-evaluating the same time always gives the same
+        value, and a new time in between two already-evaluated ones is
+        consistent with both, because the underlying Brownian path is.
+
+        Attributes
+        ----------
+        brownian_path : GaussianProcessResult
+            The Brownian motion this path is the exponential of. Exposed
+            because it is where the randomness actually lives.
+        index_set : Reals
+            The times the path is defined over.
+        """
+
+        def __init__(self):
+            """Create one simulated sample path of a geometric Brownian motion."""
+
+            def _func(t):
+                if t < 0:
+                    raise ValueError(
+                        "GeometricBrownianMotion is only defined for t >= 0 "
+                        f"(the path starts at {initial_value} at time 0), "
+                        f"got t={t}."
+                    )
+                return initial_value * np.exp(log_drift * t + scale * brownian_path(t))
+
+            super().__init__(func=_func)
+            self.index_set = Reals()
+            self.brownian_path = brownian_path
+
+    return GeometricBrownianMotionResult()
+
+
+# Define convenience class for geometric Brownian motion
+class GeometricBrownianMotionProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying a geometric Brownian motion.
+
+    Each draw from this space produces one simulated sample path. Paths are
+    generated lazily and exactly, by transforming an underlying Brownian
+    motion (see :func:`get_geometric_brownian_motion_result`).
+
+    Parameters
+    ----------
+    initial_value : float, optional
+        The value at time 0. Must be positive. Default is 1.
+    growth_rate : float, optional
+        The average exponential growth rate. Default is 0.
+    scale : float, optional
+        The volatility. Must be positive. Default is 1.
+
+    Attributes
+    ----------
+    initial_value : float
+        The value at time 0.
+    growth_rate : float
+        The average exponential growth rate.
+    scale : float
+        The volatility.
+
+    Raises
+    ------
+    TypeError
+        If any parameter is not a number.
+    ValueError
+        If ``initial_value`` or ``scale`` is not positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = GeometricBrownianMotionProbabilitySpace(initial_value=100)
+    >>> float(P.draw()(0))
+    100.0
+    """
+
+    def __init__(self, initial_value=1, growth_rate=0, scale=1):
+        """Create a probability space for a geometric Brownian motion."""
+        _validate_geometric_brownian_motion(initial_value, growth_rate, scale)
+
+        self.initial_value = initial_value
+        self.growth_rate = growth_rate
+        self.scale = scale
+
+        def draw():
+            return get_geometric_brownian_motion_result(
+                initial_value, growth_rate, scale
+            )
+
+        super().__init__(draw)
+
+
+class GeometricBrownianMotion(RandomProcess, RV):
+    """Geometric Brownian motion, a random variable over sample paths.
+
+    The standard model for a price. Brownian motion *adds* a random amount
+    each moment, which lets it go negative -- fine for a temperature, wrong
+    for a stock. Geometric Brownian motion *multiplies* by a random factor
+    instead, so it can never reach 0, and a swing is proportional to the
+    current value: a \\$100 stock moves in dollars where a \\$1 stock moves in
+    cents.
+
+    It is exactly the exponential of a Brownian motion,
+
+    ``value(t) = initial_value * exp((growth_rate - scale ** 2 / 2) * t
+    + scale * W(t))``
+
+    so Symbulate simulates it **exactly**, by drawing a Brownian path and
+    transforming it -- not by taking small steps and accumulating error.
+
+    Parameters
+    ----------
+    initial_value : float, optional
+        The value at time 0. Must be positive. Default is 1.
+    growth_rate : float, optional
+        The average exponential growth rate. The mean at time ``t`` is
+        ``initial_value * exp(growth_rate * t)``, so 0.05 is roughly 5%
+        growth per unit of time. Default is 0.
+    scale : float, optional
+        The volatility -- how widely paths spread around that average. Must
+        be positive. Default is 1.
+
+    Attributes
+    ----------
+    prob_space : GeometricBrownianMotionProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Notes
+    -----
+    The value at time ``t`` is log-normal, and its mean and variance are
+
+    - ``mean = initial_value * exp(growth_rate * t)``
+    - ``variance = mean ** 2 * (exp(scale ** 2 * t) - 1)``
+
+    The ``- scale ** 2 / 2`` in the exponent is easy to overlook and matters:
+    exponentiating stretches the upper tail, so without it ``growth_rate``
+    would describe the growth of the exponent rather than of the mean.
+    A consequence worth knowing is that a path's *typical* outcome grows
+    more slowly than its *average* one -- the average is pulled up by rare
+    very large values -- so for ``growth_rate`` below ``scale ** 2 / 2`` the
+    mean still rises while most individual paths drift toward 0.
+
+    Asking for a time before 0 raises a ``ValueError``, since the path
+    starts at ``initial_value`` at time 0.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = GeometricBrownianMotion(initial_value=100, growth_rate=0.05, scale=0.2)
+    >>> # Every path starts at initial_value
+    >>> float(X.draw()(0))
+    100.0
+    >>> path = X.draw()             # doctest: +SKIP
+    >>> path(1.0), path(2.0)        # doctest: +SKIP
+    (104.3, 118.7)
+    >>> # The average grows like exp(growth_rate * t)
+    >>> X[2.0].sim(1000).mean()     # doctest: +SKIP
+    110.4
+
+    See Also
+    --------
+    BrownianMotion : The process this is the exponential of.
+    """
+
+    def __init__(self, initial_value=1, growth_rate=0, scale=1):
+        """Create a geometric Brownian motion process."""
+        prob_space = GeometricBrownianMotionProbabilitySpace(
+            initial_value=initial_value,
+            growth_rate=growth_rate,
+            scale=scale,
+        )
+        RandomProcess.__init__(self, prob_space)
+        RV.__init__(self, prob_space)

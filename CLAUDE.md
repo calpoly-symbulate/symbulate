@@ -51,8 +51,8 @@ must be understandable by a general audience without assuming prior knowledge.
 | `table.py` | Table display for simulation results |
 | `markov_chains.py` | Markov chain probability spaces |
 | `gaussian_process.py` | `GaussianProcess`, `BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`, `FractionalBrownianMotion` |
-| `poisson_process.py` | Poisson process |
-| `renewal_process.py` | `RenewalProcess` — counts events with i.i.d. interarrival times from any nonnegative distribution |
+| `poisson_process.py` | `PoissonProcess` and `NonHomogeneousPoissonProcess` (time-varying rate) |
+| `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution |
 | `queues.py` | `GG1`, `MG1`, `GM1` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
@@ -345,8 +345,8 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_table.py` | Table display |
 | `test_markov_chains.py` | Markov chains |
 | `test_gaussian_process.py` | Gaussian processes (incl. Ornstein-Uhlenbeck, Brownian bridge, fractional Brownian motion) |
-| `test_poisson_process.py` | Poisson process |
-| `test_renewal_process.py` | `RenewalProcess` |
+| `test_poisson_process.py` | Poisson process and non-homogeneous Poisson process |
+| `test_renewal_process.py` | Renewal process |
 | `test_queues.py` | `GG1`, `MG1`, `GM1` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
 | `test_diffusion_process.py` | Diffusion processes |
