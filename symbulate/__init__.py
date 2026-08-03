@@ -126,7 +126,12 @@ from .random_walk import (
     RandomWalkProbabilitySpace,
     RandomWalkResult,
 )
-from .renewal_process import RenewalProcess, RenewalProcessProbabilitySpace
+from .renewal_process import (
+    RenewalProcess,
+    RenewalProcessProbabilitySpace,
+    CompoundPoissonProcess,
+    CompoundPoissonProcessProbabilitySpace,
+)
 from .queues import (
     GG1,
     GG1ProbabilitySpace,
