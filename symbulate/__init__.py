@@ -126,6 +126,11 @@ from .random_walk import (
     RandomWalkProbabilitySpace,
     RandomWalkResult,
 )
+from .time_series import (
+    MA,
+    MAProbabilitySpace,
+    MAResult,
+)
 from .renewal_process import RenewalProcess, RenewalProcessProbabilitySpace
 from .queues import (
     GG1,
@@ -133,6 +138,9 @@ from .queues import (
     GG1Result,
     MG1,
     GM1,
+    GGs,
+    GGsProbabilitySpace,
+    GGsResult,
 )
 from .diffusion_process import (
     DiffusionProcess,

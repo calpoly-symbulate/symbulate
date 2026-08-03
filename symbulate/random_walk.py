@@ -3,6 +3,7 @@ import numbers
 from .distributions import Bernoulli, Distribution
 from .math import inf
 from .probability_space import ProbabilitySpace
+from .random_processes import _resolve_initial
 from .random_variables import RV
 from .result import InfiniteVector
 
@@ -42,14 +43,14 @@ def _step_source(step_dist):
     return InfiniteVector(lambda n: step_dist.draw())
 
 
-def _validate_random_walk(step_dist, p, initial_value):
+def _validate_random_walk(step_dist, p, initial):
     """Check the parameters of a random walk.
 
     Raises
     ------
     TypeError
         If ``step_dist`` is neither a ``Distribution`` nor an ``RV``, or if
-        ``p`` or ``initial_value`` is not a number.
+        ``p`` or ``initial`` is not a number.
     ValueError
         If neither ``step_dist`` nor ``p`` was given, if both were, or if
         ``p`` is not between 0 and 1.
@@ -86,11 +87,10 @@ def _validate_random_walk(step_dist, p, initial_value):
             f"Poisson(2)) or a random variable built from one (e.g. "
             f"RV(Bernoulli(0.5)) * 2 - 1), got {type(step_dist).__name__}."
         )
-    if not isinstance(initial_value, numbers.Real):
+    if not isinstance(initial, numbers.Real):
         raise TypeError(
-            f"initial_value must be a number, got "
-            f"{type(initial_value).__name__}. It is where every path starts, "
-            f"for example initial_value=0."
+            f"initial must be a number, got {type(initial).__name__}. It is "
+            f"where every path starts, for example initial=0."
         )
 
 
@@ -107,35 +107,35 @@ class RandomWalkResult(InfiniteVector):
     steps : InfiniteVector
         The i.i.d. steps to accumulate. ``steps[n]`` is the step taken
         between time ``n`` and time ``n + 1``.
-    initial_value : float, optional
+    initial : float, optional
         The position at time 0. Default is 0.
 
     Attributes
     ----------
     steps : InfiniteVector
         The steps being accumulated.
-    initial_value : float
+    initial : float
         The position at time 0.
     positions : list
-        The positions generated so far, starting with ``initial_value``.
+        The positions generated so far, starting with ``initial``.
 
     Examples
     --------
     >>> from symbulate import *
     >>> path = RandomWalk(p=0.5).draw()
-    >>> float(path[0])  # every path starts at initial_value
+    >>> float(path[0])  # every path starts at initial
     0.0
     >>> abs(float(path[1]) - float(path[0]))  # each step moves by exactly 1
     1.0
     """
 
-    def __init__(self, steps, initial_value=0):
+    def __init__(self, steps, initial=0):
         """Create one simulated sample path of a random walk."""
         self.steps = steps
-        self.initial_value = initial_value
+        self.initial = initial
         # positions[n] is the position at time n. Time 0 is known with no
         # randomness, so the path always starts out one entry long.
-        self.positions = [initial_value]
+        self.positions = [initial]
 
         def _func(n):
             # Extend the walk only as far as has actually been asked for,
@@ -186,8 +186,11 @@ class RandomWalkProbabilitySpace(ProbabilitySpace):
         Probability that a step is ``+1`` rather than ``-1``, for the
         simple walk. Must be between 0 and 1. Mutually exclusive with
         ``step_dist``.
-    initial_value : float, optional
+    initial : float, optional
         The position at time 0. Default is 0.
+    initial_value : float, optional
+        Older name for ``initial``, still accepted. Give one or the other,
+        not both.
 
     Attributes
     ----------
@@ -196,17 +199,18 @@ class RandomWalkProbabilitySpace(ProbabilitySpace):
         random variable built for you when ``p`` was given.
     p : float or None
         The value of ``p``, or ``None`` if ``step_dist`` was given instead.
-    initial_value : float
+    initial : float
         The position at time 0.
 
     Raises
     ------
     TypeError
         If ``step_dist`` is neither a ``Distribution`` nor an ``RV``, or if
-        ``p`` or ``initial_value`` is not a number.
+        ``p`` or ``initial`` is not a number.
     ValueError
-        If neither ``step_dist`` nor ``p`` was given, if both were, or if
-        ``p`` is not between 0 and 1.
+        If neither ``step_dist`` nor ``p`` was given, if both were, if
+        ``p`` is not between 0 and 1, or if both ``initial`` and
+        ``initial_value`` were given.
 
     Examples
     --------
@@ -216,12 +220,13 @@ class RandomWalkProbabilitySpace(ProbabilitySpace):
     0.0
     """
 
-    def __init__(self, step_dist=None, p=None, initial_value=0):
+    def __init__(self, step_dist=None, p=None, initial=None, initial_value=None):
         """Create a probability space for a random walk."""
-        _validate_random_walk(step_dist, p, initial_value)
+        initial = _resolve_initial(initial, initial_value, "initial_value")
+        _validate_random_walk(step_dist, p, initial)
 
         self.p = p
-        self.initial_value = initial_value
+        self.initial = initial
         if p is not None:
             # The simple walk steps +1 with probability p and -1 otherwise.
             # Bernoulli gives 0/1, so 2 * B - 1 rescales it to -1/+1. That
@@ -232,15 +237,20 @@ class RandomWalkProbabilitySpace(ProbabilitySpace):
             self.step_dist = step_dist
 
         def draw():
-            return RandomWalkResult(_step_source(self.step_dist), self.initial_value)
+            return RandomWalkResult(_step_source(self.step_dist), self.initial)
 
         super().__init__(draw)
+
+    @property
+    def initial_value(self):
+        """float : the position at time 0 (older name for ``initial``)."""
+        return self.initial
 
 
 class RandomWalk(RV):
     """A random walk: the running total of independent random steps.
 
-    The walk starts at ``initial_value`` and adds one independent step at
+    The walk starts at ``initial`` and adds one independent step at
     each time, so ``X[n]`` is where it stands after ``n`` steps. It is the
     first process in most introductory courses: the simple ``+1``/``-1``
     walk is the gambler's-ruin model, and because ``X[n]`` is a sum of
@@ -263,8 +273,11 @@ class RandomWalk(RV):
         Probability that a step is ``+1`` rather than ``-1``, for the
         simple walk. Must be between 0 and 1. Mutually exclusive with
         ``step_dist``.
-    initial_value : float, optional
+    initial : float, optional
         Where every path starts. Default is 0.
+    initial_value : float, optional
+        Older name for ``initial``, still accepted so existing code keeps
+        working. Give one or the other, not both.
 
     Attributes
     ----------
@@ -274,7 +287,7 @@ class RandomWalk(RV):
         The distribution of a single step.
     p : float or None
         The value of ``p``, or ``None`` if ``step_dist`` was given instead.
-    initial_value : float
+    initial : float
         Where every path starts.
 
     Notes
@@ -282,10 +295,14 @@ class RandomWalk(RV):
     Time is indexed by the whole numbers ``0, 1, 2, ...``, so ``X[0]`` is
     the starting point and the first step lands at ``X[1]``.
 
-    For the simple walk, ``X[n]`` has mean ``initial_value + n * (2p - 1)``
+    For the simple walk, ``X[n]`` has mean ``initial + n * (2p - 1)``
     and, when ``p = 0.5``, variance ``n``. That growing variance -- spread
     proportional to the square root of ``n`` -- is the fact the walk is
     usually introduced to demonstrate.
+
+    ``initial`` is the name every process in the package is standardising
+    on for its starting condition; see ``MODEL-DECISIONS.md``, "One Name for
+    a Process's Starting Condition".
 
     Examples
     --------
@@ -293,6 +310,8 @@ class RandomWalk(RV):
     >>> X = RandomWalk(p=0.5)
     >>> float(X.draw()[0])  # every path starts at 0
     0.0
+    >>> float(RandomWalk(p=0.5, initial=10).draw()[0])
+    10.0
     >>> X[10].sim(1000).mean()  # doctest: +SKIP
     0.04
     >>> X[10].sim(1000).var()  # close to 10, the variance of a fair walk  # doctest: +SKIP
@@ -307,12 +326,17 @@ class RandomWalk(RV):
     MarkovChain : Another discrete-time process built the same way.
     """
 
-    def __init__(self, step_dist=None, p=None, initial_value=0):
+    def __init__(self, step_dist=None, p=None, initial=None, initial_value=None):
         """Create a random walk."""
         prob_space = RandomWalkProbabilitySpace(
-            step_dist=step_dist, p=p, initial_value=initial_value
+            step_dist=step_dist, p=p, initial=initial, initial_value=initial_value
         )
         self.step_dist = prob_space.step_dist
         self.p = prob_space.p
-        self.initial_value = prob_space.initial_value
+        self.initial = prob_space.initial
         super().__init__(prob_space)
+
+    @property
+    def initial_value(self):
+        """float : where every path starts (older name for ``initial``)."""
+        return self.initial

@@ -294,6 +294,81 @@ Pollaczek-Khinchine check exact.
 
 ---
 
+## Decision: G/G/s — Multi-Server Queues
+
+**Status:** Implemented — `GGs`, `GGsProbabilitySpace`, and `GGsResult` in
+`symbulate/queues.py`, tested in `symbulate/tests/test_queues.py`, demo in
+`team/models-and-sim-design/ggs_queue_demo.ipynb`, exported from
+`symbulate/__init__.py`. Closes the roadmap's "G/G/s (multi-server
+general-service queue)" row.
+
+**Decision**
+> Simulate by tracking **when each server next comes free**, not by
+> generalizing Lindley's leftover arithmetic. Customer `n` arrives at `A[n]`,
+> takes the server that frees up soonest, and waits
+> `max(earliest free time - A[n], 0)`; that server is then busy until
+> `A[n] + W[n] + S[n]`. The free times live in a `heapq`, so the earliest is
+> always at position 0 — the only one the recursion asks about. This is the
+> Kiefer–Wolfowitz vector recursion in the form that is cheapest to read.
+>
+> `GG1` is **not** reimplemented as `GGs(servers=1)`, and `GGs` does not
+> subclass `GG1`. Instead both subclass a new private `_QueueResult`, which
+> owns the two input sequences, the lazily-extended `waits` list, and the
+> derived `arrival_times` / `sojourn_times` / `departure_times`; each concrete
+> class supplies only `_wait_at(n)`. `GGs(servers=1)` is verified to reproduce
+> `GG1`'s waits value-for-value on identical inputs.
+>
+> `servers` is a required argument (no default), validated as an integer `>= 1`
+> by `_validate_servers`. `utilization` becomes
+> `mean service / (servers * mean interarrival)`.
+>
+> No `MGs` / `GMs` classes — pass an `Exponential` on the Markovian side, the
+> way `GG1(Exponential(...), ...)` already serves as `M/G/1`.
+
+**Rationale**
+> The roadmap called this "harder... needs order statistics over `s` servers'
+> completion times," and it is harder *as a generalization of the leftover
+> form* of Lindley's recursion. Reframed in clock time it is barely harder at
+> all: the state is the multiset of free times, and only its minimum matters,
+> which a heap gives in `O(log s)`. Choosing the *earliest* free server rather
+> than an arbitrary idle one is without loss of generality — later arrivals
+> come no earlier, so whichever idle server is picked, the remaining free times
+> stay below the next arrival and no future wait changes.
+>
+> `MMs` in `markov_chains.py` already covers the exponential case as a queue
+> *length*; this covers the general case as a *wait*, and the two are worth
+> comparing in a course. Keeping `GG1` untouched preserves the pedagogically
+> central Lindley formula as its own readable recursion, and follows the same
+> reasoning as leaving `PoissonProcess` alone rather than folding it into
+> `RenewalProcess`.
+
+**Alternatives Considered**
+> *`GGsResult(GG1Result)`, overriding the recursion* — rejected: a multi-server
+> queue is not a kind of single-server queue, and the inheritance would assert
+> otherwise for the sake of code reuse. The shared private base says what is
+> actually shared. *Folding `GG1` into `GGs` with `servers=1`* — rejected;
+> it would churn tested code and demote Lindley's recursion to a special case
+> of a general routine, when it is the thing a course teaches first. *Per-server
+> `service_dist` (heterogeneous servers)* — deferred; every server serving from
+> one distribution is the standard `G/G/s`, and heterogeneous servers need a
+> different assignment rule (fastest free? first free?) that should be decided
+> deliberately rather than implied by an argument shape.
+
+**Verified against exact theory:** the Erlang C formula for `M/M/2` and
+`M/M/3` (mean wait and `P(wait > 0)`, at `rho` of 0.5, 0.667, and 0.75), plus
+the classic equal-utilization comparison — two servers of rate `mu` keep the
+*line* shorter than one server of rate `2mu` (1/3 vs 1/2) while making the
+*visit* longer (4/3 vs 1), which is exactly the tradeoff a course asks
+students to find.
+
+**Known consequence, documented not fixed:** with `s > 1`,
+`departure_times` is no longer increasing, since a short service can overtake
+a long one on the next server. The single-server test asserting monotone
+departures is therefore scoped to `GG1`, and `GGsResult` has a test asserting
+the overtaking *does* happen.
+
+---
+
 ## Decision: Non-Homogeneous Poisson Process — Time-Change, Not Thinning
 
 **Status:** Implemented — `NonHomogeneousPoissonProcess`,
@@ -402,6 +477,57 @@ its own roadmap row rather than smuggled in here.
 (`MM1`, `MMs`) set a precedent for abbreviations *when the abbreviation is
 the standard textbook name*; "NHPP" is standard in reliability courses but
 not in intro probability. Not added — one name for now.
+
+---
+
+## Decision: Hitting Times — Tier B First (recorded after the fact)
+
+**Status:** Implemented in PR #272 — `hitting_time` in
+`symbulate/hitting_times.py`, tested in `symbulate/tests/test_hitting_times.py`,
+demo in `team/models-and-sim-design/hitting_times_demo.ipynb`, exported from
+`symbulate/__init__.py`.
+
+**This entry is a transcription, not the author's own.** It was written from
+the shipped module's docstrings and tests so the log has a record of what
+landed and what did not; whoever wrote the feature should correct or expand the
+rationale below.
+
+**What was built**
+> `hitting_time(process, level, max_time=100.0, start_time=0.0, step=None,
+> tol=1e-6)`, covering the **Gaussian-process family only**: `BrownianMotion`,
+> `BrownianBridge`, `OrnsteinUhlenbeck`, `FractionalBrownianMotion`,
+> `GeometricBrownianMotion`, and a hand-built `GaussianProcess`. Given a
+> process it returns a random variable; given a drawn path it returns a number.
+>
+> Between two evaluated times a path can cross the level and return unseen, so
+> the crossing is decided by a Bernoulli draw with the reflection-principle
+> probability `exp(-2 (level - x0)(level - x1) / (rate * (t1 - t0)))` and then
+> localized by bisection. *Whether* a crossing happened is exact for Brownian
+> motion and Brownian bridges at any `step`, approximate for other Gaussian
+> processes; *exactly when* is accurate to about one `step` for all of them.
+> Geometric Brownian motion is exact via the log scale, since a price reaching
+> a level is its log reaching the log level.
+>
+> Everything else — random walks, Markov chains, the `GG1`/`GGs` queues,
+> `DiffusionProcess` — raises `NotImplementedError` with a message naming
+> itself and saying what it would need instead.
+
+**Ordering note, worth a team decision:** the roadmap's build order puts
+**Tier A** (discrete-time and pure-jump processes) at step 7 and Tier B at step
+10, on the grounds that Tier A is both easier and *exact* — it just walks
+`path[0], path[1], ...` or the jump-time sequence with a cutoff, since nothing
+is hidden between queried points. PR #272 built Tier B first and left Tier A
+unbuilt, so the cheap-and-exact half of the utility is still missing while the
+subtle half exists. Nothing is wrong with the code; the gap is that
+`RandomWalk`, `MarkovChain`, `RenewalProcess`, the birth-death queues, and the
+`GG1`/`GGs` queues — most of the processes in the package — cannot answer a
+hitting-time question at all. One Tier A implementation would cover all of
+them, e.g. "which customer is the first to wait more than 10 minutes?"
+
+**Seeding:** the module draws from its own `hitting_times.rng`, so
+`np.random.seed` does nothing to it — the same trap `diffusion_process.rng`
+already documents. Its test file reseeds both `gaussian_process.rng` and
+`hitting_times.rng`.
 
 ---
 
@@ -823,8 +949,108 @@ them.
 
 ---
 
+## Decision: MA(q) Pre-Sample Shocks
+
+**Status:** Implemented — `symbulate/time_series.py`,
+`symbulate/tests/test_time_series.py`, demo in
+`team/models-and-sim-design/ma_process_demo.ipynb`.
+
+An MA(q) is defined over all time and is stationary by construction, so
+every value has the same distribution. Simulating one has to start
+somewhere, though, and `X[0]` needs the `q` shocks from *before* time 0.
+
+**Decision**
+> Simulate those `q` shocks. No parameter, no setting — the process is
+> already running when the first value is read.
+
+Leaving them out would make `X[0]` carry no echoes and `X[1]` only one, so
+the first `q` values come out too small: for `coefs=[0.8, 0.5]`,
+`Var(X[0])` is 1.00 instead of the correct 1.89, and the lag-2 correlation
+measured from the start of a path reads 0.36 against a true 0.265. That
+lands on precisely the thing an MA(q) is taught to show — the sharp cutoff
+in correlation at lag `q` — so the transient is not a feature to preserve.
+
+Unlike AR, getting it right is free and exact here: `q` extra draws, no
+burn-in length to tune, and it works for any noise distribution.
+`test_time_series.py::test_first_value_has_full_variance` pins it, and
+fails if the pre-sample shocks are ever dropped.
+
+This is also why `MA` takes no `initial` argument — see the next decision.
+
+---
+
+## Decision: One Name for a Process's Starting Condition — `initial`
+
+**Status:** Agreed convention. New processes follow it from now on;
+retrofitting the existing ones is a separate, coordinated PR (see below).
+
+We currently spell "where does the process start" four different ways:
+`initial_value` (Ornstein-Uhlenbeck, Brownian bridge, geometric Brownian
+motion, random walk), `initial` (birth-death), `x0` (diffusion), and
+`initial_dist` (Markov chains, where it means something different again — a
+probability vector over states, not a value). Several processes that plainly
+have a starting state take no such argument at all, including every M/M/\*
+queue, whose parent `BirthDeathProcess` does.
+
+**Decision**
+> One parameter, named **`initial`**, accepting any of:
+> - **a number** — every path starts there;
+> - **a univariate distribution** — the starting value is drawn from it;
+> - **a multivariate distribution** — for a process needing several
+>   starting values at once, drawn jointly so their correlations are right;
+> - **a probability vector** — over a finite state space (Markov chains,
+>   until a `Categorical` distribution exists to replace it);
+> - **`"stationary"`** — the process's own long-run distribution, where
+>   that has a closed form.
+>
+> A process with no state does not take the argument at all. `MA` is the
+> case in point: it needs pre-sample *shocks*, not values, and there is
+> nothing for a student to point at, so it is handled silently (see
+> "Decision: MA(q) Pre-Sample Shocks").
+
+`initial` rather than `initial_value` or `initial_distribution` because it
+is the only one of the three that stays honest across all five forms — a
+number is just a degenerate distribution, and `initial_distribution=0` reads
+as badly as `initial_value=Normal(0, 1)`.
+
+**Why a univariate distribution is not enough on its own.** An AR(p) needs
+`p` starting values, and in the stationary distribution those values are
+*correlated with each other*. Simulating an AR(2) with `phi1=0.5, phi2=0.3`
+(stationary variance 2.244) from two i.i.d. `Normal(0, 1)` draws gives a
+variance of 1.34 at time 0, reaching 2.25 only after about 40 steps — a
+transient, just a different one. Drawing the pair jointly from the right
+`MultivariateNormal` gives 2.24 immediately. So a univariate distribution is
+exactly right for a one-value process (AR(1), geometric Brownian motion,
+random walk) and under-specified beyond that, which is what the multivariate
+form is for.
+
+**Where `"stationary"` works.** Exactly, via Yule-Walker plus
+`MultivariateNormal`, for Gaussian AR/ARMA. Not at all for non-Gaussian
+noise, where no closed form exists, or for explosive coefficients, where no
+stationary distribution exists — both should raise rather than quietly burn
+in.
+
+**Cost.** Cheap for the recursive processes (random walk, Markov chains,
+AR, GARCH), which just draw the first value. Real work for the
+Gaussian-process ones: `OrnsteinUhlenbeck` and `BrownianBridge` are built
+from a `mean_func`/`cov_func` pair that assumes a deterministic start, and a
+random starting value changes the covariance function itself.
+
+**Migration.** New processes adopt `initial` immediately. Existing ones keep
+their current spelling working as an accepted alias when they are retrofitted,
+so notebooks and tests do not break. The retrofit touches all four groups'
+code and should not ride along inside a feature branch.
+
+---
+
 ## Open Decisions
 
+- [ ] Who owns the `initial` retrofit, and when. Renaming
+      `initial_value`/`x0`/`initial_dist` across Ornstein-Uhlenbeck,
+      Brownian bridge, geometric Brownian motion, diffusion, and the Markov
+      chains touches all four groups, so it wants its own PR rather than
+      riding along inside a feature branch. Also whether every M/M/\* queue
+      should regain the `initial` its `BirthDeathProcess` parent already has.
 - [ ] Pandas as a new dependency for `LifeTable` — blocks Phase 1 merge
       until approved or the CSV-parsing is rewritten without it.
 - [ ] Where test fixture data (e.g. `synthetic_soa_table.csv`) lives under

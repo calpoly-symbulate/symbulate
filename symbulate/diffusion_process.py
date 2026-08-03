@@ -6,6 +6,7 @@ import scipy.stats as stats
 
 from .index_sets import Reals
 from .probability_space import ProbabilitySpace
+from .random_processes import _resolve_initial
 from .result import ContinuousTimeFunction
 from .random_variables import RV
 from .random_processes import RandomProcess
@@ -37,8 +38,11 @@ def get_diffusion_process_result(drift, diffusion, x0=0, tol=1e-3):
     diffusion : callable
         A function ``sigma(x, t)`` giving the (non-negative) diffusion
         coefficient of the process.
-    x0 : float, optional
+    initial : float, optional
         The starting value ``X_0``. Default is 0.
+    x0 : float, optional
+        Older name for ``initial``, still accepted. Give one or the other,
+        not both.
     tol : float, optional
         The finest time resolution the path is allowed to be refined
         to. Smaller values give a more accurate approximation of the
@@ -189,8 +193,11 @@ class DiffusionProcessProbabilitySpace(ProbabilitySpace):
     diffusion : callable
         A function ``sigma(x, t)`` giving the diffusion coefficient of
         the process.
-    x0 : float, optional
+    initial : float, optional
         The starting value ``X_0``. Default is 0.
+    x0 : float, optional
+        Older name for ``initial``, still accepted. Give one or the other,
+        not both.
     tol : float, optional
         The finest time resolution the path is allowed to be refined
         to. Default 1e-3.
@@ -206,15 +213,16 @@ class DiffusionProcessProbabilitySpace(ProbabilitySpace):
     >>> P = DiffusionProcessProbabilitySpace(
     ...     drift=lambda x, t: 0.1 * x,
     ...     diffusion=lambda x, t: 0.2 * x,
-    ...     x0=1,
+    ...     initial=1,
     ... )
     >>> path = P.draw()  # doctest: +SKIP
     >>> path(1.0)         # doctest: +SKIP
     1.14
     """
 
-    def __init__(self, drift, diffusion, x0=0, tol=1e-3):
+    def __init__(self, drift, diffusion, initial=None, tol=1e-3, x0=None):
         """Create a probability space for a diffusion process."""
+        initial = _resolve_initial(initial, x0, "x0")
         if not callable(drift):
             raise TypeError(
                 f"drift must be callable (e.g., lambda x, t: 0), "
@@ -225,13 +233,16 @@ class DiffusionProcessProbabilitySpace(ProbabilitySpace):
                 f"diffusion must be callable (e.g., lambda x, t: 1), "
                 f"got {type(diffusion).__name__}."
             )
-        if not isinstance(x0, (int, float)):
-            raise TypeError(f"x0 must be a number, got {type(x0).__name__}.")
+        if not isinstance(initial, (int, float)):
+            raise TypeError(
+                f"initial must be a number, got {type(initial).__name__}. "
+                f"It is the starting value X_0, for example initial=0."
+            )
         if not isinstance(tol, (int, float)) or tol <= 0:
             raise ValueError(f"tol must be a positive number, got {tol!r}.")
 
         def draw():
-            return get_diffusion_process_result(drift, diffusion, x0, tol)
+            return get_diffusion_process_result(drift, diffusion, initial, tol)
 
         super().__init__(draw)
 
@@ -265,8 +276,11 @@ class DiffusionProcess(RandomProcess, RV):
     diffusion : callable
         A function ``sigma(x, t)`` giving the diffusion coefficient of
         the process. Should be non-negative.
-    x0 : float, optional
+    initial : float, optional
         The starting value ``X_0``. Default is 0.
+    x0 : float, optional
+        Older name for ``initial``, still accepted. Give one or the other,
+        not both.
     tol : float, optional
         The finest time resolution the path is allowed to be refined
         to. Smaller values trade accuracy for speed. Default 1e-3.
@@ -283,7 +297,7 @@ class DiffusionProcess(RandomProcess, RV):
     >>> X = DiffusionProcess(
     ...     drift=lambda x, t: -x,
     ...     diffusion=lambda x, t: 1,
-    ...     x0=0,
+    ...     initial=0,
     ... )
     >>> path = X.draw()             # doctest: +SKIP
     >>> path(1.0), path(2.0)        # doctest: +SKIP
@@ -298,18 +312,27 @@ class DiffusionProcess(RandomProcess, RV):
     >>> S = DiffusionProcess(
     ...     drift=lambda x, t: mu * x,
     ...     diffusion=lambda x, t: sigma * x,
-    ...     x0=100,
+    ...     initial=100,
     ... )
     >>> path = S.draw()             # doctest: +SKIP
     >>> path(1.0)                   # doctest: +SKIP
     104.3
     """
 
-    def __init__(self, drift, diffusion, x0=0, tol=1e-3):
+    def __init__(self, drift, diffusion, initial=None, tol=1e-3, x0=None):
         """Create a diffusion process."""
-        prob_space = DiffusionProcessProbabilitySpace(drift, diffusion, x0, tol)
+        initial = _resolve_initial(initial, x0, "x0")
+        prob_space = DiffusionProcessProbabilitySpace(
+            drift, diffusion, initial=initial, tol=tol
+        )
+        self.initial = initial
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
+
+    @property
+    def x0(self):
+        """float : the starting value ``X_0`` (older name for ``initial``)."""
+        return self.initial
 
 
 def _validate_cir(reversion_rate, mean, scale, initial_value):

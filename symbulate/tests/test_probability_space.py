@@ -5,6 +5,7 @@ Event (draw, sim, logical operators, type guards),
 BoxModel (list/dict init, size, replacement, ordering, error handling),
 and DeckOfCards.
 """
+
 import unittest
 import numpy as np
 
@@ -47,27 +48,27 @@ class TestProbabilitySpace(unittest.TestCase):
         self.assertIsInstance(P1 * P2, ProbabilitySpace)
 
     def test_mul_draws_both_outcomes(self):
-        P1 = ProbabilitySpace(lambda: 'a')
-        P2 = ProbabilitySpace(lambda: 'b')
+        P1 = ProbabilitySpace(lambda: "a")
+        P2 = ProbabilitySpace(lambda: "b")
         result = list((P1 * P2).draw())
-        self.assertIn('a', result)
-        self.assertIn('b', result)
+        self.assertIn("a", result)
+        self.assertIn("b", result)
 
     def test_pow_returns_vector(self):
         seed()
         P = ProbabilitySpace(lambda: 1)
-        result = (P ** 3).draw()
+        result = (P**3).draw()
         self.assertIsInstance(result, Vector)
 
     def test_pow_vector_has_correct_length(self):
         seed()
         P = ProbabilitySpace(lambda: 1)
-        result = (P ** 4).draw()
+        result = (P**4).draw()
         self.assertEqual(len(result), 4)
 
     def test_pow_inf_returns_infinite_vector(self):
         P = ProbabilitySpace(lambda: 1)
-        result = (P ** float('inf')).draw()
+        result = (P ** float("inf")).draw()
         self.assertIsInstance(result, InfiniteVector)
 
     def test_non_callable_draw_raises_type_error(self):
@@ -92,12 +93,12 @@ class TestProbabilitySpace(unittest.TestCase):
     def test_pow_zero_raises(self):
         P = ProbabilitySpace(lambda: 1)
         with self.assertRaises(ValueError):
-            P ** 0
+            P**0
 
     def test_pow_negative_raises(self):
         P = ProbabilitySpace(lambda: 1)
         with self.assertRaises(ValueError):
-            P ** -1
+            P**-1
 
     def test_check_same_passes_for_same_space(self):
         P = ProbabilitySpace(lambda: 1)
@@ -134,7 +135,7 @@ class TestEvent(unittest.TestCase):
     def test_or_one_true(self):
         P = ProbabilitySpace(lambda: True)
         A = Event(P, lambda x: not x)  # always False
-        B = Event(P, lambda x: x)       # always True
+        B = Event(P, lambda x: x)  # always True
         self.assertTrue((A | B).draw())
 
     def test_not_inverts_result(self):
@@ -167,42 +168,42 @@ class TestBoxModel(unittest.TestCase):
 
     def test_draw_from_list_in_box(self):
         seed()
-        bm = BoxModel(['a', 'b', 'c'])
-        self.assertIn(bm.draw(), ['a', 'b', 'c'])
+        bm = BoxModel(["a", "b", "c"])
+        self.assertIn(bm.draw(), ["a", "b", "c"])
 
     def test_draw_from_dict_in_box(self):
         seed()
-        bm = BoxModel({'H': 1, 'T': 1})
-        self.assertIn(bm.draw(), ['H', 'T'])
+        bm = BoxModel({"H": 1, "T": 1})
+        self.assertIn(bm.draw(), ["H", "T"])
 
     def test_dict_expands_counts(self):
-        bm = BoxModel({'a': 3, 'b': 1})
+        bm = BoxModel({"a": 3, "b": 1})
         self.assertEqual(len(bm.box), 4)
-        self.assertEqual(bm.box.count('a'), 3)
+        self.assertEqual(bm.box.count("a"), 3)
 
     def test_size_none_returns_scalar(self):
         seed()
-        bm = BoxModel(['x', 'y', 'z'], size=None)
+        bm = BoxModel(["x", "y", "z"], size=None)
         self.assertNotIsInstance(bm.draw(), Vector)
 
     def test_size_one_normalized_to_none(self):
         # size=1 is stored internally as None (returns a scalar, not a Vector)
-        bm = BoxModel(['x', 'y', 'z'], size=1)
+        bm = BoxModel(["x", "y", "z"], size=1)
         self.assertIsNone(bm.size)
 
     def test_size_n_returns_vector(self):
         seed()
-        bm = BoxModel(['a', 'b', 'c'], size=2)
+        bm = BoxModel(["a", "b", "c"], size=2)
         self.assertIsInstance(bm.draw(), Vector)
 
     def test_size_n_vector_has_correct_length(self):
         seed()
-        bm = BoxModel(['a', 'b', 'c'], size=2)
+        bm = BoxModel(["a", "b", "c"], size=2)
         self.assertEqual(len(bm.draw()), 2)
 
     def test_size_inf_returns_infinite_vector(self):
         seed()
-        bm = BoxModel(['a', 'b'], size=float('inf'))
+        bm = BoxModel(["a", "b"], size=float("inf"))
         self.assertIsInstance(bm.draw(), InfiniteVector)
 
     def test_replace_false_no_duplicates(self):
@@ -223,11 +224,11 @@ class TestBoxModel(unittest.TestCase):
 
     def test_size_exceeds_box_without_replacement_raises(self):
         with self.assertRaises(ValueError):
-            BoxModel(['a', 'b', 'c'], size=4, replace=False)
+            BoxModel(["a", "b", "c"], size=4, replace=False)
 
     def test_probs_wrong_length_raises(self):
         with self.assertRaises(ValueError):
-            BoxModel(['a', 'b', 'c'], probs=[0.5, 0.5])
+            BoxModel(["a", "b", "c"], probs=[0.5, 0.5])
 
 
 class TestDeckOfCards(unittest.TestCase):
@@ -245,12 +246,12 @@ class TestDeckOfCards(unittest.TestCase):
     def test_all_suits_present(self):
         deck = DeckOfCards()
         suits = {card[1] for card in deck.box}
-        self.assertEqual(suits, {'Diamonds', 'Hearts', 'Clubs', 'Spades'})
+        self.assertEqual(suits, {"Diamonds", "Hearts", "Clubs", "Spades"})
 
     def test_all_ranks_present(self):
         deck = DeckOfCards()
         ranks = {card[0] for card in deck.box}
-        self.assertEqual(ranks, set(range(2, 11)) | {'J', 'Q', 'K', 'A'})
+        self.assertEqual(ranks, set(range(2, 11)) | {"J", "Q", "K", "A"})
 
     def test_default_no_replacement(self):
         deck = DeckOfCards()
@@ -274,26 +275,76 @@ class TestPokerHands(unittest.TestCase):
     # One fixed, hand-built example of each category. Deterministic — no
     # simulation, so these assert exact behavior.
     HANDS = {
-        "royal flush": [(10, 'Hearts'), ('J', 'Hearts'), ('Q', 'Hearts'),
-                        ('K', 'Hearts'), ('A', 'Hearts')],
-        "straight flush": [(5, 'Clubs'), (6, 'Clubs'), (7, 'Clubs'),
-                           (8, 'Clubs'), (9, 'Clubs')],
-        "four of a kind": [(7, 'Clubs'), (7, 'Hearts'), (7, 'Spades'),
-                           (7, 'Diamonds'), (2, 'Clubs')],
-        "full house": [(3, 'Clubs'), (3, 'Hearts'), (3, 'Spades'),
-                       (8, 'Clubs'), (8, 'Diamonds')],
-        "flush": [(2, 'Spades'), (5, 'Spades'), (7, 'Spades'),
-                  (9, 'Spades'), ('J', 'Spades')],
-        "straight": [(4, 'Clubs'), (5, 'Hearts'), (6, 'Spades'),
-                     (7, 'Clubs'), (8, 'Diamonds')],
-        "three of a kind": [('Q', 'Clubs'), ('Q', 'Hearts'), ('Q', 'Spades'),
-                            (2, 'Clubs'), (5, 'Diamonds')],
-        "two pair": [(9, 'Clubs'), (9, 'Hearts'), (4, 'Spades'),
-                     (4, 'Clubs'), ('K', 'Diamonds')],
-        "pair": [(6, 'Clubs'), (6, 'Hearts'), (2, 'Spades'),
-                 (9, 'Clubs'), ('J', 'Diamonds')],
-        "high card": [(2, 'Clubs'), (5, 'Hearts'), (7, 'Spades'),
-                      (9, 'Clubs'), ('J', 'Diamonds')],
+        "royal flush": [
+            (10, "Hearts"),
+            ("J", "Hearts"),
+            ("Q", "Hearts"),
+            ("K", "Hearts"),
+            ("A", "Hearts"),
+        ],
+        "straight flush": [
+            (5, "Clubs"),
+            (6, "Clubs"),
+            (7, "Clubs"),
+            (8, "Clubs"),
+            (9, "Clubs"),
+        ],
+        "four of a kind": [
+            (7, "Clubs"),
+            (7, "Hearts"),
+            (7, "Spades"),
+            (7, "Diamonds"),
+            (2, "Clubs"),
+        ],
+        "full house": [
+            (3, "Clubs"),
+            (3, "Hearts"),
+            (3, "Spades"),
+            (8, "Clubs"),
+            (8, "Diamonds"),
+        ],
+        "flush": [
+            (2, "Spades"),
+            (5, "Spades"),
+            (7, "Spades"),
+            (9, "Spades"),
+            ("J", "Spades"),
+        ],
+        "straight": [
+            (4, "Clubs"),
+            (5, "Hearts"),
+            (6, "Spades"),
+            (7, "Clubs"),
+            (8, "Diamonds"),
+        ],
+        "three of a kind": [
+            ("Q", "Clubs"),
+            ("Q", "Hearts"),
+            ("Q", "Spades"),
+            (2, "Clubs"),
+            (5, "Diamonds"),
+        ],
+        "two pair": [
+            (9, "Clubs"),
+            (9, "Hearts"),
+            (4, "Spades"),
+            (4, "Clubs"),
+            ("K", "Diamonds"),
+        ],
+        "pair": [
+            (6, "Clubs"),
+            (6, "Hearts"),
+            (2, "Spades"),
+            (9, "Clubs"),
+            ("J", "Diamonds"),
+        ],
+        "high card": [
+            (2, "Clubs"),
+            (5, "Hearts"),
+            (7, "Spades"),
+            (9, "Clubs"),
+            ("J", "Diamonds"),
+        ],
     }
 
     PREDICATES = {
@@ -334,14 +385,24 @@ class TestPokerHands(unittest.TestCase):
 
     def test_wheel_straight_ace_low(self):
         # A-2-3-4-5 is a straight even though the Ace is high-valued.
-        wheel = [('A', 'Clubs'), (2, 'Hearts'), (3, 'Spades'),
-                 (4, 'Clubs'), (5, 'Diamonds')]
+        wheel = [
+            ("A", "Clubs"),
+            (2, "Hearts"),
+            (3, "Spades"),
+            (4, "Clubs"),
+            (5, "Diamonds"),
+        ]
         self.assertEqual(classify_hand(wheel), "straight")
 
     def test_ace_high_straight(self):
         # 10-J-Q-K-A across suits is a plain straight, not a flush.
-        hand = [(10, 'Clubs'), ('J', 'Hearts'), ('Q', 'Spades'),
-                ('K', 'Clubs'), ('A', 'Diamonds')]
+        hand = [
+            (10, "Clubs"),
+            ("J", "Hearts"),
+            ("Q", "Spades"),
+            ("K", "Clubs"),
+            ("A", "Diamonds"),
+        ]
         self.assertEqual(classify_hand(hand), "straight")
 
     def test_full_house_is_not_a_pair(self):
@@ -355,19 +416,33 @@ class TestPokerHands(unittest.TestCase):
 
     def test_too_few_cards_raises(self):
         with self.assertRaises(ValueError):
-            classify_hand([(2, 'Clubs'), (3, 'Hearts'), (4, 'Spades'),
-                           (5, 'Clubs')])
+            classify_hand([(2, "Clubs"), (3, "Hearts"), (4, "Spades"), (5, "Clubs")])
 
     def test_too_many_cards_raises(self):
         with self.assertRaises(ValueError):
-            classify_hand([(2, 'Clubs'), (3, 'Hearts'), (4, 'Spades'),
-                           (5, 'Clubs'), (6, 'Diamonds'), (7, 'Hearts'),
-                           (8, 'Spades')])
+            classify_hand(
+                [
+                    (2, "Clubs"),
+                    (3, "Hearts"),
+                    (4, "Spades"),
+                    (5, "Clubs"),
+                    (6, "Diamonds"),
+                    (7, "Hearts"),
+                    (8, "Spades"),
+                ]
+            )
 
     def test_invalid_rank_raises(self):
         with self.assertRaises(ValueError):
-            classify_hand([('Z', 'Clubs'), (3, 'Hearts'), (4, 'Spades'),
-                           (5, 'Clubs'), (6, 'Diamonds')])
+            classify_hand(
+                [
+                    ("Z", "Clubs"),
+                    (3, "Hearts"),
+                    (4, "Spades"),
+                    (5, "Clubs"),
+                    (6, "Diamonds"),
+                ]
+            )
 
     def test_works_on_a_real_draw(self):
         # classify_hand should accept a Vector straight from a deck draw.
@@ -376,5 +451,5 @@ class TestPokerHands(unittest.TestCase):
         self.assertIn(classify_hand(hand), POKER_HANDS)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
