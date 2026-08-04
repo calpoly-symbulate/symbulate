@@ -483,11 +483,49 @@ raise ValueError(
 
 ## dim > 2 Behavior
 
-RVResults with dim > 2 currently falls through to a catch-all branch that
-produces a connected-dot index plot. This is not correct behavior for joint
-distribution visualization. If you encounter dim > 2 in plot code, raise
-NotImplementedError with a student-friendly message explaining that joint
-plotting of 3+ variables is not yet supported and what to do instead.
+**There is now a way to plot 3+ simulated variables: `.plot(pairs=True)`** — a
+matrix of panels, mirroring `MultivariateDistribution.plot(pairs=True)` so a
+simulation and its distribution can be read side by side. See "Pairs Matrix of
+Simulated Results" below.
+
+`.plot()` with **no** arguments on dim > 2 still falls through to the old
+catch-all branch that produces a connected-dot index plot. That is still not
+correct behavior for joint distribution visualization — the intended fix is to
+raise NotImplementedError pointing at `pairs=True`, and it was deliberately left
+alone when the pairs matrix landed (that change alters existing behavior, so it
+needs its own decision).
+
+## Pairs Matrix of Simulated Results
+
+`RVResults.plot(pairs=True, dims=None)` in `results.py`. The panels are chosen
+by the **same** classification the 1-D and 2-D dispatches use, always in the
+large-sample form so a matrix never mixes a mesh with a scatter:
+
+| Panel | Data | Type |
+|---|---|---|
+| diagonal | continuous-ish (`B_1D`) | `density` |
+| diagonal | discrete-ish | `impulse` — a density over repeated values would smear a pmf |
+| off-diagonal | both discrete (`K_2D` per axis) | `tile` |
+| off-diagonal | both continuous | `hist2d` |
+| off-diagonal | mixed | `tile`, continuous axis binned |
+
+Conventions shared with the theoretical version, by design — change both or
+neither: lower triangle only, `JOINT_PAIRS_MAX_DIM` cap, `JOINT_PAIRS_PANEL_SIZE`
+per panel, `JOINT_PAIRS_OVERLAY_ERROR` when the figure already has a plot,
+`X1`-style labels on the outer edges only, `"Pairs Plot"` suptitle.
+
+Three implementation notes:
+- **Diagonal panels route through `.plot()`** (full reuse of the 1-D dispatch)
+  after `plt.sca(ax)` — which works because every helper draws on `plt.gca()`.
+  **Joint panels call `make_tile`/`make_hist2d` directly**, because the 2-D
+  dispatch hardcodes `colorbar=not marginal` and a colorbar per panel would
+  spend the figure on scales instead of data.
+- **One bin count for the whole matrix.** Equal-width bins over the same column
+  of data with the same count give identical edges, which is what makes a column
+  comparable. Don't pass `bins` to `make_tile` when both axes are discrete — it
+  warns.
+- `dims` is only meaningful with `pairs=True`; on its own it raises rather than
+  leaking into matplotlib.
 
 ## Testing Requirements
 
