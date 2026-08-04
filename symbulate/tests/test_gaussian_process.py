@@ -1298,7 +1298,10 @@ class TestGeometricBrownianMotionErrors(unittest.TestCase):
             GeometricBrownianMotion(initial_value=-5)
 
     def test_initial_value_error_explains_why(self):
-        with self.assertRaisesRegex(ValueError, "initial_value must be positive"):
+        # Called through the older `initial_value` spelling on purpose, so
+        # this doubles as alias coverage; the message itself now uses the
+        # current name.
+        with self.assertRaisesRegex(ValueError, "initial must be positive"):
             GeometricBrownianMotion(initial_value=0)
 
     def test_zero_scale_raises_value_error(self):
@@ -1318,6 +1321,63 @@ class TestGeometricBrownianMotionErrors(unittest.TestCase):
     def test_probability_space_validates_too(self):
         with self.assertRaises(ValueError):
             GeometricBrownianMotionProbabilitySpace(initial_value=0)
+
+
+class TestInitialNaming(unittest.TestCase):
+    """`initial` is the shared name; the older spellings still work.
+
+    Every process is standardising on `initial` for its starting condition
+    (MODEL-DECISIONS.md, "One Name for a Process's Starting Condition").
+    `initial_value` -- and `final_value` on the Brownian bridge -- are kept
+    as accepted aliases so existing code and notebooks do not break. The
+    other 75-odd references in this file still use the old names, which is
+    itself the compatibility test.
+    """
+
+    def test_ornstein_uhlenbeck_both_names(self):
+        self.assertEqual(
+            float(OrnsteinUhlenbeck(initial=5).draw()(0)),
+            float(OrnsteinUhlenbeck(initial_value=5).draw()(0)),
+        )
+
+    def test_ornstein_uhlenbeck_stationary_still_accepted(self):
+        # The sentinel has to survive the rename.
+        path = OrnsteinUhlenbeck(reversion_rate=1, scale=1, initial="stationary").draw()
+        self.assertIsInstance(float(path(1.0)), float)
+
+    def test_ornstein_uhlenbeck_both_names_at_once_raises(self):
+        self.assertRaisesRegex(
+            ValueError,
+            "not both",
+            lambda: OrnsteinUhlenbeck(initial=1, initial_value=2),
+        )
+
+    def test_brownian_bridge_both_names(self):
+        a = BrownianBridge(initial=2, final=9).draw()
+        b = BrownianBridge(initial_value=2, final_value=9).draw()
+        self.assertEqual(float(a(0)), float(b(0)))
+        # The bridge is pinned at both ends, whichever spelling was used.
+        self.assertAlmostEqual(float(a(1.0)), 9.0, places=6)
+        self.assertAlmostEqual(float(b(1.0)), 9.0, places=6)
+
+    def test_brownian_bridge_final_alias_alone(self):
+        path = BrownianBridge(initial=1, final_value=4).draw()
+        self.assertAlmostEqual(float(path(0)), 1.0, places=6)
+        self.assertAlmostEqual(float(path(1.0)), 4.0, places=6)
+
+    def test_geometric_brownian_motion_both_names(self):
+        self.assertEqual(
+            float(GeometricBrownianMotion(initial=100).draw()(0)),
+            float(GeometricBrownianMotion(initial_value=100).draw()(0)),
+        )
+
+    def test_geometric_brownian_motion_default_is_still_one(self):
+        self.assertEqual(float(GeometricBrownianMotion().draw()(0)), 1.0)
+
+    def test_initial_attribute_readable(self):
+        self.assertEqual(OrnsteinUhlenbeck(initial=3).initial, 3)
+        self.assertEqual(BrownianBridge(initial=3, final=4).final, 4)
+        self.assertEqual(GeometricBrownianMotion(initial=7).initial, 7)
 
 
 if __name__ == "__main__":

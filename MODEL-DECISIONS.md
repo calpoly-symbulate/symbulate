@@ -1323,8 +1323,6 @@ queue, whose parent `BirthDeathProcess` does.
 > - **a univariate distribution** — the starting value is drawn from it;
 > - **a multivariate distribution** — for a process needing several
 >   starting values at once, drawn jointly so their correlations are right;
-> - **a probability vector** — over a finite state space (Markov chains,
->   until a `Categorical` distribution exists to replace it);
 > - **`"stationary"`** — the process's own long-run distribution, where
 >   that has a closed form.
 >
@@ -1332,9 +1330,18 @@ queue, whose parent `BirthDeathProcess` does.
 > case in point: it needs pre-sample *shocks*, not values, and there is
 > nothing for a student to point at, so it is handled silently (see
 > "Decision: MA(q) Pre-Sample Shocks").
+>
+> **Markov chains are carved out and keep `initial_dist`.** Unlike the
+> others, that name is already accurate: what they take is a probability
+> vector over states, which really is a distribution, so there is no
+> mismatch to fix. It is also a *required* positional argument rather than
+> an optional one, and renaming it to `initial` would invite
+> `initial=0` meaning "start in state 0" — which is not supported and would
+> be a functionality change, not a rename. Revisit if a `Categorical`
+> distribution ever lands.
 
 `initial` rather than `initial_value` or `initial_distribution` because it
-is the only one of the three that stays honest across all five forms — a
+is the only one of the three that stays honest across all of those forms — a
 number is just a degenerate distribution, and `initial_distribution=0` reads
 as badly as `initial_value=Normal(0, 1)`.
 
