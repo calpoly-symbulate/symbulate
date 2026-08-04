@@ -620,6 +620,161 @@ short step from this class rather than a blocked one.
 
 ---
 
+## Decision: Cox Process — One Class for the Doubly Stochastic Family
+
+**Status:** Implemented — `CoxProcess`, `CoxProcessProbabilitySpace`, and
+`CoxProcessResult` live in `symbulate/poisson_process.py`, tested in
+`symbulate/tests/test_poisson_process.py`, demo in
+`team/models-and-sim-design/cox_process_demo.ipynb`, exported from
+`symbulate/__init__.py`. This is roadmap step 14, and it closes out three
+roadmap rows at once (see "What this subsumes" below).
+
+**Decision**
+> `CoxProcess(intensity, step=)` draws one whole intensity first, then — with
+> that intensity held fixed — generates events at it. The second stage is
+> *literally* the non-homogeneous Poisson process: `CoxProcessResult`
+> **subclasses** `NonHomogeneousPoissonProcessResult`, so the counting is the
+> same cumulative-sum walk against `Λ(t)` and nothing about it is new. The
+> only new machinery is the first stage plus **the integral of a randomly
+> drawn intensity**, which is where every real decision here lives.
+>
+> `intensity=` accepts four things, and the accepted forms are the reason this
+> is one class rather than three:
+> 1. a **`Distribution`** — one random rate, held for the whole path;
+> 2. an **`RV`**, which covers every `RandomProcess` and
+>    `ContinuousTimeMarkovChain` — one drawn path, whose value at `t` is the
+>    rate at `t`;
+> 3. a **function of time**, or a **positive number** — a rate that is not
+>    random at all, which reduces this to `NonHomogeneousPoissonProcess` (or
+>    `PoissonProcess`) so the two can be compared side by side.
+>
+> The drawn intensity is kept on each path as `.intensity` — a number in case
+> 1, the sample path in case 2. Plotting it next to the counts is the whole
+> pedagogical point of the process, so it is not thrown away.
+
+**How the drawn intensity is added up — two of three ways are exact**
+> This is the one genuinely new numerical question, and it is answered by what
+> kind of intensity was drawn, not by a user-facing switch:
+> - **A single number** (case 1 above) → `Λ(t) = rate * t`. Exact.
+> - **A path that holds one value at a time** — anything `DiscreteValued` with
+>   `interarrival_times`: a CTMC, a Poisson or renewal count →
+>   `_StepCumulativeRate`, a sum of rate × holding time, following the path one
+>   jump further only when a later time is asked about. **Exact.**
+> - **Any other path** → `_PathCumulativeRate`, a left-hand sum on a grid of
+>   width `step` (default 0.01). **Approximate**, and the only approximate
+>   corner in the class. `step` is ignored by the exact two, which is most
+>   uses.
+
+**Rationale — why not thinning, which is what the roadmap says**
+> The roadmap row (and the NHPP decision above, which anticipated this)
+> describes Cox as built on "non-homogeneous Poisson thinning." Thinning was
+> *not* used, and thinning still does not exist anywhere in the package. Two
+> reasons, the first decisive:
+> - Thinning needs an upper bound on the intensity over the region being
+>   simulated. For a randomly drawn path that bound is not known in advance and
+>   cannot be computed without scanning the path — so it would be either a
+>   required argument (against CLAUDE.md's "no required arguments beyond what
+>   is mathematically necessary") or a guess that is silently wrong whenever the
+>   path peaks between scan points. The `step` grid this uses instead is a
+>   *stated* accuracy knob with a default, not a correctness assumption.
+> - Conditional on its intensity a Cox process **is** an NHPP, so time change
+>   is not merely an alternative algorithm — it is the same algorithm already
+>   written, tested, and documented, reached by subclassing. Thinning would have
+>   meant a second counting path to keep in step with the first.
+>
+> The NHPP entry's specific worry — "a Cox process thinning against a rough
+> realized intensity path (a diffusion, say) can't be integrated reliably
+> either" — was the real problem, and it is *not* solved by thinning. It is
+> solved by noticing that most intensities a course actually uses are not
+> rough: a random constant and a regime-switching chain are both integrable in
+> closed form, and those two cover the mixed Poisson and Markov-modulated
+> Poisson rows. Only a genuinely continuous intensity (CIR) needs the grid.
+
+**Why the grid is fixed, anchored at 0, and left-handed** (three separate
+choices, each load-bearing)
+> - **Not `quad`.** A drawn path is *generated as it is looked at* — evaluating
+>   a Gaussian or CIR path at a new time draws the value then and there — so an
+>   adaptive integrator probing times of its own choosing is not integrating a
+>   fixed function, and the error estimate `_CumulativeRate` relies on becomes
+>   meaningless. `_CumulativeRate`'s careful trust checks are exactly right for
+>   a user's *formula* and exactly wrong for a realized path.
+> - **Fixed and anchored at 0**, so the same grid is read whichever times are
+>   asked about and in whatever order. That is what makes `Λ` one well-defined
+>   function of `t` rather than an artifact of the order a student happened to
+>   type things in — and paths cache their own values, so no grid point is paid
+>   for twice.
+> - **Left-handed, not trapezoid.** A trapezoid (or right-hand) sum uses the
+>   intensity at `t` itself, so within one grid cell `Λ` can *decrease* as `t`
+>   grows — λ(anchor)=0, λ(t₁)=10, λ(t₂)≈0 with t₂ slightly after t₁ — which
+>   would let the **count of events go backwards**. A left-hand sum adds only
+>   nonnegative × positive increments, so `Λ` is increasing by construction.
+>   Tests pin both the monotonicity and the order-independence.
+
+**What this subsumes (three roadmap rows, one class)**
+> - **Mixed Poisson process** — `CoxProcess(Gamma(shape=r, rate=beta))`. The
+>   count at time `t` is negative binomial with `r` and `beta / (beta + t)`;
+>   the tests check the mean, the variance, and `P(N(t) = 0)` against that
+>   closed form, not against a simulated reference.
+> - **Markov-modulated Poisson process** — `CoxProcess(ContinuousTimeMarkovChain(
+>   Q, initial, state_labels=[1, 5]))`, the actuarial regime-switching model.
+>   Exact, and the two-equal-rates case is tested to collapse back to an
+>   ordinary Poisson process.
+> - **The "soft Phase 3" framing of both** (see the Phase 1 Scope entry below,
+>   which lists Mixed Poisson and Markov-modulated Poisson as natural
+>   `Hierarchical` candidates). They ship now via the manual generator-function
+>   pattern, exactly as that entry predicted; `Hierarchical` would restate them,
+>   not unblock them.
+>
+> No `MixedPoissonProcess` or `MarkovModulatedPoissonProcess` class was added.
+> Naming a parameterization is what `MM1` does for a birth-death chain, but
+> here the parameterization *is* the argument, and three names for one class
+> would hide that these are the same construction — which is the roadmap's own
+> stated reason for building Cox once ("rather than piecemeal").
+
+**Alternatives Considered**
+> **Implementing thinning as well**, behind the same class, for the rough-path
+> case — deferred rather than rejected. It would need a scanned or supplied
+> intensity bound, and the grid sum already handles the case honestly and with
+> a stated knob. Hawkes will force the thinning question properly, since its
+> intensity depends on the process's own past and no `Λ` is available in
+> advance.
+> **A `NotImplementedError` for continuously varying intensities**, the way
+> `hitting_time` refuses non-Gaussian processes — rejected: a CIR-driven
+> intensity is the standard credit-risk example, and refusing it would leave
+> the most-cited Cox process in the literature unbuildable to buy a purity the
+> `step` argument already documents away.
+> **Its own module** `cox_process.py` — rejected, per the NHPP entry's stated
+> expectation that Cox stays with the Poisson family. It reuses `_validate_rate`,
+> `_rate_value`, and `_CumulativeRate` from that module directly, and
+> `poisson_process.py` is still under half the length of `markov_chains.py`.
+> **Requiring the intensity to be a `RandomProcess`** — rejected; it would
+> reject `ContinuousTimeMarkovChain` (which is an `RV`, not a
+> `RandomProcess`) and the whole mixed-Poisson case, which is the gentlest
+> entry point to the idea.
+
+**Accepted limitations, documented not fixed:**
+> - A continuously varying intensity is read every `step` units of time, so a
+>   spike much narrower than `step` is stepped over — the same class of
+>   limitation the NHPP entry accepts for quadrature, with the difference that
+>   here the resolution is stated rather than adaptive.
+> - Asking about a far-off time with a small `step` is slow, so both sums have a
+>   backstop (`_MAX_INTENSITY_GRID_POINTS`, `_MAX_INTENSITY_JUMPS`) that raises
+>   a student-readable error suggesting a larger `step` rather than appearing to
+>   hang.
+> - An intensity that can go negative is rejected: at construction when it is a
+>   distribution (via `renewal_process._smallest_possible_time`, reused — the
+>   quantity differs but the question, "what is the smallest value this can
+>   produce," is identical), and at the offending time when it is a path, so
+>   `CoxProcess(BrownianMotion())` names the time it went below 0 and suggests
+>   processes that cannot.
+
+**Follow-on this unblocks, not done here:** the Hawkes process (which now
+needs only the recursive-intensity/Ogata piece, the rest of the doubly
+stochastic framing being here), and the actuarial regime-switching claim
+models, which are now a `state_labels` choice rather than a build.
+
+---
+
 ## Decision: Phase 1 Scope — Process Roadmap & Distribution Additions
 
 **Status:** Proposed

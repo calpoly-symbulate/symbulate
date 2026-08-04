@@ -12,17 +12,31 @@ rate function — including a rate that only goes negative partway through, and
 one that cannot be integrated at all, both of which must raise rather than
 return a plausible-looking number.
 
+Also covers CoxProcess, whose intensity is itself random: the two exact
+cases (one random rate held for a whole path, giving negative binomial counts,
+and a rate that switches between regimes with a Markov chain), the approximate
+one (a continuously varying intensity path, read on a grid), and the properties
+the grid exists to protect -- that the expected count is one increasing
+function of time however it is asked about, so the count of events can never go
+backwards.
+
 Reproducibility is obtained by reseeding the distributions module's
-generator (``distributions.rng``), matching test_distributions.py.
+generator (``distributions.rng``), matching test_distributions.py, plus the
+generator of whichever module supplies the intensity (``markov_chains.rng``,
+``diffusion_process.rng``, ``gaussian_process.rng``) -- none of which read
+NumPy's global generator.
 """
 
 import unittest
+from unittest import mock
 
 import numpy as np
 import scipy.stats as stats
 
 from symbulate import *
 from symbulate import distributions
+from symbulate import diffusion_process, gaussian_process, markov_chains
+from symbulate import poisson_process
 from symbulate.poisson_process import (
     PoissonProcess,
     PoissonProcessResult,
@@ -30,9 +44,15 @@ from symbulate.poisson_process import (
     NonHomogeneousPoissonProcess,
     NonHomogeneousPoissonProcessResult,
     NonHomogeneousPoissonProcessProbabilitySpace,
+    CoxProcess,
+    CoxProcessResult,
+    CoxProcessProbabilitySpace,
+    _PathCumulativeRate,
+    _StepCumulativeRate,
+    _cumulative_rate_for,
 )
 from symbulate.index_sets import Reals
-from symbulate.result import ContinuousTimeFunction, DiscreteValued
+from symbulate.result import ContinuousTimeFunction, DiscreteValued, InfiniteVector
 
 Nsim = 10000
 
@@ -554,6 +574,516 @@ class TestNonHomogeneousPoissonProcessValidation(unittest.TestCase):
         self.assertEqual(N.cumulative_rate(5), 0.0)
         self.assertEqual(N.draw()(4.0), 0)
         self.assertAlmostEqual(N(10).sim(1000).mean(), 10.0, delta=0.7)
+
+
+# --- Cox process ---------------------------------------------------------
+
+
+def two_state_chain(rates, initial=(1.0, 0.0)):
+    """A two-state continuous-time Markov chain whose states are ``rates``."""
+    return ContinuousTimeMarkovChain(
+        [[-1, 1], [2, -2]], list(initial), state_labels=list(rates)
+    )
+
+
+class FakeStepPath(DiscreteValued):
+    """A piecewise-constant intensity path built by hand, for testing.
+
+    Holds ``states[n]`` for ``holding_times[n]`` units of time, repeating the
+    last of each forever, which is all ``_StepCumulativeRate`` reads.
+    """
+
+    def __init__(self, states, holding_times):
+        self.states = InfiniteVector(lambda n: states[min(n, len(states) - 1)])
+        self.interarrival_times = InfiniteVector(
+            lambda n: holding_times[min(n, len(holding_times) - 1)]
+        )
+
+
+class TestCoxProcessValidation(unittest.TestCase):
+
+    def test_intensity_stored_as_given(self):
+        intensity = Gamma(shape=2, rate=1)
+        self.assertIs(CoxProcess(intensity=intensity).intensity, intensity)
+
+    def test_step_defaults_and_is_stored(self):
+        self.assertEqual(CoxProcess(Gamma(shape=2, rate=1)).step, 0.01)
+        self.assertEqual(CoxProcess(Gamma(shape=2, rate=1), step=0.5).step, 0.5)
+
+    def test_is_random_process_and_rv(self):
+        N = CoxProcess(Gamma(shape=2, rate=1))
+        self.assertIsInstance(N, RandomProcess)
+        self.assertIsInstance(N, RV)
+
+    def test_index_set_is_reals(self):
+        self.assertIsInstance(CoxProcess(Gamma(shape=2, rate=1)).index_set, Reals)
+
+    def test_intensity_of_wrong_type_raises_type_error(self):
+        with self.assertRaises(TypeError) as context:
+            CoxProcess("busy")
+        message = str(context.exception)
+        self.assertIn("intensity", message)
+        self.assertIn("distribution", message)
+        self.assertIn("random process", message)
+
+    def test_boolean_intensity_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            CoxProcess(True)
+
+    def test_intensity_that_can_be_negative_raises_value_error(self):
+        # A Normal intensity would mean a negative rate of events.
+        with self.assertRaises(ValueError) as context:
+            CoxProcess(Normal(mean=5, sd=1))
+        message = str(context.exception)
+        self.assertIn("negative", message)
+        self.assertIn("Normal", message)
+
+    def test_multivariate_intensity_raises_type_error(self):
+        with self.assertRaises(TypeError) as context:
+            CoxProcess(MultivariateNormal(mean=[1, 1], cov=[[1, 0], [0, 1]]))
+        self.assertIn("single rate", str(context.exception))
+
+    def test_nonpositive_step_raises_value_error(self):
+        for bad_step in [0, -0.5]:
+            with self.assertRaises(ValueError):
+                CoxProcess(Gamma(shape=2, rate=1), step=bad_step)
+
+    def test_step_of_wrong_type_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            CoxProcess(Gamma(shape=2, rate=1), step="small")
+
+    def test_deterministic_number_intensity_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            CoxProcess(-3)
+
+
+class TestCoxProcessResult(unittest.TestCase):
+
+    def test_is_continuous_time_function(self):
+        seed()
+        self.assertIsInstance(
+            CoxProcess(Gamma(shape=2, rate=1)).draw(), ContinuousTimeFunction
+        )
+
+    def test_is_discrete_valued(self):
+        seed()
+        self.assertIsInstance(CoxProcess(Gamma(shape=2, rate=1)).draw(), DiscreteValued)
+
+    def test_is_a_nonhomogeneous_poisson_path(self):
+        # Conditional on its intensity, a Cox process *is* a non-homogeneous
+        # Poisson process, and the counting is literally that class's.
+        seed()
+        self.assertIsInstance(
+            CoxProcess(Gamma(shape=2, rate=1)).draw(),
+            NonHomogeneousPoissonProcessResult,
+        )
+
+    def test_starts_at_zero(self):
+        seed()
+        self.assertEqual(CoxProcess(Gamma(shape=2, rate=1)).draw()(0), 0)
+
+    def test_counts_are_nonnegative_integers(self):
+        seed()
+        path = CoxProcess(Gamma(shape=2, rate=1)).draw()
+        for t in [0.5, 1.0, 2.0, 5.0]:
+            value = path(t)
+            self.assertIsInstance(value, int)
+            self.assertGreaterEqual(value, 0)
+
+    def test_counts_are_nondecreasing(self):
+        seed()
+        path = CoxProcess(Gamma(shape=2, rate=1)).draw()
+        values = [path(t) for t in range(0, 11)]
+        for earlier, later in zip(values, values[1:]):
+            self.assertLessEqual(earlier, later)
+
+    def test_getitem_matches_call(self):
+        seed()
+        path = CoxProcess(Gamma(shape=2, rate=1)).draw()
+        for t in [0.5, 1.0, 3.5]:
+            self.assertEqual(path[t], path(t))
+
+    def test_get_states_counts_up_from_zero(self):
+        seed()
+        states = CoxProcess(Gamma(shape=2, rate=1)).draw().get_states()
+        self.assertEqual([states[i] for i in range(5)], [0, 1, 2, 3, 4])
+
+    def test_drawn_intensity_is_kept_on_the_path(self):
+        # The whole point of a Cox process: each path knows the rate it was
+        # generated at, so it can be looked at and plotted.
+        seed()
+        path = CoxProcess(Gamma(shape=2, rate=1)).draw()
+        self.assertIsInstance(path.intensity, float)
+        self.assertGreater(path.intensity, 0)
+
+    def test_drawn_intensity_is_the_whole_path_for_a_process(self):
+        seed()
+        markov_chains.rng = np.random.default_rng(3)
+        path = CoxProcess(two_state_chain([1, 5])).draw()
+        self.assertIsInstance(path.intensity, DiscreteValued)
+
+    def test_result_constructed_from_rate_one_arrivals(self):
+        # Rate-1 arrivals at 1, 3, and 8 on the expected-count scale, read onto
+        # the clock at a constant intensity of 2: the counts change at 0.5,
+        # 1.5, and 4.
+        path = CoxProcessResult([1.0, 2.0, 5.0], lambda t: 2 * max(t, 0), 2.0)
+        self.assertEqual(path(0.25), 0)
+        self.assertEqual(path(1.0), 1)
+        self.assertEqual(path(2.0), 2)
+        self.assertEqual(path.intensity, 2.0)
+
+
+class TestCoxProcessProbabilitySpace(unittest.TestCase):
+
+    def test_intensity_stored_as_given(self):
+        intensity = Gamma(shape=2, rate=1)
+        self.assertIs(CoxProcessProbabilitySpace(intensity).intensity, intensity)
+
+    def test_draw_returns_result(self):
+        seed()
+        space = CoxProcessProbabilitySpace(Gamma(shape=2, rate=1))
+        self.assertIsInstance(space.draw(), CoxProcessResult)
+
+    def test_each_path_gets_its_own_intensity(self):
+        seed()
+        space = CoxProcessProbabilitySpace(Gamma(shape=2, rate=1))
+        self.assertNotEqual(space.draw().intensity, space.draw().intensity)
+
+    def test_each_path_gets_its_own_cumulative_rate(self):
+        # A random intensity means a different expected count for every path,
+        # unlike the non-homogeneous Poisson process, where one is shared.
+        seed()
+        space = CoxProcessProbabilitySpace(Gamma(shape=2, rate=1))
+        self.assertIsNot(space.draw().cumulative_rate, space.draw().cumulative_rate)
+
+    def test_paths_share_one_cumulative_rate_when_intensity_is_not_random(self):
+        seed()
+        space = CoxProcessProbabilitySpace(growing_rate)
+        self.assertIs(space.draw().cumulative_rate, space.draw().cumulative_rate)
+
+    def test_successive_draws_are_independent(self):
+        seed()
+        space = CoxProcessProbabilitySpace(Gamma(shape=2, rate=1))
+        first, second = space.draw(), space.draw()
+        self.assertNotEqual(
+            [first(t) for t in range(1, 20)], [second(t) for t in range(1, 20)]
+        )
+
+
+class TestMixedPoissonProcess(unittest.TestCase):
+    """A single random rate, held for the whole path -- the exact case.
+
+    With a Gamma(shape=r, rate=beta) intensity, the count by time t is
+    negative binomial with r successes and probability beta / (beta + t), so
+    the mean, the variance, and the chance of no events at all are all known
+    in closed form.
+    """
+
+    shape = 3.0
+    rate = 2.0
+    time = 4.0
+
+    def cox_process(self):
+        return CoxProcess(intensity=Gamma(shape=self.shape, rate=self.rate))
+
+    def test_cumulative_rate_is_exactly_rate_times_time(self):
+        seed()
+        path = self.cox_process().draw()
+        for t in [0.0, 0.5, 3.0, 10.0]:
+            self.assertAlmostEqual(path.cumulative_rate(t), path.intensity * t)
+
+    def test_cumulative_rate_is_zero_before_time_zero(self):
+        seed()
+        self.assertEqual(self.cox_process().draw().cumulative_rate(-1), 0.0)
+
+    def test_mean_matches_negative_binomial(self):
+        seed()
+        counts = self.cox_process()[self.time].sim(Nsim)
+        expected = self.shape * self.time / self.rate
+        self.assertAlmostEqual(counts.mean(), expected, delta=0.15)
+
+    def test_variance_is_overdispersed_and_matches_theory(self):
+        # var = mean + (variance of the random expected count), which is what
+        # makes a mixed Poisson process wider than a Poisson process.
+        seed()
+        counts = self.cox_process()[self.time].sim(Nsim)
+        mean = self.shape * self.time / self.rate
+        expected = mean + self.shape * (self.time / self.rate) ** 2
+        self.assertAlmostEqual(counts.var(), expected, delta=1.2)
+        self.assertGreater(counts.var(), counts.mean())
+
+    def test_chance_of_no_events_matches_negative_binomial(self):
+        seed()
+        counts = self.cox_process()[self.time].sim(Nsim)
+        p = self.rate / (self.rate + self.time)
+        expected = stats.nbinom.pmf(0, self.shape, p)
+        observed = np.mean([count == 0 for count in counts])
+        self.assertAlmostEqual(observed, expected, delta=0.01)
+
+    def test_step_is_irrelevant_when_the_intensity_never_changes(self):
+        seed()
+        coarse = CoxProcess(Gamma(shape=self.shape, rate=self.rate), step=1000).draw()
+        coarse_counts = [coarse(t) for t in range(1, 10)]
+        seed()
+        fine = CoxProcess(Gamma(shape=self.shape, rate=self.rate), step=1e-4).draw()
+        self.assertEqual(coarse_counts, [fine(t) for t in range(1, 10)])
+
+
+class TestMarkovModulatedPoissonProcess(unittest.TestCase):
+    """A rate that switches between regimes -- also an exact case.
+
+    A continuous-time Markov chain holds one rate at a time, so the expected
+    count is a sum of rate times holding time with nothing approximated.
+    """
+
+    def test_cumulative_rate_matches_states_times_holding_times(self):
+        seed()
+        markov_chains.rng = np.random.default_rng(11)
+        path = CoxProcess(two_state_chain([1, 5])).draw()
+        intensity = path.intensity
+        # Add the intensity up by hand over the first few stretches it holds.
+        total = 0.0
+        elapsed = 0.0
+        for n in range(6):
+            total += intensity.states[n] * intensity.interarrival_times[n]
+            elapsed += intensity.interarrival_times[n]
+        self.assertAlmostEqual(path.cumulative_rate(elapsed), total, places=10)
+
+    def test_cumulative_rate_interpolates_within_a_stretch(self):
+        seed()
+        markov_chains.rng = np.random.default_rng(5)
+        path = CoxProcess(two_state_chain([1, 5])).draw()
+        intensity = path.intensity
+        first_switch = intensity.interarrival_times[0]
+        midpoint = first_switch / 2
+        self.assertAlmostEqual(
+            path.cumulative_rate(midpoint), intensity.states[0] * midpoint, places=10
+        )
+
+    def test_equal_rates_reduce_to_an_ordinary_poisson_process(self):
+        # If both regimes have the same rate, the switching is invisible and
+        # the count must have a Poisson(rate * t) distribution.
+        seed()
+        markov_chains.rng = np.random.default_rng(4)
+        counts = CoxProcess(two_state_chain([3, 3]))[2].sim(Nsim)
+        self.assertAlmostEqual(counts.mean(), 6.0, delta=0.15)
+        self.assertAlmostEqual(counts.var(), 6.0, delta=0.4)
+
+    def test_switching_rates_are_overdispersed(self):
+        seed()
+        markov_chains.rng = np.random.default_rng(6)
+        counts = CoxProcess(two_state_chain([1, 9]))[2].sim(Nsim)
+        self.assertGreater(counts.var(), 1.5 * counts.mean())
+
+    def test_step_is_irrelevant_when_the_intensity_holds_one_value_at_a_time(self):
+        seed()
+        markov_chains.rng = np.random.default_rng(9)
+        coarse = CoxProcess(two_state_chain([1, 5]), step=1000).draw()
+        coarse_counts = [coarse(t) for t in range(1, 8)]
+        seed()
+        markov_chains.rng = np.random.default_rng(9)
+        fine = CoxProcess(two_state_chain([1, 5]), step=1e-3).draw()
+        self.assertEqual(coarse_counts, [fine(t) for t in range(1, 8)])
+
+    def test_non_numeric_states_raise_type_error(self):
+        seed()
+        markov_chains.rng = np.random.default_rng(2)
+        chain = ContinuousTimeMarkovChain(
+            [[-1, 1], [2, -2]], [1.0, 0.0], state_labels=["low", "high"]
+        )
+        with self.assertRaises(TypeError) as context:
+            CoxProcess(chain).draw()(2.0)
+        message = str(context.exception)
+        self.assertIn("not a number", message)
+        self.assertIn("state_labels", message)
+
+    def test_a_count_process_can_be_an_intensity(self):
+        # A Poisson process is nonnegative and holds one value at a time, so
+        # it is a legitimate (rising) intensity, added up exactly.
+        seed()
+        path = CoxProcess(PoissonProcess(rate=1)).draw()
+        intensity = path.intensity
+        first_arrival = intensity.interarrival_times[0]
+        self.assertEqual(path.cumulative_rate(first_arrival), 0.0)
+
+
+class TestStepCumulativeRate(unittest.TestCase):
+    """The exact sum for an intensity that holds one value at a time."""
+
+    def test_matches_a_hand_computed_sum(self):
+        # Intensity 2 for 1 unit of time, then 6 for 2 units, then 0 forever.
+        cumulative_rate = _StepCumulativeRate(FakeStepPath([2, 6, 0], [1.0, 2.0, inf]))
+        self.assertEqual(cumulative_rate(0), 0.0)
+        self.assertAlmostEqual(cumulative_rate(0.5), 1.0)
+        self.assertAlmostEqual(cumulative_rate(1.0), 2.0)
+        self.assertAlmostEqual(cumulative_rate(2.0), 8.0)
+        self.assertAlmostEqual(cumulative_rate(3.0), 14.0)
+
+    def test_flattens_once_the_intensity_is_zero_forever(self):
+        # An intensity of 0 held for an infinite time is 0 further events, not
+        # an undefined number: 0 times infinity must not leak out as a nan.
+        cumulative_rate = _StepCumulativeRate(FakeStepPath([4, 0], [2.0, inf]))
+        self.assertAlmostEqual(cumulative_rate(2.0), 8.0)
+        self.assertAlmostEqual(cumulative_rate(100.0), 8.0)
+        self.assertFalse(np.isnan(cumulative_rate(1e6)))
+
+    def test_times_can_be_asked_about_in_any_order(self):
+        cumulative_rate = _StepCumulativeRate(FakeStepPath([2, 6], [1.0, 2.0]))
+        late = cumulative_rate(2.5)
+        self.assertAlmostEqual(cumulative_rate(0.5), 1.0)
+        self.assertAlmostEqual(cumulative_rate(2.5), late)
+
+    def test_too_many_jumps_raises_value_error(self):
+        cumulative_rate = _StepCumulativeRate(FakeStepPath([1], [1e-9]))
+        with mock.patch.object(poisson_process, "_MAX_INTENSITY_JUMPS", 20):
+            with self.assertRaises(ValueError) as context:
+                cumulative_rate(1.0)
+        self.assertIn("jumps", str(context.exception))
+
+
+class TestPathCumulativeRate(unittest.TestCase):
+    """The grid sum for an intensity that changes continuously."""
+
+    def test_is_the_left_hand_sum_on_the_grid(self):
+        # Intensity 2t read every 0.25: the left-hand sum up to 1 is
+        # 0.25 * (0 + 0.5 + 1 + 1.5) = 0.75.
+        cumulative_rate = _PathCumulativeRate(lambda t: 2 * t, 0.25)
+        self.assertAlmostEqual(cumulative_rate(1.0), 0.75)
+
+    def test_gets_closer_to_the_true_integral_as_the_step_shrinks(self):
+        errors = [
+            abs(_PathCumulativeRate(lambda t: 2 * t, step)(3.0) - 9.0)
+            for step in [0.1, 0.01, 0.001]
+        ]
+        self.assertEqual(errors, sorted(errors, reverse=True))
+        self.assertLess(errors[-1], 0.01)
+
+    def test_reads_the_intensity_once_per_grid_point(self):
+        times_read = []
+
+        def intensity(t):
+            times_read.append(t)
+            return 1.0
+
+        cumulative_rate = _PathCumulativeRate(intensity, 0.5)
+        cumulative_rate(2.0)
+        cumulative_rate(1.0)
+        cumulative_rate(2.0)
+        self.assertEqual(sorted(times_read), sorted(set(times_read)))
+
+    def test_never_goes_backwards_along_a_rough_path(self):
+        # The grid is fixed and anchored at 0 precisely so that this is one
+        # well-defined increasing function of t, whatever order it is asked
+        # about in -- which is what keeps the count of events from going
+        # backwards. A path whose values swing about is the case that would
+        # break if the sum used the value at t itself.
+        seed()
+        diffusion_process.rng = np.random.default_rng(13)
+        cumulative_rate = _PathCumulativeRate(CIR(scale=0.9).draw(), 0.01)
+        values = [cumulative_rate(t) for t in np.linspace(0, 5, 401)]
+        for earlier, later in zip(values, values[1:]):
+            self.assertLessEqual(earlier, later)
+
+    def test_same_answer_whatever_order_times_are_asked_in(self):
+        seed()
+        diffusion_process.rng = np.random.default_rng(21)
+        path = CIR(scale=0.9).draw()
+        forwards = _PathCumulativeRate(path, 0.01)
+        backwards = _PathCumulativeRate(path, 0.01)
+        near_first = forwards(1.0)
+        far_first = backwards(5.0)
+        self.assertEqual(backwards(1.0), near_first)
+        self.assertEqual(forwards(5.0), far_first)
+
+    def test_too_many_grid_points_raises_value_error_suggesting_a_step(self):
+        cumulative_rate = _PathCumulativeRate(lambda t: 1.0, 0.01)
+        with self.assertRaises(ValueError) as context:
+            cumulative_rate(1e9)
+        message = str(context.exception)
+        self.assertIn("step", message)
+
+
+class TestCoxProcessWithVaryingIntensity(unittest.TestCase):
+    """A continuously varying intensity path -- the one approximate case."""
+
+    def test_mean_matches_the_average_intensity(self):
+        # A CIR intensity started at its long-run mean has expected value that
+        # mean at every time, so the expected count by time t is mean * t.
+        seed()
+        diffusion_process.rng = np.random.default_rng(17)
+        N = CoxProcess(CIR(reversion_rate=1, mean=2, scale=0.5), step=0.05)
+        self.assertAlmostEqual(N[2].sim(2000).mean(), 4.0, delta=0.3)
+
+    def test_intensity_path_is_kept_and_can_be_evaluated(self):
+        seed()
+        diffusion_process.rng = np.random.default_rng(19)
+        path = CoxProcess(CIR(mean=2)).draw()
+        self.assertGreater(path.intensity(1.0), 0)
+
+    def test_a_process_that_goes_negative_raises_naming_the_time(self):
+        seed()
+        gaussian_process.rng = np.random.default_rng(1)
+        with self.assertRaises(ValueError) as context:
+            CoxProcess(BrownianMotion())[5.0].draw()
+        message = str(context.exception)
+        self.assertIn("negative", message)
+        self.assertIn("At time", message)
+
+    def test_counts_are_nondecreasing_along_a_rough_intensity(self):
+        seed()
+        diffusion_process.rng = np.random.default_rng(23)
+        path = CoxProcess(CIR(mean=3, scale=0.9)).draw()
+        values = [path(t) for t in np.linspace(0, 5, 101)]
+        for earlier, later in zip(values, values[1:]):
+            self.assertLessEqual(earlier, later)
+
+
+class TestCoxProcessWithARateThatIsNotRandom(unittest.TestCase):
+    """An intensity that is not random reduces to the Poisson family."""
+
+    def test_constant_intensity_matches_an_ordinary_poisson_process(self):
+        seed()
+        counts = CoxProcess(3)[2].sim(Nsim)
+        self.assertAlmostEqual(counts.mean(), 6.0, delta=0.15)
+        self.assertAlmostEqual(counts.var(), 6.0, delta=0.4)
+
+    def test_rate_function_matches_the_nonhomogeneous_poisson_process(self):
+        seed()
+        N = CoxProcess(growing_rate)
+        self.assertAlmostEqual(N.draw().cumulative_rate(3), 9.0, places=6)
+        self.assertAlmostEqual(N[3].sim(Nsim).mean(), 9.0, delta=0.2)
+
+    def test_drawn_intensity_is_the_rate_as_given(self):
+        seed()
+        self.assertIs(CoxProcess(growing_rate).draw().intensity, growing_rate)
+
+
+class TestCumulativeRateDispatch(unittest.TestCase):
+    """Which way a drawn intensity is added up over time."""
+
+    def test_a_number_is_added_up_exactly(self):
+        cumulative_rate = _cumulative_rate_for(2.5, 0.01)
+        self.assertAlmostEqual(cumulative_rate(4), 10.0)
+        self.assertEqual(cumulative_rate(-1), 0.0)
+
+    def test_a_negative_number_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            _cumulative_rate_for(-2.5, 0.01)
+
+    def test_a_piecewise_constant_path_uses_the_exact_sum(self):
+        self.assertIsInstance(
+            _cumulative_rate_for(FakeStepPath([1], [1.0]), 0.01), _StepCumulativeRate
+        )
+
+    def test_any_other_path_uses_the_grid_sum(self):
+        self.assertIsInstance(
+            _cumulative_rate_for(lambda t: 1.0, 0.01), _PathCumulativeRate
+        )
+
+    def test_something_that_is_not_an_intensity_raises_type_error(self):
+        with self.assertRaises(TypeError) as context:
+            _cumulative_rate_for("busy", 0.01)
+        self.assertIn("neither a number nor a sample path", str(context.exception))
 
 
 if __name__ == "__main__":
