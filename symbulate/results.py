@@ -6,6 +6,7 @@ probability space or realizations of a random variable /
 random process.
 """
 
+import numbers
 import sys
 import time
 import warnings
@@ -30,6 +31,9 @@ from .plot import (
     TILE_DEFAULT_BINS,
     DISCRETE_INDEX_OFFSET,
     DOTPLOT_MAX_STACK,
+    JOINT_PAIRS_MAX_DIM,
+    JOINT_PAIRS_OVERLAY_ERROR,
+    JOINT_PAIRS_PANEL_SIZE,
     MARGINAL_OVERLAY_ERROR,
     auto_jitter_mode,
     classify_values,
@@ -1441,6 +1445,377 @@ class RVResults(Results):
             return Table(hash_map, labels, normalize, "Bin")
         return Table(self._get_counts(), outcomes, normalize, "Value")
 
+    def _pairs_variable_label(self, index):
+        """Return the axis label for variable ``index``.
+
+        Numbered from 1 the way variables are written mathematically, and
+        worded to match the same label on a
+        :class:`~symbulate.distributions.MultivariateDistribution` pairs
+        plot, so a simulated matrix and a theoretical one can be read side
+        by side.
+
+        Parameters
+        ----------
+        index : int
+            Index of the variable, counting from 0.
+
+        Returns
+        -------
+        str
+            The label, e.g. ``"X1"`` for variable 0.
+        """
+        return "X%d" % (index + 1)
+
+    def _pairs_resolve_dims(self, dims):
+        """Work out which variables a pairs matrix should include.
+
+        Parameters
+        ----------
+        dims : tuple of int or None
+            The variables asked for, or ``None`` for every one of them.
+
+        Returns
+        -------
+        tuple of int
+            The variables to include, in the order given.
+
+        Raises
+        ------
+        ValueError
+            If there are fewer than two variables to plot, or ``dims``
+            is not at least two valid, distinct variable numbers.
+        Exception
+            If more variables were asked for than a readable matrix holds.
+        """
+        self._set_array()
+        if self.dim is None or self.dim < 2:
+            raise ValueError(
+                "A pairs matrix shows how variables relate to each other, so "
+                "it needs at least two of them. These results have "
+                + ("only one." if self.dim == 1 else "an inconsistent number.")
+                + " Plot them with .plot() instead."
+            )
+
+        if dims is None:
+            chosen = tuple(range(self.dim))
+        else:
+            if isinstance(dims, numbers.Integral) or not hasattr(dims, "__iter__"):
+                raise ValueError(
+                    "dims must be at least two variable numbers, for example "
+                    "dims=(0, 2). To plot one variable on its own, simulate "
+                    "that variable by itself."
+                )
+            chosen = tuple(dims)
+            for d in chosen:
+                if not isinstance(d, numbers.Integral) or not 0 <= d < self.dim:
+                    raise ValueError(
+                        "dims must be variable numbers between 0 and %d "
+                        "(these results have %d variables), but it included "
+                        "%r." % (self.dim - 1, self.dim, d)
+                    )
+            if len(set(chosen)) != len(chosen):
+                raise ValueError(
+                    "dims must not repeat a variable: %r asks for the same "
+                    "one more than once." % (chosen,)
+                )
+            if len(chosen) < 2:
+                raise ValueError(
+                    "A pairs matrix needs at least two variables, but dims "
+                    "asked for %d. To plot one variable on its own, simulate "
+                    "that variable by itself." % len(chosen)
+                )
+
+        if len(chosen) > JOINT_PAIRS_MAX_DIM:
+            raise Exception(
+                "A pairs plot of %d variables would need %d panels, too many "
+                "to read on one screen. Choose which variables to include, "
+                "for example .plot(pairs=True, dims=(0, 1, 2))."
+                % (len(chosen), len(chosen) * (len(chosen) + 1) // 2)
+            )
+        return chosen
+
+    def _pairs_column(self, index):
+        """Return the simulated values of one variable, as an array."""
+        self._set_array()
+        return self.array[:, index]
+
+    def _pairs_diagonal_type(self, index):
+        """Return the plot type for one variable's own panel.
+
+        A density curve when the variable looks continuous, and an impulse
+        plot when it looks discrete -- a density drawn over a handful of
+        repeated values would smear a probability mass function into a
+        smooth curve it is not.
+
+        Parameters
+        ----------
+        index : int
+            Which variable.
+
+        Returns
+        -------
+        str
+            ``"density"`` or ``"impulse"``.
+        """
+        discrete, _ = classify_values(
+            self._pairs_column(index), n_unique_threshold=B_1D
+        )
+        return "impulse" if discrete else "density"
+
+    def _pairs_joint_configuration(self, x_index, y_index):
+        """Return the data configuration of one pair, and its discreteness.
+
+        Each axis is judged independently against the 2-D per-axis budget
+        ``K_2D``, exactly as the ``dim == 2`` dispatch does.
+
+        Parameters
+        ----------
+        x_index, y_index : int
+            Which variables go on the x and y axes.
+
+        Returns
+        -------
+        tuple
+            ``(configuration, discrete_x, discrete_y)``, where the
+            configuration is one of ``"2D_dd"``, ``"2D_cc"``, or
+            ``"2D_mixed"``.
+        """
+        discrete_x, _ = classify_values(
+            self._pairs_column(x_index), n_unique_threshold=K_2D, large_n_rescue=False
+        )
+        discrete_y, _ = classify_values(
+            self._pairs_column(y_index), n_unique_threshold=K_2D, large_n_rescue=False
+        )
+        if discrete_x and discrete_y:
+            configuration = "2D_dd"
+        elif not discrete_x and not discrete_y:
+            configuration = "2D_cc"
+        else:
+            configuration = "2D_mixed"
+        return configuration, discrete_x, discrete_y
+
+    def _pairs_joint_type(self, x_index, y_index):
+        """Return the plot type for one pair's panel.
+
+        The type the ``dim == 2`` lookup table gives for this data
+        configuration in its **large-sample** form, so a matrix never
+        mixes a mesh panel with a scatter or a rug: a tile plot for two
+        discrete variables, a 2-D histogram for two continuous ones, and a
+        tile plot with the continuous axis binned for a mixed pair.
+        """
+        configuration, _, _ = self._pairs_joint_configuration(x_index, y_index)
+        default, _ = default_plot_type(configuration, False)
+        return default
+
+    def _plot_pairs(
+        self, dims, alpha=None, normalize=True, bins=None, suggest=None, **kwargs
+    ):
+        """Draw a matrix of every pair of the chosen variables.
+
+        Builds a ``k`` by ``k`` grid of panels: each variable's own
+        distribution down the diagonal, and each pair's joint distribution
+        in the lower triangle. The upper triangle is left blank because
+        panel ``(i, j)`` and panel ``(j, i)`` show the same relationship
+        with the axes swapped, so filling both would draw everything twice.
+        Laid out to match a ``MultivariateDistribution`` pairs plot, so a
+        simulation can be compared with the distribution it came from.
+
+        Parameters
+        ----------
+        dims : tuple of int or None
+            Which variables to include, or ``None`` for every one.
+        alpha : float, optional
+            Transparency of the panels.
+        normalize : bool, default True
+            Whether the panels show densities rather than raw counts. The
+            same value is used for every panel, so they are comparable.
+        bins : int, optional
+            Number of equal-width bins a continuous axis is split into.
+            One value is used throughout, so a variable is binned the same
+            way in every panel it appears in.
+        suggest : bool, optional
+            Accepted for consistency with ``plot``; the panels never print
+            their own suggestion notes.
+        **kwargs
+            Additional keyword arguments forwarded to the panels.
+
+        Returns
+        -------
+        SymbulatePlot
+            A wrapper around the bottom-left panel, as a representative of
+            the layout.
+
+        Raises
+        ------
+        ValueError
+            If the figure already has a plot on it, which the grid can't
+            be built into.
+        """
+        chosen = self._pairs_resolve_dims(dims)
+        k = len(chosen)
+
+        fig = plt.gcf()
+        # The grid fills the whole figure, so it can neither be added to a
+        # figure that already has a plot on it nor accept one later --
+        # the same rule the marginal layout and the theoretical pairs plot
+        # follow rather than stacking two layouts on top of each other.
+        if fig.axes:
+            raise ValueError(JOINT_PAIRS_OVERLAY_ERROR)
+        # Size the figure to the grid, so panels stay readable as variables
+        # are added instead of each one shrinking inside a single-plot figure.
+        fig.set_size_inches(k * JOINT_PAIRS_PANEL_SIZE, k * JOINT_PAIRS_PANEL_SIZE)
+        gs = GridSpec(k, k, figure=fig)
+
+        # One bin count for the whole matrix. Every panel in a column bins
+        # the same variable over the same data, so an equal-width binning
+        # with the same count gives identical edges -- which is what makes
+        # the panels in a column directly comparable.
+        panel_bins = TILE_DEFAULT_BINS if bins is None else bins
+
+        corner = None
+        for row in range(k):
+            for col in range(row + 1):
+                ax = fig.add_subplot(gs[row, col])
+                if row == col:
+                    # The diagonal is this variable on its own, so it is
+                    # exactly the univariate plot -- reuse the whole 1-D
+                    # dispatch rather than redraw it. The helpers all draw
+                    # on plt.gca(), so making this panel current is what
+                    # routes the plot into it.
+                    plt.sca(ax)
+                    self._pairs_subset((chosen[row],)).plot(
+                        type=self._pairs_diagonal_type(chosen[row]),
+                        alpha=alpha,
+                        normalize=normalize,
+                        suggest=False,
+                        **kwargs,
+                    )
+                else:
+                    self._draw_pairs_joint(
+                        chosen[col],
+                        chosen[row],
+                        ax,
+                        normalize=normalize,
+                        bins=panel_bins,
+                        alpha=alpha,
+                        **kwargs,
+                    )
+                # Drop the title each panel drew for itself. On its own a plot
+                # is titled with its type ("Density Curve", "Tile Plot"), but
+                # in a matrix that repeats the same two or three words down
+                # every panel and crowds them; the figure's own "Pairs Plot"
+                # says what the layout is. The theoretical pairs plot clears
+                # its panels' titles the same way.
+                ax.set_title("")
+                # Name the variables only along the outside edges, so the
+                # inner panels aren't crowded with repeated labels.
+                if row == k - 1:
+                    ax.set_xlabel(self._pairs_variable_label(chosen[col]))
+                else:
+                    ax.set_xlabel("")
+                    # Every panel in a column covers the same variable over
+                    # the same range, so hiding the inner x tick labels
+                    # loses nothing -- the bottom panel's still apply. The y
+                    # tick labels stay on every panel, since a diagonal
+                    # panel's y-axis is a density and genuinely differs
+                    # from its neighbors'.
+                    ax.set_xticklabels([])
+                # A diagonal panel's y-axis is a density or a probability
+                # rather than the variable, so it is left unlabeled instead
+                # of being labeled with a variable it isn't showing -- the
+                # panel below it in the same column carries that name.
+                if col == 0 and row != col:
+                    ax.set_ylabel(self._pairs_variable_label(chosen[row]))
+                else:
+                    ax.set_ylabel("")
+                if row == k - 1 and col == 0:
+                    corner = ax
+
+        fig.suptitle("Pairs Plot")
+        fig.tight_layout()
+        # Leave the bottom-left panel current, so the returned plot and the
+        # figure's idea of "the" axes agree.
+        if corner is not None:
+            plt.sca(corner)
+        return SymbulatePlot(corner)
+
+    def _pairs_subset(self, indices):
+        """Return results holding just the chosen variables.
+
+        Parameters
+        ----------
+        indices : tuple of int
+            Which variables to keep, in order. One index gives
+            single-variable results, two gives a pair.
+
+        Returns
+        -------
+        RVResults
+            The same simulation, restricted to those variables.
+        """
+        if len(indices) == 1:
+            index = indices[0]
+            return RVResults([outcome[index] for outcome in self.results])
+        return RVResults(
+            [tuple(outcome[i] for i in indices) for outcome in self.results]
+        )
+
+    def _draw_pairs_joint(self, x_index, y_index, ax, normalize, bins, alpha, **kwargs):
+        """Draw one pair's joint panel of a pairs matrix.
+
+        Calls the same drawing helpers the ``dim == 2`` dispatch does, with
+        the colorbar off: a matrix of panels each carrying its own colorbar
+        would spend more of the figure on scales than on data, and the
+        panels share one meaning (density, or count) anyway.
+
+        Parameters
+        ----------
+        x_index, y_index : int
+            Which variables go on the x and y axes.
+        ax : matplotlib.axes.Axes
+            The panel to draw on.
+        normalize : bool
+            Whether to show densities rather than raw counts.
+        bins : int
+            Number of equal-width bins for a continuous axis.
+        alpha : float or None
+            Transparency of the panel.
+        **kwargs
+            Additional keyword arguments forwarded to the helper.
+        """
+        x = self._pairs_column(x_index)
+        y = self._pairs_column(y_index)
+        configuration, discrete_x, discrete_y = self._pairs_joint_configuration(
+            x_index, y_index
+        )
+        if configuration == "2D_cc":
+            make_hist2d(
+                x,
+                y,
+                ax,
+                bins=bins,
+                normalize=normalize,
+                colorbar=False,
+                **kwargs,
+            )
+        else:
+            # bins only bins a continuous axis, and make_tile warns if it is
+            # handed one when both variables are discrete (every distinct
+            # value already gets its own cell), so only pass it when there
+            # is a continuous axis for it to apply to.
+            if not (discrete_x and discrete_y):
+                kwargs["bins"] = bins
+            make_tile(
+                x,
+                y,
+                ax,
+                normalize=normalize,
+                discrete_x=discrete_x,
+                discrete_y=discrete_y,
+                colorbar=False,
+                **kwargs,
+            )
+
     def plot(
         self,
         type=None,
@@ -1450,6 +1825,8 @@ class RVResults(Results):
         bins=None,
         marginal=False,
         suggest=None,
+        pairs=False,
+        dims=None,
         **kwargs,
     ):
         """Plot the simulated random variable results.
@@ -1520,6 +1897,19 @@ class RVResults(Results):
             data. ``None`` (default) prints it only on the first
             ``.plot()`` call of the session; ``True`` prints it on
             every call; ``False`` never prints it.
+        pairs : bool, default False
+            If True, draw a matrix of panels instead of a single plot:
+            each variable's own distribution down the diagonal, and
+            each pair's joint distribution below it. This is the way
+            to see simulated results of **three or more** variables,
+            which have no single "the plot." Because the matrix fills
+            the figure with its own panels, it cannot share a figure
+            with another plot. See the Notes for what each panel shows.
+        dims : tuple of int, optional
+            Which variables the pairs matrix includes, numbered from 0
+            -- for example ``dims=(0, 2)`` for the 1st and 3rd. Only
+            meaningful with ``pairs=True``; every variable is included
+            by default.
         **kwargs
             Additional keyword arguments passed to the underlying
             matplotlib plotting function. Notable options:
@@ -1578,7 +1968,50 @@ class RVResults(Results):
 
         >>> X2 = RV(BoxModel([1, 2, 3, 4, 5, 6], size=2))
         >>> X2.sim(500).plot(type="scatter")  # doctest: +SKIP
+
+        Plot every pair of three or more variables at once:
+
+        >>> X3 = RV(BoxModel([1, 2, 3, 4, 5, 6], size=3))
+        >>> X3.sim(500).plot(pairs=True)  # doctest: +SKIP
+        >>> X3.sim(500).plot(pairs=True, dims=(0, 2))  # just the 1st and 3rd  # doctest: +SKIP
+
+        Notes
+        -----
+        With ``pairs=True`` each panel is chosen the same way a single
+        plot would be, but always in its large-sample form so the matrix
+        reads consistently:
+
+        - **diagonal** -- each variable on its own: a density curve when
+          it looks continuous, an impulse plot when it looks discrete
+          (a density over a handful of repeated integers would smear a
+          probability mass function into something it isn't).
+        - **below the diagonal** -- each pair together: a tile plot when
+          both variables look discrete, a 2-D histogram when both look
+          continuous, and a tile plot with the continuous axis binned
+          when they are mixed.
+
+        The upper triangle is left blank, because panel ``(i, j)`` and
+        panel ``(j, i)`` show the same relationship with the axes
+        swapped. Every panel in a column covers the same variable with
+        the same number of bins, so columns are directly comparable.
         """
+        if pairs:
+            return self._plot_pairs(
+                dims,
+                alpha=alpha,
+                normalize=normalize,
+                bins=bins,
+                suggest=suggest,
+                **kwargs,
+            )
+        if dims is not None:
+            raise ValueError(
+                "dims chooses which variables a pairs matrix includes, so it "
+                "only applies with pairs=True -- for example "
+                ".plot(pairs=True, dims=(0, 2)). To plot one particular pair "
+                "on its own, simulate that pair, e.g. (X & Z).sim(1000).plot()."
+            )
+
         if type is not None:
             if isinstance(type, str):
                 type = (type,)
