@@ -56,6 +56,9 @@ from symbulate.plot import (
     K_2D,
     N_SMALL_THRESHOLD,
     DOTPLOT_MAX_STACK,
+    JOINT_PAIRS_MAX_DIM,
+    JOINT_PAIRS_OVERLAY_ERROR,
+    JOINT_PAIRS_PANEL_SIZE,
     classify_values,
     default_plot_type,
     dotplot_tallest_stack,
@@ -3800,6 +3803,270 @@ class TestJointTheoreticalPlots(PlotTestCase):
         with self.assertRaises(ValueError) as cm:
             make_joint_pmf(pmf, np.arange(side), np.arange(side), plt.gca())
         self.assertIn("too many to read", str(cm.exception))
+
+
+# ===========================================================================
+# Pairs matrix of simulated results (RVResults.plot(pairs=True))
+# ===========================================================================
+
+
+def _continuous_sim(n=400, k=3, seed=1):
+    """Simulated results of ``k`` correlated continuous variables."""
+    rng = np.random.default_rng(seed)
+    base = rng.normal(size=n)
+    return RVResults(
+        [
+            tuple(float(base[i] * 0.6 + rng.normal() * 0.8) for _ in range(k))
+            for i in range(n)
+        ]
+    )
+
+
+def _discrete_sim(n=400, k=3, seed=2):
+    """Simulated results of ``k`` small-cardinality discrete variables."""
+    rng = np.random.default_rng(seed)
+    return RVResults(
+        [tuple(int(rng.integers(1, 7)) for _ in range(k)) for _ in range(n)]
+    )
+
+
+def _mixed_sim(n=400, seed=3):
+    """One discrete variable and two continuous ones."""
+    rng = np.random.default_rng(seed)
+    return RVResults(
+        [
+            (int(rng.integers(1, 4)), float(rng.normal()), float(rng.normal()))
+            for _ in range(n)
+        ]
+    )
+
+
+class TestPairsPanelChoice(PlotTestCase):
+    """Which plot each panel of the matrix gets."""
+
+    def test_continuous_diagonal_is_a_density(self):
+        sim = _continuous_sim()
+        for i in range(3):
+            with self.subTest(variable=i):
+                self.assertEqual(sim._pairs_diagonal_type(i), "density")
+
+    def test_discrete_diagonal_is_an_impulse(self):
+        """A density over a handful of repeated values would smear a pmf."""
+        sim = _discrete_sim()
+        for i in range(3):
+            with self.subTest(variable=i):
+                self.assertEqual(sim._pairs_diagonal_type(i), "impulse")
+
+    def test_two_continuous_variables_get_a_2d_histogram(self):
+        self.assertEqual(_continuous_sim()._pairs_joint_type(0, 1), "hist2d")
+
+    def test_two_discrete_variables_get_a_tile(self):
+        self.assertEqual(_discrete_sim()._pairs_joint_type(0, 1), "tile")
+
+    def test_a_mixed_pair_gets_a_tile(self):
+        """The continuous axis is binned; the discrete one keeps its levels."""
+        self.assertEqual(_mixed_sim()._pairs_joint_type(0, 1), "tile")
+
+    def test_joint_type_is_the_large_sample_default(self):
+        """A matrix never falls back to scatter, even on a small simulation."""
+        small = _continuous_sim(n=20)
+        self.assertEqual(small._pairs_joint_type(0, 1), "hist2d")
+        self.assertEqual(_discrete_sim(n=20)._pairs_joint_type(0, 1), "tile")
+
+
+class TestPairsLayout(PlotTestCase):
+    """The grid of panels the matrix builds."""
+
+    def test_lower_triangle_only(self):
+        """k variables give k(k+1)/2 panels: diagonal plus lower triangle."""
+        for k in (2, 3, 4):
+            with self.subTest(variables=k):
+                plt.close("all")
+                plt.figure()
+                _continuous_sim(k=k).plot(pairs=True)
+                self.assertEqual(len(plt.gcf().axes), k * (k + 1) // 2)
+
+    def test_dims_selects_a_subset(self):
+        plt.figure()
+        _continuous_sim(k=4).plot(pairs=True, dims=(0, 2))
+        self.assertEqual(len(plt.gcf().axes), 3)
+
+    def test_figure_is_sized_to_the_grid(self):
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        width, height = plt.gcf().get_size_inches()
+        self.assertAlmostEqual(width, 3 * JOINT_PAIRS_PANEL_SIZE)
+        self.assertAlmostEqual(height, 3 * JOINT_PAIRS_PANEL_SIZE)
+
+    def test_returns_a_symbulate_plot(self):
+        plt.figure()
+        returned = _continuous_sim().plot(pairs=True)
+        self.assertIsInstance(returned, SymbulatePlot)
+
+    def test_only_the_outer_edges_are_labeled(self):
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        axes = plt.gcf().axes
+        # The bottom row carries x labels; every other panel has none.
+        x_labels = [a.get_xlabel() for a in axes]
+        self.assertEqual(sorted(l for l in x_labels if l), ["X1", "X2", "X3"])
+        # The left column carries y labels, except the diagonal panel whose
+        # y-axis is a density rather than a variable.
+        y_labels = [a.get_ylabel() for a in axes]
+        self.assertEqual(sorted(l for l in y_labels if l), ["X2", "X3"])
+
+    def test_inner_x_tick_labels_are_hidden(self):
+        """Every panel in a column shares the variable, so they'd repeat."""
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        # Tick label text is filled in at draw time, so draw before reading it.
+        fig = plt.gcf()
+        fig.canvas.draw()
+        for ax in fig.axes:
+            texts = [t.get_text() for t in ax.get_xticklabels()]
+            if ax.get_xlabel():
+                # A bottom-row panel: its numbers are the ones that apply to
+                # the whole column.
+                self.assertTrue(any(texts), "bottom row lost its tick labels")
+            else:
+                self.assertFalse(any(texts), "inner panel repeated its column's")
+
+    def test_panels_in_a_column_cover_the_same_range(self):
+        """One variable is binned the same way wherever it appears."""
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        # The two joint panels of the leftmost column both show variable 0
+        # on x, so their x-ranges must agree.
+        joint = [a for a in plt.gcf().axes if a.collections and not a.lines]
+        self.assertEqual(joint[0].get_xlim(), joint[1].get_xlim())
+
+    def test_no_per_panel_colorbars(self):
+        """A colorbar per panel would spend the figure on scales, not data."""
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        # 6 panels exactly -- a colorbar would add an extra axes each.
+        self.assertEqual(len(plt.gcf().axes), 6)
+
+    def test_every_configuration_draws_without_warnings(self):
+        for label, sim in [
+            ("continuous", _continuous_sim()),
+            ("discrete", _discrete_sim()),
+            ("mixed", _mixed_sim()),
+        ]:
+            with self.subTest(data=label):
+                plt.close("all")
+                plt.figure()
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error")
+                    sim.plot(pairs=True)
+
+    def test_panels_have_no_titles_of_their_own(self):
+        """One "Pairs Plot" title, not a plot-type title on every panel."""
+        for label, sim in [
+            ("continuous", _continuous_sim()),
+            ("discrete", _discrete_sim()),
+            ("mixed", _mixed_sim()),
+        ]:
+            with self.subTest(data=label):
+                plt.close("all")
+                plt.figure()
+                sim.plot(pairs=True)
+                fig = plt.gcf()
+                self.assertEqual([a.get_title() for a in fig.axes], [""] * 6)
+                self.assertEqual(fig._suptitle.get_text(), "Pairs Plot")
+
+    def test_panels_do_not_print_suggestion_notes(self):
+        """One note per panel would bury the plot in text."""
+        plt.figure()
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            _continuous_sim().plot(pairs=True)
+        self.assertNotIn("Currently Showing", printed.getvalue())
+
+
+class TestPairsErrors(PlotTestCase):
+    """What the matrix refuses to do, and how it says so."""
+
+    def test_cannot_share_a_figure(self):
+        plt.figure()
+        RVResults([float(v) for v in np.random.default_rng(0).normal(size=50)]).plot(
+            suggest=False
+        )
+        with self.assertRaises(ValueError) as cm:
+            _continuous_sim().plot(pairs=True)
+        self.assertEqual(str(cm.exception), JOINT_PAIRS_OVERLAY_ERROR)
+
+    def test_too_many_variables_to_read(self):
+        plt.figure()
+        many = _continuous_sim(n=50, k=JOINT_PAIRS_MAX_DIM + 1)
+        with self.assertRaises(Exception) as cm:
+            many.plot(pairs=True)
+        self.assertIn("too many", str(cm.exception))
+        self.assertIn("dims", str(cm.exception))
+
+    def test_dims_without_pairs_explains_itself(self):
+        plt.figure()
+        with self.assertRaises(ValueError) as cm:
+            _continuous_sim().plot(dims=(0, 1))
+        self.assertIn("pairs=True", str(cm.exception))
+
+    def test_dims_out_of_range(self):
+        plt.figure()
+        with self.assertRaises(ValueError) as cm:
+            _continuous_sim(k=3).plot(pairs=True, dims=(0, 9))
+        self.assertIn("between 0 and 2", str(cm.exception))
+
+    def test_dims_cannot_repeat_a_variable(self):
+        plt.figure()
+        with self.assertRaises(ValueError):
+            _continuous_sim().plot(pairs=True, dims=(1, 1))
+
+    def test_dims_needs_at_least_two_variables(self):
+        plt.figure()
+        with self.assertRaises(ValueError):
+            _continuous_sim().plot(pairs=True, dims=(0,))
+        with self.assertRaises(ValueError):
+            _continuous_sim().plot(pairs=True, dims=1)
+
+    def test_one_variable_cannot_make_a_matrix(self):
+        plt.figure()
+        one = RVResults([float(v) for v in np.random.default_rng(0).normal(size=50)])
+        with self.assertRaises(ValueError) as cm:
+            one.plot(pairs=True)
+        self.assertIn("at least two", str(cm.exception))
+
+
+class TestPairsLeavesOtherPlotsAlone(PlotTestCase):
+    """The feature is additive: nothing else about .plot() changes."""
+
+    def test_one_variable_still_plots_by_default(self):
+        plt.figure()
+        sim = RVResults([float(v) for v in np.random.default_rng(0).normal(size=200)])
+        sim.plot(suggest=False)
+        self.assertTrue(plt.gcf().axes)
+
+    def test_two_variables_still_plot_by_default(self):
+        """Unchanged: a 2-D histogram plus its colorbar."""
+        plt.figure()
+        _continuous_sim(k=2).plot(suggest=False)
+        self.assertTrue(plt.gcf().axes)
+        self.assertTrue(plt.gcf().axes[0].collections)
+
+    def test_three_variables_without_pairs_is_unchanged(self):
+        """Still the old catch-all index plot -- one axes, no exception."""
+        np.random.seed(4)
+        plt.figure()
+        sim = RV(
+            MultivariateNormal(mean=[0, 0, 0], cov=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        ).sim(100)
+        sim.plot(suggest=False)
+        self.assertEqual(len(plt.gcf().axes), 1)
+        self.assertEqual(plt.gca().get_xlabel(), "Index")
+
+    def test_explicit_type_still_honored_on_two_variables(self):
+        plt.figure()
+        _continuous_sim(k=2).plot(type="scatter", suggest=False)
+        self.assertTrue(plt.gca().collections)
 
 
 if __name__ == "__main__":
