@@ -15,11 +15,13 @@ skip one:
 The convenience classes (``MM1``, ``GG1``, ...) are checked to draw the same
 kind of path, and to reach the same three views through ``.apply()``.
 
-Known gap, deliberately not asserted here: ``NonHomogeneousPoissonProcess``
-counts events on the "expected count" scale and never converts back to clock
-time, so it has no clock-time ``interarrival_times`` (and hence no
-``arrival_times``). Supplying them needs a numerical inverse of the cumulative
-rate, which is a decision for that module's author.
+``NonHomogeneousPoissonProcess`` and ``CoxProcess`` support only three of the
+four (see ``TIME_CHANGED`` below): they count events on the "expected count"
+scale and never convert back to clock time, so neither has clock-time
+``interarrival_times``, and ``CoxProcess`` inherits the gap by building on the
+non-homogeneous one. Closing it needs a numerical inverse of the cumulative
+rate, a decision for that module's author -- so they are checked here for what
+they do offer, and this file is where they move once it lands.
 """
 
 import unittest
@@ -95,6 +97,13 @@ PROCESSES = {
         lambda: GGsProbabilitySpace(Exponential(rate=1), Exponential(rate=1), 2),
         lambda: GGs(Exponential(rate=1), Exponential(rate=1), servers=2),
     ),
+    # A running total of random jumps rather than a count, so its state is a
+    # real number instead of an integer -- but it holds that value for a
+    # stretch of continuous time and jumps, so the same interface applies.
+    "CompoundPoissonProcess": (
+        lambda: CompoundPoissonProcessProbabilitySpace(rate=1, jump_dist=Normal(0, 1)),
+        lambda: CompoundPoissonProcess(rate=1, jump_dist=Normal(0, 1)),
+    ),
     "SIR": (
         lambda: SIRProbabilitySpace(population=50, infection_rate=2, recovery_rate=1),
         lambda: SIR(population=50, infection_rate=2, recovery_rate=1),
@@ -106,6 +115,21 @@ PROCESSES = {
         lambda: SEIR(
             population=50, infection_rate=2, incubation_rate=1, recovery_rate=1
         ),
+    ),
+}
+
+
+# The two that count events on the "expected count" scale, so they have a
+# space, RV(P), and states, but no clock-time interarrival or arrival times.
+# Move an entry up into PROCESSES once it gains them.
+TIME_CHANGED = {
+    "NonHomogeneousPoissonProcess": (
+        lambda: NonHomogeneousPoissonProcessProbabilitySpace(rate=lambda t: 1 + t),
+        lambda: NonHomogeneousPoissonProcess(rate=lambda t: 1 + t),
+    ),
+    "CoxProcess": (
+        lambda: CoxProcessProbabilitySpace(intensity=Gamma(shape=2, rate=1)),
+        lambda: CoxProcess(intensity=Gamma(shape=2, rate=1)),
     ),
 }
 
@@ -214,6 +238,40 @@ class TestConvenienceClass(unittest.TestCase):
             with self.subTest(process=name):
                 X = make_process()
                 self.assertEqual(type(X.prob_space).__name__, name + "ProbabilitySpace")
+
+
+class TestTimeChangedProcesses(unittest.TestCase):
+    """The two that count on the expected-count scale, for what they do offer."""
+
+    def test_probability_space_is_exported(self):
+        import symbulate
+
+        for name in TIME_CHANGED:
+            with self.subTest(process=name):
+                self.assertTrue(hasattr(symbulate, name + "ProbabilitySpace"))
+
+    def test_rv_of_the_space_is_the_process(self):
+        for name, (make_space, _) in TIME_CHANGED.items():
+            with self.subTest(process=name):
+                seed()
+                self.assertIsNotNone(RV(make_space()).draw()(1.0))
+
+    def test_states(self):
+        for name, (make_space, _) in TIME_CHANGED.items():
+            with self.subTest(process=name):
+                seed()
+                self.assertIsNotNone(RV(make_space(), states)[0].draw())
+
+    def test_clock_time_jump_views_are_the_documented_gap(self):
+        """Fails once they gain clock-time times -- move them up to PROCESSES."""
+        for name, (make_space, _) in TIME_CHANGED.items():
+            with self.subTest(process=name):
+                seed()
+                path = make_space().draw()
+                with self.assertRaises(AttributeError):
+                    interarrival_times(path)
+                with self.assertRaises(AttributeError):
+                    arrival_times(path)
 
 
 class TestEpidemicStatesAreVectors(unittest.TestCase):

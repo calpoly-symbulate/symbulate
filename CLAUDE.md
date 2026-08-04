@@ -358,8 +358,12 @@ class — the space is what `RV(P, ...)` users get.
 
 **Known gap:** `NonHomogeneousPoissonProcess` counts events on the
 "expected count" scale and never converts back to clock time, so it has no
-clock-time `interarrival_times`/`arrival_times`. Fixing it needs a numerical
-inverse of the cumulative rate.
+clock-time `interarrival_times`/`arrival_times`; `CoxProcess` inherits the gap,
+since `CoxProcessResult` builds on that class. Fixing it needs a numerical
+inverse of the cumulative rate. Both are in `TIME_CHANGED` in
+`test_continuous_time_processes.py`, which asserts the three views they *do*
+support and pins the gap, so the test fails (and they move up into the main
+table) once it is closed.
 
 **One deliberate oddity:** `SIR`/`SEIR` states are whole *vectors* of
 compartment counts, not single numbers, and their final holding time is `inf`
