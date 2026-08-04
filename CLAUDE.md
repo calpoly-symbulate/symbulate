@@ -536,7 +536,15 @@ large-sample form so a matrix never mixes a mesh with a scatter:
 Conventions shared with the theoretical version, by design — change both or
 neither: lower triangle only, `JOINT_PAIRS_MAX_DIM` cap, `JOINT_PAIRS_PANEL_SIZE`
 per panel, `JOINT_PAIRS_OVERLAY_ERROR` when the figure already has a plot,
-`X1`-style labels on the outer edges only, `"Pairs Plot"` suptitle.
+`X1`-style labels on the outer edges only, no per-panel titles (each panel's
+own type title is cleared — the `"Pairs Plot"` suptitle names the layout).
+
+**One deliberate divergence:** the simulated matrix labels the **whole** left
+column, top-left panel included, so every row is named (`X1`, `X2`, `X3` down
+the side — seaborn `PairGrid`'s convention). The theoretical version leaves that
+one panel's y-label blank on the grounds that a diagonal panel's y-axis is a
+density rather than the variable. Worth reconciling: the theoretical side needs a
+one-line change (`if col == 0 and row != col:` → `if col == 0:`) to match.
 
 Three implementation notes:
 - **Diagonal panels route through `.plot()`** (full reuse of the 1-D dispatch)
