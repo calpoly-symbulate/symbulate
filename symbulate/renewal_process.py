@@ -1,6 +1,6 @@
 import numpy as np
 
-from .distributions import Distribution, MultivariateDistribution
+from .distributions import Distribution, Exponential, MultivariateDistribution
 from .index_sets import Reals
 from .math import inf
 from .probability_space import ProbabilitySpace
@@ -296,5 +296,291 @@ class RenewalProcess(RandomProcess, RV):
         """Create a renewal process with the given interarrival distribution."""
         prob_space = RenewalProcessProbabilitySpace(interarrival_dist)
         self.interarrival_dist = prob_space.interarrival_dist
+        RandomProcess.__init__(self, prob_space, Reals())
+        RV.__init__(self, prob_space)
+
+
+def _validate_rate(rate):
+    """Check that ``rate`` can serve as the rate of a Poisson counting process.
+
+    The same check ``PoissonProcessProbabilitySpace`` makes, worded for a
+    process whose events carry a jump size.
+
+    Parameters
+    ----------
+    rate : float
+        The candidate rate: the average number of events per unit time.
+
+    Raises
+    ------
+    TypeError
+        If ``rate`` is not a number.
+    ValueError
+        If ``rate`` is not positive.
+    """
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        raise TypeError(
+            "rate must be a positive number: the average number of events per "
+            f"unit time. You gave {type(rate).__name__}. For example, "
+            "rate=2 for two events per unit time on average."
+        )
+    if rate == 0:
+        raise ValueError(
+            "rate must be positive, got 0. A rate of 0 would mean no events "
+            "ever occur, so the total would stay at 0 forever. Try a rate "
+            "above 0 -- for example, rate=2 for two events per unit time on "
+            "average."
+        )
+    if rate < 0:
+        raise ValueError(
+            f"rate must be positive, got {rate}. The rate is how frequently "
+            "events happen, so it cannot go below 0. If what you wanted is a "
+            "total that can go down as well as up, that belongs in jump_dist "
+            "instead -- for example, jump_dist=Normal(mean=0, sd=1)."
+        )
+
+
+def _validate_jump_dist(jump_dist):
+    """Check that a distribution can serve as a jump size.
+
+    Unlike an interarrival time, a jump size has no sign restriction: a
+    compound Poisson process is free to go down as well as up. All that is
+    required is one number per event.
+
+    Parameters
+    ----------
+    jump_dist : Distribution
+        The candidate distribution of the jump added at each event.
+
+    Raises
+    ------
+    TypeError
+        If ``jump_dist`` is not a Symbulate ``Distribution``, or is a
+        multivariate one (a whole vector per draw rather than one jump).
+    """
+    if not isinstance(jump_dist, Distribution):
+        message = (
+            "jump_dist must be a Symbulate distribution describing the size of "
+            "the jump at each event, such as Exponential(rate=1), "
+            "Gamma(shape=2, rate=1), or Normal(mean=0, sd=1). You gave "
+            f"{type(jump_dist).__name__}."
+        )
+        if isinstance(jump_dist, (int, float)) and not isinstance(jump_dist, bool):
+            message += (
+                f" (If every jump is exactly {jump_dist}, write that as a "
+                f"distribution too: Uniform(a={jump_dist}, b={jump_dist}).)"
+            )
+        raise TypeError(message)
+
+    if isinstance(jump_dist, MultivariateDistribution):
+        raise TypeError(
+            "jump_dist must be a distribution of single numbers, but "
+            f"{type(jump_dist).__name__} produces a whole vector of numbers on "
+            "each draw. A compound Poisson process adds one number to a "
+            "running total at each event. Try a one-number distribution such "
+            "as Exponential(rate=1) or Normal(mean=0, sd=1)."
+        )
+
+
+class CompoundPoissonProcessResult(ContinuousTimeFunction, DiscreteValued):
+    """A single realization of a compound Poisson process.
+
+    A step function that starts at 0 and jumps at each event. The jump
+    sizes line up with the interarrival times index by index: the process
+    waits ``interarrival_times[n]`` before its ``n``-th jump, and that jump
+    adds ``jump_sizes[n]`` to the running total.
+
+    Parameters
+    ----------
+    interarrival_times : iterable of float
+        Sequence of times between events.
+    jump_sizes : iterable of float
+        Sequence of jump sizes, one per event.
+
+    Attributes
+    ----------
+    interarrival_times : iterable of float
+        The times between events on this sample path.
+    jump_sizes : iterable of float
+        The jump added at each event on this sample path.
+    states : InfiniteVector
+        The value the process holds between events: ``states[n]`` is the
+        running total during the ``n``-th waiting period, so ``states[0]``
+        is 0 (nothing has jumped yet). Reached with ``states(path)`` or
+        ``path.get_states()``.
+
+    See Also
+    --------
+    RenewalProcessResult : Counts the events without the jump sizes.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> path = CompoundPoissonProcess(rate=1, jump_dist=Exponential(rate=1)).draw()
+    >>> path[2.5]  # doctest: +SKIP
+    1.83
+
+    The pieces the path is built from are all available:
+
+    >>> path.jump_sizes[0]  # doctest: +SKIP
+    0.71
+    >>> path.get_arrival_times()[0]  # doctest: +SKIP
+    0.43
+    """
+
+    def __init__(self, interarrival_times, jump_sizes):
+        """Create a compound Poisson sample path from times and jump sizes."""
+        self.interarrival_times = interarrival_times
+        self.jump_sizes = jump_sizes
+        # The running total after each event, indexed so that the process
+        # sits at states[n] for interarrival_times[n] units of time -- the
+        # same index-by-index convention ContinuousTimeMarkovChainResult
+        # uses. Nothing has jumped during the first wait, so states[0] = 0.
+        self.states = InfiniteVector(
+            lambda n: sum(self.jump_sizes[i] for i in range(n))
+        )
+
+        def func(t):
+            total_time = 0
+            total_jumps = 0
+            for n, time in enumerate(self.interarrival_times):
+                total_time += time
+                if t < total_time:
+                    return total_jumps
+                total_jumps += self.jump_sizes[n]
+
+        super().__init__(func)
+
+
+class CompoundPoissonProcessProbabilitySpace(ProbabilitySpace):
+    """Probability space for a compound Poisson process.
+
+    Parameters
+    ----------
+    rate : float
+        The rate of the underlying Poisson process: the average number of
+        events per unit time. Must be positive.
+    jump_dist : Distribution
+        The distribution of the (i.i.d.) jump added at each event. Must be a
+        Symbulate ``Distribution`` over single numbers.
+
+    Attributes
+    ----------
+    rate : float
+        The rate of events.
+    jump_dist : Distribution
+        The jump-size distribution.
+
+    Raises
+    ------
+    TypeError
+        If ``rate`` is not a number, or ``jump_dist`` is not a Symbulate
+        ``Distribution`` over single numbers.
+    ValueError
+        If ``rate`` is not positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> space = CompoundPoissonProcessProbabilitySpace(2, Exponential(rate=1))
+    >>> path = space.draw()
+    >>> path[1.0]  # doctest: +SKIP
+    1.42
+    """
+
+    def __init__(self, rate, jump_dist):
+        """Create a probability space for a compound Poisson process."""
+        _validate_rate(rate)
+        _validate_jump_dist(jump_dist)
+        self.rate = rate
+        self.jump_dist = jump_dist
+
+        # Both sequences are built once, not once per draw: neither the rate
+        # nor the jump distribution changes, and each `.draw()` already gives
+        # a fresh, independent sequence. (Same reasoning as PoissonProcess.)
+        # The event times are exponential, exactly as in PoissonProcess --
+        # the compounding is the second sequence, not a different first one.
+        interarrivals = Exponential(rate=self.rate) ** inf
+        jumps = self.jump_dist**inf
+
+        def draw():
+            return CompoundPoissonProcessResult(interarrivals.draw(), jumps.draw())
+
+        super().__init__(draw)
+
+
+class CompoundPoissonProcess(RandomProcess, RV):
+    """A random compound Poisson process and a random variable.
+
+    Events happen as in a ``PoissonProcess``, but each event now carries a
+    size drawn from ``jump_dist``, and the process reports the running total
+    of those sizes rather than a count of events. Writing ``N(t)`` for the
+    number of events by time ``t`` and ``Y1, Y2, ...`` for the jumps, the
+    value at time ``t`` is ``Y1 + Y2 + ... + Y_N(t)``.
+
+    This is the standard model for a total that accumulates in lumps at
+    random times: claims arriving at an insurer, losses in a portfolio,
+    rainfall in storms, deposits and withdrawals in an account.
+
+    Parameters
+    ----------
+    rate : float
+        The rate of the underlying Poisson process: the average number of
+        events per unit time. Must be positive.
+    jump_dist : Distribution
+        The distribution of the jump added at each event. Must be a Symbulate
+        ``Distribution`` over single numbers. Jumps may be negative, so the
+        total can go down as well as up.
+
+    Attributes
+    ----------
+    rate : float
+        The rate of events.
+    jump_dist : Distribution
+        The jump-size distribution.
+
+    Raises
+    ------
+    TypeError
+        If ``rate`` is not a number, or ``jump_dist`` is not a Symbulate
+        ``Distribution`` over single numbers.
+    ValueError
+        If ``rate`` is not positive.
+
+    See Also
+    --------
+    PoissonProcess : Counts the events, with no jump sizes attached.
+    RenewalProcess : Counts events whose waiting times need not be
+        exponential.
+
+    Notes
+    -----
+    Two facts worth checking a simulation against. If a jump averages
+    ``E[Y]``, then the total by time ``t`` averages ``rate * t * E[Y]`` --
+    the average number of events times the average size of one. Its variance
+    is ``rate * t * E[Y ** 2]``, which is *not* the number of events times
+    the variance of a jump: both the number of events and their sizes vary,
+    and the second moment is what combines the two.
+
+    A jump of exactly 1 at every event recovers the count itself, so
+    ``CompoundPoissonProcess(rate=2, jump_dist=Uniform(a=1, b=1))`` behaves
+    like ``PoissonProcess(rate=2)``.
+
+    Examples
+    --------
+    Three claims per unit time on average, each claim averaging 500. The
+    average total claimed by time 10 is then 3 * 10 * 500 = 15000.
+
+    >>> from symbulate import *
+    >>> X = CompoundPoissonProcess(rate=3, jump_dist=Exponential(rate=1 / 500))
+    >>> X(10).mean()  # doctest: +SKIP
+    15034.2
+    """
+
+    def __init__(self, rate, jump_dist):
+        """Create a compound Poisson process with the given rate and jumps."""
+        prob_space = CompoundPoissonProcessProbabilitySpace(rate, jump_dist)
+        self.rate = prob_space.rate
+        self.jump_dist = prob_space.jump_dist
         RandomProcess.__init__(self, prob_space, Reals())
         RV.__init__(self, prob_space)

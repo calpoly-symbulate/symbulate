@@ -888,6 +888,52 @@ class TestSIR(unittest.TestCase):
         self.assertAlmostEqual(plt.gca().lines[-1].get_xdata()[-1], 30)
         plt.close("all")
 
+    def test_plot_draws_every_compartment(self):
+        # path.plot() overlays all three compartments, each labeled, over the
+        # outbreak's time axis -- shorthand for plotting S, I, R individually.
+        seed()
+        path = SIR(1000, 0.3, 0.1, initial_infected=5).draw()
+        plt.figure()
+        path.plot()
+        lines = plt.gca().lines
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(
+            [l.get_label() for l in lines],
+            ["Susceptible", "Infectious", "Recovered"],
+        )
+        self.assertAlmostEqual(lines[-1].get_xdata()[-1], path.event_times[-1])
+        plt.close("all")
+
+    def test_sim_one_plots_like_draw(self):
+        # .sim(1).plot() routes through RVResults' ensemble plotter but should
+        # still draw the three labeled compartments, like .draw().plot().
+        seed()
+        plt.figure()
+        SIR(1000, 0.3, 0.1, initial_infected=5).sim(1).plot()
+        lines = plt.gca().lines
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(
+            [l.get_label() for l in lines],
+            ["Susceptible", "Infectious", "Recovered"],
+        )
+        plt.close("all")
+
+    def test_sim_many_shares_one_legend_and_color_per_compartment(self):
+        # Overlaying k outbreaks draws 3*k lines but adds each compartment to
+        # the legend only once, and holds each compartment to a single color.
+        seed()
+        plt.figure()
+        SIR(1000, 0.3, 0.1, initial_infected=5).sim(5).plot()
+        lines = plt.gca().lines
+        self.assertEqual(len(lines), 15)
+        legend = [l.get_label() for l in lines if not l.get_label().startswith("_")]
+        self.assertEqual(legend, ["Susceptible", "Infectious", "Recovered"])
+        # every 3rd line is the same compartment; each must be one color
+        for offset in range(3):
+            colors = {lines[offset + 3 * k].get_color() for k in range(5)}
+            self.assertEqual(len(colors), 1)
+        plt.close("all")
+
     def test_supercritical_outbreak_larger_than_subcritical(self):
         # R0 = infection_rate / recovery_rate. Above 1 a large outbreak is
         # likely; below 1 the epidemic dies out quickly. Checks the rates are
@@ -954,6 +1000,20 @@ class TestSEIR(unittest.TestCase):
         path = SEIR(100, 0.4, 0.2, 0.1).draw()
         for c in ["S", "E", "I", "R"]:
             self.assertIsInstance(getattr(path, c), ContinuousTimeFunction)
+
+    def test_plot_draws_every_compartment(self):
+        # path.plot() overlays all four compartments (E included), each labeled.
+        seed()
+        path = SEIR(1000, 0.5, 0.2, 0.1, initial_infected=5).draw()
+        plt.figure()
+        path.plot()
+        lines = plt.gca().lines
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(
+            [l.get_label() for l in lines],
+            ["Susceptible", "Exposed", "Infectious", "Recovered"],
+        )
+        plt.close("all")
 
     def test_validation(self):
         self.assertRaises(Exception, lambda: SEIR(100, 0.4, 0, 0.1))  # incubation

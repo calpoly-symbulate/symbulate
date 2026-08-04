@@ -531,6 +531,95 @@ already documents. Its test file reseeds both `gaussian_process.rng` and
 
 ---
 
+## Decision: Compound Poisson Process — Jumps on Poisson Arrivals, in `renewal_process.py`
+
+**Status:** Implemented — `CompoundPoissonProcess`,
+`CompoundPoissonProcessProbabilitySpace`, and `CompoundPoissonProcessResult`
+live in `symbulate/renewal_process.py`, tested in
+`symbulate/tests/test_renewal_process.py`, exported from
+`symbulate/__init__.py`. This is roadmap step 5, the prerequisite for
+Cramér-Lundberg / Sparre Andersen risk processes, the aggregate-loss process
+with actuarial severities, Merton jump-diffusion, the shot-noise/filtered
+Poisson process, and the Hawkes process.
+
+**Decision**
+> `CompoundPoissonProcess(rate, jump_dist)` draws exponential interarrival
+> times exactly as `PoissonProcess` does, draws one jump from `jump_dist` per
+> event, and reports the running total `Y1 + ... + Y_N(t)` rather than the
+> count `N(t)`. The sample path is the *same* cumulative-sum walk
+> `PoissonProcessResult` already does, with the loop carrying a second
+> running total alongside the clock.
+>
+> It lives in **`renewal_process.py`**, not `poisson_process.py`: the
+> interarrival-time machinery it reuses, and the counting-process family it
+> generalizes, are both there. This supersedes the passing prediction in the
+> NHPP entry above ("Compound Poisson and Cox are expected to join it") for
+> Compound Poisson only — Cox still belongs with the Poisson family, since it
+> is a rate-driven construction with no renewal content.
+>
+> Three deliberate API choices:
+> 1. **No sign restriction on `jump_dist`.** A negative jump is a legitimate
+>    model (deposits and withdrawals, gains and losses), so the compound
+>    total is *not* monotone — the opposite of the nondecreasing-count
+>    invariant that `_validate_interarrival_dist` exists to protect. Only two
+>    things are checked: it is a Symbulate `Distribution`, and it is not
+>    multivariate (one number per event, not a vector).
+> 2. **`rate`, not `interarrival_dist`.** The class is the compound *Poisson*
+>    process, so it takes the same `rate` argument `PoissonProcess` does, with
+>    the same validation reworded for this context.
+> 3. **The path exposes `states`**, the running total between events, indexed
+>    so the path sits at `states[n]` for `interarrival_times[n]` units of time
+>    — the index-by-index convention `ContinuousTimeMarkovChainResult` already
+>    uses, so `states()`, `interarrival_times()`, and `arrival_times()` all
+>    work on a compound path unchanged. `states[0]` is 0: the process starts
+>    at 0 and nothing has jumped during the first wait.
+
+**Rationale**
+> Placing it beside `RenewalProcess` puts the compound process next to the
+> machinery the roadmap says it reuses, and next to the risk processes that
+> will be built on it (Sparre Andersen is a compound *renewal* process — the
+> same class with the exponential assumption dropped, which is a natural
+> follow-on in this module and would be an out-of-place one in
+> `poisson_process.py`). Reporting the running total through the existing
+> `ContinuousTimeFunction`/`DiscreteValued` pair, rather than a new result
+> type, means `.plot()`, `states()`, `interarrival_times()`, and
+> `arrival_times()` all work on day one with no plotting or math changes.
+
+**Alternatives Considered**
+> **Putting it in `poisson_process.py`** to keep the Poisson family in one
+> module (the NHPP entry's stated expectation) — a real tradeoff, decided the
+> other way: the module grouping that matters more here is "processes built
+> out of interarrival times," and the follow-on work (Sparre Andersen,
+> aggregate loss, G/G/1) is renewal-flavored, not Poisson-flavored.
+> **Shipping a general `CompoundRenewalProcess(interarrival_dist, jump_dist)`
+> at the same time**, with compound Poisson as its exponential special case —
+> deferred, not rejected. It is its own roadmap row (Sparre Andersen), and
+> `RenewalProcess`'s own precedent is that the special case keeps its own
+> class rather than being re-expressed in terms of the general one (see
+> "Deliberately not done" in the interarrival-validation entry above).
+> **Requiring nonnegative jumps** (a `_validate_interarrival_dist`-style
+> support check on `jump_dist`) — rejected: it would reject the surplus and
+> gain/loss models that are half the reason the process is on the roadmap,
+> and unlike a negative waiting time, a negative jump breaks no invariant.
+> **Storing arrival times explicitly on the result** instead of deriving them
+> from the interarrival times — rejected; `DiscreteValued.get_arrival_times`
+> already derives them as a cumulative sum, and a second stored copy could
+> drift out of step with the jumps it is meant to line up with.
+
+**Known limitation (shared with `RenewalProcessResult`, accepted):** a result
+built by hand from plain Python lists — `CompoundPoissonProcessResult([1.0,
+2.0], [10, 20])` — supports `get_interarrival_times()` but not
+`get_arrival_times()`, which needs a `.cumsum()` and so wants a `Vector` or
+`InfiniteVector`. Every path produced by an actual draw is built from an
+`InfiniteVector`, so this only shows up in hand-constructed test fixtures.
+
+**Deliberately not done:** the Cramér-Lundberg surplus process
+(`u + c*t - X(t)`), Sparre Andersen (compound renewal), and hitting
+times/ruin probabilities. Each is its own roadmap row, and each is now a
+short step from this class rather than a blocked one.
+
+---
+
 ## Decision: Phase 1 Scope — Process Roadmap & Distribution Additions
 
 **Status:** Proposed

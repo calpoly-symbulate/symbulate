@@ -6,6 +6,12 @@ continuous-time index set, the exact E[N(t)] = sum_k P(S_k <= t) renewal
 mean, the Poisson special case (exponential interarrival times), and the
 validation of the interarrival distribution.
 
+Also covers CompoundPoissonProcess, which lives in the same module: the
+running-total sample path and its states, the E[X(t)] = rate * t * E[Y] and
+Var[X(t)] = rate * t * E[Y^2] moments, the unit-jump special case that
+recovers the Poisson count itself, and the validation of rate and jump_dist
+(where, unlike an interarrival time, a negative jump is legitimate).
+
 The negative-support tests are regression tests: nothing used to stop a
 distribution like Normal from being used as an interarrival time, which
 silently broke the nondecreasing-count invariant a renewal process assumes.
@@ -25,6 +31,9 @@ from symbulate.renewal_process import (
     RenewalProcess,
     RenewalProcessResult,
     RenewalProcessProbabilitySpace,
+    CompoundPoissonProcess,
+    CompoundPoissonProcessResult,
+    CompoundPoissonProcessProbabilitySpace,
 )
 from symbulate.index_sets import Reals
 from symbulate.result import ContinuousTimeFunction, DiscreteValued
@@ -301,6 +310,259 @@ class TestRenewalProcessValidation(unittest.TestCase):
         # A point mass at exp(0) = 1, so the count at t=3.5 is exactly 3.
         path = RenewalProcess(LogNormal(0, 0)).draw()
         self.assertEqual(path(3.5), 3)
+
+
+class TestCompoundPoissonProcessResult(unittest.TestCase):
+
+    def test_is_continuous_time_function(self):
+        path = CompoundPoissonProcess(1, Exponential(rate=1)).draw()
+        self.assertIsInstance(path, ContinuousTimeFunction)
+
+    def test_is_discrete_valued(self):
+        path = CompoundPoissonProcess(1, Exponential(rate=1)).draw()
+        self.assertIsInstance(path, DiscreteValued)
+
+    def test_starts_at_zero(self):
+        seed()
+        path = CompoundPoissonProcess(1, Exponential(rate=1)).draw()
+        self.assertEqual(path(0), 0)
+
+    def test_result_accumulates_jumps_at_arrival_times(self):
+        # Arrivals at t=1, 3, and 8 (cumulative), with jumps 10, 20, 30:
+        # the total steps 0 -> 10 -> 30 -> 60.
+        path = CompoundPoissonProcessResult([1.0, 2.0, 5.0], [10, 20, 30])
+        self.assertEqual(path(0.5), 0)
+        self.assertEqual(path(1.5), 10)
+        self.assertEqual(path(4.0), 30)
+
+    def test_jump_is_included_at_its_own_arrival_time(self):
+        """The path is right-continuous: the jump at time 1 counts at time 1."""
+        path = CompoundPoissonProcessResult([1.0, 2.0, 5.0], [10, 20, 30])
+        self.assertEqual(path(1.0), 10)
+
+    def test_total_can_decrease_when_jumps_are_negative(self):
+        # Unlike a renewal count, a compound total is not monotone -- a
+        # negative jump is a legitimate modeling choice, not an error.
+        path = CompoundPoissonProcessResult([1.0, 1.0, 1.0], [5, -3, 2])
+        self.assertEqual([path(t) for t in [0.5, 1.0, 2.0, 2.5]], [0, 5, 2, 2])
+
+    def test_getitem_matches_call(self):
+        seed()
+        path = CompoundPoissonProcess(1, Exponential(rate=1)).draw()
+        for t in [0.5, 1.0, 3.5]:
+            self.assertEqual(path[t], path(t))
+
+    def test_states_are_running_totals_starting_at_zero(self):
+        path = CompoundPoissonProcessResult([1.0, 2.0, 5.0], [10, 20, 30])
+        self.assertEqual([path.states[n] for n in range(4)], [0, 10, 30, 60])
+
+    def test_get_states_returns_the_running_totals(self):
+        path = CompoundPoissonProcessResult([1.0, 2.0, 5.0], [10, 20, 30])
+        self.assertEqual([path.get_states()[n] for n in range(3)], [0, 10, 30])
+
+    def test_states_match_the_path_between_arrivals(self):
+        """The path sits at states[n] during the n-th waiting period."""
+        path = CompoundPoissonProcessResult([1.0, 2.0, 5.0], [10, 20, 30])
+        self.assertEqual(path(0.5), path.states[0])
+        self.assertEqual(path(2.0), path.states[1])
+        self.assertEqual(path(4.0), path.states[2])
+
+    def test_get_interarrival_and_arrival_times(self):
+        # A Vector rather than a plain list, since arrival times are the
+        # cumulative sum of the interarrival times.
+        path = CompoundPoissonProcessResult(Vector([1.0, 2.0, 5.0]), [10, 20, 30])
+        self.assertEqual(list(path.get_interarrival_times()), [1.0, 2.0, 5.0])
+        self.assertEqual(list(path.get_arrival_times()), [1.0, 3.0, 8.0])
+
+    def test_jump_sizes_are_stored(self):
+        path = CompoundPoissonProcessResult([1.0, 2.0, 5.0], [10, 20, 30])
+        self.assertEqual(list(path.jump_sizes), [10, 20, 30])
+
+
+class TestCompoundPoissonProcessProbabilitySpace(unittest.TestCase):
+
+    def test_rate_and_jump_dist_stored(self):
+        jumps = Exponential(rate=1)
+        space = CompoundPoissonProcessProbabilitySpace(2, jumps)
+        self.assertEqual(space.rate, 2)
+        self.assertIs(space.jump_dist, jumps)
+
+    def test_draw_returns_result(self):
+        seed()
+        space = CompoundPoissonProcessProbabilitySpace(2, Exponential(rate=1))
+        self.assertIsInstance(space.draw(), CompoundPoissonProcessResult)
+
+    def test_draw_path_starts_at_zero(self):
+        seed()
+        space = CompoundPoissonProcessProbabilitySpace(2, Exponential(rate=1))
+        self.assertEqual(space.draw()(0), 0)
+
+    def test_successive_draws_are_independent(self):
+        # Both sequences are built once and reused, so each draw must still
+        # give a fresh path rather than repeating the first one.
+        seed()
+        space = CompoundPoissonProcessProbabilitySpace(1, Exponential(rate=1))
+        first, second = space.draw(), space.draw()
+        self.assertNotEqual(
+            [first(t) for t in range(1, 20)], [second(t) for t in range(1, 20)]
+        )
+
+
+class TestCompoundPoissonProcess(unittest.TestCase):
+
+    def test_rate_and_jump_dist_stored(self):
+        jumps = Exponential(rate=1)
+        X = CompoundPoissonProcess(2, jumps)
+        self.assertEqual(X.rate, 2)
+        self.assertIs(X.jump_dist, jumps)
+
+    def test_accepts_keyword_arguments(self):
+        jumps = Exponential(rate=1)
+        X = CompoundPoissonProcess(rate=2, jump_dist=jumps)
+        self.assertEqual(X.rate, 2)
+        self.assertIs(X.jump_dist, jumps)
+
+    def test_is_random_process_and_rv(self):
+        X = CompoundPoissonProcess(2, Exponential(rate=1))
+        self.assertIsInstance(X, RandomProcess)
+        self.assertIsInstance(X, RV)
+
+    def test_index_set_is_reals(self):
+        X = CompoundPoissonProcess(2, Exponential(rate=1))
+        self.assertIsInstance(X.index_set, Reals)
+
+    def test_getitem_returns_rv(self):
+        self.assertIsInstance(CompoundPoissonProcess(2, Exponential(rate=1))[2], RV)
+
+    def test_call_returns_rv(self):
+        self.assertIsInstance(CompoundPoissonProcess(2, Exponential(rate=1))(2.5), RV)
+
+    def test_reproducible_under_same_seed(self):
+        X = CompoundPoissonProcess(2, Exponential(rate=1))
+        seed(123)
+        first = list(X(3.0).sim(50))
+        seed(123)
+        second = list(X(3.0).sim(50))
+        self.assertEqual(first, second)
+
+
+class TestCompoundPoissonMoments(unittest.TestCase):
+
+    def test_mean_is_rate_times_time_times_mean_jump(self):
+        # E[X(t)] = rate * t * E[Y] = 2 * 4 * 1 = 8.
+        seed()
+        X = CompoundPoissonProcess(2, Exponential(rate=1))
+        self.assertAlmostEqual(X(4).sim(Nsim).mean(), 8.0, delta=0.3)
+
+    def test_variance_is_rate_times_time_times_second_moment(self):
+        # Var[X(t)] = rate * t * E[Y^2]. For Exponential(rate=1) jumps,
+        # E[Y^2] = 2, so Var[X(4)] = 2 * 4 * 2 = 16 -- not 8 * Var(Y) = 8,
+        # since the number of jumps varies too.
+        seed()
+        X = CompoundPoissonProcess(2, Exponential(rate=1))
+        self.assertAlmostEqual(X(4).sim(Nsim).var(), 16.0, delta=1.0)
+
+    def test_gamma_jumps_mean(self):
+        # E[Y] = shape / rate = 2, so E[X(5)] = 3 * 5 * 2 = 30.
+        seed()
+        X = CompoundPoissonProcess(3, Gamma(shape=2, rate=1))
+        self.assertAlmostEqual(X(5).sim(Nsim).mean(), 30.0, delta=0.5)
+
+    def test_negative_jumps_give_a_mean_of_zero(self):
+        # Symmetric jumps: the total drifts nowhere on average.
+        seed()
+        X = CompoundPoissonProcess(2, Normal(mean=0, sd=1))
+        self.assertAlmostEqual(X(5).sim(Nsim).mean(), 0.0, delta=0.2)
+
+    def test_unit_jumps_give_poisson_counts(self):
+        # A jump of exactly 1 at every event makes the total the count
+        # itself, so X(5) is Poisson(rate * t) = Poisson(10).
+        seed()
+        X = CompoundPoissonProcess(2, Uniform(a=1, b=1))
+        simulated = X(5).sim(Nsim).tabulate()
+        exp_list, obs_list = [], []
+        for k in range(0, 30):
+            expected = Nsim * stats.poisson(mu=10).pmf(k)
+            if expected > 5:
+                exp_list.append(expected)
+                obs_list.append(simulated[float(k)] if float(k) in simulated else 0)
+        pval = stats.chisquare(
+            obs_list, np.array(exp_list) * sum(obs_list) / sum(exp_list)
+        ).pvalue
+        self.assertTrue(pval > 0.01)
+
+
+class TestCompoundPoissonProcessValidation(unittest.TestCase):
+    """Validation of rate and jump_dist, for both the space and the process."""
+
+    def test_string_rate_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            CompoundPoissonProcess("2", Exponential(rate=1))
+
+    def test_boolean_rate_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            CompoundPoissonProcess(True, Exponential(rate=1))
+
+    def test_zero_rate_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            CompoundPoissonProcess(0, Exponential(rate=1))
+
+    def test_negative_rate_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            CompoundPoissonProcess(-1, Exponential(rate=1))
+
+    def test_negative_rate_error_points_at_jump_dist(self):
+        """A student wanting downward jumps is sent to jump_dist, not rate."""
+        with self.assertRaises(ValueError) as context:
+            CompoundPoissonProcess(-1, Exponential(rate=1))
+        self.assertIn("jump_dist", str(context.exception))
+
+    def test_number_jump_dist_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            CompoundPoissonProcess(2, 5)
+
+    def test_number_jump_dist_error_shows_how_to_fix_a_fixed_jump(self):
+        with self.assertRaises(TypeError) as context:
+            CompoundPoissonProcess(2, 5)
+        self.assertIn("Uniform(a=5, b=5)", str(context.exception))
+
+    def test_string_jump_dist_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            CompoundPoissonProcess(2, "Exponential")
+
+    def test_none_jump_dist_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            CompoundPoissonProcess(2, None)
+
+    def test_uninstantiated_distribution_class_raises_type_error(self):
+        """Passing the class Exponential rather than Exponential(rate=1)."""
+        with self.assertRaises(TypeError):
+            CompoundPoissonProcess(2, Exponential)
+
+    def test_multivariate_jump_dist_raises_type_error(self):
+        """A vector per event is not a single jump size."""
+        with self.assertRaises(TypeError):
+            CompoundPoissonProcess(2, BivariateNormal(mean1=1, mean2=1))
+
+    def test_probability_space_also_validates(self):
+        """The guard lives in the space, so it fires there too."""
+        with self.assertRaises(ValueError):
+            CompoundPoissonProcessProbabilitySpace(0, Exponential(rate=1))
+        with self.assertRaises(TypeError):
+            CompoundPoissonProcessProbabilitySpace(2, 5)
+
+    def test_negative_support_jump_dist_accepted(self):
+        """Unlike an interarrival time, a jump may be negative."""
+        seed()
+        path = CompoundPoissonProcess(2, Normal(mean=0, sd=1)).draw()
+        # Symmetric jumps over 50 time units: the total goes below 0 at some
+        # point, which a renewal count never could.
+        self.assertLess(min(path(t) for t in range(1, 51)), 0)
+
+    def test_discrete_jump_dist_accepted(self):
+        seed()
+        path = CompoundPoissonProcess(2, Poisson(3)).draw()
+        self.assertGreaterEqual(path(5.0), 0)
 
 
 if __name__ == "__main__":

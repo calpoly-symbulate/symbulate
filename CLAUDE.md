@@ -52,12 +52,12 @@ must be understandable by a general audience without assuming prior knowledge.
 | `markov_chains.py` | Markov chain probability spaces |
 | `gaussian_process.py` | `GaussianProcess`, `BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`, `FractionalBrownianMotion` |
 | `poisson_process.py` | `PoissonProcess` and `NonHomogeneousPoissonProcess` (time-varying rate) |
-| `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution |
+| `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution; `CompoundPoissonProcess` — running total of a jump drawn at each Poisson arrival (see "Compound Poisson Process" below) |
 | `queues.py` | `GG1`, `MG1`, `GM1`, `GGs` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `time_series.py` | `MA` — moving-average process; home for the AR/ARMA/GARCH family as it lands |
 | `hitting_times.py` | `hitting_time` — when a path first reaches a level; Gaussian-process family only so far (see "Hitting Times" below) |
-| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately (see "Diffusion Processes" below) |
+| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` — named special case, simulated exactly (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
 | `math.py` | Math utility functions |
@@ -247,9 +247,48 @@ Three things that are easy to get wrong:
   in the module's demo; `test_diffusion_process.py` has a regression test that
   fails if the module ever switches back to the global generator.
 - **A `sqrt` in `diffusion` needs a floor**, e.g.
-  `lambda x, t: sigma * np.sqrt(max(x, 0))` for CIR. A forward step can land
-  slightly below 0 even in a model that should stay positive, and one `nan`
-  poisons the rest of the path.
+  `lambda x, t: sigma * np.sqrt(max(x, 0))`. A forward step can land slightly
+  below 0 even in a model that should stay positive, and one `nan` poisons the
+  rest of the path.
+
+`CIR(reversion_rate, mean, scale, initial_value)` lives in the same module as a
+named special case, the way `BrownianMotion` sits inside `gaussian_process.py`
+next to the general `GaussianProcess`. It does **not** go through
+`DiffusionProcess`: CIR has a known transition law — its value at any later
+time is a scaled noncentral chi-square, the same distribution
+`ChiSquare(df, noncentrality=)` wraps — so each new time is drawn in one shot,
+**exactly**, with no step size to tune. Do not reimplement it as a
+`DiffusionProcess` parameterization; that would reintroduce Euler–Maruyama
+error the team decision explicitly removed. `test_cir.py` pins this by checking
+that one jump to a time matches fifty steps to it. The one approximate corner
+is asking for a time *between* two already-computed times, since a CIR path
+pinned at both ends has no simple formula.
+
+## Compound Poisson Process
+
+`CompoundPoissonProcess(rate, jump_dist)` is the running total of a jump
+drawn at each Poisson arrival. It lives in `renewal_process.py`, **not**
+`poisson_process.py` — it reuses the interarrival machinery there, and the
+risk processes that will build on it (Sparre Andersen, Cramér-Lundberg) are
+renewal-flavored. See `MODEL-DECISIONS.md`, "Decision: Compound Poisson
+Process."
+
+Three things that are easy to get wrong:
+
+- **`jump_dist` is deliberately not sign-checked.** A negative jump is a
+  legitimate model (gains and losses, deposits and withdrawals), so the total
+  is *not* monotone. Do not copy `_validate_interarrival_dist`'s
+  nonnegativity check onto it — that check protects the nondecreasing-count
+  invariant, which this process does not have. `jump_dist` is checked for
+  exactly two things: it is a `Distribution`, and it is not multivariate.
+- **`Var[X(t)] = rate * t * E[Y**2]`**, not (number of events) × `Var(Y)` —
+  both the count and the sizes vary. The mean is `rate * t * E[Y]`. Use these
+  closed forms when writing a test, not a simulated reference value.
+- **`states[n]` is the total held during the n-th wait**, so `states[0]` is 0
+  — the index-by-index convention `ContinuousTimeMarkovChainResult` uses. A
+  result hand-built from plain Python lists supports
+  `get_interarrival_times()` but not `get_arrival_times()`, which needs a
+  `.cumsum()` — pass a `Vector` in a test fixture that needs it.
 
 ## Queues
 
@@ -378,12 +417,13 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_markov_chains.py` | Markov chains |
 | `test_gaussian_process.py` | Gaussian processes (incl. Ornstein-Uhlenbeck, Brownian bridge, fractional Brownian motion) |
 | `test_poisson_process.py` | Poisson process and non-homogeneous Poisson process |
-| `test_renewal_process.py` | Renewal process |
+| `test_renewal_process.py` | Renewal process and compound Poisson process |
 | `test_queues.py` | `GG1`, `MG1`, `GM1`, `GGs` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
 | `test_time_series.py` | `MA` (and the rest of the time-series family as it lands) |
 | `test_hitting_times.py` | `hitting_time` |
 | `test_diffusion_process.py` | Diffusion processes |
+| `test_cir.py` | The `CIR` process |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
 | `test_index_sets.py` | Index sets |
@@ -414,6 +454,7 @@ pytest tests/
 - Do not hardcode the discreteness thresholds — use `B_1D` (1-D) and `K_2D` (2-D per axis) from `plot.py`, passed into `classify_data()` at the `results.py` dispatch (`B_1D` for 1-D, `K_2D` per axis for 2-D). Values are provisional (see `DECISIONS.md`).
 - Do not set `self.xlim` in a new distribution's `__init__`, and do not compute a window there — `Distribution._compute_xlim` derives it from scipy's `support()` on first read (see "Distribution Plotting Window"). The only exception is a degenerate branch that skips `Distribution.__init__` and so has no scipy object.
 - Do not reintroduce the highest-density interval (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, `_PLOT_COVERAGE`, `_hdi_window`) — removed by team decision; there are tests asserting it stays gone.
+- Do not add a nonnegativity check to `CompoundPoissonProcess`'s `jump_dist` — negative jumps are intentional (see "Compound Poisson Process")
 - Do not rename `type=` to `kind=` or anything else — considered and decided against.
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
 - Do not use `viridis_r` (reversed) for 2D density/tile/hist2d — plain `viridis`, 0 = dark.
