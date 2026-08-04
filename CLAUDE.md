@@ -251,7 +251,7 @@ Three things that are easy to get wrong:
   below 0 even in a model that should stay positive, and one `nan` poisons the
   rest of the path.
 
-`CIR(reversion_rate, mean, scale, initial_value)` lives in the same module as a
+`CIR(reversion_rate, mean, scale, initial)` lives in the same module as a
 named special case, the way `BrownianMotion` sits inside `gaussian_process.py`
 next to the general `GaussianProcess`. It does **not** go through
 `DiffusionProcess`: CIR has a known transition law — its value at any later
@@ -280,6 +280,13 @@ meaning the growth rate of the mean — the same contract
 is unchanged across four very different jump settings. Note that with large
 jumps the *simulated* mean is noisy (the sd can reach 200), so judge that
 contract against the closed form, not against one simulation.
+
+Both follow the package-wide `initial` naming (see `MODEL-DECISIONS.md`, "One
+Name for a Process's Starting Condition"). `CIR` also still accepts the older
+`initial_value`, via `_resolve_initial`, because it shipped under that name;
+`MertonJumpDiffusion` never did, so it takes `initial` only. `CIR`'s `initial`
+defaults to `None` meaning "start at `mean`", so it passes `default=None` to
+the helper rather than a number.
 
 ## Cox Process
 

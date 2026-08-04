@@ -7,7 +7,7 @@ exactly from those two pieces, so there are closed forms to check against.
 Writing ``k1 = exp(jump_mean + jump_sd**2 / 2)`` and
 ``k2 = exp(2 * jump_mean + 2 * jump_sd**2)``:
 
-    mean = initial_value * exp(growth_rate * t)
+    mean = initial * exp(growth_rate * t)
     var  = mean**2 * (exp(scale**2 * t + jump_rate * t * (k2 - 2*k1 + 1)) - 1)
 
 The headline claim is the mean: it does **not** move when the jump settings
@@ -31,14 +31,14 @@ def seed(value=42):
     renewal_process.rng = np.random.default_rng(value + 2)
 
 
-def expected_mean(initial_value, growth_rate, t):
-    return initial_value * np.exp(growth_rate * t)
+def expected_mean(initial, growth_rate, t):
+    return initial * np.exp(growth_rate * t)
 
 
-def expected_var(initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd, t):
+def expected_var(initial, growth_rate, scale, jump_rate, jump_mean, jump_sd, t):
     k1 = np.exp(jump_mean + jump_sd**2 / 2)
     k2 = np.exp(2 * jump_mean + 2 * jump_sd**2)
-    mean = expected_mean(initial_value, growth_rate, t)
+    mean = expected_mean(initial, growth_rate, t)
     return mean**2 * (np.exp(scale**2 * t + jump_rate * t * (k2 - 2 * k1 + 1)) - 1)
 
 
@@ -57,14 +57,14 @@ class TestMertonConstruction(unittest.TestCase):
 
     def test_parameters_stored_on_probability_space(self):
         P = MertonJumpDiffusionProbabilitySpace(
-            initial_value=100,
+            initial=100,
             growth_rate=0.05,
             scale=0.2,
             jump_rate=2,
             jump_mean=-0.1,
             jump_sd=0.15,
         )
-        self.assertEqual(P.initial_value, 100)
+        self.assertEqual(P.initial, 100)
         self.assertEqual(P.growth_rate, 0.05)
         self.assertEqual(P.scale, 0.2)
         self.assertEqual(P.jump_rate, 2)
@@ -74,21 +74,21 @@ class TestMertonConstruction(unittest.TestCase):
 
 class TestMertonPaths(unittest.TestCase):
 
-    def test_starts_at_initial_value(self):
+    def test_starts_at_initial(self):
         seed()
-        for initial_value in [1, 100, 0.5]:
-            X = MertonJumpDiffusion(initial_value=initial_value)
+        for initial in [1, 100, 0.5]:
+            X = MertonJumpDiffusion(initial=initial)
             for _ in range(5):
-                self.assertAlmostEqual(float(X.draw()(0)), float(initial_value))
+                self.assertAlmostEqual(float(X.draw()(0)), float(initial))
 
     def test_same_time_returns_cached_value(self):
         seed()
-        path = MertonJumpDiffusion(initial_value=100).draw()
+        path = MertonJumpDiffusion(initial=100).draw()
         self.assertEqual(path(1.0), path(1.0))
 
     def test_cached_value_unchanged_after_zooming_in(self):
         seed()
-        path = MertonJumpDiffusion(initial_value=100).draw()
+        path = MertonJumpDiffusion(initial=100).draw()
         before = float(path(1.0)), float(path(2.0))
         for t in [1.2, 1.5, 1.8]:
             path(t)
@@ -96,7 +96,7 @@ class TestMertonPaths(unittest.TestCase):
 
     def test_different_draws_differ(self):
         seed()
-        X = MertonJumpDiffusion(initial_value=100)
+        X = MertonJumpDiffusion(initial=100)
         self.assertGreater(len({float(X.draw()(1.0)) for _ in range(10)}), 1)
 
     def test_stays_positive(self):
@@ -104,7 +104,7 @@ class TestMertonPaths(unittest.TestCase):
         # cannot reach 0.
         seed()
         X = MertonJumpDiffusion(
-            initial_value=100, scale=0.5, jump_rate=5, jump_mean=-0.5, jump_sd=0.5
+            initial=100, scale=0.5, jump_rate=5, jump_mean=-0.5, jump_sd=0.5
         )
         self.assertTrue(all(value > 0 for value in X[3.0].sim(500)))
 
@@ -116,7 +116,7 @@ class TestMertonPaths(unittest.TestCase):
 
     def test_path_exposes_its_two_pieces(self):
         seed()
-        path = MertonJumpDiffusion(initial_value=100).draw()
+        path = MertonJumpDiffusion(initial=100).draw()
         path(2.0)
         self.assertEqual(float(path.brownian_path(0)), 0.0)
         self.assertEqual(float(path.jump_path(0)), 0.0)
@@ -126,8 +126,8 @@ class TestMertonCompensator(unittest.TestCase):
     """growth_rate stays the growth rate of the mean, whatever the jumps do."""
 
     def test_mean_matches_closed_form_for_every_jump_setting(self):
-        initial_value, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
-        target = expected_mean(initial_value, growth_rate, t)
+        initial, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
+        target = expected_mean(initial, growth_rate, t)
 
         for jump_rate, jump_mean, jump_sd in [
             (1, 0.0, 0.1),
@@ -137,7 +137,7 @@ class TestMertonCompensator(unittest.TestCase):
         ]:
             seed()
             X = MertonJumpDiffusion(
-                initial_value=initial_value,
+                initial=initial,
                 growth_rate=growth_rate,
                 scale=scale,
                 jump_rate=jump_rate,
@@ -156,10 +156,8 @@ class TestMertonCompensator(unittest.TestCase):
             )
 
     def test_turning_up_the_jumps_widens_the_spread_not_the_mean(self):
-        initial_value, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
-        settings = dict(
-            initial_value=initial_value, growth_rate=growth_rate, scale=scale
-        )
+        initial, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
+        settings = dict(initial=initial, growth_rate=growth_rate, scale=scale)
         seed()
         calm = MertonJumpDiffusion(
             jump_rate=1, jump_mean=-0.05, jump_sd=0.1, **settings
@@ -169,17 +167,17 @@ class TestMertonCompensator(unittest.TestCase):
             jump_rate=5, jump_mean=-0.3, jump_sd=0.4, **settings
         )[t].sim(Nsim)
 
-        target = expected_mean(initial_value, growth_rate, t)
+        target = expected_mean(initial, growth_rate, t)
         self.assertAlmostEqual(calm.mean(), target, delta=0.10 * target)
         self.assertAlmostEqual(wild.mean(), target, delta=0.10 * target)
         self.assertGreater(wild.var(), calm.var())
 
     def test_variance_matches_closed_form(self):
-        initial_value, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
+        initial, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
         jump_rate, jump_mean, jump_sd = 1, -0.1, 0.15
         seed()
         X = MertonJumpDiffusion(
-            initial_value=initial_value,
+            initial=initial,
             growth_rate=growth_rate,
             scale=scale,
             jump_rate=jump_rate,
@@ -187,15 +185,15 @@ class TestMertonCompensator(unittest.TestCase):
             jump_sd=jump_sd,
         )
         target = expected_var(
-            initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd, t
+            initial, growth_rate, scale, jump_rate, jump_mean, jump_sd, t
         )
         self.assertAlmostEqual(X[t].sim(Nsim).var(), target, delta=0.35 * target)
 
     def test_jumps_add_variance_on_top_of_the_wiggle(self):
-        initial_value, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
+        initial, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
         seed()
         with_jumps = MertonJumpDiffusion(
-            initial_value=initial_value,
+            initial=initial,
             growth_rate=growth_rate,
             scale=scale,
             jump_rate=3,
@@ -204,7 +202,7 @@ class TestMertonCompensator(unittest.TestCase):
         )[t].sim(Nsim)
         seed()
         without = GeometricBrownianMotion(
-            initial_value=initial_value, growth_rate=growth_rate, scale=scale
+            initial=initial, growth_rate=growth_rate, scale=scale
         )[t].sim(Nsim)
         self.assertGreater(with_jumps.var(), without.var())
 
@@ -212,27 +210,27 @@ class TestMertonCompensator(unittest.TestCase):
 class TestMertonComparedToGeometricBrownianMotion(unittest.TestCase):
 
     def test_almost_no_jumps_behaves_like_plain_geometric_brownian_motion(self):
-        initial_value, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
+        initial, growth_rate, scale, t = 100.0, 0.05, 0.2, 2.0
         seed()
         barely = MertonJumpDiffusion(
-            initial_value=initial_value,
+            initial=initial,
             growth_rate=growth_rate,
             scale=scale,
             jump_rate=1e-6,
             jump_mean=0.0,
             jump_sd=0.1,
         )[t].sim(Nsim)
-        target_var = expected_var(initial_value, growth_rate, scale, 0, 0, 0.1, t)
+        target_var = expected_var(initial, growth_rate, scale, 0, 0, 0.1, t)
         self.assertAlmostEqual(barely.var(), target_var, delta=0.35 * target_var)
 
     def test_downward_jumps_make_the_lower_tail_fatter(self):
         # The reason the model exists: plain geometric Brownian motion is
         # criticised for making a crash too unlikely.
-        initial_value, growth_rate, scale, t = 100.0, 0.0, 0.2, 2.0
+        initial, growth_rate, scale, t = 100.0, 0.0, 0.2, 2.0
         floor = 60.0
         seed()
         merton = MertonJumpDiffusion(
-            initial_value=initial_value,
+            initial=initial,
             growth_rate=growth_rate,
             scale=scale,
             jump_rate=1,
@@ -241,7 +239,7 @@ class TestMertonComparedToGeometricBrownianMotion(unittest.TestCase):
         )[t].sim(Nsim)
         seed()
         smooth = GeometricBrownianMotion(
-            initial_value=initial_value, growth_rate=growth_rate, scale=scale
+            initial=initial, growth_rate=growth_rate, scale=scale
         )[t].sim(Nsim)
         self.assertGreater(merton.count_lt(floor), smooth.count_lt(floor))
 
@@ -250,7 +248,7 @@ class TestMertonErrors(unittest.TestCase):
 
     def test_non_numeric_parameters_raise_type_error(self):
         for kwargs in [
-            {"initial_value": "high"},
+            {"initial": "high"},
             {"growth_rate": "fast"},
             {"scale": "wide"},
             {"jump_rate": "often"},
@@ -260,10 +258,10 @@ class TestMertonErrors(unittest.TestCase):
             with self.assertRaises(TypeError):
                 MertonJumpDiffusion(**kwargs)
 
-    def test_non_positive_initial_value_raises_value_error(self):
+    def test_non_positive_initial_raises_value_error(self):
         for value in [0, -100]:
             with self.assertRaises(ValueError):
-                MertonJumpDiffusion(initial_value=value)
+                MertonJumpDiffusion(initial=value)
 
     def test_non_positive_scale_raises_value_error(self):
         for value in [0, -0.2]:
@@ -288,7 +286,7 @@ class TestMertonErrors(unittest.TestCase):
         # Only the four scale-like parameters are restricted in sign.
         seed()
         X = MertonJumpDiffusion(
-            initial_value=100, growth_rate=-0.1, jump_mean=-0.5, scale=0.2
+            initial=100, growth_rate=-0.1, jump_mean=-0.5, scale=0.2
         )
         self.assertAlmostEqual(float(X.draw()(0)), 100.0)
 

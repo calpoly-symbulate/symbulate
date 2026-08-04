@@ -338,7 +338,7 @@ class DiffusionProcess(RandomProcess, RV):
         return self.initial
 
 
-def _validate_cir(reversion_rate, mean, scale, initial_value):
+def _validate_cir(reversion_rate, mean, scale, initial):
     """Check the parameters of a CIR process.
 
     Raises
@@ -347,7 +347,7 @@ def _validate_cir(reversion_rate, mean, scale, initial_value):
         If any parameter is not a number.
     ValueError
         If ``reversion_rate``, ``mean``, or ``scale`` is not positive, or
-        ``initial_value`` is negative.
+        ``initial`` is negative.
     """
     for name, value, example in [
         ("reversion_rate", reversion_rate, "reversion_rate=1"),
@@ -365,21 +365,20 @@ def _validate_cir(reversion_rate, mean, scale, initial_value):
                 f"above 0 and is pulled toward a positive level, so all three "
                 f"of reversion_rate, mean, and scale have to be positive."
             )
-    if initial_value is not None:
-        if not isinstance(initial_value, numbers.Real):
+    if initial is not None:
+        if not isinstance(initial, numbers.Real):
             raise TypeError(
-                f"initial_value must be a number or None, got "
-                f"{type(initial_value).__name__}. Leave it out to start at "
-                f"mean."
+                f"initial must be a number or None, got "
+                f"{type(initial).__name__}. Leave it out to start at mean."
             )
-        if initial_value < 0:
+        if initial < 0:
             raise ValueError(
-                f"initial_value must be at least 0, got {initial_value}. A "
-                f"CIR process never goes below 0, so it cannot start there."
+                f"initial must be at least 0, got {initial}. A CIR process "
+                f"never goes below 0, so it cannot start there."
             )
 
 
-def get_cir_result(reversion_rate, mean, scale, initial_value):
+def get_cir_result(reversion_rate, mean, scale, initial):
     """Create one simulated sample path of a CIR process.
 
     Unlike :func:`get_diffusion_process_result`, this does not take small
@@ -404,7 +403,7 @@ def get_cir_result(reversion_rate, mean, scale, initial_value):
         The volatility multiplier. The size of the random jolts is
         ``scale * sqrt(value)``, which shrinks to nothing as the value
         approaches 0.
-    initial_value : float or None
+    initial : float or None
         Where the path starts. ``None`` starts it at ``mean``.
 
     Returns
@@ -421,7 +420,7 @@ def get_cir_result(reversion_rate, mean, scale, initial_value):
     >>> path(1.0)  # doctest: +SKIP
     0.047
     """
-    start = float(mean if initial_value is None else initial_value)
+    start = float(mean if initial is None else initial)
 
     # Degrees of freedom of the transition law. This is also what decides
     # whether the process can ever touch 0: at df >= 2 -- equivalently
@@ -560,14 +559,17 @@ class CIRProbabilitySpace(ProbabilitySpace):
         The positive level it is pulled toward. Default is 1.
     scale : float, optional
         The volatility multiplier. Must be positive. Default is 0.5.
-    initial_value : float, optional
+    initial : float, optional
         Where the path starts. Leave it out to start at ``mean``.
+    initial_value : float, optional
+        Older name for ``initial``, still accepted. Give one or the other,
+        not both.
 
     Attributes
     ----------
     reversion_rate, mean, scale : float
         The process parameters.
-    initial_value : float
+    initial : float
         Where paths start -- ``mean`` if none was given.
 
     Raises
@@ -576,7 +578,7 @@ class CIRProbabilitySpace(ProbabilitySpace):
         If any parameter is not a number.
     ValueError
         If ``reversion_rate``, ``mean``, or ``scale`` is not positive, or
-        ``initial_value`` is negative.
+        ``initial`` is negative.
 
     Examples
     --------
@@ -586,17 +588,29 @@ class CIRProbabilitySpace(ProbabilitySpace):
     0.05
     """
 
-    def __init__(self, reversion_rate=1, mean=1, scale=0.5, initial_value=None):
+    def __init__(
+        self,
+        reversion_rate=1,
+        mean=1,
+        scale=0.5,
+        initial=None,
+        initial_value=None,
+    ):
         """Create a probability space for a CIR process."""
-        _validate_cir(reversion_rate, mean, scale, initial_value)
+        # None means "start at mean" here, so the shared helper is given a
+        # default of None rather than a number, and mean is filled in below.
+        initial = _resolve_initial(
+            initial, initial_value, "initial_value", default=None
+        )
+        _validate_cir(reversion_rate, mean, scale, initial)
 
         self.reversion_rate = reversion_rate
         self.mean = mean
         self.scale = scale
-        self.initial_value = float(mean if initial_value is None else initial_value)
+        self.initial = float(mean if initial is None else initial)
 
         def draw():
-            return get_cir_result(reversion_rate, mean, scale, initial_value)
+            return get_cir_result(reversion_rate, mean, scale, initial)
 
         super().__init__(draw)
 
@@ -629,14 +643,19 @@ class CIR(RandomProcess, RV):
     scale : float, optional
         The volatility multiplier -- the jolt size is ``scale *
         sqrt(value)``. Must be positive. Default is 0.5.
-    initial_value : float, optional
+    initial : float, optional
         Where every path starts. Leave it out to start at ``mean``, which is
         usually what you want. Must be at least 0.
+    initial_value : float, optional
+        Older name for ``initial``, still accepted. Give one or the other,
+        not both.
 
     Attributes
     ----------
     prob_space : CIRProbabilitySpace
         The underlying probability space used to generate sample paths.
+    initial : float
+        Where every path starts.
 
     Notes
     -----
@@ -667,7 +686,7 @@ class CIR(RandomProcess, RV):
     >>> X[5.0].sim(1000).mean()      # doctest: +SKIP
     0.0503
     >>> # Started low, it climbs toward mean
-    >>> Y = CIR(reversion_rate=1, mean=0.05, scale=0.1, initial_value=0.01)
+    >>> Y = CIR(reversion_rate=1, mean=0.05, scale=0.1, initial=0.01)
     >>> Y[3.0].sim(1000).mean()      # doctest: +SKIP
     0.048
 
@@ -677,19 +696,28 @@ class CIR(RandomProcess, RV):
     DiffusionProcess : The general, approximate way to write any SDE.
     """
 
-    def __init__(self, reversion_rate=1, mean=1, scale=0.5, initial_value=None):
+    def __init__(
+        self,
+        reversion_rate=1,
+        mean=1,
+        scale=0.5,
+        initial=None,
+        initial_value=None,
+    ):
         """Create a CIR process."""
         prob_space = CIRProbabilitySpace(
             reversion_rate=reversion_rate,
             mean=mean,
             scale=scale,
+            initial=initial,
             initial_value=initial_value,
         )
+        self.initial = prob_space.initial
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
 
 
-def _validate_merton(initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd):
+def _validate_merton(initial, growth_rate, scale, jump_rate, jump_mean, jump_sd):
     """Check the parameters of a Merton jump-diffusion.
 
     Raises
@@ -697,11 +725,11 @@ def _validate_merton(initial_value, growth_rate, scale, jump_rate, jump_mean, ju
     TypeError
         If any parameter is not a number.
     ValueError
-        If ``initial_value``, ``scale``, ``jump_rate``, or ``jump_sd`` is not
+        If ``initial``, ``scale``, ``jump_rate``, or ``jump_sd`` is not
         positive.
     """
     for name, value, example in [
-        ("initial_value", initial_value, "initial_value=100"),
+        ("initial", initial, "initial=100"),
         ("growth_rate", growth_rate, "growth_rate=0.05"),
         ("scale", scale, "scale=0.2"),
         ("jump_rate", jump_rate, "jump_rate=1"),
@@ -714,9 +742,9 @@ def _validate_merton(initial_value, growth_rate, scale, jump_rate, jump_mean, ju
                 f"For example, {example}."
             )
 
-    if initial_value <= 0:
+    if initial <= 0:
         raise ValueError(
-            f"initial_value must be positive, got {initial_value}. A Merton "
+            f"initial must be positive, got {initial}. A Merton "
             f"jump-diffusion multiplies its starting value by positive "
             f"numbers, so it never reaches 0 or goes below it."
         )
@@ -738,7 +766,7 @@ def _validate_merton(initial_value, growth_rate, scale, jump_rate, jump_mean, ju
         )
 
 
-def get_merton_result(initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd):
+def get_merton_result(initial, growth_rate, scale, jump_rate, jump_mean, jump_sd):
     """Create one simulated sample path of a Merton jump-diffusion.
 
     Built by composing the two processes it is made of, so it is **exact**:
@@ -748,7 +776,7 @@ def get_merton_result(initial_value, growth_rate, scale, jump_rate, jump_mean, j
 
     Both are added up in the exponent, then exponentiated:
 
-    ``value(t) = initial_value * exp(log_drift * t + scale * W(t) + J(t))``
+    ``value(t) = initial * exp(log_drift * t + scale * W(t) + J(t))``
 
     where ``W`` is the Brownian motion, ``J(t)`` is the total of the jumps so
     far, and ``log_drift`` carries the correction described in
@@ -757,7 +785,7 @@ def get_merton_result(initial_value, growth_rate, scale, jump_rate, jump_mean, j
 
     Parameters
     ----------
-    initial_value : float
+    initial : float
         The value at time 0. Must be positive.
     growth_rate : float
         The average exponential growth rate, jumps included.
@@ -822,9 +850,9 @@ def get_merton_result(initial_value, growth_rate, scale, jump_rate, jump_mean, j
                 if t < 0:
                     raise ValueError(
                         "MertonJumpDiffusion is only defined for t >= 0 (the "
-                        f"path starts at {initial_value} at time 0), got t={t}."
+                        f"path starts at {initial} at time 0), got t={t}."
                     )
-                return initial_value * np.exp(
+                return initial * np.exp(
                     log_drift * t
                     + scale * float(brownian_path(t))
                     + float(jump_path(t))
@@ -847,7 +875,7 @@ class MertonJumpDiffusionProbabilitySpace(ProbabilitySpace):
 
     Parameters
     ----------
-    initial_value : float, optional
+    initial : float, optional
         The value at time 0. Must be positive. Default is 1.
     growth_rate : float, optional
         The average exponential growth rate, jumps included. Default is 0.
@@ -864,7 +892,7 @@ class MertonJumpDiffusionProbabilitySpace(ProbabilitySpace):
 
     Attributes
     ----------
-    initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd : float
+    initial, growth_rate, scale, jump_rate, jump_mean, jump_sd : float
         The process parameters.
 
     Raises
@@ -872,20 +900,20 @@ class MertonJumpDiffusionProbabilitySpace(ProbabilitySpace):
     TypeError
         If any parameter is not a number.
     ValueError
-        If ``initial_value``, ``scale``, ``jump_rate``, or ``jump_sd`` is not
+        If ``initial``, ``scale``, ``jump_rate``, or ``jump_sd`` is not
         positive.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> P = MertonJumpDiffusionProbabilitySpace(initial_value=100)
+    >>> P = MertonJumpDiffusionProbabilitySpace(initial=100)
     >>> float(P.draw()(0))
     100.0
     """
 
     def __init__(
         self,
-        initial_value=1,
+        initial=1,
         growth_rate=0,
         scale=1,
         jump_rate=1,
@@ -893,11 +921,9 @@ class MertonJumpDiffusionProbabilitySpace(ProbabilitySpace):
         jump_sd=0.1,
     ):
         """Create a probability space for a Merton jump-diffusion."""
-        _validate_merton(
-            initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd
-        )
+        _validate_merton(initial, growth_rate, scale, jump_rate, jump_mean, jump_sd)
 
-        self.initial_value = initial_value
+        self.initial = initial
         self.growth_rate = growth_rate
         self.scale = scale
         self.jump_rate = jump_rate
@@ -906,7 +932,7 @@ class MertonJumpDiffusionProbabilitySpace(ProbabilitySpace):
 
         def draw():
             return get_merton_result(
-                initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd
+                initial, growth_rate, scale, jump_rate, jump_mean, jump_sd
             )
 
         super().__init__(draw)
@@ -941,12 +967,12 @@ class MertonJumpDiffusion(RandomProcess, RV):
 
     Parameters
     ----------
-    initial_value : float, optional
+    initial : float, optional
         The value at time 0. Must be positive. Default is 1.
     growth_rate : float, optional
         The average exponential growth rate. As with
         :class:`GeometricBrownianMotion`, the mean at time ``t`` is
-        ``initial_value * exp(growth_rate * t)`` -- and it stays that way
+        ``initial * exp(growth_rate * t)`` -- and it stays that way
         whatever the jump settings are, because the jumps' average effect is
         corrected for. Default is 0.
     scale : float, optional
@@ -981,13 +1007,13 @@ class MertonJumpDiffusion(RandomProcess, RV):
     useful for marking the jumps on a plot.
 
     Asking for a time before 0 raises a ``ValueError``, since the path starts
-    at ``initial_value`` at time 0.
+    at ``initial`` at time 0.
 
     Examples
     --------
     >>> from symbulate import *
     >>> X = MertonJumpDiffusion(
-    ...     initial_value=100, growth_rate=0.05, scale=0.2,
+    ...     initial=100, growth_rate=0.05, scale=0.2,
     ...     jump_rate=1, jump_mean=-0.1, jump_sd=0.15,
     ... )
     >>> float(X.draw()(0))
@@ -1003,7 +1029,7 @@ class MertonJumpDiffusion(RandomProcess, RV):
 
     def __init__(
         self,
-        initial_value=1,
+        initial=1,
         growth_rate=0,
         scale=1,
         jump_rate=1,
@@ -1012,7 +1038,7 @@ class MertonJumpDiffusion(RandomProcess, RV):
     ):
         """Create a Merton jump-diffusion process."""
         prob_space = MertonJumpDiffusionProbabilitySpace(
-            initial_value=initial_value,
+            initial=initial,
             growth_rate=growth_rate,
             scale=scale,
             jump_rate=jump_rate,
