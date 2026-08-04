@@ -201,6 +201,12 @@ its own passing tests and docs for no user-visible gain.
 
 ## Decision: G/G/1 Queue via Lindley's Recursion
 
+**Superseded in part** by "Decision: Queue State — Number in the System, Not
+the Wait" below. Lindley's recursion is still the engine and everything about
+validation, file placement, and the `MG1`/`GM1` specializations stands; what
+changed is that the recursion now feeds a continuous-time customer *count*
+rather than being the process state itself.
+
 **Status:** Implemented — `symbulate/queues.py`,
 `symbulate/tests/test_queues.py`, demo in
 `team/models-and-sim-design/gg1_queue_demo.ipynb`, exports for `GG1`,
@@ -295,6 +301,10 @@ Pollaczek-Khinchine check exact.
 ---
 
 ## Decision: G/G/s — Multi-Server Queues
+
+**Superseded in part** by "Decision: Queue State — Number in the System, Not
+the Wait" below, in the same way as the G/G/1 entry above: the server-free-time
+recursion is unchanged, but it now feeds a continuous-time count.
 
 **Status:** Implemented — `GGs`, `GGsProbabilitySpace`, and `GGsResult` in
 `symbulate/queues.py`, tested in `symbulate/tests/test_queues.py`, demo in
@@ -477,6 +487,77 @@ its own roadmap row rather than smuggled in here.
 (`MM1`, `MMs`) set a precedent for abbreviations *when the abbreviation is
 the standard textbook name*; "NHPP" is standard in reliability courses but
 not in intro probability. Not added — one name for now.
+
+---
+
+## Decision: Queue State — Number in the System, Not the Wait
+
+**Status:** Implemented — `symbulate/queues.py`, tests rewritten in
+`symbulate/tests/test_queues.py`. Supersedes the state choice made in the two
+queue decisions above; everything else in them stands.
+
+**Decision**
+> A `GG1` / `MG1` / `GM1` / `GGs` path is the **number of customers in the
+> system as a function of continuous time**, exactly like an `MM1` / `MMs`
+> path: `X[t]` is how many are there at time `t`, waiting plus in service, and
+> a drawn path is a `ContinuousTimeFunction` that can be evaluated anywhere.
+> The previous state — customer `n`'s waiting time, indexed by customer
+> number — becomes `path.waiting_times[n]`.
+>
+> Getting there needs no new mathematics, only one more layer. Lindley's
+> recursion (or the server-free-time recursion for `GGs`) still produces the
+> waits; a wait plus an arrival time plus a service time is a departure time;
+> and arrivals and departures merge into the count. The merge is a lazily
+> extended two-stream walk with a `heapq` of pending departures, since with
+> `s > 1` departures do not come in arrival order.
+>
+> Because the count changes by one at a time, the path is also
+> `DiscreteValued`, which makes `states(path)`, `interarrival_times(path)`, and
+> `arrival_times(path)` work on a queue exactly as they do on a CTMC: the counts
+> passed through, the holding time at each, and the times of the changes. An
+> *event* is an arrival **or** a departure, so the customer-level times live
+> under `customer_arrival_times` / `customer_departure_times` to keep the two
+> readings apart. `get_number_waiting()` gives the number in *line* (the count
+> less the busy servers), and `get_arrival_process()` still returns the arrival
+> stream as a `RenewalProcessResult`.
+
+**Rationale**
+> Consistency across the package's queues, at the user's direction. With two
+> queue families reporting different quantities, a student moving from `MM1` to
+> `GG1` had to change what question they were asking, not just which
+> distributions they passed; and `.sim().plot()` produced two different kinds of
+> picture for what is meant to be the same model. Matching `MM` also makes the
+> exponential case directly comparable — the same simulation can now be checked
+> against `L = rho / (1 - rho)` and against Erlang C.
+>
+> Nothing was lost in the switch: the waits remain on the path, so
+> Pollaczek-Khinchine is still checkable, and the count additionally makes
+> Little's law (`L = lambda * W`) a one-line verification tying the two views
+> together.
+
+**Alternatives Considered**
+> *Keeping the wait as the state and adding the count as a separate method* —
+> this was the shape recommended before the user's decision, and it is what the
+> earlier `get_queue_length()` proposal was. Rejected in favor of matching the
+> `MM` family, which is the more valuable consistency. *Two classes per model
+> (`GG1` for waits, `GG1Length` for the count)* — rejected: a student could draw
+> one of each and compare two unrelated queues while believing they were
+> comparing two views of one. *Overloading the path so `path[n]` means customer
+> `n` while `path(t)` means time `t`* — rejected as a trap; `[5]` and `(5.0)`
+> are too easy to confuse, and `ContinuousTimeFunction.__getitem__` already
+> means "evaluate at this time."
+
+**Verified against exact theory:** for M/M/1 at `rho = 0.5`, the whole
+distribution of the count matches Geometric (`P(N = k) = (1 - rho) rho^k` for
+`k = 0..3`), `L` matches `rho / (1 - rho)`, and `P(empty)` matches `1 - rho`;
+Little's law holds against the simulated sojourn times; M/M/2 matches Erlang C
+for `P(wait > 0)`, the mean wait, `L`, and the mean number waiting; and
+Pollaczek-Khinchine still matches through `waiting_times`.
+
+**Consequence for the demos:** both queue notebooks plot a different thing now
+(a step-function count instead of a waiting-time sequence) and need re-running,
+which is deliberately left until the notebook question is settled with the
+user.
 
 ---
 

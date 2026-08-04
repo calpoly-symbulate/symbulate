@@ -301,19 +301,30 @@ Queues live in **two** files, split by whether the model is Markovian:
   `num_states` truncation.
 - `queues.py` — `GG1`, `MG1`, `GM1`, `GGs`. Once service is not exponential the
   number in the system is *not* a Markov chain (remaining service depends on
-  elapsed service), so there is no generator matrix to build. Each path is
-  instead the **waiting time of customer `n`**, indexed by customer number,
-  built by Lindley's recursion `W[n+1] = max(W[n] + S[n] - A[n+1], 0)` — exact
-  for any nonnegative distributions, with no truncation. `GGs` generalizes that
-  to `s` servers by tracking when each next comes free (`heapq`, earliest at
-  position 0), which is the same recursion in clock time.
+  elapsed service), so there is no generator matrix to build. **The state is
+  still the number in the system over continuous time**, same as the `MM`
+  family: `X[t]` is how many customers are there at time `t`, and a path is a
+  `ContinuousTimeFunction`. It is reached the long way round — Lindley's
+  recursion `W[n+1] = max(W[n] + S[n] - A[n+1], 0)` gives each customer's wait,
+  hence their departure time, and arrivals and departures are merged into the
+  count. Exact for any nonnegative distributions, with no truncation. `GGs`
+  generalizes the recursion to `s` servers by tracking when each next comes
+  free (`heapq`, earliest at position 0).
 
-All four share `_QueueResult`, which owns the input sequences, the lazily
-extended `waits` list, and the derived `arrival_times` / `sojourn_times` /
-`departure_times`. A new queue discipline subclasses it and implements only
-`_wait_at(n)` — do not duplicate the sequence plumbing. Note `departure_times`
-is increasing only for a single server; with `s > 1` a short service can
-overtake a long one.
+All four share `_QueueResult`, which owns the customer-level sequences
+(`waiting_times`, `service_times`, `sojourn_times`, `customer_arrival_times`,
+`customer_departure_times`), the merged event stream, and the count itself. A
+new queue discipline subclasses it and implements only `_wait_at(n)` — do not
+duplicate the plumbing.
+
+Two naming traps, both inherited from matching the `MM` queues:
+- `path.interarrival_times` and `arrival_times(path)` are the **event-level**
+  view — holding times between changes in the count, and the times of those
+  changes — exactly as for a CTMC, where an event is an arrival *or* a
+  departure. The customer-level times are `customer_arrival_times` /
+  `customer_departure_times`. Don't "fix" one into the other.
+- `customer_departure_times` is increasing only for a single server; with
+  `s > 1` a short service can overtake a long one. The count is unaffected.
 
 Do not try to express a general-service queue as a `ContinuousTimeMarkovChain`,
 and do not add `GG1`-family classes to `markov_chains.py`. Both nonnegativity
