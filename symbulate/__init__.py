@@ -119,6 +119,8 @@ from .poisson_process import (
     PoissonProcessProbabilitySpace,
     NonHomogeneousPoissonProcess,
     NonHomogeneousPoissonProcessProbabilitySpace,
+    CoxProcess,
+    CoxProcessProbabilitySpace,
 )
 from .hitting_times import hitting_time
 from .random_walk import (
