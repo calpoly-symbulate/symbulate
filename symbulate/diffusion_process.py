@@ -4,9 +4,12 @@ import numbers
 import numpy as np
 import scipy.stats as stats
 
+from .distributions import Normal
+from .gaussian_process import get_gaussian_process_result
 from .index_sets import Reals
 from .probability_space import ProbabilitySpace
 from .random_processes import _resolve_initial
+from .renewal_process import CompoundPoissonProcess
 from .result import ContinuousTimeFunction
 from .random_variables import RV
 from .random_processes import RandomProcess
@@ -681,6 +684,340 @@ class CIR(RandomProcess, RV):
             mean=mean,
             scale=scale,
             initial_value=initial_value,
+        )
+        RandomProcess.__init__(self, prob_space)
+        RV.__init__(self, prob_space)
+
+
+def _validate_merton(initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd):
+    """Check the parameters of a Merton jump-diffusion.
+
+    Raises
+    ------
+    TypeError
+        If any parameter is not a number.
+    ValueError
+        If ``initial_value``, ``scale``, ``jump_rate``, or ``jump_sd`` is not
+        positive.
+    """
+    for name, value, example in [
+        ("initial_value", initial_value, "initial_value=100"),
+        ("growth_rate", growth_rate, "growth_rate=0.05"),
+        ("scale", scale, "scale=0.2"),
+        ("jump_rate", jump_rate, "jump_rate=1"),
+        ("jump_mean", jump_mean, "jump_mean=-0.1"),
+        ("jump_sd", jump_sd, "jump_sd=0.15"),
+    ]:
+        if not isinstance(value, numbers.Real):
+            raise TypeError(
+                f"{name} must be a number, got {type(value).__name__}. "
+                f"For example, {example}."
+            )
+
+    if initial_value <= 0:
+        raise ValueError(
+            f"initial_value must be positive, got {initial_value}. A Merton "
+            f"jump-diffusion multiplies its starting value by positive "
+            f"numbers, so it never reaches 0 or goes below it."
+        )
+    if scale <= 0:
+        raise ValueError(
+            f"scale must be positive, got {scale}. It is the everyday "
+            f"volatility between jumps."
+        )
+    if jump_rate <= 0:
+        raise ValueError(
+            f"jump_rate must be positive, got {jump_rate}. It is the average "
+            f"number of jumps per unit of time; for no jumps at all, use "
+            f"GeometricBrownianMotion instead."
+        )
+    if jump_sd <= 0:
+        raise ValueError(
+            f"jump_sd must be positive, got {jump_sd}. It is how much the "
+            f"size of a jump varies; with 0 every jump would be identical."
+        )
+
+
+def get_merton_result(initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd):
+    """Create one simulated sample path of a Merton jump-diffusion.
+
+    Built by composing the two processes it is made of, so it is **exact**:
+
+    - a Brownian motion for the everyday wiggle, and
+    - a :class:`CompoundPoissonProcess` of normal jumps for the sudden moves.
+
+    Both are added up in the exponent, then exponentiated:
+
+    ``value(t) = initial_value * exp(log_drift * t + scale * W(t) + J(t))``
+
+    where ``W`` is the Brownian motion, ``J(t)`` is the total of the jumps so
+    far, and ``log_drift`` carries the correction described in
+    :class:`MertonJumpDiffusion`. Because both pieces fill themselves in
+    lazily and cache what they draw, so does the result.
+
+    Parameters
+    ----------
+    initial_value : float
+        The value at time 0. Must be positive.
+    growth_rate : float
+        The average exponential growth rate, jumps included.
+    scale : float
+        The everyday volatility between jumps.
+    jump_rate : float
+        The average number of jumps per unit of time.
+    jump_mean, jump_sd : float
+        The mean and standard deviation of ``log`` of a jump's size factor.
+
+    Returns
+    -------
+    MertonJumpDiffusionResult
+        A sample path that can be evaluated at any time ``t >= 0``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> path = get_merton_result(100, 0.05, 0.2, 1, -0.1, 0.15)
+    >>> float(path(0))
+    100.0
+    >>> path(1.0)  # doctest: +SKIP
+    97.4
+    """
+    brownian_path = get_gaussian_process_result(
+        mean_func=lambda t: 0.0,
+        cov_func=lambda s, t: min(s, t),
+    )
+    # The running total of log jump sizes. Working in logs is what lets the
+    # jumps simply be added into the exponent.
+    jump_path = CompoundPoissonProcess(
+        rate=jump_rate, jump_dist=Normal(mean=jump_mean, sd=jump_sd)
+    ).draw()
+
+    # A jump multiplies the value by exp(J), which averages more than 1 even
+    # when J averages 0, so jumps push the average up on their own. Subtracting
+    # that expected push -- the "compensator" -- is what keeps growth_rate
+    # meaning the growth of the average, exactly as it does for
+    # GeometricBrownianMotion.
+    average_jump_effect = np.exp(jump_mean + jump_sd**2 / 2) - 1
+    log_drift = growth_rate - scale**2 / 2 - jump_rate * average_jump_effect
+
+    class MertonJumpDiffusionResult(ContinuousTimeFunction):
+        """One simulated sample path of a Merton jump-diffusion.
+
+        Attributes
+        ----------
+        brownian_path : GaussianProcessResult
+            The Brownian motion supplying the everyday wiggle.
+        jump_path : CompoundPoissonProcessResult
+            The running total of log jump sizes. Its own jump times and sizes
+            are reachable through it, which is handy for marking the jumps on
+            a plot.
+        index_set : Reals
+            The times the path is defined over.
+        """
+
+        def __init__(self):
+            """Create one simulated sample path of a Merton jump-diffusion."""
+
+            def _func(t):
+                if t < 0:
+                    raise ValueError(
+                        "MertonJumpDiffusion is only defined for t >= 0 (the "
+                        f"path starts at {initial_value} at time 0), got t={t}."
+                    )
+                return initial_value * np.exp(
+                    log_drift * t
+                    + scale * float(brownian_path(t))
+                    + float(jump_path(t))
+                )
+
+            super().__init__(func=_func)
+            self.index_set = Reals()
+            self.brownian_path = brownian_path
+            self.jump_path = jump_path
+
+    return MertonJumpDiffusionResult()
+
+
+class MertonJumpDiffusionProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying a Merton jump-diffusion.
+
+    Each draw produces one simulated sample path, composed exactly from a
+    Brownian motion and a compound Poisson process of jumps (see
+    :func:`get_merton_result`).
+
+    Parameters
+    ----------
+    initial_value : float, optional
+        The value at time 0. Must be positive. Default is 1.
+    growth_rate : float, optional
+        The average exponential growth rate, jumps included. Default is 0.
+    scale : float, optional
+        The everyday volatility between jumps. Must be positive. Default is 1.
+    jump_rate : float, optional
+        The average number of jumps per unit of time. Must be positive.
+        Default is 1.
+    jump_mean : float, optional
+        The mean of ``log`` of a jump's size factor. Default is 0.
+    jump_sd : float, optional
+        The standard deviation of ``log`` of a jump's size factor. Must be
+        positive. Default is 0.1.
+
+    Attributes
+    ----------
+    initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd : float
+        The process parameters.
+
+    Raises
+    ------
+    TypeError
+        If any parameter is not a number.
+    ValueError
+        If ``initial_value``, ``scale``, ``jump_rate``, or ``jump_sd`` is not
+        positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = MertonJumpDiffusionProbabilitySpace(initial_value=100)
+    >>> float(P.draw()(0))
+    100.0
+    """
+
+    def __init__(
+        self,
+        initial_value=1,
+        growth_rate=0,
+        scale=1,
+        jump_rate=1,
+        jump_mean=0,
+        jump_sd=0.1,
+    ):
+        """Create a probability space for a Merton jump-diffusion."""
+        _validate_merton(
+            initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd
+        )
+
+        self.initial_value = initial_value
+        self.growth_rate = growth_rate
+        self.scale = scale
+        self.jump_rate = jump_rate
+        self.jump_mean = jump_mean
+        self.jump_sd = jump_sd
+
+        def draw():
+            return get_merton_result(
+                initial_value, growth_rate, scale, jump_rate, jump_mean, jump_sd
+            )
+
+        super().__init__(draw)
+
+
+class MertonJumpDiffusion(RandomProcess, RV):
+    """The Merton jump-diffusion, a random variable over sample paths.
+
+    A price model with **crashes**. A
+    :class:`GeometricBrownianMotion` moves in a continuous wiggle, so it can
+    drift a long way but never lurches. Real prices do lurch: a bad earnings
+    report or a piece of news moves them all at once. Merton's model adds
+    exactly that -- occasional sudden jumps arriving at random times, on top
+    of the everyday wiggle.
+
+    So there are two sources of movement, and each has its own settings:
+
+    - the everyday wiggle, set by ``scale``, exactly as in
+      :class:`GeometricBrownianMotion`;
+    - the jumps, set by ``jump_rate`` (how often), ``jump_mean`` (which way,
+      and how far, on average), and ``jump_sd`` (how much they vary).
+
+    A jump multiplies the value by a factor, so the value still can never go
+    negative. Setting ``jump_mean`` below 0 makes the jumps downward on
+    average, which is the usual choice: it is what gives the model the fat
+    lower tail that plain geometric Brownian motion is criticised for
+    missing.
+
+    Symbulate builds it **exactly**, by adding a Brownian motion and a
+    :class:`CompoundPoissonProcess` of jumps together in the exponent. No
+    small steps and no accumulated error.
+
+    Parameters
+    ----------
+    initial_value : float, optional
+        The value at time 0. Must be positive. Default is 1.
+    growth_rate : float, optional
+        The average exponential growth rate. As with
+        :class:`GeometricBrownianMotion`, the mean at time ``t`` is
+        ``initial_value * exp(growth_rate * t)`` -- and it stays that way
+        whatever the jump settings are, because the jumps' average effect is
+        corrected for. Default is 0.
+    scale : float, optional
+        The everyday volatility between jumps. Must be positive. Default is 1.
+    jump_rate : float, optional
+        The average number of jumps per unit of time. Must be positive.
+        Default is 1.
+    jump_mean : float, optional
+        The mean of ``log`` of a jump's size factor. Negative means jumps tend
+        to be downward. Default is 0.
+    jump_sd : float, optional
+        The standard deviation of ``log`` of a jump's size factor. Must be
+        positive. Default is 0.1.
+
+    Attributes
+    ----------
+    prob_space : MertonJumpDiffusionProbabilitySpace
+        The underlying probability space used to generate sample paths.
+
+    Notes
+    -----
+    **The mean is not affected by the jumps.** Jumps multiply, and a
+    multiplier averages more than 1 even when its log averages 0, so jumps
+    would otherwise push the average up on their own. A correction term --
+    ``jump_rate * (exp(jump_mean + jump_sd ** 2 / 2) - 1)`` -- is subtracted
+    from the drift to cancel that, which keeps ``growth_rate`` meaning the
+    growth of the average. Turn the jumps up and the *spread* grows while the
+    mean stays put.
+
+    **Each path exposes its two pieces**, as ``path.brownian_path`` and
+    ``path.jump_path``. The jump path knows its own arrival times, which is
+    useful for marking the jumps on a plot.
+
+    Asking for a time before 0 raises a ``ValueError``, since the path starts
+    at ``initial_value`` at time 0.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = MertonJumpDiffusion(
+    ...     initial_value=100, growth_rate=0.05, scale=0.2,
+    ...     jump_rate=1, jump_mean=-0.1, jump_sd=0.15,
+    ... )
+    >>> float(X.draw()(0))
+    100.0
+    >>> X[2.0].sim(1000).mean()      # doctest: +SKIP
+    110.6
+
+    See Also
+    --------
+    GeometricBrownianMotion : The same model without the jumps.
+    CompoundPoissonProcess : The process supplying the jumps.
+    """
+
+    def __init__(
+        self,
+        initial_value=1,
+        growth_rate=0,
+        scale=1,
+        jump_rate=1,
+        jump_mean=0,
+        jump_sd=0.1,
+    ):
+        """Create a Merton jump-diffusion process."""
+        prob_space = MertonJumpDiffusionProbabilitySpace(
+            initial_value=initial_value,
+            growth_rate=growth_rate,
+            scale=scale,
+            jump_rate=jump_rate,
+            jump_mean=jump_mean,
+            jump_sd=jump_sd,
         )
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)

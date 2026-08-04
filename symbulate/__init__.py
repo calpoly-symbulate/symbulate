@@ -152,6 +152,8 @@ from .diffusion_process import (
     DiffusionProcessProbabilitySpace,
     CIR,
     CIRProbabilitySpace,
+    MertonJumpDiffusion,
+    MertonJumpDiffusionProbabilitySpace,
 )
 from .markov_chains import (
     MarkovChain,

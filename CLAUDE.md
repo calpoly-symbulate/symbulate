@@ -57,7 +57,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `time_series.py` | `MA` — moving-average process; home for the AR/ARMA/GARCH family as it lands |
 | `hitting_times.py` | `hitting_time` — when a path first reaches a level; Gaussian-process family only so far (see "Hitting Times" below) |
-| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` — named special case, simulated exactly (see "Diffusion Processes" below) |
+| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` and `MertonJumpDiffusion` — named special cases, both simulated exactly (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
 | `math.py` | Math utility functions |
@@ -264,6 +264,23 @@ that one jump to a time matches fifty steps to it. The one approximate corner
 is asking for a time *between* two already-computed times, since a CIR path
 pinned at both ends has no simple formula.
 
+`MertonJumpDiffusion(...)` sits in the same module and is also **exact**, but
+by a different route: it is pure *composition*, not a new transition law. A
+path adds a Brownian motion and a `CompoundPoissonProcess` of normal jumps
+together in the exponent, then exponentiates — so it is a
+`GeometricBrownianMotion` that can also lurch. Each path keeps both pieces as
+`path.brownian_path` and `path.jump_path`.
+
+The one thing not to break: the drift subtracts a **compensator**,
+`jump_rate * (exp(jump_mean + jump_sd**2 / 2) - 1)`. Jumps multiply, and a
+multiplier averages above 1 even when its log averages 0, so without that term
+adding jumps would silently raise the mean. With it, `growth_rate` keeps
+meaning the growth rate of the mean — the same contract
+`GeometricBrownianMotion` has. `test_merton.py` pins this by checking the mean
+is unchanged across four very different jump settings. Note that with large
+jumps the *simulated* mean is noisy (the sd can reach 200), so judge that
+contract against the closed form, not against one simulation.
+
 ## Compound Poisson Process
 
 `CompoundPoissonProcess(rate, jump_dist)` is the running total of a jump
@@ -435,6 +452,7 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_hitting_times.py` | `hitting_time` |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_cir.py` | The `CIR` process |
+| `test_merton.py` | The `MertonJumpDiffusion` process |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
 | `test_index_sets.py` | Index sets |
