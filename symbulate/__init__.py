@@ -131,7 +131,12 @@ from .time_series import (
     MAProbabilitySpace,
     MAResult,
 )
-from .renewal_process import RenewalProcess, RenewalProcessProbabilitySpace
+from .renewal_process import (
+    RenewalProcess,
+    RenewalProcessProbabilitySpace,
+    CompoundPoissonProcess,
+    CompoundPoissonProcessProbabilitySpace,
+)
 from .queues import (
     GG1,
     GG1ProbabilitySpace,
