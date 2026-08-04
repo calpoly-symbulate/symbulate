@@ -561,6 +561,68 @@ user.
 
 ---
 
+## Decision: One Interface for Every Continuous-Time, Discrete-State Process
+
+**Status:** Implemented — nine new probability spaces in
+`symbulate/markov_chains.py` and `symbulate/queues.py`, `SIR`/`SEIR` paths made
+`DiscreteValued`, exports in `symbulate/__init__.py`, and a table-driven
+regression file `symbulate/tests/test_continuous_time_processes.py`.
+
+**Decision**
+> Every continuous-time, discrete-state process must offer the same four
+> things, and one test file asserts it over all of them at once:
+>
+> 1. a `<Name>ProbabilitySpace` class, exported from `symbulate`;
+> 2. `RV(P)` — the process, a discrete value at each continuous time;
+> 3. `RV(P, interarrival_times)` — the times between jumps;
+> 4. `RV(P, arrival_times)` — the times of the jumps;
+> 5. `RV(P, states)` — the values visited, ignoring durations.
+>
+> Nine processes were missing item 1: `BirthDeathProcess`, `MM1`, `MMs`,
+> `MMsK`, `MMss`, `MMsKN`, `MMInfinity` (each built a generator matrix inline
+> in the process class) and `MG1`, `GM1` (each substituted an `Exponential`
+> inline). Each now has a space, with the **rate/distribution logic moved into
+> the space** and the process class reduced to building it and copying back the
+> parameters it advertises, through a small `_init_from_space` on the family
+> base. `MMssProbabilitySpace` subclasses `MMsKProbabilitySpace`, and the six
+> M/M/ spaces subclass `BirthDeathProcessProbabilitySpace`, mirroring the
+> existing class hierarchy exactly.
+>
+> `SIR`/`SEIR` gained items 3–5 by mixing in `DiscreteValued` and exposing the
+> holding times they already had (as a `Vector`, since `arrival_times` reads it
+> through `.cumsum()`).
+
+**Rationale**
+> The requirement came from the team: these processes are one family
+> behaviorally, so a student should not have to learn which of them happens to
+> support which view, and `RV(P, states)` should work wherever `RV(P)` does. The
+> missing spaces were an artifact of how the wrappers grew — a wrapper that
+> subclasses a process-RV and calls `super().__init__(generator_matrix, ...)`
+> never creates a space of its own — not a deliberate choice. Putting the rate
+> formulas in the space also removes the duplication that a second, parallel
+> space class would otherwise have introduced.
+
+**Alternatives Considered**
+> *Leaving the wrappers alone and documenting that `ContinuousTimeMarkovChainProbabilitySpace`
+> is the space to use for M/M/ queues* — rejected: it would make a student
+> hand-build the generator matrix the wrapper exists to hide. *Copying the
+> space's attributes onto the process automatically (`vars()` loop)* — rejected
+> as too magical for this codebase; each class names the parameters it exposes.
+> *Keeping `SIR`/`SEIR` outside the trio* (the earlier decision, on the grounds
+> that their states are vectors) — reversed: a vector of compartment counts is
+> still a discrete state, the data was already stored, and the asymmetry was
+> exactly the kind of "which processes support this?" question the requirement
+> removes.
+
+**Known gap, left to its author:** `NonHomogeneousPoissonProcess` (PR #270)
+counts events on the "expected count" scale, so it has no clock-time
+`interarrival_times` and `arrival_times(path)` raises `AttributeError`.
+Supplying them needs a numerical inverse of the cumulative rate `Λ`, with a
+tolerance choice that belongs to that module's design. The test file documents
+the omission rather than asserting around it.
+
+---
+
 ## Decision: Hitting Times — Tier B First (recorded after the fact)
 
 **Status:** Implemented in PR #272 — `hitting_time` in

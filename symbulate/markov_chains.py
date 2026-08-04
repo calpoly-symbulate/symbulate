@@ -578,6 +578,119 @@ class ContinuousTimeMarkovChain(RV):
         super().__init__(prob_space)
 
 
+class BirthDeathProcessProbabilitySpace(ContinuousTimeMarkovChainProbabilitySpace):
+    """The probability space underlying a birth-death process.
+
+    Each draw from this space produces one sample path -- the count as a
+    function of continuous time. It builds the generator matrix from the birth
+    and death rates and hands it to
+    :class:`ContinuousTimeMarkovChainProbabilitySpace`, so the paths it draws
+    are ordinary continuous-time Markov chain paths and support ``states``,
+    ``interarrival_times``, and ``arrival_times`` like any other.
+
+    Parameters
+    ----------
+    birth_rates : number, callable, or array-like
+        The rate of moving up one state. May be a single number (the same rate
+        in every state), a function ``birth_rate(n)`` of the state, or a list
+        with one entry per state.
+    death_rates : number, callable, or array-like
+        The rate of moving down one state, in the same three forms.
+    num_states : int
+        The number of states, so the state space is
+        ``0, 1, ..., num_states - 1``. Must be at least 2.
+    initial : int, optional
+        The starting state. Default 0.
+    state_labels : array-like of length num_states, optional
+        Names to use for each state. Defaults to the state numbers.
+
+    Attributes
+    ----------
+    birth_rates : numpy.ndarray
+        The birth rate in each state (with the top state's set to 0).
+    death_rates : numpy.ndarray
+        The death rate in each state (with state 0's set to 0).
+    num_states : int
+        The number of states.
+
+    Raises
+    ------
+    Exception
+        If ``num_states`` is not an integer of at least 2; if a rate is
+        negative or the wrong length; if ``initial`` is not a state index
+        between 0 and ``num_states - 1``; or if some state has no way out
+        (both its birth and death rates are 0).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = BirthDeathProcessProbabilitySpace(
+    ...     birth_rates=1, death_rates=1.5, num_states=21
+    ... )
+    >>> X = RV(P)
+    >>> X.draw()(5.0)  # doctest: +SKIP
+    2
+
+    The event-by-event views are random variables of the same space.
+
+    >>> RV(P, interarrival_times)[0].sim(100).mean()  # doctest: +SKIP
+    0.99
+    """
+
+    def __init__(
+        self, birth_rates, death_rates, num_states, initial=0, state_labels=None
+    ):
+        """Initialize a probability space for a birth-death process."""
+        if not isinstance(num_states, numbers.Integral) or num_states < 2:
+            raise Exception(
+                "num_states must be a whole number that is at least 2 (the "
+                "states are 0, 1, ..., num_states - 1)."
+            )
+
+        births = _as_rate_array(birth_rates, num_states, "birth_rates")
+        deaths = _as_rate_array(death_rates, num_states, "death_rates")
+
+        # There is no state above the top one or below 0, so those moves are
+        # impossible regardless of what the user supplied.
+        births[num_states - 1] = 0.0
+        deaths[0] = 0.0
+
+        # A continuous-time Markov chain cannot have a state with no way out.
+        stuck = np.where(births + deaths == 0)[0]
+        if len(stuck) > 0:
+            raise Exception(
+                "State %d has no way out: its birth and death rates are both "
+                "0, so the process would stay there forever. Give it a "
+                "positive birth or death rate. (A pure-birth or pure-death "
+                "process cannot be built this way.)" % int(stuck[0])
+            )
+
+        if not isinstance(initial, numbers.Integral) or not (0 <= initial < num_states):
+            raise Exception(
+                "initial must be a starting state between 0 and %d "
+                "(num_states - 1)." % (num_states - 1)
+            )
+
+        # Assemble the generator matrix: births on the super-diagonal, deaths
+        # on the sub-diagonal, and each row's diagonal set so the row sums to 0.
+        generator_matrix = np.zeros((num_states, num_states))
+        for n in range(num_states):
+            if n + 1 < num_states:
+                generator_matrix[n, n + 1] = births[n]
+            if n - 1 >= 0:
+                generator_matrix[n, n - 1] = deaths[n]
+            generator_matrix[n, n] = -(births[n] + deaths[n])
+
+        initial_dist = [0.0] * num_states
+        initial_dist[initial] = 1.0
+
+        self.birth_rates = births
+        self.death_rates = deaths
+        self.num_states = num_states
+
+        super().__init__(generator_matrix, initial_dist, state_labels)
+
+
 class BirthDeathProcess(ContinuousTimeMarkovChain):
     """A birth-death process, treated as a random variable.
 
@@ -690,54 +803,31 @@ class BirthDeathProcess(ContinuousTimeMarkovChain):
             between 0 and ``num_states - 1``; or if some state has no way out
             (both its birth and death rates are 0).
         """
-        if not isinstance(num_states, numbers.Integral) or num_states < 2:
-            raise Exception(
-                "num_states must be a whole number that is at least 2 (the "
-                "states are 0, 1, ..., num_states - 1)."
+        self._init_from_space(
+            BirthDeathProcessProbabilitySpace(
+                birth_rates, death_rates, num_states, initial, state_labels
             )
+        )
 
-        births = _as_rate_array(birth_rates, num_states, "birth_rates")
-        deaths = _as_rate_array(death_rates, num_states, "death_rates")
+    def _init_from_space(self, prob_space):
+        """Wire a birth-death probability space into this process.
 
-        # There is no state above the top one or below 0, so those moves are
-        # impossible regardless of what the user supplied.
-        births[num_states - 1] = 0.0
-        deaths[0] = 0.0
+        The rates, the state space, and their validation all live in the space,
+        so a subclass (each of the ``M/M/...`` queues is one) builds its own
+        space and hands it here instead of rebuilding a generator matrix. This
+        bypasses :class:`ContinuousTimeMarkovChain`'s own ``__init__``, whose
+        job -- turning a generator matrix into a probability space -- the space
+        has already done.
 
-        # A continuous-time Markov chain cannot have a state with no way out.
-        stuck = np.where(births + deaths == 0)[0]
-        if len(stuck) > 0:
-            raise Exception(
-                "State %d has no way out: its birth and death rates are both "
-                "0, so the process would stay there forever. Give it a "
-                "positive birth or death rate. (A pure-birth or pure-death "
-                "process cannot be built this way.)" % int(stuck[0])
-            )
-
-        if not isinstance(initial, numbers.Integral) or not (0 <= initial < num_states):
-            raise Exception(
-                "initial must be a starting state between 0 and %d "
-                "(num_states - 1)." % (num_states - 1)
-            )
-
-        # Assemble the generator matrix: births on the super-diagonal, deaths
-        # on the sub-diagonal, and each row's diagonal set so the row sums to 0.
-        generator_matrix = np.zeros((num_states, num_states))
-        for n in range(num_states):
-            if n + 1 < num_states:
-                generator_matrix[n, n + 1] = births[n]
-            if n - 1 >= 0:
-                generator_matrix[n, n - 1] = deaths[n]
-            generator_matrix[n, n] = -(births[n] + deaths[n])
-
-        initial_dist = [0.0] * num_states
-        initial_dist[initial] = 1.0
-
-        self.birth_rates = births
-        self.death_rates = deaths
-        self.num_states = num_states
-
-        super().__init__(generator_matrix, initial_dist, state_labels)
+        Parameters
+        ----------
+        prob_space : BirthDeathProcessProbabilitySpace
+            The space whose draws are this process's sample paths.
+        """
+        self.birth_rates = prob_space.birth_rates
+        self.death_rates = prob_space.death_rates
+        self.num_states = prob_space.num_states
+        RV.__init__(self, prob_space)
 
 
 def _require_positive(value, name):
@@ -763,6 +853,53 @@ def _require_positive_integer(value, name):
 # customers in the system (waiting plus in service), and each draw is a
 # sample path -- the number in the system as a function of continuous time.
 # --------------------------------------------------------------------------
+
+
+class MM1ProbabilitySpace(BirthDeathProcessProbabilitySpace):
+    """The probability space underlying an M/M/1 queue.
+
+    Each draw is one sample path -- the number of customers in the system as a
+    function of continuous time. See :class:`MM1` for the model.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which the server completes a customer. Must be
+        positive.
+    num_states : int, optional
+        Truncation of the (unbounded) state space for simulation. Default 100.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and service rates.
+    servers : int
+        The number of servers (always 1 for this model).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = MM1ProbabilitySpace(arrival_rate=1, service_rate=1.5, num_states=21)
+    >>> RV(P).draw()(5.0)  # doctest: +SKIP
+    2
+    >>> RV(P, states)[1].draw()  # the count after the first event
+    1
+    """
+
+    def __init__(self, arrival_rate, service_rate, num_states=100):
+        """Initialize a probability space for an M/M/1 queue."""
+        _require_positive(arrival_rate, "arrival_rate")
+        _require_positive(service_rate, "service_rate")
+        self.arrival_rate = arrival_rate
+        self.service_rate = service_rate
+        self.servers = 1
+        super().__init__(
+            birth_rates=arrival_rate,
+            death_rates=service_rate,
+            num_states=num_states,
+        )
 
 
 class MM1(BirthDeathProcess):
@@ -807,14 +944,57 @@ class MM1(BirthDeathProcess):
 
     def __init__(self, arrival_rate, service_rate, num_states=100):
         """Initialize an M/M/1 queue."""
+        prob_space = MM1ProbabilitySpace(arrival_rate, service_rate, num_states)
+        self.arrival_rate = prob_space.arrival_rate
+        self.service_rate = prob_space.service_rate
+        self.servers = prob_space.servers
+        self._init_from_space(prob_space)
+
+
+class MMsProbabilitySpace(BirthDeathProcessProbabilitySpace):
+    """The probability space underlying an M/M/s queue.
+
+    Each draw is one sample path -- the number of customers in the system as a
+    function of continuous time. See :class:`MMs` for the model.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each busy server completes a customer. Must be
+        positive.
+    servers : int
+        The number of servers ``s``. Must be a positive integer.
+    num_states : int, optional
+        Truncation of the (unbounded) state space for simulation. Default 100.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and per-server service rates.
+    servers : int
+        The number of servers.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = MMsProbabilitySpace(arrival_rate=3, service_rate=2, servers=2)
+    >>> RV(P).draw()(5.0)  # doctest: +SKIP
+    1
+    """
+
+    def __init__(self, arrival_rate, service_rate, servers, num_states=100):
+        """Initialize a probability space for an M/M/s queue."""
         _require_positive(arrival_rate, "arrival_rate")
         _require_positive(service_rate, "service_rate")
+        _require_positive_integer(servers, "servers")
         self.arrival_rate = arrival_rate
         self.service_rate = service_rate
-        self.servers = 1
+        self.servers = servers
         super().__init__(
             birth_rates=arrival_rate,
-            death_rates=service_rate,
+            death_rates=lambda n: min(n, servers) * service_rate,
             num_states=num_states,
         )
 
@@ -859,16 +1039,71 @@ class MMs(BirthDeathProcess):
 
     def __init__(self, arrival_rate, service_rate, servers, num_states=100):
         """Initialize an M/M/s queue."""
+        prob_space = MMsProbabilitySpace(
+            arrival_rate, service_rate, servers, num_states
+        )
+        self.arrival_rate = prob_space.arrival_rate
+        self.service_rate = prob_space.service_rate
+        self.servers = prob_space.servers
+        self._init_from_space(prob_space)
+
+
+class MMsKProbabilitySpace(BirthDeathProcessProbabilitySpace):
+    """The probability space underlying an M/M/s/K queue.
+
+    Each draw is one sample path -- the number of customers in the system as a
+    function of continuous time. See :class:`MMsK` for the model. The state
+    space is genuinely finite here, so these paths are exact rather than
+    truncated.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each busy server completes a customer. Must be
+        positive.
+    servers : int
+        The number of servers ``s``. Must be a positive integer.
+    capacity : int
+        The maximum number of customers ``K`` allowed in the system. Must be a
+        positive integer.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and per-server service rates.
+    servers : int
+        The number of servers.
+    capacity : int
+        The system capacity ``K``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = MMsKProbabilitySpace(
+    ...     arrival_rate=4, service_rate=1, servers=2, capacity=5
+    ... )
+    >>> RV(P).draw()(5.0)  # doctest: +SKIP
+    4
+    """
+
+    def __init__(self, arrival_rate, service_rate, servers, capacity):
+        """Initialize a probability space for an M/M/s/K queue."""
         _require_positive(arrival_rate, "arrival_rate")
         _require_positive(service_rate, "service_rate")
         _require_positive_integer(servers, "servers")
+        _require_positive_integer(capacity, "capacity")
         self.arrival_rate = arrival_rate
         self.service_rate = service_rate
         self.servers = servers
+        self.capacity = capacity
+        # States 0, 1, ..., capacity. The birth rate at the top state is
+        # automatically 0, which is exactly the blocking.
         super().__init__(
             birth_rates=arrival_rate,
             death_rates=lambda n: min(n, servers) * service_rate,
-            num_states=num_states,
+            num_states=capacity + 1,
         )
 
 
@@ -914,21 +1149,42 @@ class MMsK(BirthDeathProcess):
 
     def __init__(self, arrival_rate, service_rate, servers, capacity):
         """Initialize an M/M/s/K queue."""
-        _require_positive(arrival_rate, "arrival_rate")
-        _require_positive(service_rate, "service_rate")
-        _require_positive_integer(servers, "servers")
-        _require_positive_integer(capacity, "capacity")
-        self.arrival_rate = arrival_rate
-        self.service_rate = service_rate
-        self.servers = servers
-        self.capacity = capacity
-        # States 0, 1, ..., capacity. The birth rate at the top state is
-        # automatically 0 (BirthDeathProcess), which is exactly the blocking.
-        super().__init__(
-            birth_rates=arrival_rate,
-            death_rates=lambda n: min(n, servers) * service_rate,
-            num_states=capacity + 1,
-        )
+        prob_space = MMsKProbabilitySpace(arrival_rate, service_rate, servers, capacity)
+        self.arrival_rate = prob_space.arrival_rate
+        self.service_rate = prob_space.service_rate
+        self.servers = prob_space.servers
+        self.capacity = prob_space.capacity
+        self._init_from_space(prob_space)
+
+
+class MMssProbabilitySpace(MMsKProbabilitySpace):
+    """The probability space underlying an M/M/s/s (Erlang loss) queue.
+
+    The special case of :class:`MMsKProbabilitySpace` with capacity equal to the
+    number of servers, so there is no room to wait. See :class:`MMss`.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each busy server completes a customer. Must be
+        positive.
+    servers : int
+        The number of servers ``s``, which is also the capacity. Must be a
+        positive integer.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = MMssProbabilitySpace(arrival_rate=3, service_rate=1, servers=3)
+    >>> RV(P).draw()(5.0)  # doctest: +SKIP
+    2
+    """
+
+    def __init__(self, arrival_rate, service_rate, servers):
+        """Initialize a probability space for an M/M/s/s queue."""
+        super().__init__(arrival_rate, service_rate, servers, capacity=servers)
 
 
 class MMss(MMsK):
@@ -970,7 +1226,87 @@ class MMss(MMsK):
 
     def __init__(self, arrival_rate, service_rate, servers):
         """Initialize an M/M/s/s (Erlang loss) queue."""
-        super().__init__(arrival_rate, service_rate, servers, capacity=servers)
+        prob_space = MMssProbabilitySpace(arrival_rate, service_rate, servers)
+        self.arrival_rate = prob_space.arrival_rate
+        self.service_rate = prob_space.service_rate
+        self.servers = prob_space.servers
+        self.capacity = prob_space.capacity
+        self._init_from_space(prob_space)
+
+
+class MMsKNProbabilitySpace(BirthDeathProcessProbabilitySpace):
+    """The probability space underlying an M/M/s/K/N (machine-repair) queue.
+
+    Each draw is one sample path -- the number of customers (broken machines) in
+    the system as a function of continuous time. See :class:`MMsKN` for the
+    model, including the state-dependent arrival rate.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which each customer *outside* the system
+        generates an arrival. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each busy server completes a customer. Must be
+        positive.
+    servers : int
+        The number of servers ``s``. Must be a positive integer.
+    capacity : int
+        The maximum number ``K`` of customers in the system. Must be a positive
+        integer no larger than ``population``.
+    population : int
+        The total number ``N`` of customers in the calling population. Must be
+        a positive integer.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The per-customer arrival rate and per-server service rate.
+    servers : int
+        The number of servers.
+    capacity : int
+        The system capacity ``K``.
+    population : int
+        The calling-population size ``N``.
+
+    Raises
+    ------
+    Exception
+        If ``capacity`` exceeds ``population``, or any parameter is not
+        positive.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = MMsKNProbabilitySpace(
+    ...     arrival_rate=0.1, service_rate=1, servers=2, capacity=6, population=6
+    ... )
+    >>> RV(P).draw()(5.0)  # doctest: +SKIP
+    1
+    """
+
+    def __init__(self, arrival_rate, service_rate, servers, capacity, population):
+        """Initialize a probability space for an M/M/s/K/N queue."""
+        _require_positive(arrival_rate, "arrival_rate")
+        _require_positive(service_rate, "service_rate")
+        _require_positive_integer(servers, "servers")
+        _require_positive_integer(capacity, "capacity")
+        _require_positive_integer(population, "population")
+        if capacity > population:
+            raise Exception(
+                "capacity (%d) cannot exceed population (%d): the system "
+                "cannot hold more customers than exist." % (capacity, population)
+            )
+        self.arrival_rate = arrival_rate
+        self.service_rate = service_rate
+        self.servers = servers
+        self.capacity = capacity
+        self.population = population
+        super().__init__(
+            birth_rates=lambda n: (population - n) * arrival_rate,
+            death_rates=lambda n: min(n, servers) * service_rate,
+            num_states=capacity + 1,
+        )
 
 
 class MMsKN(BirthDeathProcess):
@@ -1026,25 +1362,56 @@ class MMsKN(BirthDeathProcess):
 
     def __init__(self, arrival_rate, service_rate, servers, capacity, population):
         """Initialize an M/M/s/K/N (machine-repair) queue."""
+        prob_space = MMsKNProbabilitySpace(
+            arrival_rate, service_rate, servers, capacity, population
+        )
+        self.arrival_rate = prob_space.arrival_rate
+        self.service_rate = prob_space.service_rate
+        self.servers = prob_space.servers
+        self.capacity = prob_space.capacity
+        self.population = prob_space.population
+        self._init_from_space(prob_space)
+
+
+class MMInfinityProbabilitySpace(BirthDeathProcessProbabilitySpace):
+    """The probability space underlying an M/M/infinity queue.
+
+    Each draw is one sample path -- the number of customers in the system as a
+    function of continuous time. See :class:`MMInfinity` for the model.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_rate : float
+        The rate ``mu`` at which each customer completes service. Must be
+        positive.
+    num_states : int, optional
+        Truncation of the (unbounded) state space for simulation. Default 100.
+
+    Attributes
+    ----------
+    arrival_rate, service_rate : float
+        The arrival and per-customer service rates.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = MMInfinityProbabilitySpace(arrival_rate=5, service_rate=1)
+    >>> RV(P).draw()(5.0)  # doctest: +SKIP
+    6
+    """
+
+    def __init__(self, arrival_rate, service_rate, num_states=100):
+        """Initialize a probability space for an M/M/infinity queue."""
         _require_positive(arrival_rate, "arrival_rate")
         _require_positive(service_rate, "service_rate")
-        _require_positive_integer(servers, "servers")
-        _require_positive_integer(capacity, "capacity")
-        _require_positive_integer(population, "population")
-        if capacity > population:
-            raise Exception(
-                "capacity (%d) cannot exceed population (%d): the system "
-                "cannot hold more customers than exist." % (capacity, population)
-            )
         self.arrival_rate = arrival_rate
         self.service_rate = service_rate
-        self.servers = servers
-        self.capacity = capacity
-        self.population = population
         super().__init__(
-            birth_rates=lambda n: (population - n) * arrival_rate,
-            death_rates=lambda n: min(n, servers) * service_rate,
-            num_states=capacity + 1,
+            birth_rates=arrival_rate,
+            death_rates=lambda n: n * service_rate,
+            num_states=num_states,
         )
 
 
@@ -1085,15 +1452,10 @@ class MMInfinity(BirthDeathProcess):
 
     def __init__(self, arrival_rate, service_rate, num_states=100):
         """Initialize an M/M/infinity queue."""
-        _require_positive(arrival_rate, "arrival_rate")
-        _require_positive(service_rate, "service_rate")
-        self.arrival_rate = arrival_rate
-        self.service_rate = service_rate
-        super().__init__(
-            birth_rates=arrival_rate,
-            death_rates=lambda n: n * service_rate,
-            num_states=num_states,
-        )
+        prob_space = MMInfinityProbabilitySpace(arrival_rate, service_rate, num_states)
+        self.arrival_rate = prob_space.arrival_rate
+        self.service_rate = prob_space.service_rate
+        self._init_from_space(prob_space)
 
 
 class YuleProcessResult(ContinuousTimeFunction, DiscreteValued):
@@ -1320,7 +1682,7 @@ _COMPARTMENT_NAMES = {
 }
 
 
-class _EpidemicResult(ContinuousTimeFunction):
+class _EpidemicResult(ContinuousTimeFunction, DiscreteValued):
     """Base class for one simulated sample path of a compartmental model.
 
     A subclass sets ``self.compartments`` (the labels, e.g. ``["S", "I",
@@ -1338,7 +1700,12 @@ class _EpidemicResult(ContinuousTimeFunction):
         The time of each event (``event_times[0]`` is 0, the start).
     states : list of tuple
         The compartment counts after each event; ``states[0]`` is the initial
-        state.
+        state. Unlike the other discrete-state processes here, a state is a
+        whole *vector* of counts rather than a single number.
+    interarrival_times : Vector
+        How long the epidemic stays in each of those states before the next
+        event. The last one is infinite: the outbreak is over, so nothing
+        further happens.
     """
 
     def __init__(self, initial_counts):
@@ -1366,6 +1733,20 @@ class _EpidemicResult(ContinuousTimeFunction):
             self.states.append(tuple(counts))
 
         super().__init__(self._state_at)
+
+        # The event-by-event view every continuous-time, discrete-state path in
+        # the package offers: the states visited (here whole count vectors), how
+        # long each lasted, and -- by their running total -- when each change
+        # happened. The final state lasts forever, since the outbreak has ended,
+        # so its holding time is infinite. A Vector rather than a list because
+        # `arrival_times` reads these through `.cumsum()`.
+        self.interarrival_times = Vector(
+            [
+                self.event_times[k + 1] - self.event_times[k]
+                for k in range(len(self.event_times) - 1)
+            ]
+            + [inf]
+        )
 
         # Expose each compartment as its own scalar function of time, so the
         # epidemic curves can be plotted one compartment at a time. Give each a
