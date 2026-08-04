@@ -29,7 +29,7 @@ from .renewal_process import (
     _is_always_zero,
     _smallest_possible_time,
 )
-from .result import InfiniteVector
+from .result import ContinuousTimeFunction, DiscreteValued, InfiniteVector
 
 
 def _validate_interarrival_dist(interarrival_dist):
@@ -264,16 +264,21 @@ def _traffic_intensity(interarrival_dist, service_dist, servers=1):
     return mean_service / (servers * mean_interarrival)
 
 
-class _QueueResult(InfiniteVector):
+class _QueueResult(ContinuousTimeFunction, DiscreteValued):
     """Shared machinery for one sample path of a single-line queue.
 
-    The path is the sequence of *waiting times*: ``path[n]`` is how long
-    customer ``n`` stands in line before their service begins, not counting
-    the service itself. This class holds the two i.i.d. input sequences, the
-    waiting times worked out so far, and the sequences derived from them --
-    everything except the recursion that turns arrivals and services into
-    waits, which is what distinguishes one queue from another and is supplied
-    by a subclass's ``_wait_at``.
+    The path is the **number of customers in the system** as a function of
+    continuous time: ``path(t)`` is how many are there at time ``t``, waiting
+    plus in service. It steps up by one at each arrival and down by one at each
+    departure, exactly like an
+    :class:`~symbulate.markov_chains.MM1` path, and starts at 0 because the
+    system is empty before the first customer shows up.
+
+    Underneath, the count is worked out from *when* each customer arrives and
+    leaves, and departures depend on how long each customer waited. That wait
+    is what distinguishes one queue discipline from another, so it is supplied
+    by a subclass's ``_wait_at``; everything downstream of it -- the customer
+    times, the merged event stream, and the count itself -- lives here.
 
     Parameters
     ----------
@@ -287,20 +292,29 @@ class _QueueResult(InfiniteVector):
 
     Attributes
     ----------
-    interarrival_times : InfiniteVector or iterable of float
-        The times between successive arrivals.
+    states : InfiniteVector
+        The counts the path passes through, in order, ignoring how long it
+        stays at each: ``0, 1, 2, 1, ...``. The same meaning ``states`` has for
+        a continuous-time Markov chain.
+    interarrival_times : InfiniteVector
+        How long the count stays at each of those values before the next event
+        -- again as for a continuous-time Markov chain. Note that an *event* is
+        an arrival **or** a departure, so these are not the gaps between
+        customer arrivals; for those, difference ``customer_arrival_times``.
+    waiting_times : InfiniteVector
+        How long each customer waits in line before being served, not counting
+        their own service.
     service_times : InfiniteVector or iterable of float
-        The service times.
-    arrival_times : InfiniteVector
-        When each customer arrives -- the running total of the interarrival
-        times.
+        How long a server takes with each customer.
     sojourn_times : InfiniteVector
         How long each customer spends in the system altogether: waiting plus
-        being served, ``W[n] + S[n]``.
-    departure_times : InfiniteVector
-        When each customer leaves, ``arrival_times[n] + sojourn_times[n]``.
+        being served.
+    customer_arrival_times : InfiniteVector
+        When each customer arrives.
+    customer_departure_times : InfiniteVector
+        When each customer leaves.
     waits : list
-        The waiting times generated so far.
+        The waiting times worked out so far.
 
     See Also
     --------
@@ -310,7 +324,7 @@ class _QueueResult(InfiniteVector):
 
     def __init__(self, interarrival_times, service_times):
         """Set up one sample path from its arrival and service sequences."""
-        self.interarrival_times = interarrival_times
+        self._arrival_gaps = interarrival_times
         self.service_times = service_times
         # waits[n] is customer n's waiting time. Customers are served only as
         # far into the queue as has actually been asked about, and each wait is
@@ -318,30 +332,43 @@ class _QueueResult(InfiniteVector):
         # pattern RandomWalkResult uses for its positions.
         self.waits = []
 
-        super().__init__(self._wait_at)
-
-        # Derived sequences, each generated on demand from the two input
-        # sequences and the waiting times above.
-        #
-        # Each arrival time is the one before it plus the next gap, rather than
-        # a fresh sum from customer 0. An InfiniteVector fills its cache in
-        # order, so entry n - 1 is always ready by the time entry n is worked
-        # out. Re-summing instead makes reading a long stretch of the path cost
-        # a multiple of its length: arrival_times[2000] took 3.3 seconds that
-        # way, against 0.007 seconds like this.
-        self.arrival_times = InfiniteVector(
+        # The customer-level view. Each arrival time is the one before it plus
+        # the next gap, rather than a fresh sum from customer 0: an
+        # InfiniteVector fills its cache in order, so entry n - 1 is always
+        # ready by the time entry n is worked out. Re-summing instead makes
+        # reading a long stretch of the path cost a multiple of its length --
+        # 3.3 seconds out to customer 2000, against 0.007 seconds like this.
+        self.customer_arrival_times = InfiniteVector(
             lambda n: float(
-                self.interarrival_times[0]
+                self._arrival_gaps[0]
                 if n == 0
-                else self.arrival_times[n - 1] + self.interarrival_times[n]
+                else self.customer_arrival_times[n - 1] + self._arrival_gaps[n]
             )
         )
+        self.waiting_times = InfiniteVector(self._wait_at)
         self.sojourn_times = InfiniteVector(
-            lambda n: float(self[n] + self.service_times[n])
+            lambda n: float(self.waiting_times[n] + self.service_times[n])
         )
-        self.departure_times = InfiniteVector(
-            lambda n: float(self.arrival_times[n] + self.sojourn_times[n])
+        self.customer_departure_times = InfiniteVector(
+            lambda n: float(self.customer_arrival_times[n] + self.sojourn_times[n])
         )
+
+        # The event-level view, built by merging the two customer streams: the
+        # times the count changes, and what it changes to. Both are generated
+        # on demand and kept, like everything else here.
+        self._event_times = []
+        self._counts = []
+        # Customers who have arrived but not yet left, by when they will leave;
+        # heapq keeps the soonest departure at position 0. With one server that
+        # is simply the next customer, but with several a short service can
+        # finish before a long one that started earlier.
+        self._in_system = []
+        self._next_arrival = 0
+
+        self.states = InfiniteVector(self._count_after_event)
+        self.interarrival_times = InfiniteVector(self._holding_time_at)
+
+        super().__init__(self._count_at)
 
     def _wait_at(self, n):
         """Return customer ``n``'s waiting time, serving that far if needed."""
@@ -350,123 +377,142 @@ class _QueueResult(InfiniteVector):
             "GG1Result (one server) or GGsResult (several servers)."
         )
 
-    def get_waiting_times(self):
-        """Return the waiting times of this path.
+    def _next_arrival_time(self):
+        """Return when the next customer arrives, or ``None`` if none will.
 
-        The path *is* its waiting times, so this returns the path itself. It
-        exists to be read alongside the other sequences.
-
-        Returns
-        -------
-        _QueueResult
-            This path, whose entry ``n`` is customer ``n``'s waiting time.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> path = GG1Result([1.0] * 3, [1.5] * 3)
-        >>> path.get_waiting_times()[1]
-        0.5
+        A path drawn from a queue has an endless stream of arrivals. One built
+        by hand from a list of times runs out of them, and after that only the
+        customers already in the system are left to leave.
         """
-        return self
+        try:
+            return self.customer_arrival_times[self._next_arrival]
+        except IndexError:
+            return None
 
-    def get_service_times(self):
-        """Return the service times of this path.
+    def _extend_events(self, count):
+        """Work out events until ``count`` of them are known, or none are left.
 
-        Returns
-        -------
-        InfiniteVector or iterable of float
-            Entry ``n`` is how long a server takes with customer ``n``.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> path = GG1Result([1.0] * 3, [1.5] * 3)
-        >>> path.get_service_times()[0]
-        1.5
+        One event is one change in the number in the system. The next one is
+        whichever comes first: the next customer arriving, or the soonest
+        departure among those already in the system.
         """
-        return self.service_times
+        while len(self._event_times) < count:
+            arrival = self._next_arrival_time()
+            if arrival is None and not self._in_system:
+                # No arrivals left and nobody still being served, so the count
+                # stays where it is for good.
+                return
+            if self._in_system and (arrival is None or self._in_system[0] < arrival):
+                # A departure comes first, so the count goes down. (A tie goes
+                # to the arrival: the count steps up and back down at the same
+                # instant, which leaves the value at that instant unchanged.)
+                self._event_times.append(heapq.heappop(self._in_system))
+                self._counts.append(self._counts[-1] - 1)
+            else:
+                heapq.heappush(
+                    self._in_system,
+                    self.customer_departure_times[self._next_arrival],
+                )
+                self._next_arrival += 1
+                self._event_times.append(arrival)
+                self._counts.append((self._counts[-1] if self._counts else 0) + 1)
 
-    def get_interarrival_times(self):
-        """Return the times between successive arrivals.
+    def _count_at(self, t):
+        """Return the number of customers in the system at time ``t``."""
+        known = 0
+        while True:
+            self._extend_events(known + 1)
+            if len(self._event_times) <= known or self._event_times[known] > t:
+                break
+            known += 1
+        # The count set by the last event at or before t, or 0 if the first
+        # customer has not arrived yet.
+        return self._counts[known - 1] if known else 0
 
-        Returns
-        -------
-        InfiniteVector or iterable of float
-            Entry ``n`` is the gap between customer ``n - 1``'s arrival and
-            customer ``n``'s.
+    def _count_after_event(self, n):
+        """Return the ``n``-th value the count takes, ignoring durations."""
+        if n == 0:
+            # Every path starts empty, before any event has happened.
+            return 0
+        self._extend_events(n)
+        if not self._counts:
+            return 0
+        # Asking past the last event of a hand-built path: nothing more happens.
+        return self._counts[min(n, len(self._counts)) - 1]
 
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> path = GG1Result([1.0] * 3, [1.5] * 3)
-        >>> path.get_interarrival_times()[2]
-        1.0
-        """
-        return self.interarrival_times
+    def _holding_time_at(self, n):
+        """Return how long the count stays at its ``n``-th value."""
+        self._extend_events(n + 1)
+        if len(self._event_times) <= n:
+            # Nothing further happens, so the count stays there for good.
+            return inf
+        if n == 0:
+            return float(self._event_times[0])
+        return float(self._event_times[n] - self._event_times[n - 1])
 
     def get_arrival_times(self):
-        """Return the times at which the customers arrive.
+        """Return the times at which the count changes.
+
+        The event times: when the number in the system steps up (an arrival) or
+        down (a departure). This is what ``arrival_times(path)`` gives for a
+        continuous-time Markov chain too -- the times of the jumps -- so the
+        name is the package's, not this module's. For the times at which
+        *customers* arrive, read ``customer_arrival_times``.
 
         Returns
         -------
         InfiniteVector
-            Entry ``n`` is the clock time at which customer ``n`` arrives.
+            Entry ``n`` is the clock time of the ``n``-th change in the count.
 
         Examples
         --------
         >>> from symbulate import *
-        >>> path = GG1Result([1.0] * 3, [1.5] * 3)
-        >>> path.get_arrival_times()[2]
-        3.0
+        >>> # A customer every 1.0, each served in 1.5: arrival, arrival,
+        >>> # departure, ... as the single server falls behind.
+        >>> path = GG1Result([1.0] * 5, [1.5] * 5)
+        >>> [path.get_arrival_times()[n] for n in range(3)]
+        [1.0, 2.0, 2.5]
         """
-        return self.arrival_times
+        return InfiniteVector(self._event_time_at)
 
-    def get_sojourn_times(self):
-        """Return how long each customer spends in the system.
+    def _event_time_at(self, n):
+        """Return the clock time of the ``n``-th change in the count."""
+        self._extend_events(n + 1)
+        if len(self._event_times) <= n:
+            # A hand-built path with no events left: the change never comes.
+            return inf
+        return float(self._event_times[n])
 
-        The sojourn time (also called the *time in system*, or the *response
-        time*) is the waiting time plus the service time.
+    def get_number_waiting(self):
+        """Return the number of customers *waiting* over continuous time.
+
+        The path itself counts everybody in the system, including the ones
+        being served. This counts only those still in line, which is the number
+        in the system less however many servers are busy.
 
         Returns
         -------
-        InfiniteVector
-            Entry ``n`` is customer ``n``'s waiting time plus service time.
+        ContinuousTimeFunction
+            The number of customers waiting at each time.
 
         Examples
         --------
         >>> from symbulate import *
-        >>> path = GG1Result([1.0] * 3, [1.5] * 3)
-        >>> path.get_sojourn_times()[1]  # waited 0.5, then served for 1.5
-        2.0
+        >>> path = GG1Result([1.0] * 5, [1.5] * 5)
+        >>> waiting = path.get_number_waiting()
+        >>> path(3.2), waiting(3.2)  # one of the two is being served
+        (2, 1)
         """
-        return self.sojourn_times
-
-    def get_departure_times(self):
-        """Return the times at which the customers leave.
-
-        Returns
-        -------
-        InfiniteVector
-            Entry ``n`` is the clock time at which customer ``n``'s service
-            finishes.
-
-        Examples
-        --------
-        >>> from symbulate import *
-        >>> path = GG1Result([1.0] * 3, [1.5] * 3)
-        >>> path.get_departure_times()[1]  # arrived at 2.0, left 2.0 later
-        4.0
-        """
-        return self.departure_times
+        servers = getattr(self, "servers", 1)
+        return ContinuousTimeFunction(lambda t: max(self(t) - servers, 0))
 
     def get_arrival_process(self):
         """Return the arrival stream as a count over continuous time.
 
-        The customers arrive according to a renewal process, so the same
-        interarrival times this path was built from also describe a counting
-        function: evaluate the returned path at a time ``t`` to get how many
-        customers had arrived by then.
+        The customers arrive according to a renewal process, so the gaps this
+        path was built from also describe a counting function: evaluate the
+        returned path at a time ``t`` to get how many customers had arrived by
+        then -- however many of them have since left.
 
         Returns
         -------
@@ -481,20 +527,19 @@ class _QueueResult(InfiniteVector):
         >>> arrivals(2.5)  # customers 0 and 1 arrived, at times 1.0 and 2.0
         2
         """
-        return RenewalProcessResult(self.interarrival_times)
+        return RenewalProcessResult(self._arrival_gaps)
 
 
 class GG1Result(_QueueResult):
     """One simulated sample path of a single-server queue.
 
-    The path is the sequence of *waiting times*: ``path[n]`` is how long
-    customer ``n`` stands in line before their service begins, not counting
-    the service itself. Customers are numbered ``0, 1, 2, ...`` in the order
-    they arrive, and customer 0 arrives to an empty system, so ``path[0]`` is
-    always 0.
+    ``path(t)`` is the number of customers in the system at time ``t`` -- the
+    one being served plus everybody in line. It starts at 0, steps up at each
+    arrival, and steps down at each departure.
 
-    Each waiting time is worked out from the one before it by **Lindley's
-    recursion**::
+    Getting the departures right is the whole problem, and for one server
+    **Lindley's recursion** solves it: customer ``n``'s waiting time follows
+    from the customer before them by ::
 
         W[n + 1] = max(W[n] + S[n] - A[n + 1], 0)
 
@@ -503,10 +548,11 @@ class GG1Result(_QueueResult):
     ``A[n + 1]`` has already elapsed during the gap between the two arrivals.
     Whatever is left over is the new customer's wait -- and if the leftover is
     negative the server went idle in between, so the new customer walks
-    straight up and waits 0.
+    straight up and waits 0. Customer ``n`` then leaves at
+    ``A[0] + ... + A[n] + W[n] + S[n]``, which is what the count needs.
 
-    Waiting times are generated on demand as you index further into the path,
-    and cached once generated, so reading ``path[100]`` and then ``path[10]``
+    The path is worked out only as far as it has been asked about, and kept
+    once worked out, so evaluating it at ``t = 100`` and then at ``t = 10``
     describes one single queue rather than two unrelated ones.
 
     Parameters
@@ -519,41 +565,22 @@ class GG1Result(_QueueResult):
         The service times. Entry ``n`` is how long the server takes with
         customer ``n``.
 
-    Attributes
-    ----------
-    interarrival_times : InfiniteVector or iterable of float
-        The times between successive arrivals.
-    service_times : InfiniteVector or iterable of float
-        The service times.
-    arrival_times : InfiniteVector
-        When each customer arrives -- the running total of the interarrival
-        times.
-    sojourn_times : InfiniteVector
-        How long each customer spends in the system altogether: waiting plus
-        being served, ``W[n] + S[n]``.
-    departure_times : InfiniteVector
-        When each customer leaves, ``arrival_times[n] + sojourn_times[n]``.
-    waits : list
-        The waiting times generated so far, starting with customer 0's wait
-        of 0.
-
     Examples
     --------
     >>> from symbulate import *
-    >>> # Customers arrive every 1 unit of time; each service takes 1.5.
-    >>> path = GG1Result([1.0] * 5, [1.5] * 5)
-    >>> path[0]  # the first customer walks straight up to the server
-    0.0
-    >>> path[1]  # arrives 1.0 later, but the service takes 1.5
-    0.5
-    >>> path[3]  # the server falls half a unit further behind each customer
-    1.5
+    >>> # A customer every 1 unit of time; each service takes 1.5, so the
+    >>> # single server falls steadily behind and the line builds up.
+    >>> path = GG1Result([1.0] * 8, [1.5] * 8)
+    >>> [path(t) for t in [0.5, 1.0, 3.0, 6.0]]
+    [0, 1, 2, 3]
 
-    The queue this path came from is usually the more convenient way in.
+    The waiting times the count was built from are still there to read, and
+    ``waiting_times[0]`` is always 0 -- customer 0 arrives to an empty system.
 
-    >>> queue = GG1(Exponential(rate=1), Exponential(rate=2))
-    >>> queue.draw()[10]  # doctest: +SKIP
-    0.317
+    >>> [path.waiting_times[n] for n in range(4)]
+    [0.0, 0.5, 1.0, 1.5]
+    >>> path.customer_departure_times[0]  # arrived at 1.0, served for 1.5
+    2.5
 
     See Also
     --------
@@ -579,7 +606,7 @@ class GG1Result(_QueueResult):
                     max(
                         self.waits[i - 1]
                         + self.service_times[i - 1]
-                        - self.interarrival_times[i],
+                        - self._arrival_gaps[i],
                         0.0,
                     )
                 )
@@ -620,8 +647,8 @@ class GG1ProbabilitySpace(ProbabilitySpace):
     --------
     >>> from symbulate import *
     >>> space = GG1ProbabilitySpace(Exponential(rate=1), Exponential(rate=2))
-    >>> space.draw()[5]  # doctest: +SKIP
-    0.204
+    >>> space.draw()(5.0)  # doctest: +SKIP
+    2
     """
 
     def __init__(self, interarrival_dist, service_dist):
@@ -648,8 +675,10 @@ class GG1(RV):
     """A G/G/1 queue: one server, any arrival and service distributions.
 
     Customers arrive one after another, wait their turn in a single line, and
-    are served one at a time, first come first served. ``X[n]`` is how long
-    customer ``n`` waits in line before their service begins.
+    are served one at a time, first come first served. ``X[t]`` is the number of
+    customers in the system at time ``t`` -- the one being served plus everybody
+    still in line -- exactly what :class:`~symbulate.markov_chains.MM1` reports,
+    but for any pair of distributions rather than exponential ones only.
 
     The name is `Kendall's notation <https://en.wikipedia.org/wiki/Kendall%27s_notation>`_
     ``G/G/1``: **G**\\ eneral (any) distribution of the time between arrivals,
@@ -658,8 +687,9 @@ class GG1(RV):
     -- and it is famous for having *no* closed-form answer for the average
     wait, which is exactly why simulating it is the standard way to study it.
 
-    Each waiting time follows from the one before by **Lindley's
-    recursion** -- see :class:`GG1Result` for what it says and why.
+    The count steps up at each arrival and down at each departure, and the
+    departures are found from **Lindley's recursion** on the waiting times --
+    see :class:`GG1Result` for what it says and why.
 
     Parameters
     ----------
@@ -697,28 +727,31 @@ class GG1(RV):
 
     Notes
     -----
-    Customers are numbered ``0, 1, 2, ...`` in arrival order, so time here is
-    counted in *customers*, not in clock time: ``X[10]`` is the eleventh
-    customer's wait, whenever they happen to show up. This is the one real
-    difference from :class:`~symbulate.markov_chains.MM1`, which tracks the
-    number of customers in the system at each moment of continuous time. Both
-    describe the same queue when service is exponential; they just report
-    different things about it.
+    Time is clock time, as for every other continuous-time process in the
+    package: ``X[10]`` is how many customers are in the system at time 10, and
+    a drawn path can be evaluated at any time you like. Because the count only
+    ever changes by one, a path also reads event by event with ``states``,
+    ``interarrival_times``, and ``arrival_times`` -- the counts it passed
+    through, how long it stayed at each, and when each change happened, the same
+    three views a continuous-time Markov chain offers. Note that an *event* here
+    is an arrival **or** a departure, so ``interarrival_times`` is not the gaps
+    between customer arrivals.
 
     Whether the queue settles down is decided by ``utilization``. When
-    ``utilization < 1`` the waiting times have a steady-state distribution,
-    and ``X[n]`` for a large ``n`` is a draw from (very nearly) that
-    distribution. When ``utilization >= 1`` work arrives at least as fast as
-    the server can clear it, so the line grows without bound and ``X[n]``
-    keeps getting larger -- worth simulating deliberately, but not a queue
-    with a long-run average wait to estimate.
+    ``utilization < 1`` the number in the system has a steady-state
+    distribution, and ``X[t]`` for a large ``t`` is a draw from (very nearly)
+    that distribution. When ``utilization >= 1`` work arrives at least as fast
+    as the server can clear it, so the line grows without bound -- worth
+    simulating deliberately, but not a queue with a long-run average to
+    estimate.
 
-    A drawn path carries the rest of the story with it. Alongside the waiting
-    times it reports ``service_times``, ``interarrival_times``,
-    ``arrival_times``, ``sojourn_times`` (waiting plus service, i.e. the total
-    time in the system), and ``departure_times``. Wrapping one of those in
-    ``.apply()`` turns it into a random variable that can be simulated like
-    any other -- see the examples.
+    A drawn path also carries the customer-level story the count was built
+    from: ``waiting_times``, ``service_times``, ``sojourn_times`` (waiting plus
+    service, i.e. the total time in the system), ``customer_arrival_times``, and
+    ``customer_departure_times``. Wrapping one of those in ``.apply()`` turns it
+    into a random variable that can be simulated like any other -- see the
+    examples. ``get_number_waiting()`` gives the number still in *line* over
+    continuous time, which is the count less the customer in service.
 
     Examples
     --------
@@ -727,18 +760,23 @@ class GG1(RV):
     >>> queue = GG1(Exponential(rate=1), Uniform(a=0, b=1))
     >>> queue.utilization
     0.5
-    >>> queue[20].sim(1000).mean()  # the 21st customer's average wait  # doctest: +SKIP
-    0.334
+    >>> queue[20].sim(1000).mean()  # the average number in the system at t=20  # doctest: +SKIP
+    0.98
 
     Any pair of nonnegative distributions works, including ones with no
     exponential anywhere in sight.
 
     >>> lumpy = GG1(Gamma(shape=2, rate=2), LogNormal(-1.5, 0.75))
-    >>> lumpy.draw()[30]  # doctest: +SKIP
-    0.212
+    >>> lumpy.draw()(30.0)  # doctest: +SKIP
+    1
 
-    The total time in the system -- waiting plus being served -- is one
-    ``.apply()`` away.
+    The waiting time of a particular customer is one ``.apply()`` away.
+
+    >>> wait = queue.apply(lambda path: path.waiting_times[20])
+    >>> wait.sim(1000).mean()  # doctest: +SKIP
+    0.334
+
+    The total time in the system -- waiting plus being served -- likewise.
 
     >>> in_system = queue.apply(lambda path: path.sojourn_times[20])
     >>> in_system.sim(1000).mean()  # doctest: +SKIP
@@ -818,6 +856,9 @@ class MG1(GG1):
     deterministic, of ``M/D/1``) is the extreme case: ``E[S^2]`` is then as
     small as it can be for that average, and the line is as short as it can be.
 
+    The formula is about the *wait*, which a drawn path reports as
+    ``waiting_times`` alongside the number in the system the path itself gives.
+
     Examples
     --------
     >>> from symbulate import *
@@ -827,9 +868,15 @@ class MG1(GG1):
     >>> erratic = MG1(arrival_rate=1, service_dist=Exponential(rate=2))
     >>> steady.utilization == erratic.utilization  # the same load either way
     True
-    >>> steady[50].sim(1000).mean()  # doctest: +SKIP
-    0.267
-    >>> erratic[50].sim(1000).mean()  # nearly twice the wait  # doctest: +SKIP
+    >>> steady[50].sim(1000).mean()  # average number in the system  # doctest: +SKIP
+    0.77
+    >>> erratic[50].sim(1000).mean()  # a longer line on the same load  # doctest: +SKIP
+    1.01
+
+    The waits behind those numbers are what the formula predicts.
+
+    >>> wait = erratic.apply(lambda path: path.waiting_times[50])
+    >>> wait.sim(1000).mean()  # P-K says 1 * 0.5 / (2 * 0.5) = 0.5  # doctest: +SKIP
     0.494
 
     See Also
@@ -899,15 +946,15 @@ class GM1(GG1):
     >>> queue = GM1(interarrival_dist=Gamma(shape=8, rate=8), service_rate=2)
     >>> round(queue.utilization, 3)
     0.5
-    >>> queue[50].sim(1000).mean()  # doctest: +SKIP
-    0.221
+    >>> queue[50].sim(1000).mean()  # average number in the system  # doctest: +SKIP
+    0.67
 
-    Steadier arrivals mean shorter waits at the same load: an M/M/1 queue
-    under the same utilization waits longer.
+    Steadier arrivals mean a shorter line at the same load: an M/M/1 queue
+    under the same utilization holds more customers.
 
-    >>> MM1_wait = GM1(interarrival_dist=Exponential(rate=1), service_rate=2)
-    >>> MM1_wait[50].sim(1000).mean()  # doctest: +SKIP
-    0.503
+    >>> mm1 = GM1(interarrival_dist=Exponential(rate=1), service_rate=2)
+    >>> mm1[50].sim(1000).mean()  # doctest: +SKIP
+    1.02
 
     See Also
     --------
@@ -932,10 +979,10 @@ class GM1(GG1):
 class GGsResult(_QueueResult):
     """One simulated sample path of a queue with several servers.
 
-    Like :class:`GG1Result`, ``path[n]`` is how long customer ``n`` waits in
-    line before their service begins. The difference is what they are waiting
-    for: with ``servers`` servers sharing one line, a customer waits only until
-    the *first* of them comes free, so nobody waits at all while any server is
+    Like :class:`GG1Result`, ``path(t)`` is the number of customers in the
+    system at time ``t``. The difference is how long they wait to be served:
+    with ``servers`` servers sharing one line, a customer waits only until the
+    *first* of them comes free, so nobody waits at all while any server is
     idle.
 
     That is all the recursion needs to track -- the times at which each server
@@ -949,9 +996,9 @@ class GGsResult(_QueueResult):
     Kiefer and Wolfowitz), and with ``servers=1`` it *is* Lindley's recursion,
     written in clock time instead of in leftovers.
 
-    Waiting times are generated on demand as you index further into the path,
-    and cached once generated, so reading ``path[100]`` and then ``path[10]``
-    describes one single queue rather than two unrelated ones.
+    The path is worked out only as far as it has been asked about, and kept once
+    worked out, so evaluating it at ``t = 100`` and then at ``t = 10`` describes
+    one single queue rather than two unrelated ones.
 
     Parameters
     ----------
@@ -975,19 +1022,26 @@ class GGsResult(_QueueResult):
     Customers leave in the order they were *served*, which with more than one
     server need not be the order they arrived: a customer with a short service
     can overtake a slower one being served beside them. So
-    ``departure_times`` is not necessarily increasing, unlike in the
-    single-server case.
+    ``customer_departure_times`` is not necessarily increasing, unlike in the
+    single-server case. The count itself is unaffected -- it steps down at each
+    departure whoever it belongs to.
 
     Examples
     --------
     >>> from symbulate import *
     >>> # A customer every 1 unit of time, each service taking 1.5, 2 servers.
-    >>> path = GGsResult([1.0] * 6, [1.5] * 6, servers=2)
-    >>> [path[n] for n in range(5)]  # two servers keep up; nobody waits
+    >>> path = GGsResult([1.0] * 8, [1.5] * 8, servers=2)
+    >>> [path.waiting_times[n] for n in range(5)]  # two servers keep up
     [0.0, 0.0, 0.0, 0.0, 0.0]
     >>> # The same queue with one server falls behind (Lindley's recursion).
-    >>> [GGsResult([1.0] * 6, [1.5] * 6, servers=1)[n] for n in range(5)]
+    >>> one = GGsResult([1.0] * 8, [1.5] * 8, servers=1)
+    >>> [one.waiting_times[n] for n in range(5)]
     [0.0, 0.5, 1.0, 1.5, 2.0]
+
+    Two servers therefore hold a shorter line than one at the same moment.
+
+    >>> path(6.0), one(6.0)
+    (2, 3)
 
     See Also
     --------
@@ -1011,7 +1065,7 @@ class GGsResult(_QueueResult):
             # This recursion works in clock time, so it reads the arrival times
             # the path already keeps rather than accumulating its own copy --
             # the two could otherwise drift apart.
-            arrival = self.arrival_times[i]
+            arrival = self.customer_arrival_times[i]
             # Whatever is left of the wait for the soonest free server. A plain
             # float is stored rather than whatever numpy type the draws came
             # back as, so a student reading a stretch of the path sees times,
@@ -1091,14 +1145,15 @@ class GGs(RV):
 
     Customers arrive one after another and join a single line, and the customer
     at its head goes to whichever of the ``servers`` servers comes free first.
-    ``X[n]`` is how long customer ``n`` waits in line before their service
-    begins.
+    ``X[t]`` is the number of customers in the system at time ``t`` -- those
+    being served plus everybody still in line.
 
     This is the multi-server generalization of :class:`GG1` -- the bank with
     several tellers and one queue, the call center with several agents -- and
     the realistic version of :class:`~symbulate.markov_chains.MMs`, since it
-    does not need the service times to be exponential. Waiting times come from
-    the times at which the servers next come free; see :class:`GGsResult`.
+    does not need the service times to be exponential. The departures behind the
+    count come from the times at which the servers next come free; see
+    :class:`GGsResult`.
 
     Parameters
     ----------
@@ -1152,7 +1207,8 @@ class GGs(RV):
     servers keeps the *line* shorter, because a customer can be served while
     the other server is stuck on a long job; the single fast server gets each
     customer out of the *system* sooner, because the service itself is half as
-    long. Simulating both settles which matters for a given question.
+    long. Simulating both settles which matters for a given question --
+    ``X[t]`` for the line, ``path.sojourn_times[n]`` for the visit.
 
     ``M/G/s`` and ``G/M/s`` are not separate classes -- pass an ``Exponential``
     on whichever side is Markovian, exactly as ``GG1(Exponential(...), ...)``
@@ -1165,8 +1221,8 @@ class GGs(RV):
     >>> bank = GGs(Exponential(rate=1 / 2), Gamma(shape=2, rate=2 / 5), servers=3)
     >>> round(bank.utilization, 3)
     0.833
-    >>> bank[50].sim(1000).mean()  # doctest: +SKIP
-    5.42
+    >>> bank[50].sim(1000).mean()  # average number in the bank at t=50  # doctest: +SKIP
+    4.31
 
     A second server can rescue a queue that one server cannot keep up with.
 
