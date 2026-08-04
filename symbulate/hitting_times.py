@@ -256,11 +256,11 @@ def _prepare(path, level):
                 f"{level}. It multiplies its starting value by positive "
                 f"numbers, so it never reaches 0 or goes below it."
             )
-        initial_value = path.initial_value
+        initial = path.initial
         scale = path.scale
 
         def read(t):
-            return float(np.log(float(path(t)) / initial_value))
+            return float(np.log(float(path(t)) / initial))
 
         # log(price) is a Brownian motion with drift, whose covariance is the
         # plain Brownian one. The drift does not appear: a bridge's law does
@@ -268,7 +268,7 @@ def _prepare(path, level):
         def cov_func(s, t):
             return scale**2 * min(s, t)
 
-        return read, cov_func, float(np.log(level / initial_value))
+        return read, cov_func, float(np.log(level / initial))
 
     # An ordinary Gaussian-process path: read it directly.
     cov_func = getattr(path, "cov_func", None)

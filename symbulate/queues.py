@@ -794,11 +794,69 @@ class GG1(RV):
 
     def __init__(self, interarrival_dist, service_dist):
         """Create a G/G/1 queue."""
-        prob_space = GG1ProbabilitySpace(interarrival_dist, service_dist)
+        self._init_from_space(GG1ProbabilitySpace(interarrival_dist, service_dist))
+
+    def _init_from_space(self, prob_space):
+        """Wire a single-server queue's probability space into this process.
+
+        The distributions and their validation live in the space, so a subclass
+        (``MG1`` and ``GM1`` are ones) builds its own space -- substituting an
+        ``Exponential`` on the side it fixes -- and hands it here.
+
+        Parameters
+        ----------
+        prob_space : GG1ProbabilitySpace
+            The space whose draws are this process's sample paths.
+        """
         self.interarrival_dist = prob_space.interarrival_dist
         self.service_dist = prob_space.service_dist
         self.utilization = _traffic_intensity(self.interarrival_dist, self.service_dist)
-        super().__init__(prob_space)
+        RV.__init__(self, prob_space)
+
+
+class MG1ProbabilitySpace(GG1ProbabilitySpace):
+    """The probability space underlying an M/G/1 queue.
+
+    Each draw is one sample path -- the number of customers in the system as a
+    function of continuous time. The arrival rate is turned into the
+    ``Exponential`` interarrival distribution :class:`GG1ProbabilitySpace`
+    wants; see :class:`MG1` for the model.
+
+    Parameters
+    ----------
+    arrival_rate : float
+        The rate ``lambda`` at which customers arrive. Must be positive.
+    service_dist : Distribution
+        The distribution of the time the server takes with one customer.
+
+    Attributes
+    ----------
+    arrival_rate : float
+        The arrival rate ``lambda``.
+    interarrival_dist : Exponential
+        The interarrival-time distribution built from ``arrival_rate``.
+    service_dist : Distribution
+        The service-time distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = MG1ProbabilitySpace(arrival_rate=1, service_dist=Uniform(a=0, b=1))
+    >>> RV(P).draw()(20.0)  # doctest: +SKIP
+    1
+    >>> RV(P, states)[0].draw()  # every path starts empty
+    0
+    """
+
+    def __init__(self, arrival_rate, service_dist):
+        """Create a probability space for an M/G/1 queue."""
+        _validate_rate(
+            arrival_rate,
+            "arrival_rate",
+            "the average number of customers arriving per unit of time",
+        )
+        self.arrival_rate = arrival_rate
+        super().__init__(Exponential(rate=arrival_rate), service_dist)
 
 
 class MG1(GG1):
@@ -889,13 +947,58 @@ class MG1(GG1):
 
     def __init__(self, arrival_rate, service_dist):
         """Create an M/G/1 queue."""
+        prob_space = MG1ProbabilitySpace(arrival_rate, service_dist)
+        self.arrival_rate = prob_space.arrival_rate
+        self._init_from_space(prob_space)
+
+
+class GM1ProbabilitySpace(GG1ProbabilitySpace):
+    """The probability space underlying a G/M/1 queue.
+
+    Each draw is one sample path -- the number of customers in the system as a
+    function of continuous time. The service rate is turned into the
+    ``Exponential`` service distribution :class:`GG1ProbabilitySpace` wants; see
+    :class:`GM1` for the model.
+
+    Parameters
+    ----------
+    interarrival_dist : Distribution
+        The distribution of the time between one arrival and the next.
+    service_rate : float
+        The rate ``mu`` at which the server completes customers. Must be
+        positive.
+
+    Attributes
+    ----------
+    interarrival_dist : Distribution
+        The interarrival-time distribution.
+    service_rate : float
+        The service rate ``mu``.
+    service_dist : Exponential
+        The service-time distribution built from ``service_rate``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = GM1ProbabilitySpace(
+    ...     interarrival_dist=Gamma(shape=8, rate=8), service_rate=2
+    ... )
+    >>> RV(P).draw()(20.0)  # doctest: +SKIP
+    1
+    >>> RV(P, states)[0].draw()  # every path starts empty
+    0
+    """
+
+    def __init__(self, interarrival_dist, service_rate):
+        """Create a probability space for a G/M/1 queue."""
         _validate_rate(
-            arrival_rate,
-            "arrival_rate",
-            "the average number of customers arriving per unit of time",
+            service_rate,
+            "service_rate",
+            "the average number of customers the server could finish per unit "
+            "of time",
         )
-        self.arrival_rate = arrival_rate
-        super().__init__(Exponential(rate=arrival_rate), service_dist)
+        self.service_rate = service_rate
+        super().__init__(interarrival_dist, Exponential(rate=service_rate))
 
 
 class GM1(GG1):
@@ -966,14 +1069,9 @@ class GM1(GG1):
 
     def __init__(self, interarrival_dist, service_rate):
         """Create a G/M/1 queue."""
-        _validate_rate(
-            service_rate,
-            "service_rate",
-            "the average number of customers the server could finish per unit "
-            "of time",
-        )
-        self.service_rate = service_rate
-        super().__init__(interarrival_dist, Exponential(rate=service_rate))
+        prob_space = GM1ProbabilitySpace(interarrival_dist, service_rate)
+        self.service_rate = prob_space.service_rate
+        self._init_from_space(prob_space)
 
 
 class GGsResult(_QueueResult):

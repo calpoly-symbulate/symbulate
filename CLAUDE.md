@@ -51,7 +51,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `table.py` | Table display for simulation results |
 | `markov_chains.py` | Markov chain probability spaces |
 | `gaussian_process.py` | `GaussianProcess`, `BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`, `FractionalBrownianMotion` |
-| `poisson_process.py` | `PoissonProcess` and `NonHomogeneousPoissonProcess` (time-varying rate) |
+| `poisson_process.py` | `PoissonProcess`, `NonHomogeneousPoissonProcess` (time-varying rate), and `CoxProcess` (random rate — see "Cox Process" below) |
 | `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution; `CompoundPoissonProcess` — running total of a jump drawn at each Poisson arrival (see "Compound Poisson Process" below) |
 | `queues.py` | `GG1`, `MG1`, `GM1`, `GGs` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
@@ -281,6 +281,45 @@ is unchanged across four very different jump settings. Note that with large
 jumps the *simulated* mean is noisy (the sd can reach 200), so judge that
 contract against the closed form, not against one simulation.
 
+## Cox Process
+
+`CoxProcess(intensity, step=)` in `poisson_process.py` is a Poisson process
+whose rate is drawn at random *before* any events are generated. It is one
+class covering several roadmap rows — a `Distribution` intensity is the
+**mixed Poisson process** (gamma intensity → negative binomial counts), a
+`ContinuousTimeMarkovChain` intensity is the **Markov-modulated Poisson
+process** — so do not add separate classes for those. See `MODEL-DECISIONS.md`,
+"Decision: Cox Process."
+
+Four things that are easy to get wrong:
+
+- **It does not thin, and it does not use `_CumulativeRate`'s quadrature on a
+  drawn path.** Conditional on the intensity it is an NHPP, so it reuses the
+  time-change counting — `CoxProcessResult` subclasses
+  `NonHomogeneousPoissonProcessResult` — and only the *integral of the drawn
+  intensity* is new. The roadmap's "build on non-homogeneous Poisson thinning"
+  note predates the time-change decision; thinning is still not implemented
+  anywhere.
+- **How that integral is taken depends on the intensity, and two of the three
+  ways are exact.** A single random rate → rate × time. A path that holds one
+  value at a time (`DiscreteValued` with `interarrival_times`: a CTMC, a
+  Poisson or renewal count) → `_StepCumulativeRate`, a sum of rate × holding
+  time. Anything else → `_PathCumulativeRate`, a **left-hand sum on a fixed
+  grid** of width `step` (default `_INTENSITY_STEP = 0.01`), which is the only
+  approximate case. `step` is ignored by the exact two.
+- **The grid must stay fixed, anchored at 0, and left-handed.** A drawn path is
+  generated as it is *looked at*, so a general-purpose integrator probing it at
+  times of its own choosing would fill in a different path per probe and report
+  a meaningless error estimate; and a trapezoid or right-hand rule would make
+  `cumulative_rate` non-monotone within a grid cell, which would let the count
+  of events go *backwards*. There are tests pinning monotonicity and
+  order-independence — do not "improve" the sum's accuracy without rereading
+  them.
+- **A per-draw cumulative rate, not a shared one.** Each path has its own
+  intensity, so each gets its own `cumulative_rate` — the opposite of NHPP,
+  where one is shared across every path. Only the not-random-at-all intensity
+  (a plain function or number, which reduces to an NHPP) shares one.
+
 ## Compound Poisson Process
 
 `CompoundPoissonProcess(rate, jump_dist)` is the running total of a jump
@@ -306,6 +345,47 @@ Three things that are easy to get wrong:
   result hand-built from plain Python lists supports
   `get_interarrival_times()` but not `get_arrival_times()`, which needs a
   `.cumsum()` — pass a `Vector` in a test fixture that needs it.
+
+## Continuous-Time, Discrete-State Processes — Required Interface
+
+These processes all behave the same way: they sit at one value for a random
+stretch of continuous time, jump, and sit again. **Every one of them must offer
+the same four things**, and `tests/test_continuous_time_processes.py` asserts it
+table-driven over all of them, so a new process cannot quietly skip one:
+
+1. A `<Name>ProbabilitySpace` class, exported from `symbulate/__init__.py`.
+2. `RV(P)` — the process itself, a discrete value at each continuous time.
+3. `RV(P, interarrival_times)` — the times between jumps.
+4. `RV(P, arrival_times)` — the times of the jumps.
+5. `RV(P, states)` — the values visited, ignoring how long each lasted.
+
+Items 3–5 come free from `DiscreteValued`: a Result only has to set `states` and
+`interarrival_times` (an object with `.cumsum()` — an `InfiniteVector`, or a
+`Vector` for an eagerly simulated finite path). `arrival_times` is their running
+total. See "classify_data" style conventions in `math.py` for the three free
+functions themselves.
+
+**A wrapper class needs its own space too.** `MM1`, `MMs`, `MMsK`, `MMss`,
+`MMsKN`, `MMInfinity` and `BirthDeathProcess` all used to build a generator
+matrix inline, which left them with no space of their own; each now has one, with
+the **rate formulas living in the space** and the process class copying the
+parameters back out via `_init_from_space`. `MG1`/`GM1` follow the same shape
+over `GG1ProbabilitySpace`. Do not put rate or distribution logic in the process
+class — the space is what `RV(P, ...)` users get.
+
+**Known gap:** `NonHomogeneousPoissonProcess` counts events on the
+"expected count" scale and never converts back to clock time, so it has no
+clock-time `interarrival_times`/`arrival_times`; `CoxProcess` inherits the gap,
+since `CoxProcessResult` builds on that class. Fixing it needs a numerical
+inverse of the cumulative rate. Both are in `TIME_CHANGED` in
+`test_continuous_time_processes.py`, which asserts the three views they *do*
+support and pins the gap, so the test fails (and they move up into the main
+table) once it is closed.
+
+**One deliberate oddity:** `SIR`/`SEIR` states are whole *vectors* of
+compartment counts, not single numbers, and their final holding time is `inf`
+(the outbreak has ended). They are eagerly simulated, so their sequences are
+finite `Vector`s rather than `InfiniteVector`s.
 
 ## Queues
 
@@ -444,12 +524,13 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_table.py` | Table display |
 | `test_markov_chains.py` | Markov chains |
 | `test_gaussian_process.py` | Gaussian processes (incl. Ornstein-Uhlenbeck, Brownian bridge, fractional Brownian motion) |
-| `test_poisson_process.py` | Poisson process and non-homogeneous Poisson process |
+| `test_poisson_process.py` | Poisson process, non-homogeneous Poisson process, and Cox process |
 | `test_renewal_process.py` | Renewal process and compound Poisson process |
 | `test_queues.py` | `GG1`, `MG1`, `GM1`, `GGs` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
 | `test_time_series.py` | `MA` (and the rest of the time-series family as it lands) |
 | `test_hitting_times.py` | `hitting_time` |
+| `test_continuous_time_processes.py` | The interface **every** continuous-time discrete-state process shares (see "Continuous-Time, Discrete-State Processes" below) — table-driven over all of them |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_cir.py` | The `CIR` process |
 | `test_merton.py` | The `MertonJumpDiffusion` process |
@@ -484,6 +565,8 @@ pytest tests/
 - Do not set `self.xlim` in a new distribution's `__init__`, and do not compute a window there — `Distribution._compute_xlim` derives it from scipy's `support()` on first read (see "Distribution Plotting Window"). The only exception is a degenerate branch that skips `Distribution.__init__` and so has no scipy object.
 - Do not reintroduce the highest-density interval (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, `_PLOT_COVERAGE`, `_hdi_window`) — removed by team decision; there are tests asserting it stays gone.
 - Do not add a nonnegativity check to `CompoundPoissonProcess`'s `jump_dist` — negative jumps are intentional (see "Compound Poisson Process")
+- Do not add separate `MixedPoissonProcess` or `MarkovModulatedPoissonProcess` classes — both are `CoxProcess` with a different `intensity` (see "Cox Process")
+- Do not change `CoxProcess`'s intensity grid to a trapezoid/right-hand rule, a variable mesh, or `scipy.integrate.quad` — a fixed left-handed grid anchored at 0 is what keeps the event count from going backwards, and there are tests pinning it (see "Cox Process")
 - Do not rename `type=` to `kind=` or anything else — considered and decided against.
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
 - Do not use `viridis_r` (reversed) for 2D density/tile/hist2d — plain `viridis`, 0 = dark.
