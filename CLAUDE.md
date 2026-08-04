@@ -57,7 +57,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `time_series.py` | `MA` — moving-average process; home for the AR/ARMA/GARCH family as it lands |
 | `hitting_times.py` | `hitting_time` — when a path first reaches a level; Gaussian-process family only so far (see "Hitting Times" below) |
-| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` — named special case, simulated exactly (see "Diffusion Processes" below) |
+| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` and `MertonJumpDiffusion` — named special cases, both simulated exactly (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
 | `math.py` | Math utility functions |
@@ -251,7 +251,7 @@ Three things that are easy to get wrong:
   below 0 even in a model that should stay positive, and one `nan` poisons the
   rest of the path.
 
-`CIR(reversion_rate, mean, scale, initial_value)` lives in the same module as a
+`CIR(reversion_rate, mean, scale, initial)` lives in the same module as a
 named special case, the way `BrownianMotion` sits inside `gaussian_process.py`
 next to the general `GaussianProcess`. It does **not** go through
 `DiffusionProcess`: CIR has a known transition law — its value at any later
@@ -263,6 +263,30 @@ error the team decision explicitly removed. `test_cir.py` pins this by checking
 that one jump to a time matches fifty steps to it. The one approximate corner
 is asking for a time *between* two already-computed times, since a CIR path
 pinned at both ends has no simple formula.
+
+`MertonJumpDiffusion(...)` sits in the same module and is also **exact**, but
+by a different route: it is pure *composition*, not a new transition law. A
+path adds a Brownian motion and a `CompoundPoissonProcess` of normal jumps
+together in the exponent, then exponentiates — so it is a
+`GeometricBrownianMotion` that can also lurch. Each path keeps both pieces as
+`path.brownian_path` and `path.jump_path`.
+
+The one thing not to break: the drift subtracts a **compensator**,
+`jump_rate * (exp(jump_mean + jump_sd**2 / 2) - 1)`. Jumps multiply, and a
+multiplier averages above 1 even when its log averages 0, so without that term
+adding jumps would silently raise the mean. With it, `growth_rate` keeps
+meaning the growth rate of the mean — the same contract
+`GeometricBrownianMotion` has. `test_merton.py` pins this by checking the mean
+is unchanged across four very different jump settings. Note that with large
+jumps the *simulated* mean is noisy (the sd can reach 200), so judge that
+contract against the closed form, not against one simulation.
+
+Both follow the package-wide `initial` naming (see `MODEL-DECISIONS.md`, "One
+Name for a Process's Starting Condition"). `CIR` also still accepts the older
+`initial_value`, via `_resolve_initial`, because it shipped under that name;
+`MertonJumpDiffusion` never did, so it takes `initial` only. `CIR`'s `initial`
+defaults to `None` meaning "start at `mean`", so it passes `default=None` to
+the helper rather than a number.
 
 ## Cox Process
 
@@ -554,6 +578,7 @@ Three implementation notes:
 | `test_continuous_time_processes.py` | The interface **every** continuous-time discrete-state process shares (see "Continuous-Time, Discrete-State Processes" below) — table-driven over all of them |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_cir.py` | The `CIR` process |
+| `test_merton.py` | The `MertonJumpDiffusion` process |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
 | `test_index_sets.py` | Index sets |
