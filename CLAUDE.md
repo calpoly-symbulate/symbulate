@@ -329,6 +329,47 @@ Three things that are easy to get wrong:
   `get_interarrival_times()` but not `get_arrival_times()`, which needs a
   `.cumsum()` — pass a `Vector` in a test fixture that needs it.
 
+## Continuous-Time, Discrete-State Processes — Required Interface
+
+These processes all behave the same way: they sit at one value for a random
+stretch of continuous time, jump, and sit again. **Every one of them must offer
+the same four things**, and `tests/test_continuous_time_processes.py` asserts it
+table-driven over all of them, so a new process cannot quietly skip one:
+
+1. A `<Name>ProbabilitySpace` class, exported from `symbulate/__init__.py`.
+2. `RV(P)` — the process itself, a discrete value at each continuous time.
+3. `RV(P, interarrival_times)` — the times between jumps.
+4. `RV(P, arrival_times)` — the times of the jumps.
+5. `RV(P, states)` — the values visited, ignoring how long each lasted.
+
+Items 3–5 come free from `DiscreteValued`: a Result only has to set `states` and
+`interarrival_times` (an object with `.cumsum()` — an `InfiniteVector`, or a
+`Vector` for an eagerly simulated finite path). `arrival_times` is their running
+total. See "classify_data" style conventions in `math.py` for the three free
+functions themselves.
+
+**A wrapper class needs its own space too.** `MM1`, `MMs`, `MMsK`, `MMss`,
+`MMsKN`, `MMInfinity` and `BirthDeathProcess` all used to build a generator
+matrix inline, which left them with no space of their own; each now has one, with
+the **rate formulas living in the space** and the process class copying the
+parameters back out via `_init_from_space`. `MG1`/`GM1` follow the same shape
+over `GG1ProbabilitySpace`. Do not put rate or distribution logic in the process
+class — the space is what `RV(P, ...)` users get.
+
+**Known gap:** `NonHomogeneousPoissonProcess` counts events on the
+"expected count" scale and never converts back to clock time, so it has no
+clock-time `interarrival_times`/`arrival_times`; `CoxProcess` inherits the gap,
+since `CoxProcessResult` builds on that class. Fixing it needs a numerical
+inverse of the cumulative rate. Both are in `TIME_CHANGED` in
+`test_continuous_time_processes.py`, which asserts the three views they *do*
+support and pins the gap, so the test fails (and they move up into the main
+table) once it is closed.
+
+**One deliberate oddity:** `SIR`/`SEIR` states are whole *vectors* of
+compartment counts, not single numbers, and their final holding time is `inf`
+(the outbreak has ended). They are eagerly simulated, so their sequences are
+finite `Vector`s rather than `InfiniteVector`s.
+
 ## Queues
 
 Queues live in **two** files, split by whether the model is Markovian:
@@ -472,6 +513,7 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_random_walk.py` | `RandomWalk` |
 | `test_time_series.py` | `MA` (and the rest of the time-series family as it lands) |
 | `test_hitting_times.py` | `hitting_time` |
+| `test_continuous_time_processes.py` | The interface **every** continuous-time discrete-state process shares (see "Continuous-Time, Discrete-State Processes" below) — table-driven over all of them |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_cir.py` | The `CIR` process |
 | `test_random_processes.py` | Random processes |
