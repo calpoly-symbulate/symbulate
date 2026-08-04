@@ -10,7 +10,7 @@ from .result import (
     _BoundedTimeFunction,
 )
 from .random_variables import RV
-from .random_processes import RandomProcess
+from .random_processes import RandomProcess, _resolve_initial
 
 MACHINE_EPS = 1e-12
 rng = np.random.default_rng()
@@ -438,12 +438,12 @@ class BrownianMotion(RandomProcess, RV):
         RV.__init__(self, prob_space)
 
 
-# Sentinel for initial_value, asking the path to start from the process's own
+# Sentinel for initial, asking the path to start from the process's own
 # long-run (stationary) distribution instead of from a fixed number.
 STATIONARY = "stationary"
 
 
-def _ornstein_uhlenbeck_funcs(reversion_rate, mean, scale, initial_value):
+def _ornstein_uhlenbeck_funcs(reversion_rate, mean, scale, initial):
     """Build the mean and covariance functions of an Ornstein-Uhlenbeck process.
 
     Both parameterizations are exact closed forms, so an Ornstein-Uhlenbeck
@@ -459,7 +459,7 @@ def _ornstein_uhlenbeck_funcs(reversion_rate, mean, scale, initial_value):
         The level the process is pulled toward.
     scale : float
         The volatility of the random shocks.
-    initial_value : float or str
+    initial : float or str
         A number to start every path from, or ``"stationary"`` to start from
         the process's long-run distribution.
 
@@ -483,7 +483,7 @@ def _ornstein_uhlenbeck_funcs(reversion_rate, mean, scale, initial_value):
     """
     long_run_var = scale**2 / (2 * reversion_rate)
 
-    if initial_value == STATIONARY:
+    if initial == STATIONARY:
 
         def mean_func(t):
             return mean
@@ -494,12 +494,12 @@ def _ornstein_uhlenbeck_funcs(reversion_rate, mean, scale, initial_value):
     else:
 
         def mean_func(t):
-            # Travels exponentially from initial_value toward mean.
-            return mean + (initial_value - mean) * np.exp(-reversion_rate * t)
+            # Travels exponentially from initial toward mean.
+            return mean + (initial - mean) * np.exp(-reversion_rate * t)
 
         def cov_func(s, t):
             # At s = t = 0 this is exactly 0, so every path starts at
-            # initial_value with no randomness -- the same way Brownian
+            # initial with no randomness -- the same way Brownian
             # motion starts at 0.
             return long_run_var * (
                 np.exp(-reversion_rate * abs(s - t)) - np.exp(-reversion_rate * (s + t))
@@ -508,14 +508,14 @@ def _ornstein_uhlenbeck_funcs(reversion_rate, mean, scale, initial_value):
     return mean_func, cov_func
 
 
-def _validate_ornstein_uhlenbeck(reversion_rate, mean, scale, initial_value):
+def _validate_ornstein_uhlenbeck(reversion_rate, mean, scale, initial):
     """Check the parameters of an Ornstein-Uhlenbeck process.
 
     Raises
     ------
     TypeError
         If ``reversion_rate``, ``mean``, or ``scale`` is not a number, or if
-        ``initial_value`` is neither a number nor ``"stationary"``.
+        ``initial`` is neither a number nor ``"stationary"``.
     ValueError
         If ``reversion_rate`` or ``scale`` is not positive.
     """
@@ -536,11 +536,11 @@ def _validate_ornstein_uhlenbeck(reversion_rate, mean, scale, initial_value):
             f"scale must be a number, got {type(scale).__name__}. It is the "
             f"volatility of the random shocks, for example scale=1."
         )
-    if not (isinstance(initial_value, numbers.Real) or initial_value == STATIONARY):
+    if not (isinstance(initial, numbers.Real) or initial == STATIONARY):
         raise TypeError(
-            f'initial_value must be a number or the word "stationary", got '
-            f"{type(initial_value).__name__}. Give a number to start every "
-            f'path there, or initial_value="stationary" to start from the '
+            f'initial must be a number or the word "stationary", got '
+            f"{type(initial).__name__}. Give a number to start every "
+            f'path there, or initial="stationary" to start from the '
             f"process's long-run distribution."
         )
     if reversion_rate <= 0:
@@ -552,7 +552,7 @@ def _validate_ornstein_uhlenbeck(reversion_rate, mean, scale, initial_value):
     if scale <= 0:
         raise ValueError(
             f"scale must be positive, got {scale}. A scale of 0 would give a "
-            "curve with no randomness, sliding straight from initial_value to "
+            "curve with no randomness, sliding straight from initial to "
             "mean."
         )
 
@@ -575,7 +575,7 @@ class OrnsteinUhlenbeckProbabilitySpace(GaussianProcessProbabilitySpace):
         The level the process is pulled toward. Default is 0.
     scale : float, optional
         The volatility of the random shocks. Must be positive. Default is 1.
-    initial_value : float or str, optional
+    initial : float or str, optional
         Where every path starts. Give a number, or ``"stationary"`` to start
         from the process's long-run distribution. Default is 0.
 
@@ -587,14 +587,14 @@ class OrnsteinUhlenbeckProbabilitySpace(GaussianProcessProbabilitySpace):
         The level the process is pulled toward.
     scale : float
         The volatility of the random shocks.
-    initial_value : float or str
+    initial : float or str
         Where every path starts.
 
     Raises
     ------
     TypeError
         If ``reversion_rate``, ``mean``, or ``scale`` is not a number, or if
-        ``initial_value`` is neither a number nor ``"stationary"``.
+        ``initial`` is neither a number nor ``"stationary"``.
     ValueError
         If ``reversion_rate`` or ``scale`` is not positive.
 
@@ -609,19 +609,27 @@ class OrnsteinUhlenbeckProbabilitySpace(GaussianProcessProbabilitySpace):
     -0.29
     """
 
-    def __init__(self, reversion_rate=1, mean=0, scale=1, initial_value=0):
+    def __init__(
+        self, reversion_rate=1, mean=0, scale=1, initial=None, initial_value=None
+    ):
         """Create a probability space for an Ornstein-Uhlenbeck process."""
-        _validate_ornstein_uhlenbeck(reversion_rate, mean, scale, initial_value)
+        initial = _resolve_initial(initial, initial_value, "initial_value")
+        _validate_ornstein_uhlenbeck(reversion_rate, mean, scale, initial)
 
         self.reversion_rate = reversion_rate
         self.mean = mean
         self.scale = scale
-        self.initial_value = initial_value
+        self.initial = initial
 
         mean_func, cov_func = _ornstein_uhlenbeck_funcs(
-            reversion_rate, mean, scale, initial_value
+            reversion_rate, mean, scale, initial
         )
         super().__init__(mean_func=mean_func, cov_func=cov_func)
+
+    @property
+    def initial_value(self):
+        """float : where every path starts (older name for ``initial``)."""
+        return self.initial
 
 
 class OrnsteinUhlenbeck(RandomProcess, RV):
@@ -653,7 +661,7 @@ class OrnsteinUhlenbeck(RandomProcess, RV):
         The level the process is pulled toward. Default is 0.
     scale : float, optional
         The volatility of the random shocks. Must be positive. Default is 1.
-    initial_value : float or str, optional
+    initial : float or str, optional
         Where every path starts. Give a number, and the path begins there
         exactly and travels toward ``mean`` -- the *transient*. Pass
         ``"stationary"`` to start from the long-run distribution instead, so
@@ -674,7 +682,7 @@ class OrnsteinUhlenbeck(RandomProcess, RV):
     ``scale ** 2 / (2 * reversion_rate)``, the point where the inward pull and
     the random shocks balance. Together those give the long-run distribution
     ``Normal(mean, sd=sqrt(scale ** 2 / (2 * reversion_rate)))``, which is
-    what ``initial_value="stationary"`` starts from.
+    what ``initial="stationary"`` starts from.
 
     The covariance between two times falls off like
     ``exp(-reversion_rate * abs(s - t))``: nearby times are strongly related
@@ -686,18 +694,18 @@ class OrnsteinUhlenbeck(RandomProcess, RV):
     --------
     >>> from symbulate import *
     >>> X = OrnsteinUhlenbeck(reversion_rate=1, mean=0, scale=1)
-    >>> # Every path starts exactly at initial_value
+    >>> # Every path starts exactly at initial
     >>> float(X.draw()(0.0))
     0.0
     >>> path = X.draw()                    # doctest: +SKIP
     >>> path(0.5), path(1.0), path(5.0)    # doctest: +SKIP
     (-0.41, -0.76, 0.33)
     >>> # Starting far from mean, the process is pulled toward it
-    >>> Y = OrnsteinUhlenbeck(reversion_rate=1, mean=0, scale=1, initial_value=10)
+    >>> Y = OrnsteinUhlenbeck(reversion_rate=1, mean=0, scale=1, initial=10)
     >>> Y[3.0].sim(1000).mean()            # doctest: +SKIP
     0.51
     >>> # Started from its long-run distribution, there is no transient
-    >>> Z = OrnsteinUhlenbeck(initial_value="stationary")
+    >>> Z = OrnsteinUhlenbeck(initial="stationary")
     >>> Z[0.0].sim(1000).var()             # doctest: +SKIP
     0.49
 
@@ -707,19 +715,28 @@ class OrnsteinUhlenbeck(RandomProcess, RV):
     GaussianProcess : The general process both are built on.
     """
 
-    def __init__(self, reversion_rate=1, mean=0, scale=1, initial_value=0):
+    def __init__(
+        self, reversion_rate=1, mean=0, scale=1, initial=None, initial_value=None
+    ):
         """Create an Ornstein-Uhlenbeck process."""
+        initial = _resolve_initial(initial, initial_value, "initial_value")
+        self.initial = initial
         prob_space = OrnsteinUhlenbeckProbabilitySpace(
             reversion_rate=reversion_rate,
             mean=mean,
             scale=scale,
-            initial_value=initial_value,
+            initial=initial,
         )
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
 
+    @property
+    def initial_value(self):
+        """float : where every path starts (older name for ``initial``)."""
+        return self.initial
 
-def _validate_brownian_bridge(end_time, initial_value, final_value, scale):
+
+def _validate_brownian_bridge(end_time, initial, final, scale):
     """Check the parameters of a Brownian bridge.
 
     Raises
@@ -731,8 +748,8 @@ def _validate_brownian_bridge(end_time, initial_value, final_value, scale):
     """
     for name, value, example in [
         ("end_time", end_time, "end_time=1"),
-        ("initial_value", initial_value, "initial_value=0"),
-        ("final_value", final_value, "final_value=0"),
+        ("initial", initial, "initial=0"),
+        ("final", final, "final=0"),
         ("scale", scale, "scale=1"),
     ]:
         if not isinstance(value, numbers.Real):
@@ -749,7 +766,7 @@ def _validate_brownian_bridge(end_time, initial_value, final_value, scale):
     if scale <= 0:
         raise ValueError(
             f"scale must be positive, got {scale}. A scale of 0 would give a "
-            "straight line from initial_value to final_value with no "
+            "straight line from initial to final with no "
             "randomness."
         )
 
@@ -766,9 +783,9 @@ class BrownianBridgeProbabilitySpace(GaussianProcessProbabilitySpace):
     ----------
     end_time : float, optional
         When the bridge finishes. Must be positive. Default is 1.
-    initial_value : float, optional
+    initial : float, optional
         The value the bridge starts at, at time 0. Default is 0.
-    final_value : float, optional
+    final : float, optional
         The value the bridge is tied down to at ``end_time``. Default is 0.
     scale : float, optional
         How much the path wanders between the two ends. Must be positive.
@@ -778,9 +795,9 @@ class BrownianBridgeProbabilitySpace(GaussianProcessProbabilitySpace):
     ----------
     end_time : float
         When the bridge finishes.
-    initial_value : float
+    initial : float
         The value the bridge starts at.
-    final_value : float
+    final : float
         The value the bridge ends at.
     scale : float
         How much the path wanders between the two ends.
@@ -801,18 +818,28 @@ class BrownianBridgeProbabilitySpace(GaussianProcessProbabilitySpace):
     (0.0, 0.0)
     """
 
-    def __init__(self, end_time=1, initial_value=0, final_value=0, scale=1):
+    def __init__(
+        self,
+        end_time=1,
+        initial=None,
+        final=None,
+        scale=1,
+        initial_value=None,
+        final_value=None,
+    ):
         """Create a probability space for a Brownian bridge."""
-        _validate_brownian_bridge(end_time, initial_value, final_value, scale)
+        initial = _resolve_initial(initial, initial_value, "initial_value")
+        final = _resolve_initial(final, final_value, "final_value")
+        _validate_brownian_bridge(end_time, initial, final, scale)
 
         self.end_time = end_time
-        self.initial_value = initial_value
-        self.final_value = final_value
+        self.initial = initial
+        self.final = final
         self.scale = scale
 
         def mean_func(t):
-            # A straight line from initial_value to final_value.
-            return initial_value + (final_value - initial_value) * t / end_time
+            # A straight line from initial to final.
+            return initial + (final - initial) * t / end_time
 
         def cov_func(s, t):
             # Brownian motion's min(s, t), minus the part that pinning down
@@ -830,6 +857,16 @@ class BrownianBridgeProbabilitySpace(GaussianProcessProbabilitySpace):
             index_set=TimeInterval(0, end_time),
         )
 
+    @property
+    def initial_value(self):
+        """float : where every path starts (older name for ``initial``)."""
+        return self.initial
+
+    @property
+    def final_value(self):
+        """float : where every path ends (older name for ``final``)."""
+        return self.final
+
 
 class BrownianBridge(RandomProcess, RV):
     """A Brownian bridge, a random variable over sample paths.
@@ -837,7 +874,7 @@ class BrownianBridge(RandomProcess, RV):
     A Brownian bridge is Brownian motion that already knows where it has to
     end up. Ordinary Brownian motion starts at 0 and wanders off wherever it
     likes. A bridge is tied down at *both* ends -- it starts at
-    ``initial_value`` and must arrive at ``final_value`` at time
+    ``initial`` and must arrive at ``final`` at time
     ``end_time`` -- so it wanders in between but always lands on target.
 
     Because both ends are fixed, the path has nowhere to wander at the very
@@ -856,9 +893,9 @@ class BrownianBridge(RandomProcess, RV):
     end_time : float, optional
         When the bridge finishes. Must be positive. The process is only
         defined between time 0 and this time. Default is 1.
-    initial_value : float, optional
+    initial : float, optional
         The value the bridge starts at, at time 0. Default is 0.
-    final_value : float, optional
+    final : float, optional
         The value the bridge is tied down to at ``end_time``. Default is 0.
     scale : float, optional
         How much the path wanders between the two ends. Must be positive.
@@ -888,7 +925,7 @@ class BrownianBridge(RandomProcess, RV):
     >>> float(path(0)), float(path(1))
     (0.0, 0.0)
     >>> # Tie the far end down somewhere else
-    >>> Y = BrownianBridge(end_time=4, initial_value=2, final_value=10)
+    >>> Y = BrownianBridge(end_time=4, initial=2, final=10)
     >>> path = Y.draw()
     >>> float(path(0)), float(path(4))
     (2.0, 10.0)
@@ -902,16 +939,38 @@ class BrownianBridge(RandomProcess, RV):
     TimeInterval : The index set that limits the bridge to its own stretch of time.
     """
 
-    def __init__(self, end_time=1, initial_value=0, final_value=0, scale=1):
+    def __init__(
+        self,
+        end_time=1,
+        initial=None,
+        final=None,
+        scale=1,
+        initial_value=None,
+        final_value=None,
+    ):
         """Create a Brownian bridge."""
+        initial = _resolve_initial(initial, initial_value, "initial_value")
+        final = _resolve_initial(final, final_value, "final_value")
+        self.initial = initial
+        self.final = final
         prob_space = BrownianBridgeProbabilitySpace(
             end_time=end_time,
-            initial_value=initial_value,
-            final_value=final_value,
+            initial=initial,
+            final=final,
             scale=scale,
         )
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
+
+    @property
+    def initial_value(self):
+        """float : where every path starts (older name for ``initial``)."""
+        return self.initial
+
+    @property
+    def final_value(self):
+        """float : where every path ends (older name for ``final``)."""
+        return self.final
 
 
 def _validate_fractional_brownian_motion(hurst, scale):
@@ -1088,7 +1147,7 @@ class FractionalBrownianMotion(RandomProcess, RV):
         RV.__init__(self, prob_space)
 
 
-def _validate_geometric_brownian_motion(initial_value, growth_rate, scale):
+def _validate_geometric_brownian_motion(initial, growth_rate, scale):
     """Check the parameters of a geometric Brownian motion.
 
     Raises
@@ -1096,10 +1155,10 @@ def _validate_geometric_brownian_motion(initial_value, growth_rate, scale):
     TypeError
         If any parameter is not a number.
     ValueError
-        If ``initial_value`` or ``scale`` is not positive.
+        If ``initial`` or ``scale`` is not positive.
     """
     for name, value, example in [
-        ("initial_value", initial_value, "initial_value=100"),
+        ("initial", initial, "initial=100"),
         ("growth_rate", growth_rate, "growth_rate=0.05"),
         ("scale", scale, "scale=0.2"),
     ]:
@@ -1108,9 +1167,9 @@ def _validate_geometric_brownian_motion(initial_value, growth_rate, scale):
                 f"{name} must be a number, got {type(value).__name__}. "
                 f"For example, {example}."
             )
-    if initial_value <= 0:
+    if initial <= 0:
         raise ValueError(
-            f"initial_value must be positive, got {initial_value}. A "
+            f"initial must be positive, got {initial}. A "
             f"geometric Brownian motion multiplies its starting value by a "
             f"positive number, so starting at 0 would stay at 0 forever and "
             f"starting below 0 would stay negative forever."
@@ -1122,13 +1181,13 @@ def _validate_geometric_brownian_motion(initial_value, growth_rate, scale):
         )
 
 
-def get_geometric_brownian_motion_result(initial_value, growth_rate, scale):
+def get_geometric_brownian_motion_result(initial, growth_rate, scale):
     """Create one simulated sample path of a geometric Brownian motion.
 
     Built by transforming a Brownian motion path rather than by simulating
     small steps, so the path is **exact**: at every time ``t``,
 
-    ``value(t) = initial_value * exp((growth_rate - scale ** 2 / 2) * t
+    ``value(t) = initial * exp((growth_rate - scale ** 2 / 2) * t
     + scale * W(t))``
 
     where ``W`` is a standard Brownian motion. Because the underlying
@@ -1139,11 +1198,11 @@ def get_geometric_brownian_motion_result(initial_value, growth_rate, scale):
 
     Parameters
     ----------
-    initial_value : float
+    initial : float
         The value at time 0. Must be positive.
     growth_rate : float
         The average exponential growth rate. The mean at time ``t`` is
-        ``initial_value * exp(growth_rate * t)``.
+        ``initial * exp(growth_rate * t)``.
     scale : float
         The volatility -- how much the path swings around that average.
         Must be positive.
@@ -1188,7 +1247,7 @@ def get_geometric_brownian_motion_result(initial_value, growth_rate, scale):
             because it is where the randomness actually lives.
         index_set : Reals
             The times the path is defined over.
-        initial_value, growth_rate, scale : float
+        initial, growth_rate, scale : float
             The parameters this path was generated from. Kept so that code
             working with a finished path can undo the exponential -- the
             hitting-time utility does exactly that, turning a question about
@@ -1203,17 +1262,22 @@ def get_geometric_brownian_motion_result(initial_value, growth_rate, scale):
                 if t < 0:
                     raise ValueError(
                         "GeometricBrownianMotion is only defined for t >= 0 "
-                        f"(the path starts at {initial_value} at time 0), "
+                        f"(the path starts at {initial} at time 0), "
                         f"got t={t}."
                     )
-                return initial_value * np.exp(log_drift * t + scale * brownian_path(t))
+                return initial * np.exp(log_drift * t + scale * brownian_path(t))
 
             super().__init__(func=_func)
             self.index_set = Reals()
             self.brownian_path = brownian_path
-            self.initial_value = initial_value
+            self.initial = initial
             self.growth_rate = growth_rate
             self.scale = scale
+
+        @property
+        def initial_value(self):
+            """float : the price at time 0 (older name for ``initial``)."""
+            return self.initial
 
     return GeometricBrownianMotionResult()
 
@@ -1228,7 +1292,7 @@ class GeometricBrownianMotionProbabilitySpace(ProbabilitySpace):
 
     Parameters
     ----------
-    initial_value : float, optional
+    initial : float, optional
         The value at time 0. Must be positive. Default is 1.
     growth_rate : float, optional
         The average exponential growth rate. Default is 0.
@@ -1237,7 +1301,7 @@ class GeometricBrownianMotionProbabilitySpace(ProbabilitySpace):
 
     Attributes
     ----------
-    initial_value : float
+    initial : float
         The value at time 0.
     growth_rate : float
         The average exponential growth rate.
@@ -1249,30 +1313,34 @@ class GeometricBrownianMotionProbabilitySpace(ProbabilitySpace):
     TypeError
         If any parameter is not a number.
     ValueError
-        If ``initial_value`` or ``scale`` is not positive.
+        If ``initial`` or ``scale`` is not positive.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> P = GeometricBrownianMotionProbabilitySpace(initial_value=100)
+    >>> P = GeometricBrownianMotionProbabilitySpace(initial=100)
     >>> float(P.draw()(0))
     100.0
     """
 
-    def __init__(self, initial_value=1, growth_rate=0, scale=1):
+    def __init__(self, initial=None, growth_rate=0, scale=1, initial_value=None):
         """Create a probability space for a geometric Brownian motion."""
-        _validate_geometric_brownian_motion(initial_value, growth_rate, scale)
+        initial = _resolve_initial(initial, initial_value, "initial_value", default=1)
+        _validate_geometric_brownian_motion(initial, growth_rate, scale)
 
-        self.initial_value = initial_value
+        self.initial = initial
         self.growth_rate = growth_rate
         self.scale = scale
 
         def draw():
-            return get_geometric_brownian_motion_result(
-                initial_value, growth_rate, scale
-            )
+            return get_geometric_brownian_motion_result(initial, growth_rate, scale)
 
         super().__init__(draw)
+
+    @property
+    def initial_value(self):
+        """float : where every path starts (older name for ``initial``)."""
+        return self.initial
 
 
 class GeometricBrownianMotion(RandomProcess, RV):
@@ -1287,7 +1355,7 @@ class GeometricBrownianMotion(RandomProcess, RV):
 
     It is exactly the exponential of a Brownian motion,
 
-    ``value(t) = initial_value * exp((growth_rate - scale ** 2 / 2) * t
+    ``value(t) = initial * exp((growth_rate - scale ** 2 / 2) * t
     + scale * W(t))``
 
     so Symbulate simulates it **exactly**, by drawing a Brownian path and
@@ -1295,11 +1363,11 @@ class GeometricBrownianMotion(RandomProcess, RV):
 
     Parameters
     ----------
-    initial_value : float, optional
+    initial : float, optional
         The value at time 0. Must be positive. Default is 1.
     growth_rate : float, optional
         The average exponential growth rate. The mean at time ``t`` is
-        ``initial_value * exp(growth_rate * t)``, so 0.05 is roughly 5%
+        ``initial * exp(growth_rate * t)``, so 0.05 is roughly 5%
         growth per unit of time. Default is 0.
     scale : float, optional
         The volatility -- how widely paths spread around that average. Must
@@ -1314,7 +1382,7 @@ class GeometricBrownianMotion(RandomProcess, RV):
     -----
     The value at time ``t`` is log-normal, and its mean and variance are
 
-    - ``mean = initial_value * exp(growth_rate * t)``
+    - ``mean = initial * exp(growth_rate * t)``
     - ``variance = mean ** 2 * (exp(scale ** 2 * t) - 1)``
 
     The ``- scale ** 2 / 2`` in the exponent is easy to overlook and matters:
@@ -1326,13 +1394,13 @@ class GeometricBrownianMotion(RandomProcess, RV):
     mean still rises while most individual paths drift toward 0.
 
     Asking for a time before 0 raises a ``ValueError``, since the path
-    starts at ``initial_value`` at time 0.
+    starts at ``initial`` at time 0.
 
     Examples
     --------
     >>> from symbulate import *
-    >>> X = GeometricBrownianMotion(initial_value=100, growth_rate=0.05, scale=0.2)
-    >>> # Every path starts at initial_value
+    >>> X = GeometricBrownianMotion(initial=100, growth_rate=0.05, scale=0.2)
+    >>> # Every path starts at initial
     >>> float(X.draw()(0))
     100.0
     >>> path = X.draw()             # doctest: +SKIP
@@ -1347,12 +1415,19 @@ class GeometricBrownianMotion(RandomProcess, RV):
     BrownianMotion : The process this is the exponential of.
     """
 
-    def __init__(self, initial_value=1, growth_rate=0, scale=1):
+    def __init__(self, initial=None, growth_rate=0, scale=1, initial_value=None):
         """Create a geometric Brownian motion process."""
+        initial = _resolve_initial(initial, initial_value, "initial_value", default=1)
+        self.initial = initial
         prob_space = GeometricBrownianMotionProbabilitySpace(
-            initial_value=initial_value,
+            initial=initial,
             growth_rate=growth_rate,
             scale=scale,
         )
         RandomProcess.__init__(self, prob_space)
         RV.__init__(self, prob_space)
+
+    @property
+    def initial_value(self):
+        """float : where every path starts (older name for ``initial``)."""
+        return self.initial
