@@ -128,12 +128,21 @@ from .random_walk import (
     RandomWalkProbabilitySpace,
     RandomWalkResult,
 )
+from .branching_process import (
+    GaltonWatson,
+    GaltonWatsonProbabilitySpace,
+    GaltonWatsonResult,
+)
 from .time_series import (
     MA,
     MAProbabilitySpace,
     MAResult,
     AR,
+    ARCH,
     ARMA,
+    GARCH,
+    GARCHProbabilitySpace,
+    GARCHResult,
     ARMAProbabilitySpace,
     ARMAResult,
 )

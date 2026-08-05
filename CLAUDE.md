@@ -55,7 +55,8 @@ must be understandable by a general audience without assuming prior knowledge.
 | `renewal_process.py` | `RenewalProcess` — counting process with any nonnegative interarrival distribution; `CompoundPoissonProcess` — running total of a jump drawn at each Poisson arrival (see "Compound Poisson Process" below) |
 | `queues.py` | `GG1`, `MG1`, `GM1`, `GGs` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
-| `time_series.py` | `MA`, `AR`, `ARMA` — time-series processes; home for GARCH as it lands |
+| `time_series.py` | `MA`, `AR`, `ARMA`, `GARCH`, `ARCH` — time-series processes |
+| `branching_process.py` | `GaltonWatson` — a family tree that may die out or grow without bound |
 | `hitting_times.py` | `hitting_time` — when a path first reaches a level; jump, discrete-time, and Gaussian paths (see "Hitting Times" below) |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` and `MertonJumpDiffusion` — named special cases, both simulated exactly (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
@@ -611,7 +612,8 @@ Three implementation notes:
 | `test_renewal_process.py` | Renewal process and compound Poisson process |
 | `test_queues.py` | `GG1`, `MG1`, `GM1`, `GGs` (general-service queues) |
 | `test_random_walk.py` | `RandomWalk` |
-| `test_time_series.py` | `MA`, `AR`, `ARMA` (and the rest of the time-series family as it lands) |
+| `test_time_series.py` | `MA`, `AR`, `ARMA`, `GARCH`, `ARCH` |
+| `test_branching_process.py` | `GaltonWatson` |
 | `test_hitting_times.py` | `hitting_time` |
 | `test_continuous_time_processes.py` | The interface **every** continuous-time discrete-state process shares (see "Continuous-Time, Discrete-State Processes" below) — table-driven over all of them |
 | `test_diffusion_process.py` | Diffusion processes |
