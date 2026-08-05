@@ -25,7 +25,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
 import matplotlib.pyplot as plt
-from matplotlib.collections import PolyCollection, PathCollection
+from matplotlib.collections import PolyCollection, PathCollection, LineCollection
 
 from symbulate import (
     RV,
@@ -59,6 +59,8 @@ from symbulate.plot import (
     JOINT_PAIRS_MAX_DIM,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
+    MARGINAL_FREQ_TICKS,
+    JOINT_PAIRS_COLORBAR_TITLE_SIZE,
     classify_values,
     default_plot_type,
     dotplot_tallest_stack,
@@ -591,7 +593,7 @@ class TestPlot2DContinuous(PlotTestCase):
         X, Y = RV(Normal(0, 1) ** 2)
         (X & Y).sim(40).plot()
         ax = plt.gca()
-        self.assertEqual(ax.get_title(), "2D Scatter Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "2D Scatter Plot")
         self.assertEqual(len(ax.collections[0].get_offsets()), 40)
 
     def test_scatter_explicit(self):
@@ -617,18 +619,18 @@ class TestPlot2DContinuous(PlotTestCase):
         Note: add_colorbar() adds a fourth axes in some plot types, so we
         assert >= 3 rather than == 3.
         """
-        self.sims.plot(marginal=True)
+        self.sims.plot()
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
     def test_marginal_density_creates_at_least_three_axes(self):
-        self.sims.plot(type="density", marginal=True)
+        self.sims.plot(type="density")
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
     def test_marginal_true_with_default_type_draws_main_panel(self):
-        """marginal=True with no explicit type= must still resolve type
-        to the data's default (2D histogram here) and draw it on the
-        main panel, rather than leaving the center panel blank."""
-        p = self.sims.plot(marginal=True)
+        """The three-panel layout must still resolve type= to the data's
+        default (a 2-D histogram here) and draw it on the main panel,
+        rather than leaving the center panel blank."""
+        p = self.sims.plot()
         self.assertGreater(len(p.ax.collections), 0)
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
@@ -636,7 +638,7 @@ class TestPlot2DContinuous(PlotTestCase):
         """The main panel keeps its "X"/"Y" labels, and neither marginal
         panel shows a redundant "Value" axis label next to it."""
         for main_type in ["hist", "tile", "density"]:
-            p = self.sims.plot(type=main_type, marginal=True)
+            p = self.sims.plot(type=main_type)
             self.assertEqual(p.ax.get_xlabel(), "Variable 1")
             self.assertEqual(p.ax.get_ylabel(), "Variable 2")
             for a in plt.gcf().axes:
@@ -655,7 +657,7 @@ class TestPlot2DContinuous(PlotTestCase):
         def yvis(a):
             return any(gl.get_visible() for gl in a.get_ygridlines())
 
-        p = self.sims.plot(type="hist", marginal=True)
+        p = self.sims.plot(type="hist")
         # Panels are the non-main, non-colorbar axes (the colorbar caxes is
         # a narrow strip); the top marginal sits highest, the right one
         # sits furthest right.
@@ -671,45 +673,217 @@ class TestPlot2DContinuous(PlotTestCase):
 
 
 class TestMarginalOverlayHardError(PlotTestCase):
-    """A marginal=True layout is the 'hard error' tier of the overlay
-    policy: it builds three panels a second plot can't share."""
+    """A two-variable plot is the 'hard error' tier of the overlay policy.
+
+    It builds three panels -- the joint distribution plus each variable's
+    own -- and a second plot can't share them. Since that is the layout for
+    *every* two-variable plot, no plot of two variables can be overlaid.
+    """
 
     def setUp(self):
         np.random.seed(42)
         X, Y = RV(Normal(0, 1) ** 2)
         self.sims = (X & Y).sim(300)
+        (Z,) = RV(Normal(0, 1) ** 1)
+        self.sims_1d = Z.sim(300)
 
-    def test_second_plot_after_marginal_raises(self):
-        self.sims.plot(marginal=True, suggest=False)
-        with self.assertRaises(ValueError) as cm:
-            self.sims.plot(suggest=False)
-        self.assertIn("marginal=True", str(cm.exception))
-
-    def test_second_marginal_after_marginal_raises(self):
-        self.sims.plot(marginal=True, suggest=False)
-        with self.assertRaises(ValueError):
-            self.sims.plot(marginal=True, suggest=False)
-
-    def test_marginal_after_plain_plot_raises(self):
-        """A marginal layout can't be retrofitted onto a figure that
-        already has a plot on it either."""
+    def test_second_two_variable_plot_raises(self):
         self.sims.plot(suggest=False)
         with self.assertRaises(ValueError) as cm:
-            self.sims.plot(marginal=True, suggest=False)
-        self.assertIn("marginal=True", str(cm.exception))
+            self.sims.plot(suggest=False)
+        self.assertIn("two variables", str(cm.exception))
+        self.assertIn("own cell", str(cm.exception))
 
-    def test_fresh_marginal_still_works(self):
-        """The guard must not block a marginal plot on a fresh figure."""
-        p = self.sims.plot(marginal=True, suggest=False)
+    def test_two_variable_plot_onto_existing_plot_raises(self):
+        """The layout can't be retrofitted onto a figure that already has a
+        plot on it, so a 1-D plot first blocks it too."""
+        self.sims_1d.plot(suggest=False)
+        with self.assertRaises(ValueError) as cm:
+            self.sims.plot(suggest=False)
+        self.assertIn("two variables", str(cm.exception))
+
+    def test_one_variable_plot_after_a_two_variable_plot_raises(self):
+        """And nothing can be drawn on top of it afterwards, either."""
+        self.sims.plot(suggest=False)
+        with self.assertRaises(ValueError):
+            self.sims_1d.plot(suggest=False)
+
+    def test_fresh_two_variable_plot_still_works(self):
+        """The guard must not block a two-variable plot on a fresh figure."""
+        p = self.sims.plot(suggest=False)
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
         self.assertGreater(len(p.ax.collections), 0)
 
-    def test_marginal_in_new_figure_after_close_works(self):
+    def test_two_variable_plot_in_new_figure_after_close_works(self):
         """Closing the figure (a fresh Jupyter cell) clears the guard."""
-        self.sims.plot(marginal=True, suggest=False)
+        self.sims.plot(suggest=False)
         plt.close("all")
-        self.sims.plot(marginal=True, suggest=False)
+        self.sims.plot(suggest=False)
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
+
+
+class TestTwoVariableLayoutIsTheDefault(PlotTestCase):
+    """Every plot of two variables shows each variable's own distribution.
+
+    There is no keyword for it: the three-panel layout is what a 2-D plot
+    *is*, for every plot type and both sample sizes.
+    """
+
+    def _panels(self):
+        return [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+
+    def test_every_2d_type_gets_three_panels(self):
+        X, Y = RV(Normal(0, 1) ** 2)
+        Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+        Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
+        cases = [
+            ((X & Y).sim(500), None),
+            ((X & Y).sim(500), "scatter"),
+            ((X & Y).sim(500), "hist2d"),
+            ((X & Y).sim(500), "density2d"),
+            ((X & Y).sim(40), None),
+            ((Xd & Yd).sim(500), None),
+            ((Xd & Yd).sim(500), "tile"),
+            ((Xm & Ym).sim(500), None),
+            ((Xm & Ym).sim(500), "segmented_rug"),
+            ((Xm & Ym).sim(500), "violin"),
+            ((Xm & Ym).sim(500), "box"),
+        ]
+        for sims, kind in cases:
+            with self.subTest(type=kind):
+                plt.close("all")
+                plt.figure()
+                (
+                    sims.plot(suggest=False)
+                    if kind is None
+                    else sims.plot(type=kind, suggest=False)
+                )
+                self.assertEqual(len(self._panels()), 3)
+
+    def test_the_plot_type_becomes_the_figure_title(self):
+        """There is no room for the main panel's own title, so it moves to
+        the figure -- but it is not lost."""
+        Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+        (Xd & Yd).sim(500).plot(suggest=False)
+        self.assertEqual(plt.gcf().get_suptitle(), "Tile Plot")
+        self.assertEqual(plt.gca().get_title(), "")
+
+    def test_gca_is_the_joint_panel(self):
+        """Drawing the strips and the colorbar moves the current axes, so the
+        joint panel has to be made current again at the end."""
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(500).plot(suggest=False)
+        self.assertIs(plt.gca(), p.ax)
+        self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
+        self.assertEqual(plt.gca().get_ylabel(), "Variable 2")
+
+    def test_the_strips_show_each_variable_on_its_own(self):
+        """The top strip covers x's range, the right strip covers y's --
+        each locked to the joint panel's own limits."""
+        X, Y = RV((Normal(0, 1) * Normal(10, 1)))
+        p = (X & Y).sim(500).plot(suggest=False)
+        strips = [a for a in self._panels() if a is not p.ax]
+        marg_x = max(strips, key=lambda a: a.get_position().y0)
+        marg_y = max(strips, key=lambda a: a.get_position().x0)
+        self.assertEqual(marg_x.get_xlim(), p.ax.get_xlim())
+        self.assertEqual(marg_y.get_ylim(), p.ax.get_ylim())
+
+    def test_a_marginal_rug_matches_the_joint_panels_rug_ticks(self):
+        """make_rug sizes ticks as a fraction of its own axes, so a strip's
+        would be shorter than the joint panel's just for being smaller."""
+        Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
+        p = (Xm & Ym).sim(40).plot(suggest=False)
+        fig = plt.gcf()
+        fig.canvas.draw()
+
+        def longest_rug_tick(ax):
+            best = 0.0
+            for c in ax.collections:
+                if not isinstance(c, LineCollection):
+                    continue
+                transform = c.get_transform()
+                for seg in c.get_segments():
+                    pts = transform.transform(seg)
+                    best = max(
+                        best, abs(pts[1][1] - pts[0][1]), abs(pts[1][0] - pts[0][0])
+                    )
+            return best
+
+        # The main panel is a segmented rug; the continuous (y) strip is a
+        # rug. Both should draw the same length tick, in real pixels.
+        strips = [a for a in self._panels() if a is not p.ax]
+        marg_y = max(strips, key=lambda a: a.get_position().x0)
+        main = longest_rug_tick(p.ax)
+        strip = longest_rug_tick(marg_y)
+        self.assertGreater(main, 0)
+        self.assertGreater(strip, 0)
+        self.assertAlmostEqual(strip, main, delta=1.0)
+
+    def test_a_strips_frequency_axis_is_not_crowded(self):
+        """A strip is a fraction of the joint panel's size, so it can't show
+        as many ticks -- 0, 2, 4, 6, 8 ran together."""
+        cases = [
+            (RV(Binomial(5, 0.4) ** 2), 500, {"normalize": False}),  # impulse, counts
+            (RV(Binomial(5, 0.4) ** 2), 40, {}),  # dotplots
+            (RV(Normal(0, 1) ** 2), 500, {}),  # histograms
+            (RV(Binomial(5, 0.4) * Normal(0, 1)), 40, {}),  # dotplot + rug
+        ]
+        for rvs, n, kwargs in cases:
+            with self.subTest(n=n, **kwargs):
+                plt.close("all")
+                plt.figure()
+                A, B = rvs
+                p = (A & B).sim(n).plot(suggest=False, **kwargs)
+                fig = plt.gcf()
+                # Drawn, because a dot plot rebuilds its own locators on every
+                # draw and used to undo the cap here.
+                fig.canvas.draw()
+                for strip in [a for a in self._panels() if a is not p.ax]:
+                    vertical = strip.get_position().height < 0.3
+                    axis = strip.yaxis if vertical else strip.xaxis
+                    labels = [t for t in axis.get_ticklabels() if t.get_text()]
+                    self.assertLessEqual(len(labels), MARGINAL_FREQ_TICKS + 2)
+
+    def test_a_count_axis_stays_whole_numbers(self):
+        """Half a simulated value doesn't exist, so thinning a count axis
+        must not introduce fractional ticks."""
+        Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+        p = (Xd & Yd).sim(500).plot(normalize=False, suggest=False)
+        plt.gcf().canvas.draw()
+        for strip in [a for a in self._panels() if a is not p.ax]:
+            vertical = strip.get_position().height < 0.3
+            axis = strip.yaxis if vertical else strip.xaxis
+            self.assertEqual(strip.get_ylabel() if vertical else "Count", "Count")
+            for tick in axis.get_ticklocs():
+                self.assertEqual(tick, round(tick))
+
+    def test_marginal_keyword_is_gone_and_says_so(self):
+        X, Y = RV(Normal(0, 1) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(100).plot(marginal=True)
+        self.assertIn("no longer needed", str(cm.exception))
+        self.assertIn("Drop marginal=True", str(cm.exception))
+
+    def test_one_variable_is_untouched(self):
+        """The layout is for two variables only -- a 1-D plot is still one
+        panel with its title on it."""
+        (Z,) = RV(Normal(0, 1) ** 1)
+        Z.sim(500).plot(suggest=False)
+        self.assertEqual(len(self._panels()), 1)
+        self.assertEqual(plt.gcf().get_suptitle(), "")
+        self.assertNotEqual(plt.gca().get_title(), "")
+
+    def test_pairs_panels_get_no_strips(self):
+        """A joint panel of a pairs matrix goes back through the 2-D
+        dispatch when it draws a scatter or a segmented rug -- it must draw
+        just the panel, not a layout inside a panel.
+        """
+        A, B, C = RV(Normal(0, 1) ** 3)
+        # A small simulation, so the joint panels are scatters.
+        (A & B & C).sim(40).plot(suggest=False)
+        # 3 diagonal + 3 joint, and nothing else.
+        self.assertEqual(len(self._panels()), 6)
+        self.assertEqual(plt.gcf().get_suptitle(), "Pairs Plot")
 
 
 class TestPlot2DDiscrete(PlotTestCase):
@@ -761,7 +935,7 @@ class TestPlot2DViolin(PlotTestCase):
             warnings.simplefilter("ignore", PendingDeprecationWarning)
             sims.plot(type="violin")
         ax = plt.gca()
-        self.assertEqual(ax.get_title(), "Violin Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Violin Plot")
         self.assertEqual(ax.get_xlabel(), "Variable 1")
         self.assertEqual(ax.get_ylabel(), "Variable 2")
 
@@ -819,19 +993,23 @@ class TestPlot2DViolin(PlotTestCase):
         labels = [t.get_text() for t in ax.get_xticklabels() if t.get_text()]
         self.assertEqual(labels, ["0", "1", "2", "3", "4", "5"])
 
-    def test_violin_overlay_prints_warning(self):
-        import io
-        import contextlib
+    def test_violin_overlay_is_a_hard_error(self):
+        """A violin plot is a plot of two variables, so it gets the
+        three-panel layout and cannot be overlaid at all.
 
+        This used to print VIOLIN_OVERLAY_WARNING and draw both on shared
+        axes -- the readability-warning tier of the overlay policy. Every
+        two-variable plot is a hard error now, so that warning is no longer
+        reachable from here.
+        """
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         sims = (X & Y).sim(300)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", PendingDeprecationWarning)
             sims.plot(type="violin", suggest=False)
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
+            with self.assertRaises(ValueError) as cm:
                 sims.plot(type="violin", suggest=False)
-        self.assertIn("second violin plot", buf.getvalue())
+        self.assertIn("two variables", str(cm.exception))
 
     def test_violin_tick_position_matches_its_own_label(self):
         """Regression test: tick marks must sit at the same x-position as
@@ -1411,6 +1589,7 @@ class TestPlot1DBoxStyling(PlotTestCase):
     def test_boxplot_alias_behaves_like_box(self):
         self.sims.plot(type="boxplot")
         ax = plt.gca()
+        # 1-D data: one panel, so the title stays on it.
         self.assertEqual(ax.get_title(), "Box Plot")
         self.assertGreater(len(ax.patches), 0)
 
@@ -1526,7 +1705,7 @@ class TestPlot2DScatterFeatures(PlotTestCase):
         ax = plt.gca()
         self.assertEqual(ax.get_xlabel(), "Variable 1")
         self.assertEqual(ax.get_ylabel(), "Variable 2")
-        self.assertEqual(ax.get_title(), "2D Scatter Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "2D Scatter Plot")
 
     def test_scatter_jitter_true_still_works(self):
         """jitter=True is the legacy alias for jitter='random'."""
@@ -1579,14 +1758,18 @@ class TestPlot2DScatterFeatures(PlotTestCase):
         offsets = np.asarray(plt.gca().collections[0].get_offsets())
         self.assertLess(len(np.unique(offsets, axis=0)), len(offsets))
 
-    def test_scatter_overlay_gets_legend(self):
+    def test_scatter_overlay_is_a_hard_error(self):
+        """Two scatters can no longer share axes to be compared.
+
+        A scatter is a plot of two variables, so it gets the three-panel
+        layout, which nothing can be drawn on top of. This used to overlay
+        and label the two sets in a legend.
+        """
         self.sims.plot(type="scatter")
         X, Y = RV(Normal(2, 1) ** 2)
-        (X & Y).sim(100).plot(type="scatter")
-        legend = plt.gca().get_legend()
-        self.assertIsNotNone(legend)
-        labels = [t.get_text() for t in legend.get_texts()]
-        self.assertEqual(labels, ["Variable 1", "Variable 2"])
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(100).plot(type="scatter")
+        self.assertIn("two variables", str(cm.exception))
 
     def test_scatter_user_marker_size_does_not_raise(self):
         """s= used to flow straight into ax.scatter; it still must."""
@@ -1623,27 +1806,27 @@ class TestPlot2DMeshFeatures(PlotTestCase):
 
     def test_hist2d_hex_option(self):
         self.sims.plot(type="hist", hex=True)
-        self.assertEqual(plt.gca().get_title(), "Hexbin Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Hexbin Plot")
 
     def test_hist2d_title(self):
         self.sims.plot(type="hist")
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gcf().get_suptitle(), "2-D Histogram")
 
     def test_density2d_draws_contour_surface(self):
         """Banded by default now, so it titles itself a contour plot."""
         self.sims.plot(type="density")
         ax = plt.gca()
         self.assertGreater(len(ax.collections + ax.images), 0)
-        self.assertEqual(ax.get_title(), "Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Contour Plot")
 
     def test_density2d_smooth_surface_with_contour_off(self):
         """contour=False is how the smooth gradient is asked for now."""
         self.sims.plot(type="density", contour=False)
-        self.assertEqual(plt.gca().get_title(), "2D Density Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "2D Density Plot")
 
     def test_density2d_contour_mode(self):
         self.sims.plot(type="density", contour=True)
-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Contour Plot")
 
     def test_density2d_levels_without_contour_warns(self):
         """levels only bands a contour plot, so it warns with contour=False."""
@@ -1744,7 +1927,7 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         self.mixed_sims.plot(type="rug")
         ax = plt.gca()
         self.assertGreater(len(ax.collections), 0)
-        self.assertEqual(ax.get_title(), "Segmented Rug Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Segmented Rug Plot")
 
     def test_segmented_rug_gridlines_on_discrete_axis_only(self):
         """Gridlines run along the discrete axis only: vertical (x) when x
@@ -1798,7 +1981,7 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         self.assertIn("tile", str(cm.exception))
 
     def test_marginal_hist_combo_still_draws(self):
-        self.sims.plot(type="hist", marginal=True)
+        self.sims.plot(type="hist")
         self.assertGreaterEqual(len(plt.gcf().axes), 3)
 
 
@@ -2191,7 +2374,7 @@ class TestPlot2DBox(PlotTestCase):
         sims.plot(type="box")
         ax = plt.gca()
         self.assertGreater(len(ax.patches), 0)
-        self.assertEqual(ax.get_title(), "Box Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Box Plot")
 
     def test_box_continuous_x_discrete_y(self):
         X, Y = RV(Normal(0, 1) * Binomial(5, 0.4))
@@ -2203,7 +2386,7 @@ class TestPlot2DBox(PlotTestCase):
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         (X & Y).sim(500).plot(type="boxplot")
         ax = plt.gca()
-        self.assertEqual(ax.get_title(), "Box Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Box Plot")
         self.assertGreater(len(ax.patches), 0)
 
     def test_box_two_discrete_raises_friendly_error(self):
@@ -2261,7 +2444,7 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         sims = (X & Y).sim(500)
         sims.plot(type="segmented_density")
         ax = plt.gca()
-        self.assertEqual(ax.get_title(), "Segmented Density Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Segmented Density Plot")
         # One unfilled Line2D curve per observed level of X, and no
         # fills by default (ridge=False)
         n_levels = len(np.unique(sims.array[:, 0]))
@@ -2373,14 +2556,14 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
     def test_density_short_name_is_segmented_on_mixed(self):
         """On mixed data, type='density' produces the segmented density."""
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="density", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "Segmented Density Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Segmented Density Plot")
 
     def test_density2d_still_forces_surface_on_mixed(self):
         """type='density2d' forces the 2D surface even on mixed data."""
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(
             type="density2d", suggest=False
         )
-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Contour Plot")
 
 
 class TestPlot2DSegmentedHist(PlotTestCase):
@@ -2394,7 +2577,7 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         sims = (X & Y).sim(500)
         sims.plot(type="segmented_hist")
         ax = plt.gca()
-        self.assertEqual(ax.get_title(), "Segmented Histogram")
+        self.assertEqual(plt.gcf().get_suptitle(), "Segmented Histogram")
         self.assertGreater(len(ax.patches), 0)
         # Discrete x -> flipped orientation: baselines on the x-axis
         n_levels = len(np.unique(sims.array[:, 0]))
@@ -2505,17 +2688,17 @@ class TestPlot2DSegmentedHist(PlotTestCase):
     def test_hist_short_name_is_segmented_on_mixed(self):
         """On mixed data, type='hist' produces the segmented histogram."""
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="hist", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "Segmented Histogram")
+        self.assertEqual(plt.gcf().get_suptitle(), "Segmented Histogram")
 
     def test_hist2d_still_forces_mesh_on_mixed(self):
         """type='hist2d' forces the 2D mesh even on mixed data."""
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="hist2d", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gcf().get_suptitle(), "2-D Histogram")
 
     def test_hist_short_name_stays_2d_on_continuous(self):
         """On two continuous variables, type='hist' is still the 2D mesh."""
         RV(Normal(0, 1) * Normal(0, 1)).sim(500).plot(type="hist", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gcf().get_suptitle(), "2-D Histogram")
 
 
 # ===========================================================================
@@ -2525,7 +2708,7 @@ class TestPlot2DSegmentedHist(PlotTestCase):
 
 
 class TestMarginalPanelRebuild(PlotTestCase):
-    """marginal=True panels now use the redesigned 1D helpers, are routed
+    """Marginal strips use the redesigned 1D helpers, are routed
     through classify_values like a standalone 1D variable, and are aligned
     to the main panel's actual coordinate system instead of drifting to
     their own scheme."""
@@ -2543,7 +2726,7 @@ class TestMarginalPanelRebuild(PlotTestCase):
         used to disagree completely with a real-valued marginal axis."""
         np.random.seed(0)
         X, Y = RV(DiscreteUniform(a=50, b=60) * Poisson(lam=5))
-        p = (X & Y).sim(2000).plot(type="tile", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="tile", suggest=False)
         ax_marg_x, ax_marg_y = self._marginal_axes(p)
         self.assertEqual(p.ax.get_xlim(), ax_marg_x.get_xlim())
         self.assertEqual(p.ax.get_ylim(), ax_marg_y.get_ylim())
@@ -2562,56 +2745,64 @@ class TestMarginalPanelRebuild(PlotTestCase):
     def test_scatter_continuous_marginal_aligned(self):
         np.random.seed(1)
         X, Y = RV(Normal(0, 1) ** 2)
-        p = (X & Y).sim(50).plot(type="scatter", marginal=True, suggest=False)
+        p = (X & Y).sim(50).plot(type="scatter", suggest=False)
         self._assert_aligned_and_populated(p)
 
     def test_scatter_discrete_marginal_aligned(self):
         np.random.seed(1)
         X, Y = RV(Binomial(5, 0.4) ** 2)
-        p = (X & Y).sim(50).plot(type="scatter", marginal=True, suggest=False)
+        p = (X & Y).sim(50).plot(type="scatter", suggest=False)
         self._assert_aligned_and_populated(p)
 
     def test_tile_discrete_discrete_marginal_aligned(self):
         np.random.seed(1)
         X, Y = RV(Binomial(5, 0.4) ** 2)
-        p = (X & Y).sim(2000).plot(type="tile", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="tile", suggest=False)
         self._assert_aligned_and_populated(p)
 
     def test_hist2d_marginal_aligned(self):
         np.random.seed(1)
         X, Y = RV(Normal(0, 1) ** 2)
-        p = (X & Y).sim(2000).plot(type="hist2d", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="hist2d", suggest=False)
         self._assert_aligned_and_populated(p)
 
     def test_density2d_marginal_aligned(self):
         np.random.seed(1)
         X, Y = RV(Normal(0, 1) ** 2)
-        p = (X & Y).sim(2000).plot(type="density2d", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="density2d", suggest=False)
         self._assert_aligned_and_populated(p)
 
     def test_segmented_rug_marginal_aligned(self):
         np.random.seed(1)
         X, Y = RV(Poisson(lam=3) * Normal(0, 1))
-        p = (X & Y).sim(2000).plot(type="rug", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="rug", suggest=False)
         self._assert_aligned_and_populated(p)
 
     def test_violin_marginal_aligned(self):
         np.random.seed(1)
         X, Y = RV(Poisson(lam=3) * Normal(0, 1))
-        p = (X & Y).sim(2000).plot(type="violin", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="violin", suggest=False)
         self._assert_aligned_and_populated(p)
 
     def test_box_marginal_aligned(self):
         np.random.seed(1)
         X, Y = RV(Poisson(lam=3) * Normal(0, 1))
-        p = (X & Y).sim(2000).plot(type="box", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="box", suggest=False)
         self._assert_aligned_and_populated(p)
 
-    def test_mosaic_marginal_raises_and_points_to_marginal_column(self):
+    def test_mosaic_gets_no_marginal_strips(self):
+        """A mosaic already shows x's marginal through its column widths and
+        y's through its own marginal column, so it is the one two-variable
+        plot drawn on a single panel."""
         X, Y = RV(Binomial(5, 0.4) ** 2)
-        with self.assertRaises(ValueError) as cm:
-            (X & Y).sim(500).plot(type="mosaic", marginal=True)
-        self.assertIn("marginal_column", str(cm.exception))
+        (X & Y).sim(500).plot(type="mosaic", suggest=False)
+        fig = plt.gcf()
+        panels = [a for a in fig.axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 1)
+        # Its title stays on the panel, since there is no strip above it to
+        # collide with and so no reason to move it to the figure.
+        self.assertEqual(panels[0].get_title(), "Mosaic Plot")
+        self.assertEqual(fig.get_suptitle(), "")
 
     def test_small_n_discrete_marginal_is_dotplot(self):
         """A small-n discrete axis's marginal should be a dot plot,
@@ -2619,7 +2810,7 @@ class TestMarginalPanelRebuild(PlotTestCase):
         impulse/hist regardless of sample size."""
         np.random.seed(1)
         X, Y = RV(Binomial(5, 0.4) ** 2)
-        p = (X & Y).sim(50).plot(type="scatter", marginal=True, suggest=False)
+        p = (X & Y).sim(50).plot(type="scatter", suggest=False)
         ax_marg_x, ax_marg_y = self._marginal_axes(p)
         self.assertTrue(hasattr(ax_marg_x, "_dotplot_state"))
         self.assertTrue(hasattr(ax_marg_y, "_dotplot_state"))
@@ -2627,7 +2818,7 @@ class TestMarginalPanelRebuild(PlotTestCase):
     def test_large_n_discrete_marginal_is_impulse(self):
         np.random.seed(1)
         X, Y = RV(Binomial(5, 0.4) ** 2)
-        p = (X & Y).sim(2000).plot(type="tile", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="tile", suggest=False)
         ax_marg_x, ax_marg_y = self._marginal_axes(p)
         self.assertTrue(hasattr(ax_marg_x, "_impulse_series"))
         self.assertTrue(hasattr(ax_marg_y, "_impulse_series"))
@@ -2635,7 +2826,7 @@ class TestMarginalPanelRebuild(PlotTestCase):
     def test_small_n_continuous_marginal_is_rug(self):
         np.random.seed(1)
         X, Y = RV(Normal(0, 1) ** 2)
-        p = (X & Y).sim(50).plot(type="scatter", marginal=True, suggest=False)
+        p = (X & Y).sim(50).plot(type="scatter", suggest=False)
         ax_marg_x, ax_marg_y = self._marginal_axes(p)
         self.assertGreater(getattr(ax_marg_x, "_rug_count", 0), 0)
         self.assertGreater(getattr(ax_marg_y, "_rug_count", 0), 0)
@@ -2643,7 +2834,7 @@ class TestMarginalPanelRebuild(PlotTestCase):
     def test_large_n_continuous_marginal_is_hist(self):
         np.random.seed(1)
         X, Y = RV(Normal(0, 1) ** 2)
-        p = (X & Y).sim(2000).plot(type="hist2d", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="hist2d", suggest=False)
         ax_marg_x, ax_marg_y = self._marginal_axes(p)
         self.assertGreater(getattr(ax_marg_x, "_hist_count", 0), 0)
         self.assertGreater(getattr(ax_marg_y, "_hist_count", 0), 0)
@@ -2651,7 +2842,7 @@ class TestMarginalPanelRebuild(PlotTestCase):
     def test_density_mode_gives_density_curve_marginals(self):
         np.random.seed(1)
         X, Y = RV(Normal(0, 1) ** 2)
-        p = (X & Y).sim(2000).plot(type="density2d", marginal=True, suggest=False)
+        p = (X & Y).sim(2000).plot(type="density2d", suggest=False)
         ax_marg_x, ax_marg_y = self._marginal_axes(p)
         self.assertGreater(getattr(ax_marg_x, "_density_count", 0), 0)
         self.assertGreater(getattr(ax_marg_y, "_density_count", 0), 0)
@@ -2662,7 +2853,7 @@ class TestMarginalPanelRebuild(PlotTestCase):
         np.random.seed(1)
         X, Y = RV(Normal(0, 1) ** 2)
         sims = (X & Y).sim(2000)
-        p = sims.plot(type="hist2d", marginal=True, bins=17, suggest=False)
+        p = sims.plot(type="hist2d", bins=17, suggest=False)
         ax_marg_x, _ = self._marginal_axes(p)
 
         plt.close("all")
@@ -2686,7 +2877,7 @@ class TestMarginalPanelRebuild(PlotTestCase):
         np.random.seed(1)
         X, Y = RV(Poisson(lam=3) * Normal(0, 1))
         sims = (X & Y).sim(2000)
-        p = sims.plot(type="tile", marginal=True, bins=17, suggest=False)
+        p = sims.plot(type="tile", bins=17, suggest=False)
         _, ax_marg_y = self._marginal_axes(p)  # y is the continuous axis here
 
         from symbulate.plot import setup_tile_axis
@@ -3004,14 +3195,14 @@ class TestDefaultLookupDispatch(PlotTestCase):
     def test_2d_mixed_large_defaults_to_tile(self):
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         (X & Y).sim(500).plot()
-        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Tile Plot")
 
     def test_2d_both_axes_under_K_2D_is_tile(self):
         """Two discrete axes both within the per-axis cap -> tile."""
         RV(BoxModel(list(range(5))) * BoxModel(list(range(5)))).sim(3000).plot(
             suggest=False
         )
-        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Tile Plot")
 
     def test_2d_one_axis_over_K_2D_stays_tile(self):
         """One axis over the per-axis cap bins only that axis -> still a
@@ -3019,7 +3210,7 @@ class TestDefaultLookupDispatch(PlotTestCase):
         RV(BoxModel(list(range(5))) * BoxModel(list(range(40)))).sim(3000).plot(
             suggest=False
         )
-        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Tile Plot")
 
     def test_2d_both_axes_over_K_2D_is_hist2d(self):
         """Both axes over the per-axis cap now bin to a 2-D histogram -- the
@@ -3028,43 +3219,43 @@ class TestDefaultLookupDispatch(PlotTestCase):
         RV(BoxModel(list(range(40))) * BoxModel(list(range(40)))).sim(3000).plot(
             suggest=False
         )
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gcf().get_suptitle(), "2-D Histogram")
 
     def test_2d_mixed_small_defaults_to_segmented_rug(self):
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         (X & Y).sim(60).plot()
-        self.assertEqual(plt.gca().get_title(), "Segmented Rug Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Segmented Rug Plot")
 
     def test_2d_discrete_large_defaults_to_tile(self):
         X, Y = RV(Binomial(5, 0.4) ** 2)
         (X & Y).sim(500).plot()
-        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Tile Plot")
 
     def test_2d_discrete_small_defaults_to_scatter(self):
         X, Y = RV(Binomial(5, 0.4) ** 2)
         (X & Y).sim(40).plot()
-        self.assertEqual(plt.gca().get_title(), "2D Scatter Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "2D Scatter Plot")
 
     def test_2d_explicit_alias_types_work(self):
         """The lookup-table tokens are accepted as explicit type= values."""
         X, Y = RV(Normal(0, 1) ** 2)
         sims = (X & Y).sim(200)
         sims.plot(type="hist2d")
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gcf().get_suptitle(), "2-D Histogram")
         plt.close("all")
         sims.plot(type="density2d")
-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Contour Plot")
         plt.close("all")
         Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
         (Xm & Ym).sim(200).plot(type="segmented_rug")
-        self.assertEqual(plt.gca().get_title(), "Segmented Rug Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Segmented Rug Plot")
 
     def test_2d_mixed_explicit_box_type_works(self):
         """'box' is a listed alternative for 2D_mixed data and dispatches
         to make_grouped_boxplot when explicitly requested."""
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         (X & Y).sim(200).plot(type="box")
-        self.assertEqual(plt.gca().get_title(), "Box Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Box Plot")
 
     def test_every_listed_alternative_is_choosable(self):
         """Every default and alternative in DEFAULT_PLOT_TYPE renders via
@@ -3352,12 +3543,12 @@ class TestDistributionPlotDiscrete(PlotTestCase):
     def test_multivariate_normal_plots_joint_density(self):
         """MultivariateNormal.plot() draws the joint density of two variables."""
         MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
-        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
 
     def test_multinomial_plots_joint_pmf(self):
         """Multinomial.plot() draws a probability per pair of counts."""
         Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot()
-        self.assertEqual(plt.gca().get_title(), "Joint PMF Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint PMF Plot")
 
 
 # ===========================================================================
@@ -3522,13 +3713,13 @@ class TestPlottingErrors(PlotTestCase):
             sims.plot(type=99)
 
     def test_marginal_as_bare_type_string_raises_helpful_error(self):
-        """type="marginal" is no longer valid -- marginal is now its own
-        keyword argument, not a type= value."""
+        """type="marginal" is not valid -- every two-variable plot shows
+        each variable's own distribution, so there is nothing to ask for."""
         X, Y = RV(Normal(0, 1) ** 2)
         sims = (X & Y).sim(100)
         with self.assertRaises(ValueError) as cm:
             sims.plot(type="marginal")
-        self.assertIn("marginal=True", str(cm.exception))
+        self.assertIn("not a type= value", str(cm.exception))
 
     def test_marginal_inside_type_list_raises_helpful_error(self):
         """type=("hist", "marginal") -- the old way of combining a main
@@ -3538,7 +3729,7 @@ class TestPlottingErrors(PlotTestCase):
         sims = (X & Y).sim(100)
         with self.assertRaises(ValueError) as cm:
             sims.plot(type=("hist", "marginal"))
-        self.assertIn("marginal=True", str(cm.exception))
+        self.assertIn("not a type= value", str(cm.exception))
 
 
 # ===========================================================================
@@ -3578,7 +3769,7 @@ class TestSymbulatePlotWrapper(PlotTestCase):
 
     def test_2d_marginal_plot_returns_wrapper(self):
         X, Y = RV(Normal(0, 1) ** 2)
-        p = (X & Y).sim(100).plot(marginal=True)
+        p = (X & Y).sim(100).plot()
         self.assertIsInstance(p, SymbulatePlot)
 
     def test_distribution_plot_returns_wrapper(self):
@@ -3939,6 +4130,101 @@ class TestSuggestionPolicy(unittest.TestCase):
         self.assertFalse(should_show_suggestion(None))
 
 
+class TestTheoreticalTwoVariableLayout(PlotTestCase):
+    """A theoretical plot of two variables gets the same three panels.
+
+    Both sides call ``setup_marginal_axes``, so the simulated and
+    theoretical layouts cannot drift apart. The strips here are the exact
+    closed-form marginal pdf/pmf, not an estimate.
+    """
+
+    def _panels(self):
+        return [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+
+    def _strips(self, joint):
+        strips = [a for a in self._panels() if a is not joint]
+        return (
+            max(strips, key=lambda a: a.get_position().y0),
+            max(strips, key=lambda a: a.get_position().x0),
+        )
+
+    def test_continuous_and_discrete_both_get_three_panels(self):
+        for dist, title in [
+            (
+                MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]),
+                "Joint Contour Plot",
+            ),
+            (Multinomial(n=10, p=[0.2, 0.3, 0.5]), "Joint PMF Plot"),
+        ]:
+            with self.subTest(dist=type(dist).__name__):
+                plt.close("all")
+                plt.figure()
+                dist.plot()
+                self.assertEqual(len(self._panels()), 3)
+                self.assertEqual(plt.gcf().get_suptitle(), title)
+                self.assertEqual(plt.gca().get_title(), "")
+
+    def test_the_right_strip_runs_sideways(self):
+        """The strip beside the y-axis has the variable on *its* y-axis, so
+        it lines up with the joint panel -- the density runs along x."""
+        p = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
+        marg_x, marg_y = self._strips(p.ax)
+        # Top strip: value on x, density on y (the univariate orientation).
+        self.assertEqual(marg_x.get_xlim(), p.ax.get_xlim())
+        self.assertEqual(marg_x.get_xlabel(), "")
+        self.assertEqual(marg_x.get_ylabel(), "Density")
+        # Right strip: transposed.
+        self.assertEqual(marg_y.get_ylim(), p.ax.get_ylim())
+        self.assertEqual(marg_y.get_xlabel(), "Density")
+        self.assertEqual(marg_y.get_ylabel(), "")
+        # Its curve rises from a density of 0, so its x data is nonnegative
+        # and its y data spans the variable's window.
+        (curve,) = marg_y.get_lines()
+        xdata, ydata = curve.get_data()
+        self.assertTrue(np.all(np.asarray(xdata) >= 0))
+        self.assertAlmostEqual(min(ydata), p.ax.get_ylim()[0], places=6)
+
+    def test_a_discrete_strip_keeps_its_masses(self):
+        """A pmf strip is dots plus a dashed connector, transposed the same
+        way -- the dots are a PathCollection, not a line."""
+        p = Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot()
+        _, marg_y = self._strips(p.ax)
+        self.assertGreater(len(marg_y.collections), 0)
+        offsets = np.asarray(marg_y.collections[0].get_offsets())
+        # Transposed: the probabilities are the x coordinate now.
+        self.assertTrue(np.all(offsets[:, 0] >= 0))
+        self.assertEqual(marg_y.get_xlabel(), "Probability")
+
+    def test_the_strips_are_the_exact_marginals(self):
+        """A MultivariateNormal's marginal is a Normal, so the top strip is
+        that Normal's pdf -- not a sum over the joint surface."""
+        dist = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
+        p = dist.plot()
+        marg_x, _ = self._strips(p.ax)
+        (curve,) = marg_x.get_lines()
+        xdata, ydata = curve.get_data()
+        expected = dist._marginal_1d(0).pdf(np.asarray(xdata))
+        np.testing.assert_allclose(ydata, expected, rtol=1e-10)
+
+    def test_an_explicit_axes_draws_only_the_joint(self):
+        """A caller who supplies ax= is placing the plot in a layout of their
+        own, and one axes has no room for the strips."""
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+        MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot(ax=ax)
+        self.assertEqual(len(self._panels()), 1)
+        # Its own title stays on it, since nothing sits above it.
+        self.assertEqual(ax.get_title(), "Joint Contour Plot")
+        self.assertEqual(fig.get_suptitle(), "")
+
+    def test_a_pairs_matrix_is_unaffected(self):
+        """Three or more variables still draw the matrix, whose diagonal
+        already shows each variable on its own."""
+        MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3)).plot()
+        self.assertEqual(len(self._panels()), 6)
+        self.assertEqual(plt.gcf().get_suptitle(), "Probability Density Functions")
+
+
 class TestJointTheoreticalPlots(PlotTestCase):
     """The joint pdf/pmf helpers behind MultivariateDistribution.plot()."""
 
@@ -4143,16 +4429,23 @@ class TestPairsLayout(PlotTestCase):
         self.assertEqual(len(_pairs_panels()), 6)
 
     def test_two_variables_still_get_a_single_joint_plot(self):
-        """The matrix starts at three variables, not two."""
+        """The matrix starts at three variables, not two.
+
+        Two variables get the three-panel two-variable layout instead, which
+        also has three panels -- so the giveaway is the title: a matrix is
+        titled "Pairs Plot", a single joint plot by its own plot type.
+        """
         plt.figure()
         _continuous_sim(k=2).plot(suggest=False)
-        self.assertEqual(len(_pairs_panels()), 1)
+        self.assertEqual(len(_pairs_panels()), 3)
+        self.assertEqual(plt.gcf().get_suptitle(), "2-D Histogram")
 
     def test_a_subset_is_chosen_by_indexing_the_variable(self):
         """No dims= here: X[[0, 2]].sim(n).plot() picks the variables."""
         plt.figure()
         _continuous_sim(k=4)._pairs_subset((0, 2)).plot(suggest=False)
-        self.assertEqual(len(_pairs_panels()), 1)
+        self.assertEqual(len(_pairs_panels()), 3)
+        self.assertEqual(plt.gcf().get_suptitle(), "2-D Histogram")
 
     def test_figure_is_sized_to_the_grid(self):
         plt.figure()
@@ -4236,6 +4529,41 @@ class TestPairsLayout(PlotTestCase):
                 "Variable 2 & Variable 3",
             ],
         )
+
+    def test_pair_label_matches_the_density_label_on_its_bar(self):
+        """A bar's caption is lettered alike top and side.
+
+        The pair label identifies the bar rather than titling a plot, so it
+        is the size of the bar's own "Density"/"Count" label, below a panel
+        title. Both matrices go through ``add_pairs_panel_colorbar``, so the
+        simulated and theoretical sides are checked together.
+        """
+        expected = (
+            matplotlib.font_manager.font_scalings[JOINT_PAIRS_COLORBAR_TITLE_SIZE]
+            * plt.rcParams["font.size"]
+        )
+        panel_title = (
+            matplotlib.font_manager.font_scalings[plt.rcParams["axes.titlesize"]]
+            * plt.rcParams["font.size"]
+        )
+        self.assertLess(expected, panel_title)
+        for name, draw in [
+            ("simulated", lambda: _continuous_sim(k=3).plot()),
+            (
+                "theoretical",
+                lambda: MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3)).plot(),
+            ),
+        ]:
+            with self.subTest(matrix=name):
+                plt.close("all")
+                plt.figure()
+                draw()
+                bars = _pairs_colorbars()
+                self.assertEqual({a.title.get_fontsize() for a in bars}, {expected})
+                # The "Density" label sits on the bar's y-axis.
+                self.assertEqual(
+                    {a.yaxis.label.get_fontsize() for a in bars}, {expected}
+                )
 
     def test_colorbars_sit_in_the_empty_mirroring_cells(self):
         """The upper triangle is blank, so the bars go there."""
