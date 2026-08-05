@@ -57,7 +57,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `time_series.py` | `MA`, `AR`, `ARMA`, `GARCH`, `ARCH` — time-series processes |
 | `branching_process.py` | `GaltonWatson` — a family tree that may die out or grow without bound |
-| `hitting_times.py` | `hitting_time` — when a path first reaches a level; jump, discrete-time, and Gaussian paths (see "Hitting Times" below) |
+| `hitting_times.py` | `hitting_time` — when a path first reaches a level; jump, discrete-time, and Gaussian paths. `upcrossings` — the whole sequence of crossing times, jump and discrete-time paths only (see "Hitting Times" below) |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` and `MertonJumpDiffusion` — named special cases, both simulated exactly (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
@@ -467,6 +467,11 @@ that way (see `MODEL-DECISIONS.md`, "Decision: Hitting Times — Tier A").
   Tier C (`DiffusionProcess`, `CIR`, `MertonJumpDiffusion`) still raises
   `NotImplementedError`. `MertonJumpDiffusion` is Tier C, **not** a jump path:
   it wanders continuously between its jumps.
+- **The first two families are picked by `_tier_a_reader`, not inline.** It
+  returns `(search, read_one)` — the value-by-value walk for whichever kind of
+  path it is, plus a one-value probe — and is the single definition of "Tier A"
+  that `hitting_time` and `upcrossings` both use. A **fourth** exactly-readable
+  path kind belongs in there, not at either call site.
 - **Tier A is exact, and `step`/`tol` are ignored there.** They exist to deal
   with what a *continuous* path does between two evaluated times; a jump path
   can only reach a level at a jump and a discrete-time path has nothing between
@@ -497,10 +502,38 @@ that way (see `MODEL-DECISIONS.md`, "Decision: Hitting Times — Tier A").
   `_numeric_value`. Asking about one compartment (`path.I`) does not work either
   — it is a bare `_BoundedTimeFunction` with no states — so do not put that
   suggestion back into either message.
-- **Still open:** `upcrossings` (the *sequence* of crossing times, as a lazy
-  `InfiniteVector`) is its own roadmap row and is not built. `start_time` is
-  the hook it will use. Hitting times for a single epidemic compartment are
-  also unbuilt, and would need the compartment to expose its jump times.
+- **Still open:** hitting times for a single epidemic compartment, which would
+  need the compartment to expose its jump times.
+
+`upcrossings(process, level, max_time=100.0, start_time=0.0)` in the same module
+is the *sequence* of crossing times — a lazy `InfiniteVector` for a path, an `RV`
+of one for a process (index it: `upcrossings(X, level=3)[2]`). See
+`MODEL-DECISIONS.md`, "Decision: Upcrossings — Tier A Only."
+
+- **Tier A only, and Tier B is refused on purpose, not unbuilt.** A continuous
+  path recrosses a level infinitely often in every stretch of time after it
+  first touches it, so there is no first/second/third crossing to list and any
+  count would just measure how finely the path was looked at. A Gaussian or
+  `GeometricBrownianMotion` path therefore raises `NotImplementedError` pointing
+  at `hitting_time(..., start_time=)`. **Do not "add Tier B"** by counting one
+  crossing per `step`-sized window, and do not add a `step`/`tol` argument —
+  they do not exist on this function.
+- **A crossing has to arrive from strictly below**, which is what the `strict`
+  flag on `_reached` is for: finding one crossing is *two* searches, `sign=-1,
+  strict=True` to get properly under the level and then `sign=+1, strict=False`
+  to rise back to it. Without the strict half, a path sitting *on* the level
+  (4 → 5 → 5 → 6) would report a fresh crossing at every step.
+- **Consequences worth knowing before "fixing" them:** a path already at or
+  above the level at `start_time` is not crossing it, so `upcrossings(...)[0]`
+  can be *later* than `hitting_time(...)`; and a monotone count (`PoissonProcess`,
+  `RenewalProcess`) crosses at most once, so `upcrossings(N, level=0)` is all
+  `inf`. Both are tested.
+- **The bad-path check is deliberately eager.** The sequence is lazy, so
+  `read_one()` is called up front — otherwise an epidemic path or a
+  name-labelled `MarkovChain` would be accepted quietly and only complain when
+  someone indexed the result.
+- Exhaustion is recorded on `_UpcrossingWalk.finished`, so a sequence that has
+  run past `max_time` does not re-walk the path for every later index.
 
 ## Suggestion Messages
 
@@ -680,7 +713,7 @@ Three implementation notes:
 | `test_random_walk.py` | `RandomWalk` |
 | `test_time_series.py` | `MA`, `AR`, `ARMA`, `GARCH`, `ARCH` |
 | `test_branching_process.py` | `GaltonWatson` |
-| `test_hitting_times.py` | `hitting_time` |
+| `test_hitting_times.py` | `hitting_time` and `upcrossings` |
 | `test_continuous_time_processes.py` | The interface **every** continuous-time discrete-state process shares (see "Continuous-Time, Discrete-State Processes" below) — table-driven over all of them |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_cir.py` | The `CIR` process |
@@ -719,6 +752,8 @@ pytest tests/
 - Do not add separate `MixedPoissonProcess` or `MarkovModulatedPoissonProcess` classes — both are `CoxProcess` with a different `intensity` (see "Cox Process")
 - Do not add interpolation, a `step` scan, or an equality test to `hitting_time`'s jump/discrete-time branches — they are exact, and a jump path reaching a level means reaching *or passing* it (see "Hitting Times")
 - Do not narrow `hitting_time`'s process check back to `RandomProcess` — most Tier A processes are plain `RV`s (see "Hitting Times")
+- Do not give `upcrossings` a Gaussian branch, a `step`/`tol` argument, or a "count one crossing per window" rule — a continuous path recrosses a level infinitely often, so the refusal is the correct answer (see "Hitting Times")
+- Do not drop the `strict` half of `upcrossings`' two-search cycle, or its eager `read_one()` check — the first keeps a path sitting *on* the level from reporting a crossing every step, the second keeps a lazy sequence from hiding a bad path (see "Hitting Times")
 - Do not change `CoxProcess`'s intensity grid to a trapezoid/right-hand rule, a variable mesh, or `scipy.integrate.quad` — a fixed left-handed grid anchored at 0 is what keeps the event count from going backwards, and there are tests pinning it (see "Cox Process")
 - Do not rename `type=` to `kind=` or anything else — considered and decided against.
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
