@@ -21,6 +21,7 @@ from .plot import (
     JOINT_PMF_MAX_CELLS,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
+    add_pairs_panel_colorbar,
     SHADE_COLOR,
     SHADE_ALPHA,
     TRUE_DIST_MARKER_SIZE,
@@ -5131,6 +5132,10 @@ class MultivariateDistribution(Distribution):
     def _variable_label(self, i):
         """Return the axis label for component ``i``.
 
+        Spelled out rather than abbreviated, matching the default labels
+        ``make_joint_pdf`` and ``make_joint_pmf`` already use, and readable
+        by a student who has not been told that ``X`` means a variable.
+
         Parameters
         ----------
         i : int
@@ -5140,9 +5145,9 @@ class MultivariateDistribution(Distribution):
         -------
         str
             The label, numbered from 1 the way the variables are written
-            mathematically -- component 0 is ``"X1"``.
+            mathematically -- component 0 is ``"Variable 1"``.
         """
-        return "X%d" % (i + 1)
+        return "Variable %d" % (i + 1)
 
     def _marginal_1d(self, i):
         """Return the distribution of component ``i`` on its own.
@@ -5254,29 +5259,32 @@ class MultivariateDistribution(Distribution):
         low, high = self._plot_window(i)
         return np.arange(int(low), int(high) + 1)
 
-    def _resolve_dims(self, dims, pairs):
-        """Check a ``dims`` argument and return it as a tuple of indices.
+    def _resolve_variables(self, variables):
+        """Check a ``variables`` argument and return the variables to plot.
+
+        Also decides *what* to draw, since the two questions are the same
+        one: exactly two variables have a single joint distribution between
+        them, and three or more do not, so they are drawn as a matrix of
+        every pair.
 
         Parameters
         ----------
-        dims : sequence of int or None
+        variables : sequence of int or None
             The requested variables. ``None`` falls back to the default:
-            the two freely varying variables for a single joint plot, or
-            every variable for a pairs matrix.
-        pairs : bool
-            Whether the caller asked for a pairs matrix, which takes any
-            number of variables from 2 up, rather than exactly two.
+            the two freely varying variables when there are only two, and
+            every variable otherwise.
 
         Returns
         -------
-        tuple of int
-            The validated indices.
+        tuple
+            ``(variables, pairs)`` -- the validated indices, and whether they
+            are to be drawn as a matrix rather than one joint plot.
 
         Raises
         ------
         Exception
             If the distribution has too few freely varying variables to
-            plot; if ``dims`` was left out where there is no single natural
+            plot; if ``variables`` was left out where there is no single natural
             default; or if it is not the right number of distinct, in-range
             whole numbers.
         """
@@ -5293,69 +5301,62 @@ class MultivariateDistribution(Distribution):
                 "two-category Dirichlet([a, b]) is a Beta(a, b)."
             )
 
-        if dims is None:
-            if pairs:
-                dims = tuple(range(n))
-            elif free == 2:
+        if variables is None:
+            if free == 2:
                 # Exactly two freely varying variables, so there is only one
                 # joint distribution to show and no choice to make -- the
                 # same way a univariate plot() never asks which variable.
-                dims = (0, 1)
+                variables = (0, 1)
             else:
-                raise Exception(
-                    "This distribution has %d variables, so there is no "
-                    "single joint plot to show. Choose which two to plot, "
-                    "for example .plot(dims=(0, 2)) for the 1st and 3rd "
-                    "variables (they are numbered from 0), or use "
-                    ".plot(pairs=True) to see every pair at once." % (n,)
-                )
+                # Three or more variables have no single joint plot, so show
+                # every pair at once rather than asking which one to pick.
+                variables = tuple(range(n))
 
         # Checked before converting, so a single number or other non-sequence
         # reports this instead of a cryptic TypeError from the conversion.
-        if not isinstance(dims, (tuple, list, np.ndarray)):
+        if not isinstance(variables, (tuple, list, np.ndarray)):
             raise Exception(
-                "dims must be a pair of variable numbers, given as a tuple or "
-                "a list -- for example dims=(0, 2) for the 1st and 3rd "
-                "variables. You passed dims=%r." % (dims,)
+                "variables must be a list or tuple of variable numbers -- for "
+                "example variables=[0, 2] for the 1st and 3rd, or "
+                "variables=[0, 1, 3] for the 1st, 2nd and 4th. You passed "
+                "variables=%r." % (variables,)
             )
-        dims = tuple(dims)
+        variables = tuple(variables)
 
-        if pairs:
-            if len(dims) < 2:
-                raise Exception(
-                    "With pairs=True, dims chooses which variables to "
-                    "include, so it needs at least two -- for example "
-                    "dims=(0, 1, 3). You passed dims=%r." % (dims,)
-                )
-        elif len(dims) != 2:
+        # Two variables have one joint distribution between them, so they are
+        # drawn as one plot; any more than that becomes a matrix of pairs.
+        pairs = len(variables) > 2
+        if len(variables) < 2:
             raise Exception(
-                "dims must name exactly two variables, since a joint plot "
-                "has two axes -- for example dims=(0, 2) for the 1st and 3rd "
-                "variables. You passed %d of them (dims=%r). To see more "
-                "than two variables at once, use pairs=True." % (len(dims), dims)
+                "variables chooses which variables to plot, so it needs at least "
+                "two -- name two for their joint distribution, for example "
+                "variables=(0, 2), or more for a matrix of every pair among them, "
+                "for example variables=(0, 1, 3). You passed variables=%r."
+                % (variables,)
             )
 
-        for d in dims:
-            # bool is a subclass of int, so exclude it explicitly: dims=(True,
-            # False) would otherwise silently mean dims=(1, 0).
+        for d in variables:
+            # bool is a subclass of int, so exclude it explicitly: variables=(True,
+            # False) would otherwise silently mean variables=(1, 0).
             if isinstance(d, bool) or not isinstance(d, numbers.Integral):
                 raise Exception(
-                    "Every entry of dims must be a whole number naming a "
-                    "variable, counting from 0. You passed dims=%r." % (dims,)
+                    "Every entry of variables must be a whole number naming a "
+                    "variable, counting from 0. You passed variables=%r." % (variables,)
                 )
             if not 0 <= d < n:
                 raise Exception(
                     "This distribution has %d variables, numbered 0 to %d, "
-                    "so dims=%r asks for a variable it doesn't have." % (n, n - 1, dims)
+                    "so variables=%r asks for a variable it doesn't have."
+                    % (n, n - 1, variables)
                 )
-        if len(set(dims)) != len(dims):
+        if len(set(variables)) != len(variables):
             raise Exception(
-                "The variables in dims must all be different -- a variable "
+                "Every entry of variables must be different -- a variable "
                 "plotted against itself has nothing to show. You passed "
-                "dims=%r." % (dims,)
+                "variables=%r." % (variables,)
             )
 
-        return tuple(int(d) for d in dims)
+        return tuple(int(d) for d in variables), pairs
 
     def _plot_joint(
         self, i, j, ax, contour, colorbar=True, title=True, alpha=None, **kwargs
@@ -5424,7 +5425,7 @@ class MultivariateDistribution(Distribution):
             **kwargs,
         )
 
-    def _plot_pairs(self, dims, contour, alpha=None, **kwargs):
+    def _plot_pairs(self, variables, contour, alpha=None, **kwargs):
         """Draw a matrix of every pair of the chosen variables.
 
         Builds an ``n`` by ``n`` grid of panels: each variable's own
@@ -5435,7 +5436,7 @@ class MultivariateDistribution(Distribution):
 
         Parameters
         ----------
-        dims : tuple of int
+        variables : tuple of int
             The variables to include, already validated.
         contour : bool
             Whether the joint panels draw contour bands.
@@ -5457,12 +5458,12 @@ class MultivariateDistribution(Distribution):
         Exception
             If more variables were asked for than a readable matrix holds.
         """
-        if len(dims) > JOINT_PAIRS_MAX_DIM:
+        if len(variables) > JOINT_PAIRS_MAX_DIM:
             raise Exception(
                 "A pairs plot of %d variables would need %d panels, too many "
                 "to read on one screen. Choose which variables to include, "
-                "for example .plot(pairs=True, dims=(0, 1, 2))."
-                % (len(dims), len(dims) * (len(dims) + 1) // 2)
+                "for example .plot(pairs=True, variables=(0, 1, 2))."
+                % (len(variables), len(variables) * (len(variables) + 1) // 2)
             )
 
         fig = plt.gcf()
@@ -5472,13 +5473,16 @@ class MultivariateDistribution(Distribution):
         # rather than stacking a second layout on top of existing content.
         if fig.axes:
             raise ValueError(JOINT_PAIRS_OVERLAY_ERROR)
-        k = len(dims)
+        k = len(variables)
         # Size the figure to the grid, so panels stay readable as variables
         # are added instead of each one shrinking inside a single-plot figure.
         fig.set_size_inches(k * JOINT_PAIRS_PANEL_SIZE, k * JOINT_PAIRS_PANEL_SIZE)
         gs = GridSpec(k, k, figure=fig)
 
         corner = None
+        # (mappable, row, col) per joint panel, so each can be given its own
+        # colorbar once the layout has settled (see the end of this method).
+        joint_panels = []
         for row in range(k):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
@@ -5491,20 +5495,26 @@ class MultivariateDistribution(Distribution):
                     # column use, so every panel in a column really does
                     # cover the variable over the same range -- which is
                     # what makes hiding the inner x tick labels below safe.
-                    self._marginal_1d(dims[row]).plot(
-                        xlim=self._plot_window(dims[row]), ax=ax, alpha=alpha
+                    self._marginal_1d(variables[row]).plot(
+                        xlim=self._plot_window(variables[row]), ax=ax, alpha=alpha
                     )
                     ax.set_title("")
                 else:
-                    self._plot_joint(
-                        dims[col],
-                        dims[row],
-                        ax,
-                        contour,
-                        colorbar=False,
-                        title=False,
-                        alpha=alpha,
-                        **kwargs,
+                    joint_panels.append(
+                        (
+                            self._plot_joint(
+                                variables[col],
+                                variables[row],
+                                ax,
+                                contour,
+                                colorbar=False,
+                                title=False,
+                                alpha=alpha,
+                                **kwargs,
+                            ),
+                            row,
+                            col,
+                        )
                     )
                 # Name the variables only along the outside edges, so the
                 # inner panels aren't crowded with repeated labels. Set them
@@ -5513,7 +5523,7 @@ class MultivariateDistribution(Distribution):
                 # labels its x-axis "Value" since on its own it has no
                 # variable number to use.
                 if row == k - 1:
-                    ax.set_xlabel(self._variable_label(dims[col]))
+                    ax.set_xlabel(self._variable_label(variables[col]))
                 else:
                     ax.set_xlabel("")
                     # Every panel in a column covers the same variable over
@@ -5523,24 +5533,54 @@ class MultivariateDistribution(Distribution):
                     # panel's y-axis is a density and genuinely differs from
                     # its neighbors'.
                     ax.set_xticklabels([])
-                # A diagonal panel's y-axis is a density or probability
-                # rather than the variable, so it is left unlabeled instead
-                # of being labeled with a variable it isn't showing -- the
-                # panel below it in the same column carries that name.
-                if col == 0 and row != col:
-                    ax.set_ylabel(self._variable_label(dims[row]))
+                # The left column names its row's variable, so the labels read
+                # down the side in order -- including the top-left panel, which
+                # is the only one in its row and would otherwise go unnamed
+                # until the bottom of its column. That panel's y-axis is really
+                # a density or a probability rather than the variable, so the
+                # label names the row it heads rather than the axis it sits on;
+                # this is the convention seaborn's PairGrid uses, and the one a
+                # simulated pairs matrix follows.
+                if col == 0:
+                    ax.set_ylabel(self._variable_label(variables[row]))
                 else:
                     ax.set_ylabel("")
                 if row == k - 1 and col == 0:
                     corner = ax
 
-        fig.suptitle("Pairs Plot")
+        # Name what the panels actually are. Every panel of a theoretical
+        # matrix is an exact distribution -- a density for a continuous
+        # family, a set of probabilities for a discrete one -- so the title
+        # says which, rather than naming the layout.
+        fig.suptitle(
+            "Probability Mass Functions"
+            if self.discrete
+            else "Probability Density Functions"
+        )
         fig.tight_layout()
+
+        # Each joint panel gets its own colorbar, in the empty cell mirroring
+        # it across the diagonal -- the same treatment a simulated pairs
+        # matrix gets, so the two can be read side by side. Done after
+        # tight_layout, so the cells are where they will finally be.
+        quantity = "Probability" if self.discrete else "Density"
+        for mappable, row, col in joint_panels:
+            if mappable is None:
+                continue
+            add_pairs_panel_colorbar(
+                fig,
+                gs[col, row].get_position(fig),
+                mappable,
+                "%s & %s"
+                % (
+                    self._variable_label(variables[col]),
+                    self._variable_label(variables[row]),
+                ),
+                quantity,
+            )
         return corner
 
-    def plot(
-        self, dims=None, pairs=False, contour=False, alpha=None, ax=None, **kwargs
-    ):
+    def plot(self, variables=None, contour=True, alpha=None, ax=None, **kwargs):
         """Plot the joint distribution of two of the variables.
 
         A multivariate distribution describes several variables at once, so
@@ -5558,13 +5598,12 @@ class MultivariateDistribution(Distribution):
           there is only one joint distribution, so it is plotted with no
           arguments needed.
         - **Three or more**: there is no single "the plot" any more, so
-          name the two variables you want with ``dims``, e.g.
-          ``dims=(0, 2)`` for the 1st and 3rd. This is asked for rather
-          than guessed, so that a pair with a much stronger relationship
-          can't stay hidden behind a silently chosen default.
-        - **Every pair at once**: ``pairs=True`` draws a matrix of panels
-          -- each variable's own distribution down the diagonal, each
-          pair's joint distribution below it.
+          this draws a **matrix of panels** -- each variable's own
+          distribution down the diagonal, each pair's joint distribution
+          below it -- rather than silently picking one pair out of several.
+        - **One particular pair**: name the two variables you want with
+          ``variables``, e.g. ``variables=(0, 2)`` for the 1st and 3rd. Naming three
+          or more instead draws the matrix of just those.
 
         Each panel shows an *exact* distribution, not an approximation:
         every one of these families has a closed-form distribution for one
@@ -5573,25 +5612,25 @@ class MultivariateDistribution(Distribution):
 
         Parameters
         ----------
-        dims : tuple of int, optional
-            Which variables to plot, numbered from 0. Exactly two for a
-            single joint plot (the default when the distribution has only
-            two freely varying variables); any number of them, to choose a
-            subset, with ``pairs=True``.
-        pairs : bool, default False
-            If True, draw a matrix of every pair of variables instead of a
-            single joint plot. Because the matrix fills the figure with its
-            own panels, it cannot share a figure with another plot.
-        contour : bool, default False
-            If True, draw a continuous density surface as discrete contour
-            bands with outlines between them, so bands can be matched to
-            the colorbar by eye. Has no effect on a discrete distribution,
-            whose grid of probabilities is already made of discrete cells.
+        variables : tuple of int, optional
+            Which variables to plot, numbered from 0. Name exactly two for
+            their joint distribution, e.g. ``variables=(0, 2)`` for the 1st and
+            3rd; name three or more for a matrix of every pair among them.
+            Left out, a distribution of two freely varying variables draws
+            its one joint plot, and one of three or more draws the matrix of
+            all of them.
+        contour : bool, default True
+            Whether to draw a continuous density surface as discrete
+            contour bands with outlines between them, so a band can be
+            matched to the colorbar by eye. Pass ``contour=False`` for one
+            smooth gradient instead. Has no effect on a discrete
+            distribution, whose grid of probabilities is already made of
+            discrete cells.
         alpha : float, optional
             Transparency of the plot, from 0 (invisible) to 1 (opaque).
         ax : matplotlib.axes.Axes, optional
             The axes to draw on. Creates or uses the current axes if not
-            provided. Ignored when ``pairs=True``, which builds its own
+            provided. Ignored for a pairs matrix, which builds its own
             panels.
         **kwargs
             Additional keyword arguments forwarded to matplotlib.
@@ -5606,21 +5645,20 @@ class MultivariateDistribution(Distribution):
         ------
         Exception
             If the distribution varies in only one direction (plot it as
-            the one-dimensional distribution it is); if it has three or
-            more variables and ``dims`` was not given; if ``dims`` does not
-            name the right number of distinct, in-range variables; or if a
-            ``pairs=True`` matrix would have more panels than fit.
+            the one-dimensional distribution it is); if ``variables`` does not
+            name at least two distinct, in-range variables; or if a matrix
+            would have more panels than fit.
         ValueError
-            If ``pairs=True`` is used on a figure that already has a plot
-            on it.
+            If a pairs matrix is drawn on a figure that already has a plot
+            on it, or if the removed ``pairs=`` keyword is passed.
 
         Examples
         --------
         >>> from symbulate import *
         >>> MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()  # doctest: +SKIP
         >>> X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4))  # doctest: +SKIP
-        >>> X.plot(dims=(0, 2))  # the 1st and 3rd variables  # doctest: +SKIP
-        >>> X.plot(pairs=True)  # every pair at once  # doctest: +SKIP
+        >>> X.plot(variables=(0, 2))  # the 1st and 3rd variables  # doctest: +SKIP
+        >>> X.plot()  # every pair at once, for three or more variables  # doctest: +SKIP
         >>> Multinomial(n=10, p=[0.5, 0.3, 0.2]).plot()  # doctest: +SKIP
         """
         # A joint plot shows a whole surface rather than one curve, so
@@ -5631,8 +5669,9 @@ class MultivariateDistribution(Distribution):
         if "type" in kwargs:
             raise ValueError(
                 "`plot()` does not take a `type=` argument. To see every "
-                "pair of variables instead of one, use pairs=True; to draw "
-                "the density surface as contour bands, use contour=True. "
+                "pair of variables instead of one, name them with "
+                "variables=; to draw the density surface as one smooth "
+                "gradient instead of contour bands, use contour=False. "
                 "(`type=` selects among the many ways of drawing simulated "
                 "data.)"
             )
@@ -5645,11 +5684,30 @@ class MultivariateDistribution(Distribution):
                 "for example, Normal(0, 1).plot(cdf=True)."
             )
 
-        dims = self._resolve_dims(dims, pairs)
+        # pairs=True used to be how the matrix was asked for. It is the
+        # default for three or more variables now, so say so rather than
+        # letting the stray keyword reach matplotlib.
+        if "dims" in kwargs:
+            raise ValueError(
+                "dims= has been renamed variables= -- for example "
+                ".plot(variables=[0, 2]) for the 1st and 3rd variables, or "
+                ".plot(variables=[0, 1, 3]) for a matrix of the 1st, 2nd and "
+                "4th."
+            )
+
+        if "pairs" in kwargs:
+            raise ValueError(
+                "pairs= is no longer needed: a distribution of three or more "
+                "variables is drawn as a matrix of every pair by default, so "
+                ".plot() alone does it. Drop pairs=True. (Name two variables, "
+                "e.g. .plot(variables=(0, 2)), for one joint plot instead.)"
+            )
+
+        variables, pairs = self._resolve_variables(variables)
 
         if pairs:
-            ax = self._plot_pairs(dims, contour, alpha=alpha, **kwargs)
-            return JointDistributionPlot(ax, self, dims)
+            ax = self._plot_pairs(variables, contour, alpha=alpha, **kwargs)
+            return JointDistributionPlot(ax, self, variables)
 
         # Use the current axes if a figure already exists, so a joint plot
         # lands on the same axes as anything drawn before it, exactly like
@@ -5661,8 +5719,8 @@ class MultivariateDistribution(Distribution):
         # skipping this would leave a curve drawn onto the same axes
         # afterwards reusing a color already on the plot.
         get_next_color(ax)
-        self._plot_joint(dims[0], dims[1], ax, contour, alpha=alpha, **kwargs)
-        return JointDistributionPlot(ax, self, dims)
+        self._plot_joint(variables[0], variables[1], ax, contour, alpha=alpha, **kwargs)
+        return JointDistributionPlot(ax, self, variables)
 
     def __pow__(self, exponent):
         """Draw several independent vectors from the distribution.
