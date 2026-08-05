@@ -842,20 +842,51 @@ def configure_axes(
     globals, so this works correctly even when ``axes`` isn't the
     current axes (e.g. a marginal panel drawn after the main panel).
     """
-    # Create 5% buffer on either end of plot so that leftmost and rightmost
-    # lines are visible. However, if current axes are already bigger,
-    # keep current axes.
-    data_range = max(xdata) - min(xdata)
-    buff = 0.05 * data_range if data_range > 0 else 1.0
+    # Padding on the value axis: one slot of air beyond the outermost
+    # value, where a slot is the smallest gap between neighboring values
+    # -- the same rule the dot plot uses (see _dotplot_relayout), so the
+    # same discrete data frames identically whichever of the two it is
+    # drawn with. A plain 5% of the data range does not survive a short
+    # range: Bernoulli values 0 and 1 got 0.05 of air, which puts both
+    # stems all but on top of the spines.
+    #
+    # Continuous values (an impulse plot is for discrete data, but
+    # type="impulse" does not refuse them) keep the 5% buffer, since
+    # their smallest gap can be arbitrarily close to zero.
+    distinct = np.unique(np.asarray(xdata, dtype=float))
+    data_range = distinct[-1] - distinct[0]
+    whole_number = np.all(distinct == np.round(distinct))
+    if len(distinct) > 1 and whole_number:
+        buff = np.diff(distinct).min()
+    elif data_range > 0:
+        buff = 0.05 * data_range
+    else:
+        buff = 1.0
 
     if orientation == "vertical":
+        set_value_margin = axes.set_xmargin
         value_lim, freq_lim = axes.get_xlim(), axes.get_ylim()
         set_value_lim, set_freq_lim = axes.set_xlim, axes.set_ylim
         set_value_label, set_freq_label = axes.set_xlabel, axes.set_ylabel
     else:
+        set_value_margin = axes.set_ymargin
         value_lim, freq_lim = axes.get_ylim(), axes.get_xlim()
         set_value_lim, set_freq_lim = axes.set_ylim, axes.set_xlim
         set_value_label, set_freq_label = axes.set_ylabel, axes.set_xlabel
+
+    # The limits below only ever *widen* what the axes already show, so
+    # that an overlaid second series can't crop the first one out. That
+    # makes matplotlib's automatic 5%-of-the-range margin a competitor
+    # rather than a starting point: on a wide axis it is larger than one
+    # slot, so it would silently win and the padding would drift back to
+    # being range-dependent. Drop it, leaving the autoscaled limits at
+    # the exact data extent, and let the slot padding above be the only
+    # air on this axis. On a later overlaid call autoscaling is already
+    # off (an explicit set_*lim below turns it off), so this re-scales
+    # nothing and the first call's limits stand.
+    set_value_margin(0)
+    axes.autoscale_view()
+    value_lim = axes.get_xlim() if orientation == "vertical" else axes.get_ylim()
 
     vmin, vmax = value_lim
     vmin = min(vmin, min(xdata) - buff)
@@ -863,6 +894,15 @@ def configure_axes(
     if vmin == vmax:
         vmin, vmax = vmin - 1.0, vmax + 1.0
     set_value_lim(vmin, vmax)
+
+    # Whole-number values get whole-number ticks, again matching the dot
+    # plot. Left to matplotlib's default locator, a handful of discrete
+    # values draws ticks at 0.5, 2.5, ... -- marking values the variable
+    # cannot take. (A categorical impulse plot overrides these ticks with
+    # its category names afterwards; see make_impulse.)
+    if whole_number:
+        value_axis = axes.xaxis if orientation == "vertical" else axes.yaxis
+        value_axis.set_major_locator(MaxNLocator(integer=True))
 
     _, fmax = freq_lim
     fmax = max(fmax, 1.05 * max(ydata))
@@ -1329,6 +1369,53 @@ def compute_density(values):
 def setup_ticks(pos, lab, ax):
     ax.set_ticks(pos)
     ax.set_ticklabels(lab)
+
+
+def _discrete_tick_labels(labels):
+    """Tick label strings for a discrete axis's level values.
+
+    A discrete axis labels each level with the value itself. When those
+    values arrive as floats that happen to be whole numbers, the plain
+    string form carries a trailing ``.0`` (``1.0``, ``2.0``, ...), which
+    is what a mixed 2-D dataset always produces: a simulation's values
+    are stored in one array, so a discrete count sitting next to a
+    continuous measurement becomes a float. Every other plot labels those
+    same levels as plain integers (the tile plot lays its discrete axis
+    out on a real number line and lets matplotlib's integer locator do
+    the formatting), so the ``.0`` reads as an inconsistency rather than
+    as information.
+
+    The whole-number test is applied to the levels **together**, not one
+    at a time: levels of 0.5, 1.0, 1.5 keep every ``.0``, because
+    labeling that axis 0.5, 1, 1.5 would be less readable, not more.
+    Non-numeric levels (strings, booleans, categories) are left exactly
+    as they print.
+
+    Parameters
+    ----------
+    labels : array-like
+        The value labeling each level, in axis order.
+
+    Returns
+    -------
+    list of str
+        One label string per level, same length and order as ``labels``.
+
+    Examples
+    --------
+    >>> _discrete_tick_labels([1.0, 2.0, 3.0])
+    ['1', '2', '3']
+    >>> _discrete_tick_labels([0.5, 1.0, 1.5])
+    ['0.5', '1.0', '1.5']
+    >>> _discrete_tick_labels(["heads", "tails"])
+    ['heads', 'tails']
+    """
+    labels = np.asarray(labels)
+    if np.issubdtype(labels.dtype, np.floating):
+        finite = np.isfinite(labels)
+        if finite.all() and np.all(labels == np.round(labels)):
+            return [str(int(value)) for value in labels]
+    return [str(value) for value in labels]
 
 
 def _thin_discrete_ticks(positions, labels, max_ticks):
@@ -2356,7 +2443,7 @@ def make_violin(data, positions, ax, color, axis, alpha):
     # tile plot and segmented rug/box/density.
     slot_positions = list(range(1, len(positions) + 1))
     tick_pos, tick_lab = _thin_discrete_ticks(
-        slot_positions, positions, MAX_DISCRETE_TICKS
+        slot_positions, _discrete_tick_labels(positions), MAX_DISCRETE_TICKS
     )
     setup_ticks(tick_pos, tick_lab, ax.xaxis if axis == "x" else ax.yaxis)
     for body in violins["bodies"]:
@@ -3923,7 +4010,9 @@ def make_segmented_rug(
     # labeled, mirroring the mixed tile plot.
     positions = np.arange(len(levels))
     if discrete_y:
-        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
+        tick_pos, tick_lab = _thin_discrete_ticks(
+            positions, _discrete_tick_labels(levels), MAX_DISCRETE_TICKS
+        )
         ax.set_yticks(tick_pos)
         ax.set_yticklabels(tick_lab)
         # Minor ticks at every band, so a gridline can mark each distinct
@@ -3931,7 +4020,9 @@ def make_segmented_rug(
         ax.set_yticks(positions, minor=True)
         ax.set_ylim(-0.5, len(levels) - 0.5)
     else:
-        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
+        tick_pos, tick_lab = _thin_discrete_ticks(
+            positions, _discrete_tick_labels(levels), MAX_DISCRETE_TICKS
+        )
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_lab)
         ax.set_xticks(positions, minor=True)
@@ -4275,12 +4366,16 @@ def make_segmented_density(
     # evenly spaced subset of the baselines is labeled, mirroring the
     # mixed tile plot and segmented rug.
     if discrete_y:
-        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
+        tick_pos, tick_lab = _thin_discrete_ticks(
+            ticks, _discrete_tick_labels(all_levels), MAX_DISCRETE_TICKS
+        )
         ax.set_yticks(tick_pos)
         ax.set_yticklabels(tick_lab)
         ax.set_ylim(lo, hi)
     else:
-        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
+        tick_pos, tick_lab = _thin_discrete_ticks(
+            ticks, _discrete_tick_labels(all_levels), MAX_DISCRETE_TICKS
+        )
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_lab)
         ax.set_xlim(lo, hi)
@@ -4612,12 +4707,16 @@ def make_segmented_hist(
     # evenly spaced subset of the baselines is labeled, mirroring the
     # segmented density plot.
     if discrete_y:
-        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
+        tick_pos, tick_lab = _thin_discrete_ticks(
+            ticks, _discrete_tick_labels(all_levels), MAX_DISCRETE_TICKS
+        )
         ax.set_yticks(tick_pos)
         ax.set_yticklabels(tick_lab)
         ax.set_ylim(lo, hi)
     else:
-        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
+        tick_pos, tick_lab = _thin_discrete_ticks(
+            ticks, _discrete_tick_labels(all_levels), MAX_DISCRETE_TICKS
+        )
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_lab)
         ax.set_xlim(lo, hi)
@@ -4819,11 +4918,15 @@ def make_grouped_boxplot(
     # `positions`); past MAX_DISCRETE_TICKS, only an evenly spaced subset
     # of the boxes is labeled.
     if discrete_y:
-        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
+        tick_pos, tick_lab = _thin_discrete_ticks(
+            positions, _discrete_tick_labels(levels), MAX_DISCRETE_TICKS
+        )
         ax.set_yticks(tick_pos)
         ax.set_yticklabels(tick_lab)
     else:
-        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
+        tick_pos, tick_lab = _thin_discrete_ticks(
+            positions, _discrete_tick_labels(levels), MAX_DISCRETE_TICKS
+        )
         ax.set_xticks(tick_pos)
         ax.set_xticklabels(tick_lab)
     ax.set_xlabel("Variable 1")
