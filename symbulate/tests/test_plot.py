@@ -3830,6 +3830,22 @@ def _discrete_sim(n=400, k=3, seed=2):
     )
 
 
+def _pairs_panels(fig=None):
+    """The matrix's panels, without the per-pair colorbars beside them.
+
+    Panels come from the grid, so they have a subplot spec; the colorbars are
+    placed with ``add_axes`` in the empty mirroring cells and have none.
+    """
+    fig = fig if fig is not None else plt.gcf()
+    return [ax for ax in fig.axes if ax.get_subplotspec() is not None]
+
+
+def _pairs_colorbars(fig=None):
+    """The matrix's per-pair colorbar axes."""
+    fig = fig if fig is not None else plt.gcf()
+    return [ax for ax in fig.axes if ax.get_subplotspec() is None]
+
+
 def _mixed_sim(n=400, seed=3):
     """One discrete variable and two continuous ones."""
     rng = np.random.default_rng(seed)
@@ -3884,12 +3900,12 @@ class TestPairsLayout(PlotTestCase):
                 plt.close("all")
                 plt.figure()
                 _continuous_sim(k=k).plot(pairs=True)
-                self.assertEqual(len(plt.gcf().axes), k * (k + 1) // 2)
+                self.assertEqual(len(_pairs_panels()), k * (k + 1) // 2)
 
     def test_dims_selects_a_subset(self):
         plt.figure()
         _continuous_sim(k=4).plot(pairs=True, dims=(0, 2))
-        self.assertEqual(len(plt.gcf().axes), 3)
+        self.assertEqual(len(_pairs_panels()), 3)
 
     def test_figure_is_sized_to_the_grid(self):
         plt.figure()
@@ -3906,7 +3922,7 @@ class TestPairsLayout(PlotTestCase):
     def test_only_the_outer_edges_are_labeled(self):
         plt.figure()
         _continuous_sim(k=3).plot(pairs=True)
-        axes = plt.gcf().axes
+        axes = _pairs_panels()
         # The bottom row carries x labels; every other panel has none.
         x_labels = [a.get_xlabel() for a in axes]
         self.assertEqual(sorted(l for l in x_labels if l), ["X1", "X2", "X3"])
@@ -3920,7 +3936,7 @@ class TestPairsLayout(PlotTestCase):
         plt.figure()
         _continuous_sim(k=3).plot(pairs=True)
         # Panels are added row by row, so the first one is (0, 0).
-        self.assertEqual(plt.gcf().axes[0].get_ylabel(), "X1")
+        self.assertEqual(_pairs_panels()[0].get_ylabel(), "X1")
 
     def test_inner_x_tick_labels_are_hidden(self):
         """Every panel in a column shares the variable, so they'd repeat."""
@@ -3929,7 +3945,7 @@ class TestPairsLayout(PlotTestCase):
         # Tick label text is filled in at draw time, so draw before reading it.
         fig = plt.gcf()
         fig.canvas.draw()
-        for ax in fig.axes:
+        for ax in _pairs_panels(fig):
             texts = [t.get_text() for t in ax.get_xticklabels()]
             if ax.get_xlabel():
                 # A bottom-row panel: its numbers are the ones that apply to
@@ -3947,12 +3963,71 @@ class TestPairsLayout(PlotTestCase):
         joint = [a for a in plt.gcf().axes if a.collections and not a.lines]
         self.assertEqual(joint[0].get_xlim(), joint[1].get_xlim())
 
-    def test_no_per_panel_colorbars(self):
-        """A colorbar per panel would spend the figure on scales, not data."""
+    def test_one_colorbar_per_joint_panel(self):
+        """Each pair keeps its own scale, so each gets its own bar."""
         plt.figure()
         _continuous_sim(k=3).plot(pairs=True)
-        # 6 panels exactly -- a colorbar would add an extra axes each.
-        self.assertEqual(len(plt.gcf().axes), 6)
+        # 3 joint panels among 3 variables -> 3 colorbars.
+        self.assertEqual(len(_pairs_colorbars()), 3)
+        self.assertEqual(len(_pairs_panels()), 6)
+
+    def test_colorbars_name_the_pair_they_explain(self):
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        titles = sorted(a.get_title() for a in _pairs_colorbars())
+        self.assertEqual(titles, ["X1 & X2", "X1 & X3", "X2 & X3"])
+
+    def test_colorbars_sit_in_the_empty_mirroring_cells(self):
+        """The upper triangle is blank, so the bars go there."""
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        fig = plt.gcf()
+        fig.canvas.draw()
+        panel_boxes = [a.get_position() for a in _pairs_panels(fig)]
+        for bar in _pairs_colorbars(fig):
+            box = bar.get_position()
+            for panel in panel_boxes:
+                self.assertFalse(
+                    box.overlaps(panel), "a colorbar landed on top of a panel"
+                )
+
+    def test_density_by_default_counts_when_asked(self):
+        for normalize, expected in [(True, "Density"), (False, "Count")]:
+            with self.subTest(normalize=normalize):
+                plt.close("all")
+                plt.figure()
+                _continuous_sim(k=3).plot(pairs=True, normalize=normalize)
+                labels = {a.get_ylabel() for a in _pairs_colorbars()}
+                self.assertEqual(labels, {expected})
+
+    def test_count_ticks_have_no_decimals(self):
+        """A count is a whole number of simulated values."""
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True, normalize=False)
+        fig = plt.gcf()
+        fig.canvas.draw()
+        for bar in _pairs_colorbars(fig):
+            for text in [t.get_text() for t in bar.get_yticklabels()]:
+                if text:
+                    self.assertNotIn(".", text)
+
+    def test_density_ticks_keep_their_decimals(self):
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        fig = plt.gcf()
+        fig.canvas.draw()
+        shown = [
+            t.get_text() for bar in _pairs_colorbars(fig) for t in bar.get_yticklabels()
+        ]
+        self.assertTrue(any("." in t for t in shown if t))
+
+    def test_discrete_and_mixed_matrices_get_colorbars_too(self):
+        for label, sim in [("discrete", _discrete_sim()), ("mixed", _mixed_sim())]:
+            with self.subTest(data=label):
+                plt.close("all")
+                plt.figure()
+                sim.plot(pairs=True)
+                self.assertEqual(len(_pairs_colorbars()), 3)
 
     def test_every_configuration_draws_without_warnings(self):
         for label, sim in [
@@ -3979,7 +4054,7 @@ class TestPairsLayout(PlotTestCase):
                 plt.figure()
                 sim.plot(pairs=True)
                 fig = plt.gcf()
-                self.assertEqual([a.get_title() for a in fig.axes], [""] * 6)
+                self.assertEqual([a.get_title() for a in _pairs_panels(fig)], [""] * 6)
                 self.assertEqual(fig._suptitle.get_text(), "Pairs Plot")
 
     def test_panels_do_not_print_suggestion_notes(self):

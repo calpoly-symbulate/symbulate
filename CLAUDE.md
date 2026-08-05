@@ -546,12 +546,31 @@ one panel's y-label blank on the grounds that a diagonal panel's y-axis is a
 density rather than the variable. Worth reconciling: the theoretical side needs a
 one-line change (`if col == 0 and row != col:` → `if col == 0:`) to match.
 
+**Colorbars go in the empty upper triangle — one per joint panel.** The matrix
+fills only its lower triangle, so the cell mirroring panel `(row, col)` across
+the diagonal is free and exactly the right shape for that panel's colorbar.
+`add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label)` in
+`plot.py` places it, and **both matrices call the same helper** so they cannot
+drift apart. Consequences to respect:
+- Each panel keeps **its own** color scale (a dense pair and a diffuse one are
+  each colored over their own range), which is *why* every bar is titled with
+  the pair it explains (`"X1 & X2"`) — a color only means something against its
+  own bar.
+- `quantity_label` is `"Density"`/`"Count"` by `normalize` for simulated results
+  and `"Density"`/`"Probability"` by discreteness for a distribution. **A
+  `"Count"` bar's ticks carry no decimals** (a count is a whole number of
+  simulated values); density and probability keep `JOINT_CBAR_DECIMALS`.
+- The bars are placed **after `fig.tight_layout()`**, from
+  `gs[col, row].get_position(fig)` — the cell rectangles are only final once the
+  layout has settled. They use `fig.add_axes`, so they have no subplot spec,
+  which is how tests tell a panel from a bar (`get_subplotspec() is not None`).
+
 Three implementation notes:
 - **Diagonal panels route through `.plot()`** (full reuse of the 1-D dispatch)
   after `plt.sca(ax)` — which works because every helper draws on `plt.gca()`.
   **Joint panels call `make_tile`/`make_hist2d` directly**, because the 2-D
-  dispatch hardcodes `colorbar=not marginal` and a colorbar per panel would
-  spend the figure on scales instead of data.
+  dispatch hardcodes `colorbar=not marginal`; they return their mappable so the
+  matrix can give each one its own bar in the mirroring cell.
 - **One bin count for the whole matrix.** Equal-width bins over the same column
   of data with the same count give identical edges, which is what makes a column
   comparable. Don't pass `bins` to `make_tile` when both axes are discrete — it

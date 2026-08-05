@@ -427,6 +427,11 @@ JOINT_PAIRS_PANEL_SIZE = 2.2  # width and height, in inches, of one panel of
 # a pairs matrix. The figure is sized to the grid rather than left at the
 # single-plot figure.figsize from symbulate.mplstyle, which would shrink
 # every panel as the number of variables grows.
+# Where a joint panel's colorbar sits inside the otherwise-empty grid cell
+# mirroring it, as fractions of that cell: (left, bottom, width, height). A
+# slim bar left of center, leaving room on its right for the tick labels and
+# the "Density"/"Count" label.
+JOINT_PAIRS_COLORBAR_INSET = (0.26, 0.08, 0.10, 0.84)
 
 # Tile plot. The colormap comes from image.cmap (viridis) in
 # symbulate.mplstyle.
@@ -1371,6 +1376,64 @@ def add_colorbar(fig, marginal, mappable, label):
         caxes = fig.add_axes([0.86, 0.11, 0.03, 0.52])
         cbar = plt.colorbar(mappable=mappable, cax=caxes)
         cbar.set_label(label)
+    return caxes
+
+
+def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
+    """Put one joint panel's colorbar in the empty cell mirroring it.
+
+    A pairs matrix fills only its lower triangle, because panel ``(i, j)``
+    and panel ``(j, i)`` would show the same pair twice. That leaves the
+    upper triangle empty and exactly the right shape: each joint panel's
+    colorbar goes in the cell across the diagonal from it, so the bar has
+    room of its own instead of eating into the panel.
+
+    Every panel keeps its own color scale -- a dense pair and a diffuse one
+    are each colored over their own range -- so each bar is labeled with the
+    pair it belongs to, and reading a color means reading that pair's bar.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure holding the matrix.
+    cell : matplotlib.transforms.Bbox
+        Where the mirroring grid cell sits in the figure, from
+        ``gridspec[row, col].get_position(fig)`` *after* the layout is
+        settled.
+    mappable : matplotlib.cm.ScalarMappable
+        The surface or mesh drawn in the joint panel.
+    pair_label : str
+        Which two variables the panel shows, e.g. ``"X1 & X2"``.
+    quantity_label : str
+        What the colors measure: ``"Density"``, ``"Count"``, or
+        ``"Probability"``. Counts are whole numbers, so their ticks are
+        drawn without decimals.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The colorbar's axes.
+    """
+    left, bottom, width, height = JOINT_PAIRS_COLORBAR_INSET
+    caxes = fig.add_axes(
+        (
+            cell.x0 + left * cell.width,
+            cell.y0 + bottom * cell.height,
+            width * cell.width,
+            height * cell.height,
+        )
+    )
+    cbar = plt.colorbar(mappable=mappable, cax=caxes)
+    cbar.set_label(quantity_label)
+    # Name the pair above its bar, so a color in the matrix can be traced to
+    # the scale that explains it.
+    caxes.set_title(pair_label)
+    # A count is a whole number of simulated values, so decimals on its ticks
+    # would be noise; a density or a probability needs them.
+    decimals = 0 if quantity_label == "Count" else JOINT_CBAR_DECIMALS
+    cbar.ax.yaxis.set_major_formatter(
+        FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
+    )
     return caxes
 
 

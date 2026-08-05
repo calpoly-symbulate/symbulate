@@ -4286,17 +4286,50 @@ class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_plot_pairs_lower_triangle(self):
         # n diagonal panels plus n(n-1)/2 lower-triangle panels, and no
-        # upper triangle: 4 variables -> 4 + 6 = 10 panels.
+        # upper triangle: 4 variables -> 4 + 6 = 10 panels. The 6 joint panels
+        # each put a colorbar in the empty cell mirroring them, so the figure
+        # holds 16 axes in all.
         X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4).tolist())
         X.plot(pairs=True)
-        self.assertEqual(len(plt.gcf().axes), 10)
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 10)
+        self.assertEqual(len(plt.gcf().axes), 10 + 6)
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_pairs_colorbars_name_their_pair(self):
+        # Each joint panel keeps its own color scale, so each gets its own
+        # colorbar in the empty cell mirroring it, named for the pair it
+        # explains.
+        plt.close("all")
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
+        X.plot(pairs=True)
+        bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
+        self.assertEqual(
+            sorted(a.get_title() for a in bars), ["X1 & X2", "X1 & X3", "X2 & X3"]
+        )
+        self.assertEqual({a.get_ylabel() for a in bars}, {"Density"})
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_pairs_colorbars_avoid_the_panels(self):
+        plt.close("all")
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
+        X.plot(pairs=True)
+        fig = plt.gcf()
+        fig.canvas.draw()
+        panels = [a.get_position() for a in fig.axes if a.get_subplotspec() is not None]
+        for bar in [a for a in fig.axes if a.get_subplotspec() is None]:
+            for panel in panels:
+                self.assertFalse(bar.get_position().overlaps(panel))
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_subset_of_dims(self):
         X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4).tolist())
         X.plot(pairs=True, dims=(0, 2))
-        # 2 diagonal panels plus the one pair between them.
-        self.assertEqual(len(plt.gcf().axes), 3)
+        # 2 diagonal panels plus the one pair between them, whose colorbar
+        # sits in the mirroring cell.
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 3)
+        self.assertEqual(len(plt.gcf().axes), 3 + 1)
         plt.close("all")
 
     def test_MultivariateNormal_marginal_1d_is_exact(self):
@@ -5007,6 +5040,14 @@ class TestMultinomial(unittest.TestCase):
         large.plot()
         plt.close("all")
 
+    def test_Multinomial_plot_pairs_colorbars_say_probability(self):
+        # A discrete joint panel shows a probability, not a density.
+        plt.close("all")
+        Multinomial(n=10, p=[0.3, 0.3, 0.4]).plot(pairs=True)
+        bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
+        self.assertEqual({a.get_ylabel() for a in bars}, {"Probability"})
+        plt.close("all")
+
     def test_Multinomial_plot_pairs(self):
         # A pairs plot fills the whole figure, so it refuses to draw into one
         # that already has axes. Start from a clean figure so the test does
@@ -5015,7 +5056,9 @@ class TestMultinomial(unittest.TestCase):
         plt.close("all")
         X = Multinomial(n=12, p=[0.4, 0.3, 0.2, 0.1])
         X.plot(pairs=True)
-        self.assertEqual(len(plt.gcf().axes), 10)
+        # 10 panels; the 6 joint ones each carry a colorbar as well.
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 10)
         plt.close("all")
 
     def test_Multinomial_pdf(self):
@@ -5294,7 +5337,9 @@ class TestDirichlet(unittest.TestCase):
     def test_Dirichlet_plots_pairs_with_Beta_marginals_on_the_diagonal(self):
         X = Dirichlet(alpha=[3, 2, 4, 5])
         X.plot(pairs=True)
-        self.assertEqual(len(plt.gcf().axes), 10)
+        # 10 panels; the 6 joint ones each carry a colorbar as well.
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 10)
         plt.close("all")
 
     def test_Dirichlet_plots_with_concentration_below_one(self):

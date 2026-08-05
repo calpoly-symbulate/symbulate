@@ -34,6 +34,7 @@ from .plot import (
     JOINT_PAIRS_MAX_DIM,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
+    add_pairs_panel_colorbar,
     MARGINAL_OVERLAY_ERROR,
     auto_jitter_mode,
     classify_values,
@@ -1673,6 +1674,9 @@ class RVResults(Results):
         panel_bins = TILE_DEFAULT_BINS if bins is None else bins
 
         corner = None
+        # (mappable, row, col) per joint panel, so each can be given its own
+        # colorbar once the layout has settled (see the end of this method).
+        joint_panels = []
         for row in range(k):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
@@ -1691,14 +1695,20 @@ class RVResults(Results):
                         **kwargs,
                     )
                 else:
-                    self._draw_pairs_joint(
-                        chosen[col],
-                        chosen[row],
-                        ax,
-                        normalize=normalize,
-                        bins=panel_bins,
-                        alpha=alpha,
-                        **kwargs,
+                    joint_panels.append(
+                        (
+                            self._draw_pairs_joint(
+                                chosen[col],
+                                chosen[row],
+                                ax,
+                                normalize=normalize,
+                                bins=panel_bins,
+                                alpha=alpha,
+                                **kwargs,
+                            ),
+                            row,
+                            col,
+                        )
                     )
                 # Drop the title each panel drew for itself. On its own a plot
                 # is titled with its type ("Density Curve", "Tile Plot"), but
@@ -1736,6 +1746,26 @@ class RVResults(Results):
 
         fig.suptitle("Pairs Plot")
         fig.tight_layout()
+
+        # Each joint panel gets its own colorbar, in the empty cell mirroring
+        # it across the diagonal. Done after tight_layout, so the cells are
+        # where they will finally be.
+        quantity = "Density" if normalize else "Count"
+        for mappable, row, col in joint_panels:
+            if mappable is None:
+                continue
+            add_pairs_panel_colorbar(
+                fig,
+                gs[col, row].get_position(fig),
+                mappable,
+                "%s & %s"
+                % (
+                    self._pairs_variable_label(chosen[col]),
+                    self._pairs_variable_label(chosen[row]),
+                ),
+                quantity,
+            )
+
         # Leave the bottom-left panel current, so the returned plot and the
         # figure's idea of "the" axes agree.
         if corner is not None:
@@ -1785,6 +1815,12 @@ class RVResults(Results):
             Transparency of the panel.
         **kwargs
             Additional keyword arguments forwarded to the helper.
+
+        Returns
+        -------
+        matplotlib.cm.ScalarMappable
+            The mesh or image drawn, so the caller can give the panel its own
+            colorbar in the cell mirroring it.
         """
         x = self._pairs_column(x_index)
         y = self._pairs_column(y_index)
@@ -1792,7 +1828,7 @@ class RVResults(Results):
             x_index, y_index
         )
         if configuration == "2D_cc":
-            make_hist2d(
+            histogram = make_hist2d(
                 x,
                 y,
                 ax,
@@ -1801,6 +1837,9 @@ class RVResults(Results):
                 colorbar=False,
                 **kwargs,
             )
+            # Square bins hand back (counts, xedges, yedges, mesh); hexagonal
+            # ones hand back the mesh itself.
+            return histogram[3] if isinstance(histogram, tuple) else histogram
         else:
             # bins only bins a continuous axis, and make_tile warns if it is
             # handed one when both variables are discrete (every distinct
@@ -1808,7 +1847,7 @@ class RVResults(Results):
             # is a continuous axis for it to apply to.
             if not (discrete_x and discrete_y):
                 kwargs["bins"] = bins
-            make_tile(
+            return make_tile(
                 x,
                 y,
                 ax,

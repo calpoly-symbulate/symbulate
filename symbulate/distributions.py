@@ -21,6 +21,7 @@ from .plot import (
     JOINT_PMF_MAX_CELLS,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
+    add_pairs_panel_colorbar,
     SHADE_COLOR,
     SHADE_ALPHA,
     TRUE_DIST_MARKER_SIZE,
@@ -5479,6 +5480,9 @@ class MultivariateDistribution(Distribution):
         gs = GridSpec(k, k, figure=fig)
 
         corner = None
+        # (mappable, row, col) per joint panel, so each can be given its own
+        # colorbar once the layout has settled (see the end of this method).
+        joint_panels = []
         for row in range(k):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
@@ -5496,15 +5500,21 @@ class MultivariateDistribution(Distribution):
                     )
                     ax.set_title("")
                 else:
-                    self._plot_joint(
-                        dims[col],
-                        dims[row],
-                        ax,
-                        contour,
-                        colorbar=False,
-                        title=False,
-                        alpha=alpha,
-                        **kwargs,
+                    joint_panels.append(
+                        (
+                            self._plot_joint(
+                                dims[col],
+                                dims[row],
+                                ax,
+                                contour,
+                                colorbar=False,
+                                title=False,
+                                alpha=alpha,
+                                **kwargs,
+                            ),
+                            row,
+                            col,
+                        )
                     )
                 # Name the variables only along the outside edges, so the
                 # inner panels aren't crowded with repeated labels. Set them
@@ -5536,6 +5546,23 @@ class MultivariateDistribution(Distribution):
 
         fig.suptitle("Pairs Plot")
         fig.tight_layout()
+
+        # Each joint panel gets its own colorbar, in the empty cell mirroring
+        # it across the diagonal -- the same treatment a simulated pairs
+        # matrix gets, so the two can be read side by side. Done after
+        # tight_layout, so the cells are where they will finally be.
+        quantity = "Probability" if self.discrete else "Density"
+        for mappable, row, col in joint_panels:
+            if mappable is None:
+                continue
+            add_pairs_panel_colorbar(
+                fig,
+                gs[col, row].get_position(fig),
+                mappable,
+                "%s & %s"
+                % (self._variable_label(dims[col]), self._variable_label(dims[row])),
+                quantity,
+            )
         return corner
 
     def plot(
