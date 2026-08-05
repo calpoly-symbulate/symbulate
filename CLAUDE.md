@@ -97,6 +97,17 @@ types." Those live as named constants at the top of `plot.py` instead (see
 values inline in a plot function — every value belongs in one of those two
 places, not scattered inline.
 
+**2D density surfaces are banded by default.** `make_density2D` and
+`make_joint_pdf` both default to `contour=True`, so a 2-D density (simulated
+`type="density2d"`, a theoretical joint pdf, and every continuous joint panel of a
+pairs matrix) is drawn as `DENSITY2D_LEVELS`/`JOINT_PDF_LEVELS` discrete bands with
+thin white outlines, which can be read against the colorbar. `contour=False` gives
+the old smooth gradient (`*_CONTINUOUS_LEVELS` bands). Note the panel title follows
+the mode — "Contour Plot" / "Joint Contour Plot" by default, "2D Density Plot" /
+"Joint PDF Plot" with `contour=False` — while `PLOT_DISPLAY_NAME["density2d"]` in
+the suggestion note still reads "2D Density Plot", since that names the `type=`
+token rather than the shading.
+
 **Color palette:** categorical palette is **Okabe-Ito** (7 hues, excluding
 black) — colorblind-safe and print-friendly. Do not substitute other colors.
 Sequential/continuous plots (2D density, tile, hist2d) use **viridis** —
@@ -534,16 +545,18 @@ as well (a stray one raises the same kind of message). Note the sum-constrained
 families count *free* variables — a 3-category `Multinomial` has 2, so it still
 draws its one joint plot.
 
-**`dims` means the same thing on both sides, with one wrinkle.** Naming exactly
-two variables draws their single joint plot on the theoretical side (its
-documented "name the two variables you want"), whereas the simulated side always
-builds a matrix from `dims`, so `sim.plot(dims=(0, 1))` gives a 2×2 matrix while
-`dist.plot(dims=(0, 1))` gives one joint plot. Worth reconciling if it bites.
+**Choosing which variables to show is asymmetric on purpose.** A distribution
+takes `variables=` — any list of two or more, Python-indexed, so
+`variables=[0, 1, 3]` draws `Variable 1`, `Variable 2`, `Variable 4` (two of them
+means their single joint plot; three or more means a matrix of those). Simulated
+results have **no such argument**: index the random variable before simulating,
+`X[[0, 2]].sim(1000).plot()`, since that already exists and avoids two ways to say
+the same thing. Both removed keywords (`dims=` on either side, `pairs=`) raise a
+message naming the replacement rather than reaching matplotlib.
 
 ## Pairs Matrix of Simulated Results
 
-`RVResults.plot(dims=None)` in `results.py`, reached by default for 3+
-variables.
+`RVResults.plot()` in `results.py`, reached by default for 3+ variables.
 
 Every panel shows **exactly what that data would show on its own** — the same
 `classify_values` + `DEFAULT_PLOT_TYPE` lookup the 1-D and 2-D dispatches use,
@@ -561,8 +574,16 @@ student gets by simulating those variables by themselves:
 Conventions shared with the theoretical version, by design — change both or
 neither: lower triangle only, `JOINT_PAIRS_MAX_DIM` cap, `JOINT_PAIRS_PANEL_SIZE`
 per panel, `JOINT_PAIRS_OVERLAY_ERROR` when the figure already has a plot,
-`Variable 1`-style labels on the outer edges only, no per-panel titles (each panel's
-own type title is cleared — the `"Pairs Plot"` suptitle names the layout).
+`Variable 1`-style labels on the outer edges only, no per-panel titles (each
+panel's own type title is cleared, and the figure carries one suptitle instead).
+
+**The suptitle differs by design.** A theoretical matrix is titled
+`"Probability Density Functions"` or `"Probability Mass Functions"` by
+`self.discrete`, because every panel of it *is* an exact pdf/pmf. A simulated
+matrix keeps `"Pairs Plot"`: its panels are estimates, a mixed matrix has both
+kinds of variable at once, `normalize=False` shows counts, and a small
+simulation's panels are scatters and rugs — so no single pdf/pmf claim would be
+true of it.
 
 **Both matrices label the whole left column**, top-left panel included, so every
 row is named (`Variable 1`, `Variable 2`, `Variable 3` down the side — seaborn
@@ -600,8 +621,9 @@ Three implementation notes:
   of data with the same count give identical edges, which is what makes a column
   comparable. Don't pass `bins` to `make_tile` when both axes are discrete — it
   warns.
-- `dims` is only meaningful with `pairs=True`; on its own it raises rather than
-  leaking into matplotlib.
+- There is no `dims`/`variables` argument here: a subset is chosen by indexing
+  the random variable (`X[[0, 2]].sim(n).plot()`). Passing `dims=` raises a
+  message saying so.
 
 ## Testing Requirements
 

@@ -368,7 +368,7 @@ DENSITY2D_PADDING_FRAC = 0.1  # quantile bounds, not raw min/max, so
 # outlier-heavy data doesn't stretch the axes (same rationale as the
 # 1D density case)
 DENSITY2D_CONTINUOUS_LEVELS = 256  # number of contourf bands used for
-# the default continuous density plot (contour=False). High enough
+# the continuous density plot (contour=False). High enough
 # that the bands blend into a smooth gradient.
 DENSITY2D_LEVELS = 8  # default number of discrete color bands for the
 # contour plot (contour=True); levels= overrides per call
@@ -390,7 +390,8 @@ JOINT_PDF_GRID_POINTS = 200  # points per axis for the continuous surface.
 # Lower than DENSITY2D_GRID_POINTS (300) because every grid point is an
 # exact pdf evaluation rather than one KDE lookup, and 200 matches the
 # number of points the univariate Distribution.plot() curve uses.
-JOINT_PDF_LEVELS = 8  # discrete color bands for contour=True; matches
+JOINT_PDF_LEVELS = 8  # discrete color bands for contour=True, the default;
+# matches
 # DENSITY2D_LEVELS so a theoretical contour plot bands like a simulated one
 JOINT_PDF_CONTINUOUS_LEVELS = 256  # matches DENSITY2D_CONTINUOUS_LEVELS --
 # enough bands that the default surface reads as a smooth gradient
@@ -5818,22 +5819,22 @@ def _density2d_grid(x, y):
     return Xgrid, Ygrid, Z, (xmin, xmax, ymin, ymax)
 
 
-def make_density2D(x, y, ax, contour=False, levels=None, colorbar=True, **kwargs):
+def make_density2D(x, y, ax, contour=True, levels=None, colorbar=True, **kwargs):
     """Draw a 2D density surface from a KDE estimate.
 
     Both modes plot the *same* KDE-estimated density surface with
     ``ax.contourf``; they differ in how finely it is quantized:
 
-    - ``contour=False`` (default): a *continuous* density plot. The
-      surface is drawn with a large fixed number of color bands
+    - ``contour=True`` (default): a topographic "Contour Plot". The
+      surface is split into ``levels`` discrete color bands with thin
+      white outlines between them, so each band can be matched to the
+      colorbar by eye rather than guessed at from a gradient.
+    - ``contour=False``: a *continuous* density plot. The surface is
+      drawn with a large fixed number of color bands
       (``DENSITY2D_CONTINUOUS_LEVELS``) so they blend into a smooth
       gradient with no visible banding -- the "2D Density Plot" look.
-      The ``levels`` argument does not apply here; passing it warns
+      The ``levels`` argument does not apply there; passing it warns
       and has no effect.
-    - ``contour=True``: a topographic "Contour Plot". The same surface
-      is split into ``levels`` discrete color bands with thin white
-      outlines between them, so each band can be matched to the
-      colorbar by eye.
 
     The axis limits are quantile-based (0.1st to 99.9th percentile of
     each variable, plus padding), not raw min/max, so outlier-heavy
@@ -6083,7 +6084,7 @@ def make_joint_pdf(
     xlim,
     ylim,
     ax,
-    contour=False,
+    contour=True,
     colorbar=True,
     xlabel="Variable 1",
     ylabel="Variable 2",
@@ -6100,11 +6101,11 @@ def make_joint_pdf(
     curve the univariate ``Distribution.plot()`` draws, and it takes the
     same two forms ``make_density2D`` does:
 
-    - ``contour=False`` (default): a smoothly shaded surface, drawn with
+    - ``contour=True`` (default): a topographic contour plot --
+      ``JOINT_PDF_LEVELS`` discrete bands with thin white outlines, so each
+      band can be matched to the colorbar by eye.
+    - ``contour=False``: a smoothly shaded surface, drawn with
       ``JOINT_PDF_CONTINUOUS_LEVELS`` bands so no banding is visible.
-    - ``contour=True``: a topographic contour plot -- ``JOINT_PDF_LEVELS``
-      discrete bands with thin white outlines, so each band can be matched
-      to the colorbar by eye.
 
     The color scale runs from 0 to the peak density, so the colorbar starts
     at 0. A density that is unbounded at the edge of its support (a

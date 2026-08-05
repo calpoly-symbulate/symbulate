@@ -1539,18 +1539,33 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         self.assertEqual(plt.gca().get_title(), "2-D Histogram")
 
     def test_density2d_draws_contour_surface(self):
+        """Banded by default now, so it titles itself a contour plot."""
         self.sims.plot(type="density")
         ax = plt.gca()
         self.assertGreater(len(ax.collections + ax.images), 0)
-        self.assertEqual(ax.get_title(), "2D Density Plot")
+        self.assertEqual(ax.get_title(), "Contour Plot")
+
+    def test_density2d_smooth_surface_with_contour_off(self):
+        """contour=False is how the smooth gradient is asked for now."""
+        self.sims.plot(type="density", contour=False)
+        self.assertEqual(plt.gca().get_title(), "2D Density Plot")
 
     def test_density2d_contour_mode(self):
         self.sims.plot(type="density", contour=True)
         self.assertEqual(plt.gca().get_title(), "Contour Plot")
 
     def test_density2d_levels_without_contour_warns(self):
+        """levels only bands a contour plot, so it warns with contour=False."""
         with self.assertWarns(UserWarning):
-            self.sims.plot(type="density", levels=5)
+            self.sims.plot(type="density", levels=5, contour=False)
+
+    def test_density2d_levels_apply_by_default(self):
+        """Bands are the default, so levels= now takes effect without a flag."""
+        self.sims.plot(type="density", levels=5)
+        sets = [
+            c for c in plt.gca().collections if getattr(c, "levels", None) is not None
+        ]
+        self.assertTrue(any(len(s.levels) - 1 == 5 for s in sets))
 
     def test_density2d_bad_levels_raises_friendly_error(self):
         with self.assertRaises(ValueError) as cm:
@@ -2274,7 +2289,7 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(
             type="density2d", suggest=False
         )
-        self.assertEqual(plt.gca().get_title(), "2D Density Plot")
+        self.assertEqual(plt.gca().get_title(), "Contour Plot")
 
 
 class TestPlot2DSegmentedHist(PlotTestCase):
@@ -2829,7 +2844,7 @@ class TestDefaultLookupDispatch(PlotTestCase):
         self.assertEqual(plt.gca().get_title(), "2-D Histogram")
         plt.close("all")
         sims.plot(type="density2d")
-        self.assertEqual(plt.gca().get_title(), "2D Density Plot")
+        self.assertEqual(plt.gca().get_title(), "Contour Plot")
         plt.close("all")
         Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
         (Xm & Ym).sim(200).plot(type="segmented_rug")
@@ -3128,7 +3143,7 @@ class TestDistributionPlotDiscrete(PlotTestCase):
     def test_multivariate_normal_plots_joint_density(self):
         """MultivariateNormal.plot() draws the joint density of two variables."""
         MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
-        self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
 
     def test_multinomial_plots_joint_pmf(self):
         """Multinomial.plot() draws a probability per pair of counts."""
@@ -3732,7 +3747,7 @@ class TestJointTheoreticalPlots(PlotTestCase):
         self.assertEqual(seen["n"], JOINT_PDF_GRID_POINTS**2)
         self.assertEqual(ax.get_xlim(), (-3, 3))
         self.assertEqual(ax.get_ylim(), (-3, 3))
-        self.assertEqual(ax.get_title(), "Joint PDF Plot")
+        self.assertEqual(ax.get_title(), "Joint Contour Plot")
 
     def test_make_joint_pdf_contour_titles_and_bands(self):
         pdf = lambda x, y: np.exp(-(x**2 + y**2) / 2)
@@ -3924,10 +3939,11 @@ class TestPairsLayout(PlotTestCase):
         _continuous_sim(k=2).plot(suggest=False)
         self.assertEqual(len(_pairs_panels()), 1)
 
-    def test_dims_selects_a_subset(self):
+    def test_a_subset_is_chosen_by_indexing_the_variable(self):
+        """No dims= here: X[[0, 2]].sim(n).plot() picks the variables."""
         plt.figure()
-        _continuous_sim(k=4).plot(dims=(0, 2))
-        self.assertEqual(len(_pairs_panels()), 3)
+        _continuous_sim(k=4)._pairs_subset((0, 2)).plot(suggest=False)
+        self.assertEqual(len(_pairs_panels()), 1)
 
     def test_figure_is_sized_to_the_grid(self):
         plt.figure()
@@ -4119,13 +4135,17 @@ class TestPairsErrors(PlotTestCase):
         with self.assertRaises(Exception) as cm:
             many.plot()
         self.assertIn("too many", str(cm.exception))
-        self.assertIn("dims", str(cm.exception))
+        # It points at indexing the variable, which is how a subset is chosen.
+        self.assertIn("X[[0, 1, 2]]", str(cm.exception))
 
-    def test_dims_on_too_few_variables_explains_itself(self):
+    def test_the_old_dims_keyword_explains_itself(self):
+        """It was removed: index the random variable instead."""
         plt.figure()
         with self.assertRaises(ValueError) as cm:
-            _continuous_sim(k=2).plot(dims=(0, 1))
-        self.assertIn("three or more variables", str(cm.exception))
+            _continuous_sim(k=3).plot(dims=(0, 1))
+        message = str(cm.exception)
+        self.assertIn("X[[0, 2]]", message)
+        self.assertIn("variables=", message)
 
     def test_the_old_pairs_keyword_explains_itself(self):
         """It was how the matrix used to be asked for; now it is the default."""
@@ -4144,30 +4164,12 @@ class TestPairsErrors(PlotTestCase):
         self.assertIn("3 variables", message)
         self.assertIn("type='path'", message)
 
-    def test_dims_out_of_range(self):
-        plt.figure()
-        with self.assertRaises(ValueError) as cm:
-            _continuous_sim(k=3).plot(dims=(0, 9))
-        self.assertIn("between 0 and 2", str(cm.exception))
-
-    def test_dims_cannot_repeat_a_variable(self):
-        plt.figure()
-        with self.assertRaises(ValueError):
-            _continuous_sim().plot(dims=(1, 1))
-
-    def test_dims_needs_at_least_two_variables(self):
-        plt.figure()
-        with self.assertRaises(ValueError):
-            _continuous_sim().plot(dims=(0,))
-        with self.assertRaises(ValueError):
-            _continuous_sim().plot(dims=1)
-
     def test_one_variable_cannot_make_a_matrix(self):
         """Reached only by calling the matrix directly -- .plot() on one
         variable draws that variable."""
         one = RVResults([float(v) for v in np.random.default_rng(0).normal(size=50)])
         with self.assertRaises(ValueError) as cm:
-            one._plot_pairs(None)
+            one._plot_pairs()
         self.assertIn("at least two", str(cm.exception))
 
 

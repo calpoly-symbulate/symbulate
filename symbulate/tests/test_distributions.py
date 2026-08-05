@@ -4261,7 +4261,7 @@ class TestMultivariateNormal(unittest.TestCase):
         # Two variables: one joint distribution, so no arguments needed.
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
         X.plot()
-        self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
         self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
         self.assertEqual(plt.gca().get_ylabel(), "Variable 2")
         plt.close("all")
@@ -4280,15 +4280,17 @@ class TestMultivariateNormal(unittest.TestCase):
         X.plot()
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
         self.assertEqual(len(panels), 6)
-        self.assertEqual(plt.gcf()._suptitle.get_text(), "Pairs Plot")
+        self.assertEqual(
+            plt.gcf()._suptitle.get_text(), "Probability Density Functions"
+        )
         plt.close("all")
 
-    def test_MultivariateNormal_plot_two_dims_is_one_joint_plot(self):
+    def test_MultivariateNormal_plot_two_variables_is_one_joint_plot(self):
         # Naming exactly two variables still draws their joint distribution,
         # not a 2-by-2 matrix -- two variables have one joint plot between them.
         plt.close("all")
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
-        X.plot(dims=(0, 2))
+        X.plot(variables=(0, 2))
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
         self.assertEqual(len(panels), 1)
         self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
@@ -4362,9 +4364,9 @@ class TestMultivariateNormal(unittest.TestCase):
                 self.assertFalse(bar.get_position().overlaps(panel))
         plt.close("all")
 
-    def test_MultivariateNormal_plot_pairs_subset_of_dims(self):
+    def test_MultivariateNormal_plot_pairs_subset_of_variables(self):
         X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4).tolist())
-        X.plot(dims=(0, 2, 3))
+        X.plot(variables=(0, 2, 3))
         # 3 diagonal panels plus the 3 pairs among them, each pair's colorbar
         # in the mirroring cell.
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
@@ -4397,15 +4399,15 @@ class TestMultivariateNormal(unittest.TestCase):
         self.assertRaises(ValueError, lambda: X.plot(type="hist"))
         plt.close("all")
 
-    def test_MultivariateNormal_plot_bad_dims(self):
+    def test_MultivariateNormal_plot_bad_variables(self):
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
         # Too few variables, out of range, repeated, not a number. (Three or
         # more is no longer an error -- it asks for a matrix of every pair.)
-        self.assertRaises(Exception, lambda: X.plot(dims=(0,)))
-        self.assertRaises(Exception, lambda: X.plot(dims=()))
-        self.assertRaises(Exception, lambda: X.plot(dims=(0, 7)))
-        self.assertRaises(Exception, lambda: X.plot(dims=(1, 1)))
-        self.assertRaises(Exception, lambda: X.plot(dims=(0, "a")))
+        self.assertRaises(Exception, lambda: X.plot(variables=(0,)))
+        self.assertRaises(Exception, lambda: X.plot(variables=()))
+        self.assertRaises(Exception, lambda: X.plot(variables=(0, 7)))
+        self.assertRaises(Exception, lambda: X.plot(variables=(1, 1)))
+        self.assertRaises(Exception, lambda: X.plot(variables=(0, "a")))
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_cannot_share_a_figure(self):
@@ -4521,7 +4523,7 @@ class TestMultivariateT(unittest.TestCase):
     def test_MultivariateT_plots_joint_density(self):
         X = MultivariateT(mean=[0, 0], cov=[[1, 0.3], [0.3, 2]], df=4)
         X.plot()
-        self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
         plt.close("all")
 
     def test_MultivariateT_plots_when_moments_are_undefined(self):
@@ -5082,6 +5084,13 @@ class TestMultinomial(unittest.TestCase):
         large.plot()
         plt.close("all")
 
+    def test_Multinomial_plot_pairs_is_titled_mass_functions(self):
+        # Discrete panels are probability masses, not densities.
+        plt.close("all")
+        Multinomial(n=12, p=[0.3, 0.3, 0.2, 0.2]).plot()
+        self.assertEqual(plt.gcf()._suptitle.get_text(), "Probability Mass Functions")
+        plt.close("all")
+
     def test_Multinomial_plot_pairs_colorbars_say_probability(self):
         # A discrete joint panel shows a probability, not a density.
         plt.close("all")
@@ -5334,7 +5343,7 @@ class TestDirichlet(unittest.TestCase):
         # the single-joint-plot case, drawn over the simplex.
         Dirichlet(alpha=[2, 3, 5]).draw()
         Dirichlet(alpha=[2, 3, 5]).plot()
-        self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
         plt.close("all")
 
     def test_Dirichlet_plot_window_is_full_proportion_range(self):

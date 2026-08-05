@@ -1467,26 +1467,24 @@ class RVResults(Results):
         """
         return "Variable %d" % (index + 1)
 
-    def _pairs_resolve_dims(self, dims):
-        """Work out which variables a pairs matrix should include.
+    def _pairs_resolve_variables(self):
+        """Return the variables a pairs matrix will include.
 
-        Parameters
-        ----------
-        dims : tuple of int or None
-            The variables asked for, or ``None`` for every one of them.
+        Every one of them: a subset is selected by indexing the random
+        variable instead, e.g. ``X[[0, 2]].sim(1000).plot()``, so the matrix
+        itself takes no choice.
 
         Returns
         -------
         tuple of int
-            The variables to include, in the order given.
+            The variables to include, in order.
 
         Raises
         ------
         ValueError
-            If there are fewer than two variables to plot, or ``dims``
-            is not at least two valid, distinct variable numbers.
+            If there are fewer than two variables to plot.
         Exception
-            If more variables were asked for than a readable matrix holds.
+            If there are more variables than a readable matrix holds.
         """
         self._set_array()
         if self.dim is None or self.dim < 2:
@@ -1496,41 +1494,12 @@ class RVResults(Results):
                 + ("only one." if self.dim == 1 else "an inconsistent number.")
                 + " Plot them with .plot() instead."
             )
-
-        if dims is None:
-            chosen = tuple(range(self.dim))
-        else:
-            if isinstance(dims, numbers.Integral) or not hasattr(dims, "__iter__"):
-                raise ValueError(
-                    "dims must be at least two variable numbers, for example "
-                    "dims=(0, 2). To plot one variable on its own, simulate "
-                    "that variable by itself."
-                )
-            chosen = tuple(dims)
-            for d in chosen:
-                if not isinstance(d, numbers.Integral) or not 0 <= d < self.dim:
-                    raise ValueError(
-                        "dims must be variable numbers between 0 and %d "
-                        "(these results have %d variables), but it included "
-                        "%r." % (self.dim - 1, self.dim, d)
-                    )
-            if len(set(chosen)) != len(chosen):
-                raise ValueError(
-                    "dims must not repeat a variable: %r asks for the same "
-                    "one more than once." % (chosen,)
-                )
-            if len(chosen) < 2:
-                raise ValueError(
-                    "A pairs matrix needs at least two variables, but dims "
-                    "asked for %d. To plot one variable on its own, simulate "
-                    "that variable by itself." % len(chosen)
-                )
-
+        chosen = tuple(range(self.dim))
         if len(chosen) > JOINT_PAIRS_MAX_DIM:
             raise Exception(
                 "A pairs plot of %d variables would need %d panels, too many "
-                "to read on one screen. Choose which variables to include, "
-                "for example .plot(dims=(0, 1, 2))."
+                "to read on one screen. Simulate the variables you want to "
+                "look at instead, for example X[[0, 1, 2]].sim(1000).plot()."
                 % (len(chosen), len(chosen) * (len(chosen) + 1) // 2)
             )
         return chosen
@@ -1624,7 +1593,7 @@ class RVResults(Results):
         return default
 
     def _plot_pairs(
-        self, dims, alpha=None, normalize=True, bins=None, suggest=None, **kwargs
+        self, alpha=None, normalize=True, bins=None, suggest=None, **kwargs
     ):
         """Draw a matrix of every pair of the chosen variables.
 
@@ -1638,8 +1607,6 @@ class RVResults(Results):
 
         Parameters
         ----------
-        dims : tuple of int or None
-            Which variables to include, or ``None`` for every one.
         alpha : float, optional
             Transparency of the panels.
         normalize : bool, default True
@@ -1667,7 +1634,7 @@ class RVResults(Results):
             If the figure already has a plot on it, which the grid can't
             be built into.
         """
-        chosen = self._pairs_resolve_dims(dims)
+        chosen = self._pairs_resolve_variables()
         k = len(chosen)
 
         fig = plt.gcf()
@@ -1898,7 +1865,6 @@ class RVResults(Results):
         bins=None,
         marginal=False,
         suggest=None,
-        dims=None,
         **kwargs,
     ):
         """Plot the simulated random variable results.
@@ -1920,7 +1886,8 @@ class RVResults(Results):
             The short names adapt to the data. On two continuous
             variables, ``"hist"`` draws a binned color mesh and
             ``"density"`` a smooth density surface (pass
-            ``contour=True`` for a banded contour plot). On mixed data
+            ``contour=False`` for one smooth gradient instead of the
+            default contour bands). On mixed data
             (one discrete, one continuous), ``"rug"``, ``"hist"``, and
             ``"density"`` draw the *segmented* rug / histogram / density
             -- one small plot per level of the discrete variable,
@@ -1969,11 +1936,6 @@ class RVResults(Results):
             data. ``None`` (default) prints it only on the first
             ``.plot()`` call of the session; ``True`` prints it on
             every call; ``False`` never prints it.
-        dims : tuple of int, optional
-            Which variables the pairs matrix includes, numbered from 0
-            -- for example ``dims=(0, 2)`` for the 1st and 3rd. Only
-            meaningful for three or more variables, where the matrix is
-            what gets drawn; every variable is included by default.
         **kwargs
             Additional keyword arguments passed to the underlying
             matplotlib plotting function. Notable options:
@@ -2038,7 +2000,7 @@ class RVResults(Results):
 
         >>> X3 = RV(BoxModel([1, 2, 3, 4, 5, 6], size=3))
         >>> X3.sim(500).plot()  # doctest: +SKIP
-        >>> X3.sim(500).plot(dims=(0, 2))  # just the 1st and 3rd  # doctest: +SKIP
+        >>> X3[[0, 2]].sim(500).plot()  # just the 1st and 3rd  # doctest: +SKIP
         >>> X3.sim(500).plot(type="path")  # one line per realization  # doctest: +SKIP
 
         Notes
@@ -2134,7 +2096,6 @@ class RVResults(Results):
                 if should_show_suggestion(suggest):
                     print(suggestion_message(type[0], default, alternatives))
                 return self._plot_pairs(
-                    dims,
                     alpha=alpha,
                     normalize=normalize,
                     bins=bins,
@@ -2152,13 +2113,13 @@ class RVResults(Results):
                 )
             # Fall through to the path branch, with the note it should print.
             _suggestion = (type[0], default, alternatives)
-        if dims is not None and (self.dim is None or self.dim <= 2):
+        if "dims" in kwargs:
             raise ValueError(
-                "dims chooses which variables a pairs matrix includes, so it "
-                "only applies to three or more variables -- for example "
-                "(X & Y & Z).sim(1000).plot(dims=(0, 2)). To plot one "
-                "particular pair on its own, simulate that pair, e.g. "
-                "(X & Z).sim(1000).plot()."
+                "dims= is not a plotting argument for simulated results: "
+                "choose the variables when you simulate them instead, by "
+                "indexing the random variable -- X[[0, 2]].sim(1000).plot() "
+                "for the 1st and 3rd. (A distribution's own .plot() does take "
+                "variables=, since there is nothing to simulate.)"
             )
 
         if self.dim == 1:
