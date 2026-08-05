@@ -20,6 +20,7 @@ from .plot import (
     JOINT_CBAR_DECIMALS,
     JOINT_PAIRS_MAX_DIM,
     setup_marginal_axes,
+    thin_marginal_frequency_ticks,
     JOINT_PMF_MAX_CELLS,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
@@ -5461,6 +5462,9 @@ class MultivariateDistribution(Distribution):
         # Each strip is one variable's distribution, not a plot in its own
         # right -- the figure's title names what the whole thing is.
         ax.set_title("")
+        # A strip is a fraction of the joint panel's size, so the tick count
+        # a full-size axes would take crowds into itself here.
+        thin_marginal_frequency_ticks(ax, orientation)
         if orientation == "vertical":
             # The joint panel below already names this variable on its x-axis,
             # and the two axes are shared, so the strip's own copy of the label

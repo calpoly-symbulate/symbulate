@@ -633,6 +633,22 @@ Things to respect:
   of their own. This is the only way to get a bare joint panel.
 - **Overlay is a hard error for all 2-D plots** — see "Overlay Policy" above
   for what that cost.
+- **A strip's rug ticks are sized against the joint panel, not the strip.**
+  `make_rug` measures its ticks as a fraction of *its own* axes (so a tick
+  keeps its size when a real y-scale is drawn on it later), which in a strip
+  means a visibly shorter tick. `marginal_rug_tick_height(main_ax, marg_ax,
+  orientation)` cancels the size difference out; pass it as `make_rug`'s
+  `tick_height`.
+- **A strip's frequency axis is thinned to `MARGINAL_FREQ_TICKS`.** A strip is
+  a fraction of the joint panel's size, so a full-size tick count runs
+  together (`0, 2, 4, 6, 8`). `thin_marginal_frequency_ticks(marg_ax,
+  orientation, integer=)` caps it, on both sides; `integer=True` for a count
+  axis, since half a simulated value doesn't exist. **A dot plot needs more
+  than the locator**: `_dotplot_relayout` rebuilds its own locators on every
+  draw, so the helper also records the cap as `ax._symbulate_freq_ticks` and
+  that rebuild honors it. Set the locator without recording the cap and the
+  thinning silently reverts on the next render — it looks right until you save
+  the figure.
 
 Mixed discrete/continuous pairs are not special-cased here: the joint pmf mesh
 is laid out at real values (`make_joint_pmf`'s `extent`), so a strip drawn at

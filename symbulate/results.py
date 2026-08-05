@@ -37,6 +37,8 @@ from .plot import (
     add_pairs_panel_colorbar,
     MARGINAL_OVERLAY_ERROR,
     setup_marginal_axes,
+    thin_marginal_frequency_ticks,
+    marginal_rug_tick_height,
     auto_jitter_mode,
     classify_values,
     default_plot_type,
@@ -187,6 +189,7 @@ def _sim_with_progress(draw_func, n, progress_delay=5.0, bar_width=30):
 
 def _draw_marginal_panel(
     ax_marg,
+    main_ax,
     values,
     discrete,
     main_type,
@@ -225,6 +228,9 @@ def _draw_marginal_panel(
     ----------
     ax_marg : matplotlib.axes.Axes
         The marginal panel to draw on (``ax_marg_x`` or ``ax_marg_y``).
+    main_ax : matplotlib.axes.Axes
+        The joint panel. Only its size is used, to scale a rug's ticks so
+        they match the joint panel's (see ``marginal_rug_tick_height``).
     values : numpy.ndarray
         This axis's simulated values (``x`` or ``y``).
     discrete : bool
@@ -284,6 +290,7 @@ def _draw_marginal_panel(
         make_density(
             values, ax_marg, color, bandwidth=bandwidth, orientation=orientation
         )
+        thin_marginal_frequency_ticks(ax_marg, orientation)
         ax_marg.set_title("")
         return
 
@@ -292,9 +299,14 @@ def _draw_marginal_panel(
     if discrete and offset is not None:
         plot_values = np.searchsorted(np.unique(values), values) + offset
 
+    # A dot plot always shows counts; the others show counts only with
+    # normalize=False. A count axis gets whole-number ticks -- there is no
+    # such thing as half a simulated value.
+    counts = normalize is False
     if discrete:
         if small_n:
             make_dotplot(plot_values, ax_marg, color, orientation=orientation)
+            counts = True
         else:
             make_impulse(
                 plot_values,
@@ -305,7 +317,16 @@ def _draw_marginal_panel(
             )
     else:
         if small_n:
-            make_rug(plot_values, ax_marg, color, orientation=orientation)
+            # Sized against the joint panel rather than this strip, so a
+            # marginal rug's ticks are the same length as the joint panel's
+            # own rug ticks instead of shrinking with the strip.
+            make_rug(
+                plot_values,
+                ax_marg,
+                color,
+                orientation=orientation,
+                tick_height=marginal_rug_tick_height(main_ax, ax_marg, orientation),
+            )
         else:
             make_hist(
                 plot_values,
@@ -315,6 +336,7 @@ def _draw_marginal_panel(
                 normalize=normalize,
                 orientation=orientation,
             )
+    thin_marginal_frequency_ticks(ax_marg, orientation, integer=counts)
     ax_marg.set_title("")
 
 
@@ -2605,6 +2627,7 @@ class RVResults(Results):
                 marg_y_color = get_next_color(ax)
                 _draw_marginal_panel(
                     ax_marg_x,
+                    ax,
                     x,
                     discrete_x,
                     _resolved_main_type_x,
@@ -2619,6 +2642,7 @@ class RVResults(Results):
                 )
                 _draw_marginal_panel(
                     ax_marg_y,
+                    ax,
                     y,
                     discrete_y,
                     _resolved_main_type_y,

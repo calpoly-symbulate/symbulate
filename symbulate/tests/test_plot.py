@@ -25,7 +25,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
 import matplotlib.pyplot as plt
-from matplotlib.collections import PolyCollection, PathCollection
+from matplotlib.collections import PolyCollection, PathCollection, LineCollection
 
 from symbulate import (
     RV,
@@ -59,6 +59,7 @@ from symbulate.plot import (
     JOINT_PAIRS_MAX_DIM,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
+    MARGINAL_FREQ_TICKS,
     JOINT_PAIRS_COLORBAR_TITLE_SIZE,
     classify_values,
     default_plot_type,
@@ -785,6 +786,75 @@ class TestTwoVariableLayoutIsTheDefault(PlotTestCase):
         marg_y = max(strips, key=lambda a: a.get_position().x0)
         self.assertEqual(marg_x.get_xlim(), p.ax.get_xlim())
         self.assertEqual(marg_y.get_ylim(), p.ax.get_ylim())
+
+    def test_a_marginal_rug_matches_the_joint_panels_rug_ticks(self):
+        """make_rug sizes ticks as a fraction of its own axes, so a strip's
+        would be shorter than the joint panel's just for being smaller."""
+        Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
+        p = (Xm & Ym).sim(40).plot(suggest=False)
+        fig = plt.gcf()
+        fig.canvas.draw()
+
+        def longest_rug_tick(ax):
+            best = 0.0
+            for c in ax.collections:
+                if not isinstance(c, LineCollection):
+                    continue
+                transform = c.get_transform()
+                for seg in c.get_segments():
+                    pts = transform.transform(seg)
+                    best = max(
+                        best, abs(pts[1][1] - pts[0][1]), abs(pts[1][0] - pts[0][0])
+                    )
+            return best
+
+        # The main panel is a segmented rug; the continuous (y) strip is a
+        # rug. Both should draw the same length tick, in real pixels.
+        strips = [a for a in self._panels() if a is not p.ax]
+        marg_y = max(strips, key=lambda a: a.get_position().x0)
+        main = longest_rug_tick(p.ax)
+        strip = longest_rug_tick(marg_y)
+        self.assertGreater(main, 0)
+        self.assertGreater(strip, 0)
+        self.assertAlmostEqual(strip, main, delta=1.0)
+
+    def test_a_strips_frequency_axis_is_not_crowded(self):
+        """A strip is a fraction of the joint panel's size, so it can't show
+        as many ticks -- 0, 2, 4, 6, 8 ran together."""
+        cases = [
+            (RV(Binomial(5, 0.4) ** 2), 500, {"normalize": False}),  # impulse, counts
+            (RV(Binomial(5, 0.4) ** 2), 40, {}),  # dotplots
+            (RV(Normal(0, 1) ** 2), 500, {}),  # histograms
+            (RV(Binomial(5, 0.4) * Normal(0, 1)), 40, {}),  # dotplot + rug
+        ]
+        for rvs, n, kwargs in cases:
+            with self.subTest(n=n, **kwargs):
+                plt.close("all")
+                plt.figure()
+                A, B = rvs
+                p = (A & B).sim(n).plot(suggest=False, **kwargs)
+                fig = plt.gcf()
+                # Drawn, because a dot plot rebuilds its own locators on every
+                # draw and used to undo the cap here.
+                fig.canvas.draw()
+                for strip in [a for a in self._panels() if a is not p.ax]:
+                    vertical = strip.get_position().height < 0.3
+                    axis = strip.yaxis if vertical else strip.xaxis
+                    labels = [t for t in axis.get_ticklabels() if t.get_text()]
+                    self.assertLessEqual(len(labels), MARGINAL_FREQ_TICKS + 2)
+
+    def test_a_count_axis_stays_whole_numbers(self):
+        """Half a simulated value doesn't exist, so thinning a count axis
+        must not introduce fractional ticks."""
+        Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+        p = (Xd & Yd).sim(500).plot(normalize=False, suggest=False)
+        plt.gcf().canvas.draw()
+        for strip in [a for a in self._panels() if a is not p.ax]:
+            vertical = strip.get_position().height < 0.3
+            axis = strip.yaxis if vertical else strip.xaxis
+            self.assertEqual(strip.get_ylabel() if vertical else "Count", "Count")
+            for tick in axis.get_ticklocs():
+                self.assertEqual(tick, round(tick))
 
     def test_marginal_keyword_is_gone_and_says_so(self):
         X, Y = RV(Normal(0, 1) ** 2)

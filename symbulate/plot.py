@@ -585,6 +585,12 @@ MARGINAL_GRID_RIGHT = 0.78
 # density can run to several digits (a sharply peaked one reaches into the
 # hundreds), so it is wider than the labels of any one plot need.
 MARGINAL_COLORBAR_RECT = (0.80, 0.11, 0.03, 0.52)
+# How many tick labels a strip's frequency axis (Density / Count /
+# Probability) may show. A strip is a fraction of the joint panel's size, so
+# the tick count matplotlib would choose for a full-size axes crowds into
+# itself there -- 0, 2, 4, 6, 8 running together. The value axis is left
+# alone: it is shared with the joint panel, which sets the ticks there.
+MARGINAL_FREQ_TICKS = 3
 
 
 class SymbulatePlot:
@@ -1442,6 +1448,79 @@ def setup_marginal_axes(fig):
     ax_marg_x = fig.add_subplot(gs[0, 0 : n - 1])
     ax_marg_y = fig.add_subplot(gs[1:n, n - 1])
     return ax, ax_marg_x, ax_marg_y
+
+
+def thin_marginal_frequency_ticks(marg_ax, orientation, integer=False):
+    """Cap how many tick labels a marginal strip's frequency axis shows.
+
+    A strip is a fraction of the joint panel's size, so the number of ticks
+    matplotlib picks for a full-size axes runs together there. Only the
+    frequency axis (Density / Count / Probability) is thinned -- the value
+    axis is shared with the joint panel, which owns the ticks there.
+
+    Both the simulated and the theoretical layouts call this, so their strips
+    are thinned the same way.
+
+    Parameters
+    ----------
+    marg_ax : matplotlib.axes.Axes
+        The strip.
+    orientation : {"vertical", "horizontal"}
+        How the strip was drawn. ``"vertical"`` (the strip above the joint
+        panel) has its frequency on the y-axis; ``"horizontal"`` (the strip
+        to the right) has it on the x-axis.
+    integer : bool, default False
+        Whether the frequency is a whole number, i.e. a count. Counts get
+        whole-number ticks, since half a simulated value doesn't exist.
+    """
+    axis = marg_ax.yaxis if orientation == "vertical" else marg_ax.xaxis
+    axis.set_major_locator(MaxNLocator(nbins=MARGINAL_FREQ_TICKS, integer=integer))
+    # A dot plot rebuilds its own locators every time the axes is resized
+    # (_dotplot_relayout, which runs on draw), so setting the locator here is
+    # not enough on its own -- record the cap where that rebuild can find it.
+    marg_ax._symbulate_freq_ticks = MARGINAL_FREQ_TICKS
+
+
+def marginal_rug_tick_height(main_ax, marg_ax, orientation):
+    """Rug tick height that looks the same in a strip as in the joint panel.
+
+    ``make_rug`` sizes its ticks as a fraction of *its own* axes, so that a
+    tick keeps its size when something with a real y-scale is drawn on the
+    same axes later. In a marginal strip that backfires: the strip is a
+    fraction of the joint panel's size, so the same fraction is a visibly
+    shorter tick -- a marginal rug beside a segmented rug looked like a
+    smaller kind of rug rather than the same one.
+
+    Scaling by the ratio of the two panels' spans cancels that out, so the
+    ticks match whatever the layout's proportions happen to be.
+
+    Parameters
+    ----------
+    main_ax : matplotlib.axes.Axes
+        The joint panel, whose tick size is the one to match.
+    marg_ax : matplotlib.axes.Axes
+        The strip the rug will be drawn in.
+    orientation : {"vertical", "horizontal"}
+        Which way the rug runs, so the right dimension is compared: a
+        vertical rug's ticks rise, so heights are compared; a horizontal
+        one's extend sideways, so widths are.
+
+    Returns
+    -------
+    float
+        A fraction of the strip's own axes, to pass as ``make_rug``'s
+        ``tick_height``.
+    """
+    main, marg = main_ax.get_position(), marg_ax.get_position()
+    if orientation == "vertical":
+        main_span, marg_span = main.height, marg.height
+    else:
+        main_span, marg_span = main.width, marg.width
+    if marg_span <= 0:
+        return RUG_TICK_HEIGHT
+    # Capped at the whole strip: a pathologically thin strip would otherwise
+    # ask for ticks longer than the panel holding them.
+    return min(RUG_TICK_HEIGHT * main_span / marg_span, 1.0)
 
 
 def add_colorbar(fig, marginal, mappable, label, decimals=None):
@@ -3466,15 +3545,23 @@ def make_density(
 
 
 def make_rug(
-    values, ax, color, alpha=None, label=None, orientation="vertical", **kwargs
+    values,
+    ax,
+    color,
+    alpha=None,
+    label=None,
+    orientation="vertical",
+    tick_height=None,
+    **kwargs,
 ):
     """Draw a rug plot of simulated values on the given axes.
 
     Draws one thin vertical tick per simulated value along the bottom
     of the axes. Tick heights are drawn in axes fractions
-    (``RUG_TICK_HEIGHT`` of the axes height), not data units, so the
-    ticks keep their size if something with a meaningful y-scale (e.g.
-    a histogram) is drawn on the same axes later.
+    (``tick_height``, defaulting to ``RUG_TICK_HEIGHT`` of the axes
+    height), not data units, so the ticks keep their size if something
+    with a meaningful y-scale (e.g. a histogram) is drawn on the same
+    axes later.
 
     The function automatically detects whether this is a standalone
     rug plot or overlaying another plot type. For a standalone rug, it
@@ -3516,6 +3603,13 @@ def make_rug(
         draws ticks extending from the left edge instead, values on
         the y-axis -- for drawing sideways in a 2D plot's y-marginal
         panel.
+    tick_height : float, optional
+        How long the ticks are, as a fraction of the axes. Defaults to
+        ``RUG_TICK_HEIGHT``. Like ``orientation``, this exists for the
+        marginal strips of a 2D plot rather than as a style knob: a strip
+        is smaller than the joint panel, so the same fraction there is a
+        physically shorter tick -- ``marginal_rug_tick_height`` computes
+        the value that makes the two match.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.vlines`` (or ``.hlines`` when
@@ -3547,6 +3641,9 @@ def make_rug(
         label = f"Variable {n_prior_rugs + 1}"
     ax._rug_count = n_prior_rugs + 1
 
+    if tick_height is None:
+        tick_height = RUG_TICK_HEIGHT
+
     # Check if this is a standalone rug plot (nothing else on the axes
     # yet) or an overlay on another plot type.
     is_standalone = (
@@ -3557,7 +3654,7 @@ def make_rug(
         rug = ax.vlines(
             np.asarray(values),
             0,
-            RUG_TICK_HEIGHT,
+            tick_height,
             # Axes-fraction y coordinates: ticks rise from the bottom of
             # the axes regardless of the y data limits.
             transform=ax.get_xaxis_transform(),
@@ -3570,7 +3667,7 @@ def make_rug(
         rug = ax.hlines(
             np.asarray(values),
             0,
-            RUG_TICK_HEIGHT,
+            tick_height,
             # Axes-fraction x coordinates: ticks extend from the left
             # edge of the axes regardless of the x data limits.
             transform=ax.get_yaxis_transform(),
@@ -5104,9 +5201,17 @@ def _dotplot_relayout(ax):
         )
     elif np.all(positions == np.round(positions)):
         value_axis.set_major_locator(MaxNLocator(integer=True))
-    # The count axis is always integer counts.
+    # The count axis is always integer counts. This runs on every draw, so
+    # it would undo a cap set on the tick count afterwards -- a dot plot in a
+    # marginal strip is thinned to fit (thin_marginal_frequency_ticks, which
+    # records the cap on the axes), so honor that if it is there.
     count_axis = ax.yaxis if vertical else ax.xaxis
-    count_axis.set_major_locator(MaxNLocator(integer=True))
+    cap = getattr(ax, "_symbulate_freq_ticks", None)
+    count_axis.set_major_locator(
+        MaxNLocator(integer=True)
+        if cap is None
+        else MaxNLocator(integer=True, nbins=cap)
+    )
     _dotplot_boundary_lines(ax, state)
     state["last_size_px"] = _axes_size_px(ax)
 
