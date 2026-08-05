@@ -16,19 +16,33 @@ different claims:
   exact for Brownian motion at any ``step`` (``TestHittingTimeExactness``);
 - where inside that stretch is approximate and leans late, so the reported
   time is only good to about one ``step`` (``TestHittingTimeTiming``).
+
+The jump and discrete-time processes (Tier A) are exact, so they are tested
+against exact answers rather than against tolerances: the k-th arrival time of
+a Poisson process *is* the time its count reaches k, on every single path, and
+the mean hitting times of an asymmetric random walk, a two-state Markov chain,
+and a two-state continuous-time Markov chain all have closed forms
+(``1 / (2p - 1)``, ``1 / a``, ``1 / q``). Their tests also pin the two things
+that make them different from the Gaussian case: reaching a level means
+reaching it *or passing it*, and neither ``step`` nor ``tol`` changes the
+answer.
 """
 
 import unittest
+from unittest import mock
+
 import numpy as np
 import scipy.stats as stats
 
 from symbulate import *
-from symbulate import gaussian_process, hitting_times
+from symbulate import distributions, gaussian_process, hitting_times, markov_chains
 
 
 def seed(value=42):
     gaussian_process.rng = np.random.default_rng(value)
     hitting_times.rng = np.random.default_rng(value + 1)
+    distributions.rng = np.random.default_rng(value + 2)
+    markov_chains.rng = np.random.default_rng(value + 3)
 
 
 def reach_probability(level, scale, time):
@@ -487,22 +501,348 @@ class TestHittingTimeGeometricBrownianMotion(unittest.TestCase):
 
 
 class TestHittingTimeUnsupportedProcesses(unittest.TestCase):
-    """Tiers A and C are not built, and the error says so."""
+    """Tier C is not built, and the error says so."""
 
     def test_diffusion_process_path_raises_not_implemented(self):
         path = DiffusionProcess(drift=lambda x, t: 0, diffusion=lambda x, t: 1).draw()
         with self.assertRaises(NotImplementedError):
             hitting_time(path, level=1.0)
 
-    def test_random_walk_path_raises_not_implemented(self):
-        path = RandomWalk(p=0.5).draw()
+    def test_cir_path_raises_not_implemented(self):
+        path = CIR().draw()
         with self.assertRaises(NotImplementedError):
-            hitting_time(path, level=1.0)
+            hitting_time(path, level=2.0)
 
     def test_error_message_names_what_is_supported(self):
-        path = RandomWalk(p=0.5).draw()
+        path = CIR().draw()
         with self.assertRaisesRegex(NotImplementedError, "BrownianMotion"):
-            hitting_time(path, level=1.0)
+            hitting_time(path, level=2.0)
+
+    def test_error_message_mentions_the_diffusion_gap(self):
+        path = CIR().draw()
+        with self.assertRaisesRegex(NotImplementedError, "not built yet"):
+            hitting_time(path, level=2.0)
+
+    def test_multi_compartment_path_raises_not_implemented(self):
+        # An epidemic path reports its whole compartment vector as a state, so
+        # it reaches the jump branch and has to be turned away there -- with the
+        # message about having several numbers at once, not the one about
+        # labelling Markov chain states.
+        seed()
+        path = SIR(population=100, infection_rate=2, recovery_rate=1).draw()
+        with self.assertRaises(NotImplementedError) as context:
+            hitting_time(path, level=50)
+        self.assertIn("several numbers at once", str(context.exception))
+
+    def test_one_compartment_on_its_own_also_raises(self):
+        # Worth pinning because the error message says so: a single compartment
+        # is a plain function of time with no states to walk, so it is not a way
+        # round the limitation above.
+        seed()
+        path = SIR(population=100, infection_rate=2, recovery_rate=1).draw()
+        with self.assertRaises(NotImplementedError):
+            hitting_time(path.I, level=20, max_time=50)
+
+
+# --- Tier A: jump and discrete-time processes ----------------------------
+
+
+class TestHittingTimeJumpProcessesAreExact(unittest.TestCase):
+    """A pure-jump path can only reach a level at a jump, so this is exact."""
+
+    def test_poisson_count_reaches_k_at_the_kth_arrival(self):
+        # Not a tolerance check: the time the count reaches k is the k-th
+        # arrival time, exactly, on every path.
+        seed()
+        path = PoissonProcess(rate=2).draw()
+        for k in [1, 2, 5]:
+            expected = float(path.get_arrival_times()[k - 1])
+            self.assertEqual(hitting_time(path, level=k, max_time=100), expected)
+
+    def test_renewal_count_reaches_k_at_the_kth_arrival(self):
+        seed()
+        path = RenewalProcess(Gamma(shape=2, rate=2)).draw()
+        for k in [1, 3]:
+            expected = float(path.get_arrival_times()[k - 1])
+            self.assertEqual(hitting_time(path, level=k, max_time=100), expected)
+
+    def test_poisson_mean_matches_the_gamma_closed_form(self):
+        # The k-th arrival of a rate-r Poisson process is Gamma(k, r), so the
+        # mean hitting time of level k is exactly k / r.
+        seed()
+        values = simulate(PoissonProcess(rate=2), 2000, level=4, max_time=1000)
+        self.assertTrue(np.all(np.isfinite(values)))
+        self.assertAlmostEqual(values.mean(), 4 / 2, delta=0.06)
+
+    def test_level_zero_is_reached_immediately(self):
+        seed()
+        path = PoissonProcess(rate=1).draw()
+        self.assertEqual(hitting_time(path, level=0, max_time=10), 0.0)
+
+    def test_unreached_level_returns_infinity(self):
+        seed()
+        values = simulate(PoissonProcess(rate=1), 50, level=100, max_time=5)
+        self.assertTrue(np.all(np.isinf(values)))
+
+    def test_a_level_between_two_counts_is_reached_by_passing_it(self):
+        # A count goes 3, 4 and is never at 3.5, so reaching 3.5 means the
+        # moment it got to 4.
+        seed()
+        path = PoissonProcess(rate=1).draw()
+        self.assertEqual(
+            hitting_time(path, level=3.5, max_time=100),
+            hitting_time(path, level=4, max_time=100),
+        )
+
+    def test_continuous_time_markov_chain_mean_matches_the_exponential(self):
+        # Starting in state 0 of a two-state chain, the time until state 1 is
+        # Exponential(rate=q01), so its mean is 1 / q01.
+        seed()
+        chain = ContinuousTimeMarkovChain([[-2, 2], [1, -1]], [1.0, 0.0])
+        values = simulate(chain, 2000, level=1, max_time=1000)
+        self.assertTrue(np.all(np.isfinite(values)))
+        self.assertAlmostEqual(values.mean(), 1 / 2, delta=0.03)
+
+    def test_continuous_time_markov_chain_hits_at_a_jump(self):
+        seed()
+        path = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0]).draw()
+        reached = hitting_time(path, level=1, max_time=100)
+        self.assertEqual(reached, float(path.get_arrival_times()[0]))
+
+    def test_queue_reaches_one_customer_when_the_first_arrives(self):
+        seed()
+        path = GG1(Exponential(rate=1), Exponential(rate=1.2)).draw()
+        self.assertEqual(
+            hitting_time(path, level=1, max_time=1000),
+            float(path.customer_arrival_times[0]),
+        )
+
+    def test_queue_length_hitting_time_is_a_jump_time(self):
+        seed()
+        path = GG1(Exponential(rate=1), Exponential(rate=1.5)).draw()
+        reached = hitting_time(path, level=4, max_time=500)
+        self.assertTrue(np.isfinite(reached))
+        jump_times = [float(path.get_arrival_times()[n]) for n in range(400)]
+        self.assertIn(reached, jump_times)
+
+    def test_compound_poisson_ruin_time_is_a_jump_time(self):
+        # A surplus falling to a level is the ruin question, and it is one use
+        # of this same mechanism rather than a separate utility.
+        seed()
+        surplus = CompoundPoissonProcess(rate=1, jump_dist=Normal(mean=-1, sd=2))
+        path = surplus.draw()
+        ruin = hitting_time(path, level=-5, max_time=200)
+        self.assertTrue(np.isfinite(ruin))
+        jump_times = [float(path.get_arrival_times()[n]) for n in range(300)]
+        self.assertIn(ruin, jump_times)
+
+    def test_compound_poisson_falls_to_a_negative_level(self):
+        seed()
+        surplus = CompoundPoissonProcess(rate=2, jump_dist=Normal(mean=-1, sd=1))
+        values = simulate(surplus, 500, level=-10, max_time=100)
+        self.assertTrue(np.all(np.isfinite(values)))
+        # Losing about 2 per unit time, so about 10 is lost by time 5.
+        self.assertAlmostEqual(values.mean(), 5.0, delta=0.4)
+
+    def test_time_varying_rate_counts_say_why_they_are_not_supported(self):
+        # A non-homogeneous Poisson or Cox count moves in jumps, but knows its
+        # jumps on the expected-count scale rather than on the clock, so it
+        # gets its own message rather than the generic one.
+        seed()
+        for process in [
+            NonHomogeneousPoissonProcess(rate=lambda t: 2 * t),
+            CoxProcess(intensity=Gamma(shape=2, rate=1)),
+        ]:
+            with self.assertRaises(NotImplementedError) as context:
+                hitting_time(process.draw(), level=3, max_time=100)
+            message = str(context.exception)
+            self.assertIn("expected number of events", message)
+            self.assertIn("count itself at a time", message)
+
+
+class TestHittingTimeDiscreteTimeProcessesAreExact(unittest.TestCase):
+    """A discrete-time path has nothing between its steps, so this is exact."""
+
+    def test_a_walk_that_only_rises_reaches_the_level_at_that_step(self):
+        seed()
+        path = RandomWalk(p=1).draw()
+        self.assertEqual(hitting_time(path, level=5, max_time=50), 5.0)
+
+    def test_a_level_between_two_steps_is_reached_by_passing_it(self):
+        # A +1 walk goes 4, 5 and is never at 4.5, so reaching 4.5 means step 5.
+        seed()
+        path = RandomWalk(p=1).draw()
+        self.assertEqual(hitting_time(path, level=4.5, max_time=50), 5.0)
+
+    def test_reported_time_is_a_whole_number_of_steps(self):
+        seed()
+        values = simulate(RandomWalk(p=0.6), 200, level=3, max_time=200)
+        finite = values[np.isfinite(values)]
+        self.assertGreater(len(finite), 0)
+        self.assertTrue(np.all(finite == np.round(finite)))
+
+    def test_mean_matches_the_asymmetric_walk_closed_form(self):
+        # For a +-1 walk with p > 1/2, E[T_1] = 1 / (2p - 1).
+        seed()
+        values = simulate(RandomWalk(p=0.7), 4000, level=1, max_time=2000)
+        self.assertTrue(np.all(np.isfinite(values)))
+        self.assertAlmostEqual(values.mean(), 1 / (2 * 0.7 - 1), delta=0.1)
+
+    def test_chance_of_ever_reaching_matches_the_closed_form(self):
+        # A downward-drifting walk reaches +1 with probability p / (1 - p).
+        # The crossings that happen, happen early, so a 600-step window is
+        # long enough for the truncation to be lost in the noise.
+        p, n = 0.3, 1000
+        seed()
+        values = simulate(RandomWalk(p=p), n, level=1, max_time=600)
+        expected = p / (1 - p)
+        observed = np.mean(np.isfinite(values))
+        standard_error = np.sqrt(expected * (1 - expected) / n)
+        self.assertLess(abs(observed - expected), 4 * standard_error)
+
+    def test_walk_falls_to_a_negative_level(self):
+        # Drifting downward, the walk reaches -1 with probability 1, and
+        # E[T] = 1 / (q - p) exactly as in the rising case.
+        seed()
+        values = simulate(RandomWalk(p=0.3), 2000, level=-1, max_time=2000)
+        self.assertTrue(np.all(np.isfinite(values)))
+        self.assertAlmostEqual(values.mean(), 1 / (2 * 0.7 - 1), delta=0.25)
+
+    def test_markov_chain_mean_matches_the_geometric(self):
+        # Starting in state 0, the first step in state 1 is geometric with
+        # success probability 0.25, so its mean is 1 / 0.25 = 4.
+        seed()
+        chain = MarkovChain([[0.75, 0.25], [0.5, 0.5]], [1.0, 0.0])
+        values = simulate(chain, 4000, level=1, max_time=500)
+        self.assertTrue(np.all(np.isfinite(values)))
+        self.assertAlmostEqual(values.mean(), 4.0, delta=0.15)
+
+    def test_moving_average_process_is_read_step_by_step(self):
+        seed()
+        path = MA(coefs=[0.5], noise_dist=Normal(mean=0, sd=1)).draw()
+        reached = hitting_time(path, level=1.5, max_time=200)
+        self.assertTrue(np.isfinite(reached))
+        self.assertEqual(reached, float(int(reached)))
+        self.assertGreaterEqual(float(path[int(reached)]), 1.5)
+
+    def test_max_time_counts_steps(self):
+        # A walk that rises by 1 per step cannot reach 20 within 10 steps.
+        seed()
+        path = RandomWalk(p=1).draw()
+        self.assertEqual(hitting_time(path, level=20, max_time=10), float("inf"))
+        self.assertEqual(hitting_time(path, level=20, max_time=25), 20.0)
+
+    def test_a_faster_sampling_rate_is_reported_in_time_not_steps(self):
+        # A discrete-time process sampled twice per unit time reaches a level
+        # at a time, not at a step index.
+        walk = RandomProcess(
+            Bernoulli(p=1) ** inf,
+            DiscreteTimeSequence(fs=2),
+            lambda outcome, n: n,
+        )
+        path = walk.draw()
+        self.assertEqual(hitting_time(path, level=4, max_time=10), 2.0)
+
+
+class TestHittingTimeTierADoesNotUseStepOrTol(unittest.TestCase):
+    """`step` and `tol` deal with what a continuous path does in between."""
+
+    def test_step_does_not_change_a_jump_answer(self):
+        seed()
+        path = PoissonProcess(rate=2).draw()
+        answers = {
+            hitting_time(path, level=3, max_time=100, step=size)
+            for size in [1e-4, 1.0, 100.0]
+        }
+        self.assertEqual(len(answers), 1)
+
+    def test_tol_does_not_change_a_jump_answer(self):
+        seed()
+        path = PoissonProcess(rate=2).draw()
+        answers = {
+            hitting_time(path, level=3, max_time=100, tol=size) for size in [1e-12, 0.5]
+        }
+        self.assertEqual(len(answers), 1)
+
+    def test_step_does_not_change_a_discrete_time_answer(self):
+        seed()
+        path = RandomWalk(p=0.6).draw()
+        answers = {
+            hitting_time(path, level=2, max_time=100, step=size)
+            for size in [1e-4, 1.0, 100.0]
+        }
+        self.assertEqual(len(answers), 1)
+
+
+class TestHittingTimeTierAStartTime(unittest.TestCase):
+    """Searching from a later time, for both Tier A families."""
+
+    def test_already_past_the_level_looks_for_a_fall_back_to_it(self):
+        # The direction is taken from where the path is at start_time, so a
+        # count already above the level is waiting to come back down to it --
+        # which a count never does.
+        seed()
+        path = PoissonProcess(rate=2).draw()
+        first = hitting_time(path, level=3, max_time=100)
+        self.assertTrue(np.isfinite(first))
+        self.assertEqual(
+            hitting_time(path, level=3, max_time=100, start_time=first + 5),
+            float("inf"),
+        )
+
+    def test_start_time_inside_a_stretch_reports_a_later_crossing(self):
+        seed()
+        path = PoissonProcess(rate=2).draw()
+        first = hitting_time(path, level=5, max_time=100)
+        later = hitting_time(path, level=5, max_time=100, start_time=first / 2)
+        self.assertEqual(later, first)
+
+    def test_already_on_the_level_at_start_time_returns_start_time(self):
+        seed()
+        path = PoissonProcess(rate=1).draw()
+        reached = hitting_time(path, level=2, max_time=100)
+        self.assertEqual(
+            hitting_time(path, level=2, max_time=100, start_time=reached + 0.01),
+            reached + 0.01,
+        )
+
+    def test_start_time_skips_earlier_steps_of_a_walk(self):
+        seed()
+        path = RandomWalk(p=0.6).draw()
+        first = hitting_time(path, level=1, max_time=100)
+        self.assertTrue(np.isfinite(first))
+        later = hitting_time(path, level=1, max_time=100, start_time=first + 1)
+        self.assertGreater(later, first)
+
+
+class TestHittingTimeTierAErrors(unittest.TestCase):
+
+    def test_named_markov_chain_states_raise_type_error(self):
+        seed()
+        chain = MarkovChain(
+            [[0.5, 0.5], [0.3, 0.7]], [1.0, 0.0], state_labels=["sun", "rain"]
+        )
+        with self.assertRaises(TypeError) as context:
+            hitting_time(chain.draw(), level=1)
+        message = str(context.exception)
+        self.assertIn("not a number", message)
+        self.assertIn("state_labels", message)
+
+    def test_named_continuous_time_markov_chain_states_raise_type_error(self):
+        seed()
+        chain = ContinuousTimeMarkovChain(
+            [[-1, 1], [2, -2]], [1.0, 0.0], state_labels=["calm", "busy"]
+        )
+        with self.assertRaises(TypeError):
+            hitting_time(chain.draw(), level=1)
+
+    def test_too_many_jumps_raises_value_error(self):
+        seed()
+        path = PoissonProcess(rate=100).draw()
+        with mock.patch.object(hitting_times, "MAX_JUMPS", 20):
+            with self.assertRaises(ValueError) as context:
+                hitting_time(path, level=1000, max_time=100)
+        self.assertIn("jumps", str(context.exception))
 
 
 class TestHittingTimeErrors(unittest.TestCase):
