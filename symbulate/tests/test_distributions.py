@@ -4226,7 +4226,21 @@ class TestGPD(unittest.TestCase):
         plt.close("all")
 
 
-class TestMultivariateNormal(unittest.TestCase):
+class MultivariatePlotTestCase(unittest.TestCase):
+    """Base class for the multivariate distributions, which are plottable.
+
+    Starts each test on a fresh figure. A plot of two variables fills its
+    figure with three panels -- the joint distribution plus each variable's
+    own -- and refuses to share it (MARGINAL_OVERLAY_ERROR), so a figure left
+    open by an earlier test would make the next one fail rather than quietly
+    overlay onto it.
+    """
+
+    def setUp(self):
+        plt.close("all")
+
+
+class TestMultivariateNormal(MultivariatePlotTestCase):
 
     def test_MultivariateNormal_mean_cov_error(self):
         self.assertRaises(
@@ -4261,7 +4275,7 @@ class TestMultivariateNormal(unittest.TestCase):
         # Two variables: one joint distribution, so no arguments needed.
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
         X.plot()
-        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
         self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
         self.assertEqual(plt.gca().get_ylabel(), "Variable 2")
         plt.close("all")
@@ -4269,7 +4283,7 @@ class TestMultivariateNormal(unittest.TestCase):
     def test_MultivariateNormal_plot_contour(self):
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
         X.plot(contour=True)
-        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
         plt.close("all")
 
     def test_MultivariateNormal_plot_3d_defaults_to_the_matrix(self):
@@ -4287,12 +4301,16 @@ class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_plot_two_variables_is_one_joint_plot(self):
         # Naming exactly two variables still draws their joint distribution,
-        # not a 2-by-2 matrix -- two variables have one joint plot between them.
+        # not a 2-by-2 matrix -- two variables have one joint plot between
+        # them. It gets the standard three panels: the joint distribution,
+        # plus each of the two variables on its own.
         plt.close("all")
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
         X.plot(variables=(0, 2))
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
-        self.assertEqual(len(panels), 1)
+        self.assertEqual(len(panels), 3)
+        # plt.gca() is the joint panel, and it names the pair that was asked
+        # for -- the 1st and 3rd variables, not the 1st and 2nd.
         self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
         self.assertEqual(plt.gca().get_ylabel(), "Variable 3")
         plt.close("all")
@@ -4462,7 +4480,7 @@ class TestMultivariateNormal(unittest.TestCase):
         self.assertNotIsInstance(ctx.exception, TypeError)
 
 
-class TestMultivariateT(unittest.TestCase):
+class TestMultivariateT(MultivariatePlotTestCase):
 
     def test_MultivariateT_mean_cov_error(self):
         self.assertRaises(
@@ -4523,7 +4541,7 @@ class TestMultivariateT(unittest.TestCase):
     def test_MultivariateT_plots_joint_density(self):
         X = MultivariateT(mean=[0, 0], cov=[[1, 0.3], [0.3, 2]], df=4)
         X.plot()
-        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
         plt.close("all")
 
     def test_MultivariateT_plots_when_moments_are_undefined(self):
@@ -4579,7 +4597,7 @@ class TestMultivariateT(unittest.TestCase):
         self.assertIsInstance(X, MultivariateDistribution)
 
 
-class TestMultivariateLogNormal(unittest.TestCase):
+class TestMultivariateLogNormal(MultivariatePlotTestCase):
 
     def test_MVLogNormal_validation_inherited(self):
         # Validation is delegated to the underlying MultivariateNormal.
@@ -4926,7 +4944,7 @@ class TestInverseWishart(unittest.TestCase):
         self.assertRaises(Exception, X.plot)
 
 
-class TestBivariateNormal(unittest.TestCase):
+class TestBivariateNormal(MultivariatePlotTestCase):
 
     def test_BivariateNormal_error1(self):
         self.assertRaises(
@@ -4990,7 +5008,7 @@ class TestBivariateNormal(unittest.TestCase):
         )
 
 
-class TestMultinomial(unittest.TestCase):
+class TestMultinomial(MultivariatePlotTestCase):
 
     def test_Multinomial_error_n_negative(self):
         self.assertRaises(Exception, lambda: Multinomial(n=-1, p=[0.5, 0.5]))
@@ -5035,7 +5053,7 @@ class TestMultinomial(unittest.TestCase):
         # whatever is left), so this is the single-joint-plot case.
         X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
         X.plot()
-        self.assertEqual(plt.gca().get_title(), "Joint PMF Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint PMF Plot")
         plt.close("all")
 
     def test_Multinomial_is_discrete(self):
@@ -5131,7 +5149,7 @@ class TestMultinomial(unittest.TestCase):
         self.assertIsInstance(X, MultivariateDistribution)
 
 
-class TestMultivariateHypergeometric(unittest.TestCase):
+class TestMultivariateHypergeometric(MultivariatePlotTestCase):
 
     def test_MVHypergeom_error_m_negative(self):
         self.assertRaises(
@@ -5257,7 +5275,7 @@ class TestMultivariateHypergeometric(unittest.TestCase):
         plt.close("all")
 
 
-class TestDirichlet(unittest.TestCase):
+class TestDirichlet(MultivariatePlotTestCase):
 
     def test_Dirichlet_error_alpha_non_positive(self):
         self.assertRaises(Exception, lambda: Dirichlet(alpha=[2, -1, 3]))
@@ -5343,7 +5361,7 @@ class TestDirichlet(unittest.TestCase):
         # the single-joint-plot case, drawn over the simplex.
         Dirichlet(alpha=[2, 3, 5]).draw()
         Dirichlet(alpha=[2, 3, 5]).plot()
-        self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
         plt.close("all")
 
     def test_Dirichlet_plot_window_is_full_proportion_range(self):
@@ -5401,7 +5419,7 @@ class TestDirichlet(unittest.TestCase):
         plt.close("all")
 
 
-class TestDirichletMultinomial(unittest.TestCase):
+class TestDirichletMultinomial(MultivariatePlotTestCase):
 
     def test_DirichletMultinomial_error_n_negative(self):
         self.assertRaises(
@@ -5528,7 +5546,7 @@ class TestDirichletMultinomial(unittest.TestCase):
         plt.close("all")
 
 
-class TestNegativeMultinomial(unittest.TestCase):
+class TestNegativeMultinomial(MultivariatePlotTestCase):
 
     def test_NegativeMultinomial_error_r_zero(self):
         self.assertRaisesRegex(

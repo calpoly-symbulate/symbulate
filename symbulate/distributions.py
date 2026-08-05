@@ -17,10 +17,13 @@ from .plot import (
     make_joint_pdf,
     make_joint_pmf,
     ECDF_LINEWIDTH,
+    JOINT_CBAR_DECIMALS,
     JOINT_PAIRS_MAX_DIM,
+    setup_marginal_axes,
     JOINT_PMF_MAX_CELLS,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
+    add_colorbar,
     add_pairs_panel_colorbar,
     SHADE_COLOR,
     SHADE_ALPHA,
@@ -5425,6 +5428,65 @@ class MultivariateDistribution(Distribution):
             **kwargs,
         )
 
+    def _plot_marginal_panel(self, i, ax, orientation, alpha=None):
+        """Draw one variable's own distribution in a strip beside a joint plot.
+
+        The strip is that variable's marginal pdf or pmf -- the exact
+        closed-form one from :meth:`_marginal_1d`, not a slice of the joint
+        surface -- drawn by the univariate :meth:`Distribution.plot` so it
+        looks the same as plotting that variable on its own.
+
+        The strip to the *right* of a joint panel has to run sideways, with
+        the variable on the y-axis, so it lines up with the joint panel's y
+        variable. Rather than reimplement the univariate plot in the other
+        direction, this draws it the usual way and then transposes what was
+        drawn -- so the two directions cannot drift apart in styling.
+
+        Parameters
+        ----------
+        i : int
+            Index of the component, counting from 0.
+        ax : matplotlib.axes.Axes
+            The strip to draw on.
+        orientation : {"vertical", "horizontal"}
+            ``"vertical"`` puts the variable on the x-axis, for the strip
+            above a joint panel; ``"horizontal"`` puts it on the y-axis, for
+            the strip to the right of one.
+        alpha : float, optional
+            Transparency of the curve.
+        """
+        # Framed on the same window the joint panel uses, so the strip covers
+        # the variable over exactly the range the joint panel shows it over.
+        self._marginal_1d(i).plot(xlim=self._plot_window(i), ax=ax, alpha=alpha)
+        # Each strip is one variable's distribution, not a plot in its own
+        # right -- the figure's title names what the whole thing is.
+        ax.set_title("")
+        if orientation == "vertical":
+            # The joint panel below already names this variable on its x-axis,
+            # and the two axes are shared, so the strip's own copy of the label
+            # would be clutter right next to it. The density/probability label
+            # stays: it is what the strip's height means.
+            ax.set_xlabel("")
+            return
+
+        # Turn the plot on its side: the values move to the y-axis and the
+        # density/probability to the x-axis. A continuous marginal is one
+        # curve (a Line2D); a discrete one is a dot per value (a
+        # PathCollection from scatter) plus a dashed connector.
+        for line in ax.lines:
+            xdata, ydata = line.get_data()
+            line.set_data(ydata, xdata)
+        for collection in ax.collections:
+            offsets = np.asarray(collection.get_offsets())
+            collection.set_offsets(offsets[:, ::-1])
+        value_lim, freq_lim = ax.get_xlim(), ax.get_ylim()
+        ax.set_xlim(*freq_lim)
+        ax.set_ylim(*value_lim)
+        # The labels transpose with the data: what named the height now names
+        # the width. The value label is dropped for the same reason as above.
+        ax.set_xlabel(ax.get_ylabel())
+        ax.set_ylabel("")
+
     def _plot_pairs(self, variables, contour, alpha=None, **kwargs):
         """Draw a matrix of every pair of the chosen variables.
 
@@ -5709,17 +5771,68 @@ class MultivariateDistribution(Distribution):
             ax = self._plot_pairs(variables, contour, alpha=alpha, **kwargs)
             return JointDistributionPlot(ax, self, variables)
 
-        # Use the current axes if a figure already exists, so a joint plot
-        # lands on the same axes as anything drawn before it, exactly like
-        # the univariate plot().
-        if ax is None:
-            ax = plt.gca()
-        # Advance the color cycle once per plot() call, as every plot type
-        # does. A joint plot colors by a colormap rather than the cycle, but
-        # skipping this would leave a curve drawn onto the same axes
-        # afterwards reusing a color already on the plot.
+        # An axes was handed in, so draw the joint distribution on it and
+        # nothing else: one axes has no room for the strips, and a caller
+        # who named the axes is placing this plot inside a layout of their
+        # own. Advance the color cycle once per plot() call, as every plot
+        # type does -- a joint plot colors by a colormap rather than the
+        # cycle, but skipping this would leave a curve drawn onto the same
+        # axes afterwards reusing a color already on the plot.
+        if ax is not None:
+            get_next_color(ax)
+            self._plot_joint(
+                variables[0], variables[1], ax, contour, alpha=alpha, **kwargs
+            )
+            return JointDistributionPlot(ax, self, variables)
+
+        # Two variables are shown on three panels: their joint distribution,
+        # plus each one's own distribution in a strip beside the matching
+        # axis. Built by the same helper the simulated side uses, so the two
+        # layouts stay identical.
+        fig = plt.gcf()
+        ax, ax_marg_x, ax_marg_y = setup_marginal_axes(fig)
+        plt.sca(ax)
         get_next_color(ax)
-        self._plot_joint(variables[0], variables[1], ax, contour, alpha=alpha, **kwargs)
+        # The joint helpers put their own colorbar immediately right of the
+        # axes, which here would land on top of the y strip -- so suppress it
+        # and let add_colorbar place it past the strip instead, exactly as a
+        # simulated two-variable plot does.
+        mappable = self._plot_joint(
+            variables[0],
+            variables[1],
+            ax,
+            contour,
+            colorbar=False,
+            alpha=alpha,
+            **kwargs,
+        )
+        quantity = "Probability" if self.discrete else "Density"
+        if mappable is not None:
+            add_colorbar(fig, True, mappable, quantity, decimals=JOINT_CBAR_DECIMALS)
+
+        self._plot_marginal_panel(variables[0], ax_marg_x, "vertical", alpha=alpha)
+        self._plot_marginal_panel(variables[1], ax_marg_y, "horizontal", alpha=alpha)
+        # Lock each strip to the joint panel's own final limits rather than
+        # re-deriving them, so the strip lines up with whatever extent the
+        # joint plot actually drew (a pmf mesh runs half a unit past its
+        # outermost values). sharex/sharey then keeps them together for any
+        # later interaction.
+        ax_marg_x.set_xlim(ax.get_xlim())
+        ax_marg_x.sharex(ax)
+        ax_marg_y.set_ylim(ax.get_ylim())
+        ax_marg_y.sharey(ax)
+        plt.setp(ax_marg_x.get_xticklabels(), visible=False)
+        plt.setp(ax_marg_y.get_yticklabels(), visible=False)
+        # There is no room for the joint panel's own title -- it would collide
+        # with the strip above it -- but what the plot is ("Joint Contour
+        # Plot", "Joint PMF Plot") is worth keeping, so it moves to the figure,
+        # above all three panels. Read back from the panel rather than
+        # re-derived, so it stays whatever the joint plot titled itself.
+        fig.suptitle(ax.get_title())
+        ax.set_title("")
+        # Leave the joint panel current: drawing the strips and the colorbar
+        # moved plt.gca() off it, and it is the panel plt.gca() should mean.
+        plt.sca(ax)
         return JointDistributionPlot(ax, self, variables)
 
     def __pow__(self, exponent):

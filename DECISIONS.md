@@ -713,6 +713,52 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: Two Variables Are Drawn Joint-Plus-Marginals (`marginal=` Removed)
+
+**Decision.** A plot of two variables shows the joint distribution *and* each
+variable's own distribution, on three panels, always. On both sides:
+`RVResults.plot()` for simulated data and `MultivariateDistribution.plot()`
+for a theoretical one. The `marginal=` keyword that used to opt into the
+strips is **gone**; `type="marginal"` was never valid and still isn't.
+
+**Why.** The joint picture and the two one-variable pictures answer different
+questions, and a student reading a scatter or a tile plot needs both to
+interpret it — a dense band in the middle of a tile plot means something
+different when x is uniform than when x is itself concentrated there. Making
+it the default rather than a keyword follows "default behavior must work
+without configuration": the useful view should not have to be asked for.
+
+**How.** `setup_marginal_axes(fig)` in `plot.py` builds the layout and both
+sides call it, so the simulated and theoretical layouts cannot drift apart.
+The theoretical strips are the exact closed-form `_marginal_1d(i)`, drawn by
+the univariate `Distribution.plot()`; the right-hand strip is drawn upright
+and then **transposed** (`set_data` / `set_offsets`) rather than reimplemented
+sideways, so the two orientations can't diverge in styling.
+
+**What it cost, accepted deliberately.**
+
+- **No 2-D plot can be overlaid any more.** The three panels can't be shared,
+  so every two-variable plot is the hard-error tier of the overlay policy.
+  That makes the readability-warning tier unreachable for 2-D data:
+  `VIOLIN_OVERLAY_WARNING` and the two-tile / two-hist2d warnings are still in
+  `plot.py` but nothing reaches them. They are left in place as what that tier
+  would use if a no-strips escape hatch is ever added. Two 2-D scatters can no
+  longer be compared on shared axes with a legend.
+- **The plot's title moved to `fig.suptitle`.** The strip sits where the main
+  panel's title would go. Clearing it (what `marginal=True` used to do) threw
+  away what the plot *was*, so it moves to the figure instead. Read a 2-D
+  plot's type with `plt.gcf().get_suptitle()`.
+- **Two exceptions get no strips**, neither a user choice: a mosaic already
+  shows both marginals itself, and a panel of a pairs matrix has no room (the
+  matrix's diagonal is already each variable on its own).
+- **`ax=` on a theoretical plot draws the joint alone** — one axes has no room
+  for strips. This is the only route to a bare joint panel.
+
+**Not a concern:** mixed discrete/continuous pairs. `make_joint_pmf` lays its
+mesh out at real values, so a strip drawn at real values lines up without the
+rank-index conversion `tile` needs; and the strips are locked to the joint
+panel's own final limits rather than re-deriving any plot type's extent.
+
 ## Decision: Equal-Width Mosaic Columns (`equal_width=` on `make_mosaic`) — "100%-Stacked Bar Chart"
 
 **Status:** Implemented (`plot.py`'s `make_mosaic`; dispatched automatically via `RVResults.plot(type="mosaic", ...)`'s existing `**kwargs` passthrough — no `results.py` dispatch changes needed).

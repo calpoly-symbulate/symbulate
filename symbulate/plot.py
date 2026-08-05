@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, MaxNLocator, MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -433,6 +434,13 @@ JOINT_PAIRS_PANEL_SIZE = 2.2  # width and height, in inches, of one panel of
 # slim bar left of center, leaving room on its right for the tick labels and
 # the "Density"/"Count" label.
 JOINT_PAIRS_COLORBAR_INSET = (0.26, 0.08, 0.10, 0.84)
+# The pair naming a colorbar ("Variable 1 & Variable 2") is a long string over
+# a narrow bar, so it is set smaller than a panel title (axes.titlesize in
+# symbulate.mplstyle) -- it identifies the bar rather than titling a plot, and
+# at full title size it crowds its cell. It matches the bar's own
+# "Density"/"Count" label (axes.labelsize), so the two halves of one bar's
+# caption are lettered alike.
+JOINT_PAIRS_COLORBAR_TITLE_SIZE = "medium"
 
 # Tile plot. The colormap comes from image.cmap (viridis) in
 # symbulate.mplstyle.
@@ -551,17 +559,32 @@ VIOLIN_OVERLAY_WARNING = (
     "instead."
 )
 
-# A marginal=True plot builds a three-panel GridSpec layout that a later
-# .plot() call cannot share (a second plot would draw into whichever panel
-# is current, silently corrupting the figure). This is the "hard error"
-# tier of the overlay policy -- see DECISIONS.md, "Decision: Overlay
-# Behavior".
+# A two-variable plot builds a three-panel GridSpec layout -- the joint
+# distribution plus each variable's own -- that a later .plot() call cannot
+# share (a second plot would draw into whichever panel is current, silently
+# corrupting the figure). This is the "hard error" tier of the overlay policy
+# -- see DECISIONS.md, "Decision: Overlay Behavior".
 MARGINAL_OVERLAY_ERROR = (
-    "You can't draw another plot on top of one made with marginal=True. "
-    "The marginal layout uses three separate panels that a second plot "
-    "can't share. Plot each one in its own cell, or draw both without "
-    "marginal=True so they can overlay."
+    "You can't draw another plot on top of a plot of two variables. It "
+    "uses three separate panels -- the two variables together, plus each "
+    "one on its own -- and a second plot can't share them. Plot each one "
+    "in its own cell."
 )
+# Geometry of that three-panel layout, as a GridSpec of MARGINAL_GRID by
+# MARGINAL_GRID cells: the joint panel takes all but the first row and last
+# column, each variable's own distribution takes the strip beside it.
+# MARGINAL_GRID_RIGHT stops the grid short of the figure's right edge so a
+# colormap-based joint panel's colorbar has room out there (add_colorbar
+# puts it there for this layout); the plot types that encode nothing in
+# color simply leave that strip empty.
+MARGINAL_GRID = 4
+MARGINAL_GRID_RIGHT = 0.78
+# Where that colorbar goes, as (left, bottom, width, height) fractions of the
+# figure: past the y strip, aligned with the joint panel. The gap to the
+# figure's right edge has to hold the bar's tick labels *and* its label, and a
+# density can run to several digits (a sharply peaked one reaches into the
+# hundreds), so it is wider than the labels of any one plot need.
+MARGINAL_COLORBAR_RECT = (0.80, 0.11, 0.03, 0.52)
 
 
 class SymbulatePlot:
@@ -1371,7 +1394,65 @@ def _thin_discrete_ticks(positions, labels, max_ticks):
     return positions[keep], labels[keep]
 
 
-def add_colorbar(fig, marginal, mappable, label):
+def setup_marginal_axes(fig):
+    """Build the three panels a two-variable plot is drawn on.
+
+    A plot of two variables shows their joint distribution in a large panel,
+    with each variable's own distribution in a strip beside the matching
+    axis -- above for the x variable, to the right for the y variable -- so
+    the joint picture and the two one-variable pictures can be read against
+    each other without switching plots.
+
+    Both the simulated (``RVResults.plot()``) and the theoretical
+    (``MultivariateDistribution.plot()``) sides call this, so the two
+    layouts cannot drift apart.
+
+    The panels are returned rather than made current: the caller draws the
+    joint panel first (the helpers all draw on ``plt.gca()``, so it decides
+    which panel that is) and then fills the strips.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure to build the layout in. It must be empty -- the layout
+        fills it, so it can't be added to a figure that already has a plot
+        on it.
+
+    Returns
+    -------
+    tuple of matplotlib.axes.Axes
+        ``(ax, ax_marg_x, ax_marg_y)`` -- the joint panel, the strip above
+        it, and the strip to its right.
+
+    Raises
+    ------
+    ValueError
+        If the figure already has a plot on it.
+    """
+    # Fail the same way overlaying *onto* this layout does, rather than
+    # stacking a second GridSpec on top of existing content.
+    if fig.axes:
+        raise ValueError(MARGINAL_OVERLAY_ERROR)
+    # Tag the figure so a later .plot() call hits that same hard-error guard
+    # instead of drawing into one of the three panels.
+    fig._symbulate_marginal = True
+    n = MARGINAL_GRID
+    gs = GridSpec(n, n, right=MARGINAL_GRID_RIGHT)
+    ax = fig.add_subplot(gs[1:n, 0 : n - 1])
+    ax_marg_x = fig.add_subplot(gs[0, 0 : n - 1])
+    ax_marg_y = fig.add_subplot(gs[1:n, n - 1])
+    return ax, ax_marg_x, ax_marg_y
+
+
+def add_colorbar(fig, marginal, mappable, label, decimals=None):
+    """Place a colorbar for a plot that can't hold its own.
+
+    ``decimals``, when given, rounds the tick labels to that many decimal
+    places -- the same treatment ``_joint_colorbar`` gives a joint plot's own
+    bar, so a theoretical joint distribution reads the same whether or not it
+    is drawn with marginal strips. Left out, matplotlib chooses, which is
+    right for the count and relative-frequency scales of simulated data.
+    """
     if not marginal:
         # No marginals: colorbar on the far left, label on its left.
         caxes = fig.add_axes([0, 0.1, 0.05, 0.8])
@@ -1383,11 +1464,15 @@ def add_colorbar(fig, marginal, mappable, label):
         # Marginal layout: place the colorbar on the far right, past the
         # y-marginal panel, with its ticks and label on the right (the
         # matplotlib default). On the left it would sit on top of the main
-        # panel's y-axis label; the caller leaves right-hand room for it by
-        # narrowing the GridSpec (see RVResults.plot()'s marginal branch).
-        caxes = fig.add_axes([0.86, 0.11, 0.03, 0.52])
+        # panel's y-axis label; the layout leaves right-hand room for it by
+        # narrowing the GridSpec (see setup_marginal_axes).
+        caxes = fig.add_axes(MARGINAL_COLORBAR_RECT)
         cbar = plt.colorbar(mappable=mappable, cax=caxes)
         cbar.set_label(label)
+    if decimals is not None:
+        cbar.ax.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
+        )
     return caxes
 
 
@@ -1439,7 +1524,7 @@ def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
     cbar.set_label(quantity_label)
     # Name the pair above its bar, so a color in the matrix can be traced to
     # the scale that explains it.
-    caxes.set_title(pair_label)
+    caxes.set_title(pair_label, fontsize=JOINT_PAIRS_COLORBAR_TITLE_SIZE)
     # A count is a whole number of simulated values, so decimals on its ticks
     # would be noise; a density or a probability needs them.
     decimals = 0 if quantity_label == "Count" else JOINT_CBAR_DECIMALS
