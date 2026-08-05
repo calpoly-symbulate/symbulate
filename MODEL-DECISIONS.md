@@ -792,14 +792,131 @@ first — no consequence, since the tiers share only the entry point).
 >   naming the step and pointing at `state_labels`, since "reached" needs an
 >   order.
 
-**Still open, deliberately:** `upcrossings` — the *sequence* of crossing times
-as a lazy `InfiniteVector` — is its own roadmap row and is not built here.
-`start_time` is the hook it needs, and it now behaves identically across all
-three tiers, so that row is a thin loop rather than three of them. Tier C
-(`DiffusionProcess`, `CIR`, `MertonJumpDiffusion`) is also still its own row and
-still raises. `MertonJumpDiffusion` is worth calling out: it is **not** one of
-the jump paths above despite the name, since it wanders continuously between its
-jumps, so the states-and-holding-times walk would miss everything in between.
+**Left for its own row, and since built:** `upcrossings` — the *sequence* of
+crossing times as a lazy `InfiniteVector`. `start_time` was the hook it needed.
+It turned out **not** to be the "thin loop across all three tiers" this entry
+predicted: it is a thin loop across Tier A only, because a continuous path has no
+sequence of crossings to loop over. See "Decision: Upcrossings — Tier A Only"
+below. Tier C (`DiffusionProcess`, `CIR`, `MertonJumpDiffusion`) is also still
+its own row and still raises. `MertonJumpDiffusion` is worth calling out: it is
+**not** one of the jump paths above despite the name, since it wanders
+continuously between its jumps, so the states-and-holding-times walk would miss
+everything in between.
+
+---
+
+## Decision: Upcrossings — Tier A Only
+
+**Status:** Implemented — `upcrossings`, `_UpcrossingWalk`,
+`_upcrossings_unsupported` and the shared `_tier_a_reader` live in
+`symbulate/hitting_times.py`, tested in `symbulate/tests/test_hitting_times.py`,
+demo appended to `team/models-and-sim-design/hitting_times_demo.ipynb`.
+`upcrossings` is exported from `symbulate/__init__.py` (a public-API addition —
+flagged). Roadmap row 22, "Upcrossings, as a sequence."
+
+**Decision**
+> `upcrossings(process, level, max_time=100.0, start_time=0.0)` returns the
+> sequence of times the path crosses up through `level`: a lazy
+> `InfiniteVector` given a path, an `RV` of one given a process, so
+> `upcrossings(X, level=3)[2]` is a random variable for the third crossing.
+> `inf` at position `n` means fewer than `n + 1` crossings before `max_time`,
+> and every position after an `inf` is `inf`.
+>
+> **It covers the two Tier A families only** — pure-jump and discrete-time
+> paths. Every continuous path is refused: any Gaussian process,
+> `GeometricBrownianMotion`, and the Tier C diffusions.
+
+**Rationale for the Tier A restriction — this is not a missing feature**
+> A path that moves continuously recrosses a level infinitely often in every
+> stretch of time after it first touches it, however short. The crossing times
+> are dense, not a sequence, so `upcrossings(BrownianMotion(), level=1)[1]`
+> has no answer to give: any count of crossings is a count of how finely the
+> path was looked at, and it diverges as `step` shrinks. Returning a
+> `step`-dependent number would be reporting an artifact of the algorithm as a
+> property of the process, which is exactly what the Tier B `hitting_time`
+> machinery was built to avoid. So the Gaussian branch raises, with a message
+> that explains the density and points at `hitting_time(..., start_time=)` for
+> one later crossing.
+>
+> Consequently `step` and `tol` are **not arguments** on this function — not
+> "accepted and ignored" as they are on `hitting_time`. There, the uniformity
+> argument applied: you should be able to call `hitting_time` the same way
+> across a class's worth of processes, some Tier A and some Tier B. Here there
+> is no Tier B to be uniform with.
+
+**What an upcrossing is, and the two searches it takes**
+> A crossing is a time when the path is at or above `level` **having been
+> strictly below it beforehand** — the textbook definition (an upcrossing at
+> step `n` means `X[n-1] < a <= X[n]`). So finding one is a *pair* of searches
+> through the same walk: `sign=-1, strict=True` to get properly under the
+> level, then `sign=+1, strict=False` to rise back to it. This is what the
+> `strict` flag on `_reached` exists for. Without it, a path sitting *on* the
+> level — 4, 5, 5, 5, 6 — would count a fresh crossing at every step, since
+> "not above" and "below" would be the same test.
+>
+> Reaching the level still means reaching it **or passing it**, inherited
+> unchanged from Tier A of `hitting_time`.
+
+**Two consequences that look like bugs and are not**
+> - **`upcrossings(...)[0]` can be later than `hitting_time(...)`.** If the
+>   path is already at or above the level at `start_time` it is not crossing
+>   it; it has to go below first. When the path starts strictly below the level
+>   — the usual case — the two agree exactly, and there is a test for that.
+> - **A monotone count crosses a level at most once.** A `PoissonProcess` or
+>   `RenewalProcess` count never comes back below a level, so the sequence is
+>   its hitting time followed by `inf` forever, and `upcrossings(N, level=0)`
+>   is `inf` from the start even though `hitting_time(N, level=0)` is 0. Both
+>   are tested. Upcrossings are interesting for processes that move both ways:
+>   a random walk, a queue length, a CTMC, a `CompoundPoissonProcess` with
+>   negative jumps.
+
+**Implementation notes**
+> - **`_tier_a_reader` is now the single definition of Tier A**, returning
+>   `(search, read_one)`. `hitting_time`'s two inline `isinstance` branches were
+>   folded into it, so the two functions cannot drift apart on what counts as an
+>   exactly-readable path, and a fourth such kind is added in one place.
+> - **The bad-path check is eager on purpose.** `hitting_time` walks
+>   immediately, so it reports an epidemic compartment vector or a
+>   name-labelled `MarkovChain` at once. A lazy sequence would not — it would
+>   be accepted quietly and complain only when indexed. `read_one()` reads a
+>   single value up front to put the error where the mistake is.
+> - **Exhaustion is recorded, not rediscovered** (`_UpcrossingWalk.finished`),
+>   so a sequence that has run past `max_time` does not re-walk the whole path
+>   for every later index. There is a test that patches the walk to raise if
+>   called again.
+> - Finding the k-th crossing re-walks a jump path from its first state, so the
+>   cost is quadratic in the number of crossings asked for. Accepted: the
+>   states and holding times are cached `InfiniteVector`s, so the re-walk is
+>   list indexing, and `max_time` bounds it.
+> - `_validate` was split, with `_validate_window` shared by both functions.
+>   `_numeric_value`'s message no longer names `hitting_time`, since
+>   `upcrossings` raises it too.
+
+**Alternatives Considered**
+> **A `band=` / reset level for continuous paths** — count an upcrossing of
+> `level` only after the path has fallen below `level - band`, the standard
+> ε-upcrossing fix. Well-defined and finite, and rejected for now: it adds a
+> kwarg that is meaningless for every Tier A process and required for every
+> Tier B one, and the answer then depends on a band the student has to invent.
+> Worth revisiting as its own row if the demand appears.
+> **One crossing per `step`-sized window** for Gaussian paths — rejected. It
+> needs no new argument and is the easiest thing to write, but the number of
+> crossings then grows without bound as `step` shrinks, so the same path and
+> level give different answers at different settings.
+> **Making the first entry always equal `hitting_time`** by counting a path
+> that starts at or above the level as crossing it at `start_time` — rejected:
+> it makes the first entry a different kind of thing from the rest (not
+> actually a crossing), and it contradicts the definition of an upcrossing.
+> **A separate `downcrossings`** — not built; ask about the negated process and
+> level, or use `hitting_time` repeatedly. Worth its own row if wanted.
+
+**Accepted limitations, documented not fixed:**
+> - `NonHomogeneousPoissonProcess` and `CoxProcess` inherit the
+>   `hitting_time` gap for the same reason (jump times known on the
+>   expected-count scale, not the clock) and get their own message, which also
+>   notes that a count crosses at most once anyway.
+> - An epidemic path and a single epidemic compartment are unsupported, exactly
+>   as for `hitting_time`.
 
 ---
 

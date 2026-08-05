@@ -4,6 +4,16 @@ This module provides :func:`hitting_time`, which answers "how long until the
 process first gets to ``level``?" for a sample path -- or, given a whole
 process, hands back a random variable you can simulate like any other.
 
+It also provides :func:`upcrossings`, which asks the same question over and
+over: when does the path get to the level, and then when does it get back there
+again, and again? That one covers only the jump and discrete-time processes
+described below, and the reason is not a missing feature. A path that moves
+continuously recrosses a level infinitely often the instant it touches it, so
+for a Brownian motion there is no second or third crossing to report -- any
+count of them would measure how finely the path was looked at rather than
+anything about the path. :func:`upcrossings` says so rather than returning a
+number that depends on a step size.
+
 The hard part is that a sample path is only ever computed at the times
 somebody asks about. Between two of those times the path is not a straight
 line: it wiggles, and it might have crossed the level and come back without
@@ -68,7 +78,12 @@ import numbers
 import numpy as np
 
 from .random_variables import RV
-from .result import DiscreteTimeFunction, DiscreteValued, InfiniteTuple
+from .result import (
+    DiscreteTimeFunction,
+    DiscreteValued,
+    InfiniteTuple,
+    InfiniteVector,
+)
 
 # Guard against a singular covariance matrix when two times are nearly equal,
 # the same trick and constant gaussian_process.py uses for the same reason.
@@ -270,10 +285,10 @@ def _numeric_value(value, where):
         raise NotImplementedError(
             f"{where} the process is at {tuple(value)!r} -- several numbers at "
             "once rather than one. A level is a single number, so there is "
-            "nothing here to compare it with, and hitting_time cannot answer "
-            "for a process like this yet. That holds for an epidemic model's "
-            "compartments taken one at a time as well, so path.I is not a way "
-            "round it for now."
+            "nothing here to compare it with, and neither a hitting time nor "
+            "its upcrossings can be worked out for a process like this yet. "
+            "That holds for an epidemic model's compartments taken one at a "
+            "time as well, so path.I is not a way round it for now."
         )
 
     if isinstance(value, bool) or not isinstance(
@@ -290,7 +305,7 @@ def _numeric_value(value, where):
     return float(value)
 
 
-def _reached(value, level, sign):
+def _reached(value, level, sign, strict=False):
     """Whether a value has got to the level, or past it.
 
     A path that moves in jumps can step straight over a level without ever
@@ -307,16 +322,23 @@ def _reached(value, level, sign):
     sign : float
         ``1`` when the path has to rise to the level, ``-1`` when it has to
         fall to it.
+    strict : bool, optional
+        Whether sitting exactly *on* the level counts. Default is ``False``,
+        which is what a hitting time wants. :func:`upcrossings` needs the
+        strict version for the other half of its cycle: a path has only really
+        come back below a level once it is properly below it, not merely
+        touching it, or every touch would count as a fresh crossing.
 
     Returns
     -------
     bool
         ``True`` once the level is reached or passed.
     """
-    return sign * (value - level) >= 0
+    gap = sign * (value - level)
+    return gap > 0 if strict else gap >= 0
 
 
-def _jump_hitting_time(path, level, max_time, start_time):
+def _jump_hitting_time(path, level, max_time, start_time, sign=None, strict=False):
     """Return when a pure-jump path first reaches ``level``. Exact.
 
     A pure-jump path holds one value at a time and changes only at its jumps,
@@ -338,7 +360,15 @@ def _jump_hitting_time(path, level, max_time, start_time):
     start_time : float
         Start looking from here. The direction -- rise to the level or fall to
         it -- is taken from where the path is at this time, not from where it
-        started out.
+        started out, unless ``sign`` says otherwise.
+    sign : float, optional
+        ``1`` to wait for a rise to the level, ``-1`` for a fall. Default is
+        ``None``, which reads the direction off the path at ``start_time``.
+        :func:`upcrossings` passes it explicitly, because it is looking for a
+        specific one of the two.
+    strict : bool, optional
+        Whether to require passing the level rather than merely touching it.
+        Default is ``False``. See :func:`_reached`.
 
     Returns
     -------
@@ -356,7 +386,6 @@ def _jump_hitting_time(path, level, max_time, start_time):
     holding_times = path.get_interarrival_times()
 
     entered = 0.0  # the clock time at which the current value was taken on
-    sign = None
     n = 0
 
     while entered <= max_time:
@@ -383,7 +412,7 @@ def _jump_hitting_time(path, level, max_time, start_time):
                 if value == level:
                     return float(reached_at)
                 sign = 1.0 if value < level else -1.0
-            if _reached(value, level, sign):
+            if _reached(value, level, sign, strict):
                 return float(reached_at)
 
         entered = left
@@ -392,7 +421,9 @@ def _jump_hitting_time(path, level, max_time, start_time):
     return float("inf")
 
 
-def _step_hitting_time(path, level, max_time, start_time, samples_per_time):
+def _step_hitting_time(
+    path, level, max_time, start_time, samples_per_time, sign=None, strict=False
+):
     """Return when a discrete-time path first reaches ``level``. Exact.
 
     A discrete-time path has no values between its steps, so there is nothing
@@ -413,6 +444,12 @@ def _step_hitting_time(path, level, max_time, start_time, samples_per_time):
         reported as a time. This is 1 for the usual case, where a step *is*
         the unit of time (a random walk, a Markov chain, a moving-average
         series), and the process's sampling rate otherwise.
+    sign : float, optional
+        ``1`` to wait for a rise to the level, ``-1`` for a fall. Default is
+        ``None``, which reads the direction off the path at ``start_time``.
+    strict : bool, optional
+        Whether to require passing the level rather than merely touching it.
+        Default is ``False``. See :func:`_reached`.
 
     Returns
     -------
@@ -427,14 +464,13 @@ def _step_hitting_time(path, level, max_time, start_time, samples_per_time):
     first_step = math.ceil(start_time * samples_per_time)
     last_step = math.floor(max_time * samples_per_time)
 
-    sign = None
     for n in range(first_step, last_step + 1):
         value = _numeric_value(path[n], f"At step {n},")
         if sign is None:
             if value == level:
                 return n / samples_per_time
             sign = 1.0 if value < level else -1.0
-        if _reached(value, level, sign):
+        if _reached(value, level, sign, strict):
             return n / samples_per_time
 
     return float("inf")
@@ -492,6 +528,74 @@ def _steps_per_time(path):
     """
     index_set = getattr(path, "index_set", None)
     return float(getattr(index_set, "fs", 1))
+
+
+def _tier_a_reader(path):
+    """Return how to read ``path`` value by value, or ``None``.
+
+    Both kinds of path that can be read exactly -- a pure-jump path and a
+    discrete-time path -- are walked value by value, but by different walks.
+    This decides which walk fits and hands it back behind one signature, so
+    that a caller which has to look for a level over and over
+    (:func:`upcrossings`) does not re-decide on every pass, and so that
+    :func:`hitting_time` and :func:`upcrossings` cannot drift apart on what
+    counts as an exactly-readable path. **A third kind of such path belongs
+    here**, not at either call site.
+
+    Parameters
+    ----------
+    path : object
+        The sample path.
+
+    Returns
+    -------
+    tuple or None
+        ``(search, read_one)``, or ``None`` when the path cannot be walked value
+        by value -- a continuous path, whose crossings need the machinery above.
+
+        ``search(level, max_time, start_time, sign, strict)`` gives the first
+        time from ``start_time`` onwards at which the path has reached ``level``
+        in the direction ``sign``, or ``inf`` if it has not by ``max_time``.
+
+        ``read_one()`` reads the path's very first value and checks that it is a
+        number, raising if not. Whether a path's values can be compared with a
+        level at all is a property of the path rather than of where you look, so
+        one value settles it. It is for a caller that does not walk the path
+        straight away and so would otherwise report a bad path long after the
+        event.
+    """
+    if _is_jump_path(path):
+
+        def search(level, max_time, start_time, sign, strict):
+            return _jump_hitting_time(
+                path, level, max_time, start_time, sign=sign, strict=strict
+            )
+
+        def read_one():
+            return _numeric_value(path.get_states()[0], "In state number 0,")
+
+        return search, read_one
+
+    if isinstance(path, (InfiniteTuple, DiscreteTimeFunction)):
+        samples_per_time = _steps_per_time(path)
+
+        def search(level, max_time, start_time, sign, strict):
+            return _step_hitting_time(
+                path,
+                level,
+                max_time,
+                start_time,
+                samples_per_time,
+                sign=sign,
+                strict=strict,
+            )
+
+        def read_one():
+            return _numeric_value(path[0], "At step 0,")
+
+        return search, read_one
+
+    return None
 
 
 def _prepare(path, level):
@@ -597,27 +701,26 @@ def _prepare(path, level):
     )
 
 
-def _validate(level, max_time, start_time, step, tol):
-    """Check the arguments of :func:`hitting_time`.
+def _validate_window(level, max_time, start_time):
+    """Check the level and the stretch of time to search.
+
+    Shared by :func:`hitting_time` and :func:`upcrossings`, which ask for a
+    level over the same kind of window and so reject the same things.
 
     Raises
     ------
     TypeError
         If any argument is not a number.
     ValueError
-        If ``max_time`` is not after ``start_time``, or if ``step`` or ``tol``
-        is not positive.
+        If ``start_time`` is negative, or ``max_time`` is not after it.
     """
     for name, value in [
         ("level", level),
         ("max_time", max_time),
         ("start_time", start_time),
-        ("tol", tol),
     ]:
         if not isinstance(value, numbers.Real):
             raise TypeError(f"{name} must be a number, got {type(value).__name__}.")
-    if step is not None and not isinstance(step, numbers.Real):
-        raise TypeError(f"step must be a number, got {type(step).__name__}.")
 
     if start_time < 0:
         raise ValueError(
@@ -630,6 +733,26 @@ def _validate(level, max_time, start_time, step, tol):
             f"{start_time} and max_time={max_time}. There is no stretch of "
             f"time to search."
         )
+
+
+def _validate(level, max_time, start_time, step, tol):
+    """Check the arguments of :func:`hitting_time`.
+
+    Raises
+    ------
+    TypeError
+        If any argument is not a number.
+    ValueError
+        If ``max_time`` is not after ``start_time``, or if ``step`` or ``tol``
+        is not positive.
+    """
+    _validate_window(level, max_time, start_time)
+
+    if not isinstance(tol, numbers.Real):
+        raise TypeError(f"tol must be a number, got {type(tol).__name__}.")
+    if step is not None and not isinstance(step, numbers.Real):
+        raise TypeError(f"step must be a number, got {type(step).__name__}.")
+
     if step is not None and step <= 0:
         raise ValueError(
             f"step must be positive, got {step}. It is how far ahead to look "
@@ -828,20 +951,12 @@ def hitting_time(process, level, max_time=100.0, start_time=0.0, step=None, tol=
     # A path that moves in jumps, or in steps, is walked exactly -- there is
     # nothing hiding between the values it reports, so `step` and `tol`, which
     # exist to deal with what a continuous path does in between, have nothing
-    # to do here.
-    if _is_jump_path(process):
-        return _jump_hitting_time(
-            process, float(level), float(max_time), float(start_time)
-        )
-
-    if isinstance(process, (InfiniteTuple, DiscreteTimeFunction)):
-        return _step_hitting_time(
-            process,
-            float(level),
-            float(max_time),
-            float(start_time),
-            _steps_per_time(process),
-        )
+    # to do here. The direction is left to the walk to read off the path, and
+    # reaching the level counts even without landing on it.
+    reader = _tier_a_reader(process)
+    if reader is not None:
+        search, _ = reader
+        return search(float(level), float(max_time), float(start_time), None, False)
 
     read, cov_func, level = _prepare(process, level)
 
@@ -879,3 +994,300 @@ def hitting_time(process, level, max_time=100.0, start_time=0.0, step=None, tol=
         t0, gap0 = t1, gap1
 
     return float("inf")
+
+
+def _upcrossings_unsupported(path):
+    """Explain why ``path`` has no list of crossing times, and raise.
+
+    Reached only for a path :func:`_tier_a_reader` cannot walk. There are three
+    such cases and they fail for genuinely different reasons, so each gets its
+    own message rather than one generic "unsupported".
+
+    Parameters
+    ----------
+    path : object
+        The sample path.
+
+    Raises
+    ------
+    NotImplementedError
+        Always.
+    """
+    # A Gaussian-process path, or a geometric Brownian motion. This is not a
+    # missing feature so much as a level having no *sequence* of crossings for a
+    # continuous path -- see the Notes in `upcrossings`.
+    is_gaussian = hasattr(path, "cov_func") and hasattr(path, "observed")
+    is_geometric = hasattr(path, "brownian_path") and hasattr(path, "scale")
+    if is_gaussian or is_geometric:
+        raise NotImplementedError(
+            f"upcrossings cannot list the crossing times of a "
+            f"{type(path).__name__} path, because there is no first, second, "
+            "third crossing to list. A path that moves continuously recrosses "
+            "a level infinitely often in every stretch of time after it first "
+            "touches it, however short that stretch is, so its crossings are "
+            "packed together rather than coming one after another, and any "
+            "count of them would only report how finely the path happened to "
+            "be looked at. hitting_time does work for this process, and asking "
+            "it again from a later start_time gives a later crossing: "
+            "hitting_time(path, level=1), then hitting_time(path, level=1, "
+            "start_time=that_time + 1). upcrossings itself works for processes "
+            "that move in jumps or in steps, where the crossings really are "
+            "separated from one another."
+        )
+
+    # A non-homogeneous Poisson or Cox count -- the same gap `hitting_time`
+    # documents, worth repeating here because it *is* a jump process and being
+    # told only that it is unsupported would be baffling.
+    if hasattr(path, "cumulative_rate") and hasattr(
+        path, "standard_interarrival_times"
+    ):
+        raise NotImplementedError(
+            "upcrossings cannot read a NonHomogeneousPoissonProcess or "
+            "CoxProcess path yet, for the same reason hitting_time cannot: its "
+            "count does move in jumps, but it does not know when those jumps "
+            "happen on the clock -- it knows them on the 'expected number of "
+            "events' scale, and working back to a time from that is not built. "
+            "Bear in mind that a count only ever goes up, so it crosses a "
+            "level at most once in any case. What you can do meanwhile is ask "
+            "for the count itself at a time, which is exact: path(t) for one "
+            "path, or N[t].sim(10000) for the whole distribution."
+        )
+
+    raise NotImplementedError(
+        f"upcrossings does not know how to read a {type(path).__name__} yet. It "
+        "handles processes that move in jumps (PoissonProcess, RenewalProcess, "
+        "CompoundPoissonProcess, ContinuousTimeMarkovChain, the birth-death "
+        "and M/M queues, and the G/G queues) and discrete-time processes "
+        "(RandomWalk, MarkovChain, MA) -- the ones whose crossings of a level "
+        "are separated from one another. A DiffusionProcess, CIR, or "
+        "MertonJumpDiffusion moves continuously between the times you look at "
+        "it, so it has no such sequence of crossings, and its hitting time is "
+        "not built yet either. A process whose value is several numbers at "
+        "once, such as an epidemic model, has no single level to cross, and "
+        "neither it nor one of its compartments on its own is handled yet."
+    )
+
+
+class _UpcrossingWalk:
+    """Finds the upcrossing times of one path, in order, as they are asked for.
+
+    An upcrossing has to come *from below*, so finding one is two searches
+    rather than one: get to where the path is strictly below the level, then
+    find where it next rises back to it. Repeating that pair walks up the
+    sequence. The times found are kept, so asking for the same one twice does
+    not walk the path again -- the caching pattern
+    :class:`~symbulate.result.InfiniteVector` is built around.
+
+    Once a search runs past ``max_time`` there are no more crossings to find,
+    and every later position of the sequence is ``inf``. That is recorded rather
+    than rediscovered, so a sequence that has run out does not re-walk the whole
+    path on each new index.
+
+    Parameters
+    ----------
+    search : callable
+        The walk for this path, from :func:`_tier_a_reader`.
+    level : float
+        The level being crossed.
+    max_time : float
+        Stop looking after this time.
+    start_time : float
+        Start looking from here.
+
+    Attributes
+    ----------
+    times : list of float
+        The crossing times found so far, in order.
+    """
+
+    def __init__(self, search, level, max_time, start_time):
+        self.search = search
+        self.level = level
+        self.max_time = max_time
+        self.times = []
+        # Where the next pair of searches begins. After a crossing is found this
+        # is the crossing itself, which is at or above the level -- so the next
+        # "get below" search starts by moving off it, as it should.
+        self.cursor = start_time
+        self.finished = False
+
+    def _find_one_more(self):
+        """Add the next crossing time, or record that there are none left."""
+        below_at = self.search(self.level, self.max_time, self.cursor, -1.0, True)
+        if math.isinf(below_at):
+            self.finished = True
+            return
+
+        crossed_at = self.search(self.level, self.max_time, below_at, 1.0, False)
+        if math.isinf(crossed_at):
+            self.finished = True
+            return
+
+        self.times.append(crossed_at)
+        self.cursor = crossed_at
+
+    def crossing_at(self, n):
+        """Return the time of the ``n``-th upcrossing, counting from 0.
+
+        Parameters
+        ----------
+        n : int
+            Which crossing to report.
+
+        Returns
+        -------
+        float
+            Its time, or ``inf`` if the path does not cross the level that many
+            times before ``max_time``.
+        """
+        while not self.finished and len(self.times) <= n:
+            self._find_one_more()
+        return self.times[n] if n < len(self.times) else float("inf")
+
+
+def upcrossings(process, level, max_time=100.0, start_time=0.0):
+    """Return every time a process crosses up through ``level``, in order.
+
+    Where :func:`hitting_time` answers "when does it first get there?", this
+    answers "when does it get there, and then when again, and again?" Pass a
+    whole process and you get a random variable back; pass a single sample path
+    and you get the sequence of times for that one path.
+
+    The sequence is an :class:`~symbulate.result.InfiniteVector`, so it is
+    computed only as far as you look: ``times[0]`` is the first crossing,
+    ``times[3]`` the fourth, and nothing beyond what you ask for is worked out.
+
+    Only processes that move in **jumps** or in **steps** are handled -- the
+    ones whose crossings of a level are separated from one another. A process
+    with continuous paths, such as :class:`BrownianMotion`, has no such
+    sequence at all; see the notes.
+
+    Parameters
+    ----------
+    process : RV or a sample path
+        The process, or a single sample path drawn from one.
+    level : float
+        The level to cross.
+    max_time : float, optional
+        Stop looking after this time. Default is 100. Crossings after it are
+        reported as ``inf``. For a discrete-time process a step *is* the unit
+        of time, so this counts steps.
+    start_time : float, optional
+        Start looking from here rather than from time 0. Default is 0.
+
+    Returns
+    -------
+    RV or InfiniteVector
+        A random variable, if given a process -- index it to get the ``n``-th
+        crossing time as a random variable of its own,
+        ``upcrossings(X, level=3)[0]``. The sequence of times itself, if given a
+        single path. ``inf`` at position ``n`` means the path did not cross the
+        level ``n + 1`` times before ``max_time``, and every position after an
+        ``inf`` is ``inf`` too.
+
+    Raises
+    ------
+    TypeError
+        If an argument has the wrong type, or the path's values are not numbers
+        -- a Markov chain labelled with names rather than numbers has no level
+        to cross.
+    ValueError
+        If ``max_time`` is not after ``start_time``, or the process jumps too
+        many times before ``max_time`` to walk through.
+    NotImplementedError
+        If the path is continuous (any Gaussian process,
+        :class:`GeometricBrownianMotion`, or a general diffusion), is a
+        :class:`~symbulate.poisson_process.NonHomogeneousPoissonProcess` or
+        :class:`~symbulate.poisson_process.CoxProcess` count, or is not a
+        single number at each time. Each case says why.
+
+    Notes
+    -----
+    **What counts as an upcrossing.** The path has to arrive at the level
+    *from below*: a crossing is a time when the path is at or above ``level``
+    having been strictly below it beforehand. So the path must drop under the
+    level again between one crossing and the next, which is what keeps the
+    crossings apart and makes them a sequence. It also means that if the path is
+    already at or above ``level`` when you start looking, that is not counted as
+    a crossing -- it has to go below first -- so the first entry here can come
+    later than :func:`hitting_time`. When the path starts strictly below the
+    level, ``upcrossings(X, level=a)[0]`` and ``hitting_time(X, level=a)`` are
+    the same thing.
+
+    Reaching the level means reaching it **or passing it**, exactly as for
+    :func:`hitting_time`: a walk going from 4 to 6 is never at 5, so the step
+    that took it to 6 is the crossing of 5.
+
+    **This is exact**, for the same reason Tier A of :func:`hitting_time` is:
+    a jump path holds one value at a time so it can only cross at a jump, and a
+    discrete-time path has no values between its steps. There is nothing hidden
+    between the values the path reports, so there is no step size to choose and
+    no accuracy to trade off.
+
+    **Why a continuous process is refused rather than approximated.** A
+    Brownian motion recrosses a level infinitely often in every stretch of time
+    after it first touches it, however short -- the crossing times are packed
+    together, not spread out one after another. So there is no second or third
+    crossing to report: any count would be a count of how finely the path was
+    looked at, not a property of the path. :func:`hitting_time` is still the
+    right tool there, called again with a later ``start_time`` for a later
+    crossing.
+
+    **A count crosses a level at most once.** A
+    :class:`~symbulate.poisson_process.PoissonProcess` or
+    :class:`~symbulate.renewal_process.RenewalProcess` count only ever goes up,
+    so it never comes back below a level to cross it again: the answer is the
+    hitting time followed by ``inf`` forever. This is worth knowing rather than
+    surprising -- upcrossings are interesting for processes that move both ways,
+    such as a random walk, a queue length, a continuous-time Markov chain, or a
+    :class:`~symbulate.renewal_process.CompoundPoissonProcess` with negative
+    jumps.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> walk = RandomWalk(p=0.5).draw()
+    >>> times = upcrossings(walk, level=2, max_time=500)
+    >>> times[0], times[1]     # doctest: +SKIP
+    (14.0, 22.0)
+
+    How often a queue reaches five customers in its first 200 time units -- the
+    third such time, over many simulated queues:
+
+    >>> queue = GG1(Exponential(rate=1), Exponential(rate=1.2))
+    >>> third = upcrossings(queue, level=5, max_time=200)[2]
+    >>> third.sim(100).mean()      # doctest: +SKIP
+    92.7
+
+    See Also
+    --------
+    hitting_time : The first time a process reaches a level.
+    """
+    _validate_window(level, max_time, start_time)
+
+    # Handed a whole process, hand back a random variable, whose value on each
+    # simulated path is that path's sequence of crossing times. Every process
+    # here is an RV; only some are also a RandomProcess, so RV is the check that
+    # catches all of them.
+    if isinstance(process, RV):
+        return process.apply(
+            lambda path: upcrossings(
+                path, level=level, max_time=max_time, start_time=start_time
+            )
+        )
+
+    reader = _tier_a_reader(process)
+    if reader is None:
+        _upcrossings_unsupported(process)
+    search, read_one = reader
+
+    # The sequence below is computed only as far as it is looked at, so a path
+    # whose values cannot be compared with a level -- an epidemic model's
+    # compartment counts, a Markov chain labelled with names -- would otherwise
+    # be accepted quietly here and complain only once somebody indexed the
+    # result. One value read now puts the error where the mistake is, which is
+    # what hitting_time gets for free by walking straight away.
+    read_one()
+
+    walk = _UpcrossingWalk(search, float(level), float(max_time), float(start_time))
+    return InfiniteVector(walk.crossing_at)
