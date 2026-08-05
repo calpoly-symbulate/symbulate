@@ -368,7 +368,7 @@ DENSITY2D_PADDING_FRAC = 0.1  # quantile bounds, not raw min/max, so
 # outlier-heavy data doesn't stretch the axes (same rationale as the
 # 1D density case)
 DENSITY2D_CONTINUOUS_LEVELS = 256  # number of contourf bands used for
-# the default continuous density plot (contour=False). High enough
+# the continuous density plot (contour=False). High enough
 # that the bands blend into a smooth gradient.
 DENSITY2D_LEVELS = 8  # default number of discrete color bands for the
 # contour plot (contour=True); levels= overrides per call
@@ -390,7 +390,8 @@ JOINT_PDF_GRID_POINTS = 200  # points per axis for the continuous surface.
 # Lower than DENSITY2D_GRID_POINTS (300) because every grid point is an
 # exact pdf evaluation rather than one KDE lookup, and 200 matches the
 # number of points the univariate Distribution.plot() curve uses.
-JOINT_PDF_LEVELS = 8  # discrete color bands for contour=True; matches
+JOINT_PDF_LEVELS = 8  # discrete color bands for contour=True, the default;
+# matches
 # DENSITY2D_LEVELS so a theoretical contour plot bands like a simulated one
 JOINT_PDF_CONTINUOUS_LEVELS = 256  # matches DENSITY2D_CONTINUOUS_LEVELS --
 # enough bands that the default surface reads as a smooth gradient
@@ -427,6 +428,11 @@ JOINT_PAIRS_PANEL_SIZE = 2.2  # width and height, in inches, of one panel of
 # a pairs matrix. The figure is sized to the grid rather than left at the
 # single-plot figure.figsize from symbulate.mplstyle, which would shrink
 # every panel as the number of variables grows.
+# Where a joint panel's colorbar sits inside the otherwise-empty grid cell
+# mirroring it, as fractions of that cell: (left, bottom, width, height). A
+# slim bar left of center, leaving room on its right for the tick labels and
+# the "Density"/"Count" label.
+JOINT_PAIRS_COLORBAR_INSET = (0.26, 0.08, 0.10, 0.84)
 
 # Tile plot. The colormap comes from image.cmap (viridis) in
 # symbulate.mplstyle.
@@ -1079,6 +1085,14 @@ DEFAULT_PLOT_TYPE = {
         "default": "tile",
         "alternatives": ["rug", "box", "violin", "density", "hist"],
     },
+    # Three or more variables have no single joint plot, so the default is the
+    # matrix of every pair (each of whose panels is itself chosen from this
+    # same table). The alternative is the connected-dot plot of each
+    # realization against its index, which is what these results used to get
+    # by default. Sample size doesn't change either choice -- the panels of
+    # the matrix make that call variable by variable.
+    ("nD", True): {"default": "pairs", "alternatives": ["path"]},
+    ("nD", False): {"default": "pairs", "alternatives": ["path"]},
 }
 
 
@@ -1096,6 +1110,7 @@ def default_plot_type(configuration, small_n):
     - ``"2D_cc"`` -- 2D, both axes continuous-ish
     - ``"2D_mixed"`` -- 2D, one axis discrete and one continuous (either
       order; the plot type bins/segments whichever axis is continuous)
+    - ``"nD"`` -- three or more variables, which have no single joint plot
 
     Process time points (``X[t].sim(n)``) are ordinary 1D results, so they
     use the ``"1D_discrete"`` / ``"1D_continuous"`` configurations.
@@ -1142,6 +1157,8 @@ PLOT_DISPLAY_NAME = {
     "segmented_rug": "Segmented Rug Plot",
     "segmented_density": "Segmented Density Plot",
     "segmented_hist": "Segmented Histogram",
+    "pairs": "Pairs Plot",
+    "path": "Path Plot",
 }
 
 
@@ -1371,6 +1388,64 @@ def add_colorbar(fig, marginal, mappable, label):
         caxes = fig.add_axes([0.86, 0.11, 0.03, 0.52])
         cbar = plt.colorbar(mappable=mappable, cax=caxes)
         cbar.set_label(label)
+    return caxes
+
+
+def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
+    """Put one joint panel's colorbar in the empty cell mirroring it.
+
+    A pairs matrix fills only its lower triangle, because panel ``(i, j)``
+    and panel ``(j, i)`` would show the same pair twice. That leaves the
+    upper triangle empty and exactly the right shape: each joint panel's
+    colorbar goes in the cell across the diagonal from it, so the bar has
+    room of its own instead of eating into the panel.
+
+    Every panel keeps its own color scale -- a dense pair and a diffuse one
+    are each colored over their own range -- so each bar is labeled with the
+    pair it belongs to, and reading a color means reading that pair's bar.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure holding the matrix.
+    cell : matplotlib.transforms.Bbox
+        Where the mirroring grid cell sits in the figure, from
+        ``gridspec[row, col].get_position(fig)`` *after* the layout is
+        settled.
+    mappable : matplotlib.cm.ScalarMappable
+        The surface or mesh drawn in the joint panel.
+    pair_label : str
+        Which two variables the panel shows, e.g. ``"X1 & X2"``.
+    quantity_label : str
+        What the colors measure: ``"Density"``, ``"Count"``, or
+        ``"Probability"``. Counts are whole numbers, so their ticks are
+        drawn without decimals.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The colorbar's axes.
+    """
+    left, bottom, width, height = JOINT_PAIRS_COLORBAR_INSET
+    caxes = fig.add_axes(
+        (
+            cell.x0 + left * cell.width,
+            cell.y0 + bottom * cell.height,
+            width * cell.width,
+            height * cell.height,
+        )
+    )
+    cbar = plt.colorbar(mappable=mappable, cax=caxes)
+    cbar.set_label(quantity_label)
+    # Name the pair above its bar, so a color in the matrix can be traced to
+    # the scale that explains it.
+    caxes.set_title(pair_label)
+    # A count is a whole number of simulated values, so decimals on its ticks
+    # would be noise; a density or a probability needs them.
+    decimals = 0 if quantity_label == "Count" else JOINT_CBAR_DECIMALS
+    cbar.ax.yaxis.set_major_formatter(
+        FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
+    )
     return caxes
 
 
@@ -5744,22 +5819,22 @@ def _density2d_grid(x, y):
     return Xgrid, Ygrid, Z, (xmin, xmax, ymin, ymax)
 
 
-def make_density2D(x, y, ax, contour=False, levels=None, colorbar=True, **kwargs):
+def make_density2D(x, y, ax, contour=True, levels=None, colorbar=True, **kwargs):
     """Draw a 2D density surface from a KDE estimate.
 
     Both modes plot the *same* KDE-estimated density surface with
     ``ax.contourf``; they differ in how finely it is quantized:
 
-    - ``contour=False`` (default): a *continuous* density plot. The
-      surface is drawn with a large fixed number of color bands
+    - ``contour=True`` (default): a topographic "Contour Plot". The
+      surface is split into ``levels`` discrete color bands with thin
+      white outlines between them, so each band can be matched to the
+      colorbar by eye rather than guessed at from a gradient.
+    - ``contour=False``: a *continuous* density plot. The surface is
+      drawn with a large fixed number of color bands
       (``DENSITY2D_CONTINUOUS_LEVELS``) so they blend into a smooth
       gradient with no visible banding -- the "2D Density Plot" look.
-      The ``levels`` argument does not apply here; passing it warns
+      The ``levels`` argument does not apply there; passing it warns
       and has no effect.
-    - ``contour=True``: a topographic "Contour Plot". The same surface
-      is split into ``levels`` discrete color bands with thin white
-      outlines between them, so each band can be matched to the
-      colorbar by eye.
 
     The axis limits are quantile-based (0.1st to 99.9th percentile of
     each variable, plus padding), not raw min/max, so outlier-heavy
@@ -6009,7 +6084,7 @@ def make_joint_pdf(
     xlim,
     ylim,
     ax,
-    contour=False,
+    contour=True,
     colorbar=True,
     xlabel="Variable 1",
     ylabel="Variable 2",
@@ -6026,11 +6101,11 @@ def make_joint_pdf(
     curve the univariate ``Distribution.plot()`` draws, and it takes the
     same two forms ``make_density2D`` does:
 
-    - ``contour=False`` (default): a smoothly shaded surface, drawn with
+    - ``contour=True`` (default): a topographic contour plot --
+      ``JOINT_PDF_LEVELS`` discrete bands with thin white outlines, so each
+      band can be matched to the colorbar by eye.
+    - ``contour=False``: a smoothly shaded surface, drawn with
       ``JOINT_PDF_CONTINUOUS_LEVELS`` bands so no banding is visible.
-    - ``contour=True``: a topographic contour plot -- ``JOINT_PDF_LEVELS``
-      discrete bands with thin white outlines, so each band can be matched
-      to the colorbar by eye.
 
     The color scale runs from 0 to the peak density, so the colorbar starts
     at 0. A density that is unbounded at the edge of its support (a

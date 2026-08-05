@@ -98,6 +98,17 @@ types." Those live as named constants at the top of `plot.py` instead (see
 values inline in a plot function — every value belongs in one of those two
 places, not scattered inline.
 
+**2D density surfaces are banded by default.** `make_density2D` and
+`make_joint_pdf` both default to `contour=True`, so a 2-D density (simulated
+`type="density2d"`, a theoretical joint pdf, and every continuous joint panel of a
+pairs matrix) is drawn as `DENSITY2D_LEVELS`/`JOINT_PDF_LEVELS` discrete bands with
+thin white outlines, which can be read against the colorbar. `contour=False` gives
+the old smooth gradient (`*_CONTINUOUS_LEVELS` bands). Note the panel title follows
+the mode — "Contour Plot" / "Joint Contour Plot" by default, "2D Density Plot" /
+"Joint PDF Plot" with `contour=False` — while `PLOT_DISPLAY_NAME["density2d"]` in
+the suggestion note still reads "2D Density Plot", since that names the `type=`
+token rather than the shading.
+
 **Color palette:** categorical palette is **Okabe-Ito** (7 hues, excluding
 black) — colorblind-safe and print-friendly. Do not substitute other colors.
 Sequential/continuous plots (2D density, tile, hist2d) use **viridis** —
@@ -538,57 +549,112 @@ raise ValueError(
 
 ## dim > 2 Behavior
 
-**There is now a way to plot 3+ simulated variables: `.plot(pairs=True)`** — a
-matrix of panels, mirroring `MultivariateDistribution.plot(pairs=True)` so a
-simulation and its distribution can be read side by side. See "Pairs Matrix of
-Simulated Results" below.
+**`.plot()` on 3+ simulated variables draws the pairs matrix** — that is the
+default, with no argument needed. The lookup table has an `"nD"` configuration
+(`default: "pairs"`, `alternatives: ["path"]`) so the choice lives with every
+other default rather than being special-cased, and the suggestion note reads
+`Currently Showing: Pairs Plot (Default) / Alternative Plots: Path Plot
+(type = "path")`.
 
-`.plot()` with **no** arguments on dim > 2 still falls through to the old
-catch-all branch that produces a connected-dot index plot. That is still not
-correct behavior for joint distribution visualization — the intended fix is to
-raise NotImplementedError pointing at `pairs=True`, and it was deliberately left
-alone when the pairs matrix landed (that change alters existing behavior, so it
-needs its own decision).
+`type="path"` keeps the old behavior: one connected-dot line per realization
+against its index. Any other `type` on 3+ variables raises, naming both options.
+
+**There is no `pairs=` keyword.** It was how the matrix used to be asked for; a
+stray `pairs=True` now raises a message saying it is the default instead of
+leaking into matplotlib as a `Rectangle.set()` error.
+
+**The gate is `self.dim is not None and self.dim > 2`, and that `is not None`
+matters.** A random process's `.sim(n)` results are time functions, not tuples of
+numbers, so their `dim` is `None` — they fall through to the same path branch
+they always used, untouched. Verified across `GG1`, `RandomWalk`,
+`ContinuousTimeMarkovChain`, `PoissonProcess`, `BrownianMotion`, `MM1`, and
+`SIR`. Don't widen that condition to `self.dim != 2` or similar.
+
+**The theoretical side matches**: `MultivariateDistribution.plot()` on 3+
+freely varying components draws the matrix too, and its `pairs=` keyword is gone
+as well (a stray one raises the same kind of message). Note the sum-constrained
+families count *free* variables — a 3-category `Multinomial` has 2, so it still
+draws its one joint plot.
+
+**Choosing which variables to show is asymmetric on purpose.** A distribution
+takes `variables=` — any list of two or more, Python-indexed, so
+`variables=[0, 1, 3]` draws `Variable 1`, `Variable 2`, `Variable 4` (two of them
+means their single joint plot; three or more means a matrix of those). Simulated
+results have **no such argument**: index the random variable before simulating,
+`X[[0, 2]].sim(1000).plot()`, since that already exists and avoids two ways to say
+the same thing. Both removed keywords (`dims=` on either side, `pairs=`) raise a
+message naming the replacement rather than reaching matplotlib.
 
 ## Pairs Matrix of Simulated Results
 
-`RVResults.plot(pairs=True, dims=None)` in `results.py`. The panels are chosen
-by the **same** classification the 1-D and 2-D dispatches use, always in the
-large-sample form so a matrix never mixes a mesh with a scatter:
+`RVResults.plot()` in `results.py`, reached by default for 3+ variables.
 
-| Panel | Data | Type |
-|---|---|---|
-| diagonal | continuous-ish (`B_1D`) | `density` |
-| diagonal | discrete-ish | `impulse` — a density over repeated values would smear a pmf |
-| off-diagonal | both discrete (`K_2D` per axis) | `tile` |
-| off-diagonal | both continuous | `hist2d` |
-| off-diagonal | mixed | `tile`, continuous axis binned |
+Every panel shows **exactly what that data would show on its own** — the same
+`classify_values` + `DEFAULT_PLOT_TYPE` lookup the 1-D and 2-D dispatches use,
+small-sample branch included, so a panel of the matrix matches the plot a
+student gets by simulating those variables by themselves:
+
+| Panel | Data | Large n | Small n |
+|---|---|---|---|
+| diagonal | continuous-ish (`B_1D`) | `hist` | `rug` |
+| diagonal | discrete-ish | `impulse` | `dotplot` |
+| off-diagonal | both continuous (`K_2D` per axis) | `hist2d` | `scatter` |
+| off-diagonal | both discrete | `tile` | `scatter` |
+| off-diagonal | mixed | `tile`, continuous axis binned | `rug` (segmented) |
 
 Conventions shared with the theoretical version, by design — change both or
 neither: lower triangle only, `JOINT_PAIRS_MAX_DIM` cap, `JOINT_PAIRS_PANEL_SIZE`
 per panel, `JOINT_PAIRS_OVERLAY_ERROR` when the figure already has a plot,
-`X1`-style labels on the outer edges only, no per-panel titles (each panel's
-own type title is cleared — the `"Pairs Plot"` suptitle names the layout).
+`Variable 1`-style labels on the outer edges only, no per-panel titles (each
+panel's own type title is cleared, and the figure carries one suptitle instead).
 
-**One deliberate divergence:** the simulated matrix labels the **whole** left
-column, top-left panel included, so every row is named (`X1`, `X2`, `X3` down
-the side — seaborn `PairGrid`'s convention). The theoretical version leaves that
-one panel's y-label blank on the grounds that a diagonal panel's y-axis is a
-density rather than the variable. Worth reconciling: the theoretical side needs a
-one-line change (`if col == 0 and row != col:` → `if col == 0:`) to match.
+**The suptitle differs by design.** A theoretical matrix is titled
+`"Probability Density Functions"` or `"Probability Mass Functions"` by
+`self.discrete`, because every panel of it *is* an exact pdf/pmf. A simulated
+matrix keeps `"Pairs Plot"`: its panels are estimates, a mixed matrix has both
+kinds of variable at once, `normalize=False` shows counts, and a small
+simulation's panels are scatters and rugs — so no single pdf/pmf claim would be
+true of it.
+
+**Both matrices label the whole left column**, top-left panel included, so every
+row is named (`Variable 1`, `Variable 2`, `Variable 3` down the side — seaborn
+`PairGrid`'s convention). That panel's y-axis is really a density rather than the
+variable, so the label names the row it heads rather than the axis it sits on;
+leaving it blank (as the theoretical side used to) left the first row unnamed
+until the bottom of its column.
+
+**Colorbars go in the empty upper triangle — one per joint panel.** The matrix
+fills only its lower triangle, so the cell mirroring panel `(row, col)` across
+the diagonal is free and exactly the right shape for that panel's colorbar.
+`add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label)` in
+`plot.py` places it, and **both matrices call the same helper** so they cannot
+drift apart. Consequences to respect:
+- Each panel keeps **its own** color scale (a dense pair and a diffuse one are
+  each colored over their own range), which is *why* every bar is titled with
+  the pair it explains (`"Variable 1 & Variable 2"`) — a color only means something against its
+  own bar.
+- `quantity_label` is `"Density"`/`"Count"` by `normalize` for simulated results
+  and `"Density"`/`"Probability"` by discreteness for a distribution. **A
+  `"Count"` bar's ticks carry no decimals** (a count is a whole number of
+  simulated values); density and probability keep `JOINT_CBAR_DECIMALS`.
+- The bars are placed **after `fig.tight_layout()`**, from
+  `gs[col, row].get_position(fig)` — the cell rectangles are only final once the
+  layout has settled. They use `fig.add_axes`, so they have no subplot spec,
+  which is how tests tell a panel from a bar (`get_subplotspec() is not None`).
 
 Three implementation notes:
 - **Diagonal panels route through `.plot()`** (full reuse of the 1-D dispatch)
   after `plt.sca(ax)` — which works because every helper draws on `plt.gca()`.
   **Joint panels call `make_tile`/`make_hist2d` directly**, because the 2-D
-  dispatch hardcodes `colorbar=not marginal` and a colorbar per panel would
-  spend the figure on scales instead of data.
+  dispatch hardcodes `colorbar=not marginal`; they return their mappable so the
+  matrix can give each one its own bar in the mirroring cell.
 - **One bin count for the whole matrix.** Equal-width bins over the same column
   of data with the same count give identical edges, which is what makes a column
   comparable. Don't pass `bins` to `make_tile` when both axes are discrete — it
   warns.
-- `dims` is only meaningful with `pairs=True`; on its own it raises rather than
-  leaking into matplotlib.
+- There is no `dims`/`variables` argument here: a subset is chosen by indexing
+  the random variable (`X[[0, 2]].sim(n).plot()`). Passing `dims=` raises a
+  message saying so.
 
 ## Testing Requirements
 
