@@ -503,7 +503,7 @@ that way (see `MODEL-DECISIONS.md`, "Decision: Hitting Times — Tier A").
 
 ## Suggestion Messages
 
-Print a message after **every** plot renders — this fires whether or not
+Print a message after a plot renders — this fires whether or not
 `type=` was specified (a deliberate broadening from the original plan).
 See `DECISIONS.md`, "Decision: Suggestion Message Behavior" for the full
 template and both wording variants. Summary:
@@ -515,9 +515,12 @@ template and both wording variants. Summary:
   `"Currently Showing: Histogram / Alternative Plots: Impulse (Default),
   Density (type='density'), ..."`
 
-Opt-out parameter: `hints` (default `True`), e.g. `.plot(hints=False)`.
-**Note:** this name is carried over from an earlier, unchosen draft
-template — not independently confirmed for the chosen wording above.
+Control parameter: `suggest` (default `None`), e.g. `.plot(suggest=False)`.
+`None` shows the message only on the **first** `.plot()` of the session,
+`True` shows it on every call, `False` never shows it (see
+`plot.should_show_suggestion`). There is no `hints` parameter — that name
+came from an earlier, unchosen draft template and was never implemented;
+passing it raises rather than quietly opting out.
 
 ## Code Conventions
 
