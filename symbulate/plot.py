@@ -1084,6 +1084,14 @@ DEFAULT_PLOT_TYPE = {
         "default": "tile",
         "alternatives": ["rug", "box", "violin", "density", "hist"],
     },
+    # Three or more variables have no single joint plot, so the default is the
+    # matrix of every pair (each of whose panels is itself chosen from this
+    # same table). The alternative is the connected-dot plot of each
+    # realization against its index, which is what these results used to get
+    # by default. Sample size doesn't change either choice -- the panels of
+    # the matrix make that call variable by variable.
+    ("nD", True): {"default": "pairs", "alternatives": ["path"]},
+    ("nD", False): {"default": "pairs", "alternatives": ["path"]},
 }
 
 
@@ -1101,6 +1109,7 @@ def default_plot_type(configuration, small_n):
     - ``"2D_cc"`` -- 2D, both axes continuous-ish
     - ``"2D_mixed"`` -- 2D, one axis discrete and one continuous (either
       order; the plot type bins/segments whichever axis is continuous)
+    - ``"nD"`` -- three or more variables, which have no single joint plot
 
     Process time points (``X[t].sim(n)``) are ordinary 1D results, so they
     use the ``"1D_discrete"`` / ``"1D_continuous"`` configurations.
@@ -1147,6 +1156,8 @@ PLOT_DISPLAY_NAME = {
     "segmented_rug": "Segmented Rug Plot",
     "segmented_density": "Segmented Density Plot",
     "segmented_hist": "Segmented Histogram",
+    "pairs": "Pairs Plot",
+    "path": "Path Plot",
 }
 
 

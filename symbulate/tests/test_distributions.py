@@ -4262,8 +4262,8 @@ class TestMultivariateNormal(unittest.TestCase):
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
         X.plot()
         self.assertEqual(plt.gca().get_title(), "Joint PDF Plot")
-        self.assertEqual(plt.gca().get_xlabel(), "X1")
-        self.assertEqual(plt.gca().get_ylabel(), "X2")
+        self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
+        self.assertEqual(plt.gca().get_ylabel(), "Variable 2")
         plt.close("all")
 
     def test_MultivariateNormal_plot_contour(self):
@@ -4272,16 +4272,35 @@ class TestMultivariateNormal(unittest.TestCase):
         self.assertEqual(plt.gca().get_title(), "Joint Contour Plot")
         plt.close("all")
 
-    def test_MultivariateNormal_plot_3d_requires_dims(self):
-        # Above two variables there is no single natural default, so plot()
-        # asks which pair to show instead of silently choosing one.
+    def test_MultivariateNormal_plot_3d_defaults_to_the_matrix(self):
+        # Above two variables there is no single joint plot, so plot() shows
+        # every pair rather than asking which one to pick.
+        plt.close("all")
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
-        with self.assertRaises(Exception) as cm:
-            X.plot()
-        self.assertIn("dims", str(cm.exception))
+        X.plot()
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
+        self.assertEqual(plt.gcf()._suptitle.get_text(), "Pairs Plot")
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_two_dims_is_one_joint_plot(self):
+        # Naming exactly two variables still draws their joint distribution,
+        # not a 2-by-2 matrix -- two variables have one joint plot between them.
+        plt.close("all")
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
         X.plot(dims=(0, 2))
-        self.assertEqual(plt.gca().get_xlabel(), "X1")
-        self.assertEqual(plt.gca().get_ylabel(), "X3")
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 1)
+        self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
+        self.assertEqual(plt.gca().get_ylabel(), "Variable 3")
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_the_old_pairs_keyword_explains_itself(self):
+        plt.close("all")
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
+        with self.assertRaises(ValueError) as cm:
+            X.plot(pairs=True)
+        self.assertIn("no longer needed", str(cm.exception))
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_lower_triangle(self):
@@ -4290,10 +4309,26 @@ class TestMultivariateNormal(unittest.TestCase):
         # each put a colorbar in the empty cell mirroring them, so the figure
         # holds 16 axes in all.
         X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4).tolist())
-        X.plot(pairs=True)
+        X.plot()
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
         self.assertEqual(len(panels), 10)
         self.assertEqual(len(plt.gcf().axes), 10 + 6)
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_pairs_labels_every_row(self):
+        # The left column names its row's variable, top-left panel included --
+        # that panel is the only one in its row, so without the label the
+        # first row goes unnamed. Matches a simulated pairs matrix.
+        plt.close("all")
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
+        X.plot()
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        # Panels are added row by row, so the first one is (0, 0).
+        self.assertEqual(panels[0].get_ylabel(), "Variable 1")
+        self.assertEqual(
+            sorted(a.get_ylabel() for a in panels if a.get_ylabel()),
+            ["Variable 1", "Variable 2", "Variable 3"],
+        )
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_colorbars_name_their_pair(self):
@@ -4302,10 +4337,15 @@ class TestMultivariateNormal(unittest.TestCase):
         # explains.
         plt.close("all")
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
-        X.plot(pairs=True)
+        X.plot()
         bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
         self.assertEqual(
-            sorted(a.get_title() for a in bars), ["X1 & X2", "X1 & X3", "X2 & X3"]
+            sorted(a.get_title() for a in bars),
+            [
+                "Variable 1 & Variable 2",
+                "Variable 1 & Variable 3",
+                "Variable 2 & Variable 3",
+            ],
         )
         self.assertEqual({a.get_ylabel() for a in bars}, {"Density"})
         plt.close("all")
@@ -4313,7 +4353,7 @@ class TestMultivariateNormal(unittest.TestCase):
     def test_MultivariateNormal_plot_pairs_colorbars_avoid_the_panels(self):
         plt.close("all")
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
-        X.plot(pairs=True)
+        X.plot()
         fig = plt.gcf()
         fig.canvas.draw()
         panels = [a.get_position() for a in fig.axes if a.get_subplotspec() is not None]
@@ -4324,12 +4364,12 @@ class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_plot_pairs_subset_of_dims(self):
         X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4).tolist())
-        X.plot(pairs=True, dims=(0, 2))
-        # 2 diagonal panels plus the one pair between them, whose colorbar
-        # sits in the mirroring cell.
+        X.plot(dims=(0, 2, 3))
+        # 3 diagonal panels plus the 3 pairs among them, each pair's colorbar
+        # in the mirroring cell.
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
-        self.assertEqual(len(panels), 3)
-        self.assertEqual(len(plt.gcf().axes), 3 + 1)
+        self.assertEqual(len(panels), 6)
+        self.assertEqual(len(plt.gcf().axes), 6 + 3)
         plt.close("all")
 
     def test_MultivariateNormal_marginal_1d_is_exact(self):
@@ -4359,17 +4399,19 @@ class TestMultivariateNormal(unittest.TestCase):
 
     def test_MultivariateNormal_plot_bad_dims(self):
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
-        # Wrong number of variables, out of range, repeated, not a number.
-        self.assertRaises(Exception, lambda: X.plot(dims=(0, 1, 2)))
+        # Too few variables, out of range, repeated, not a number. (Three or
+        # more is no longer an error -- it asks for a matrix of every pair.)
+        self.assertRaises(Exception, lambda: X.plot(dims=(0,)))
+        self.assertRaises(Exception, lambda: X.plot(dims=()))
         self.assertRaises(Exception, lambda: X.plot(dims=(0, 7)))
         self.assertRaises(Exception, lambda: X.plot(dims=(1, 1)))
         self.assertRaises(Exception, lambda: X.plot(dims=(0, "a")))
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_cannot_share_a_figure(self):
-        X = MultivariateNormal(mean=[0, 0], cov=[[1, 0], [0, 1]])
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
         Normal(0, 1).plot()
-        self.assertRaises(ValueError, lambda: X.plot(pairs=True))
+        self.assertRaises(ValueError, lambda: X.plot())
         plt.close("all")
 
     def test_MultivariateNormal_plot_shade_explains_itself(self):
@@ -4695,7 +4737,7 @@ class TestMultivariateLogNormal(unittest.TestCase):
     def test_MVLogNormal_plot_pairs(self):
         MultivariateLogNormal(
             mean=[0, 0, 0], cov=[[1, 0.5, 0], [0.5, 1, 0], [0, 0, 1]]
-        ).plot(pairs=True)
+        ).plot()
         plt.close("all")
 
 
@@ -5043,7 +5085,7 @@ class TestMultinomial(unittest.TestCase):
     def test_Multinomial_plot_pairs_colorbars_say_probability(self):
         # A discrete joint panel shows a probability, not a density.
         plt.close("all")
-        Multinomial(n=10, p=[0.3, 0.3, 0.4]).plot(pairs=True)
+        Multinomial(n=12, p=[0.3, 0.3, 0.2, 0.2]).plot()
         bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
         self.assertEqual({a.get_ylabel() for a in bars}, {"Probability"})
         plt.close("all")
@@ -5055,7 +5097,7 @@ class TestMultinomial(unittest.TestCase):
         # it passes alone and fails in a full run.
         plt.close("all")
         X = Multinomial(n=12, p=[0.4, 0.3, 0.2, 0.1])
-        X.plot(pairs=True)
+        X.plot()
         # 10 panels; the 6 joint ones each carry a colorbar as well.
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
         self.assertEqual(len(panels), 10)
@@ -5202,7 +5244,7 @@ class TestMultivariateHypergeometric(unittest.TestCase):
         self.assertEqual(float(func(np.array([4]), np.array([5]))[0]), 0.0)
 
     def test_MVHypergeom_plot_pairs(self):
-        MultivariateHypergeometric(m=[10, 8, 6, 4], n=6).plot(pairs=True)
+        MultivariateHypergeometric(m=[10, 8, 6, 4], n=6).plot()
         plt.close("all")
 
 
@@ -5336,7 +5378,7 @@ class TestDirichlet(unittest.TestCase):
 
     def test_Dirichlet_plots_pairs_with_Beta_marginals_on_the_diagonal(self):
         X = Dirichlet(alpha=[3, 2, 4, 5])
-        X.plot(pairs=True)
+        X.plot()
         # 10 panels; the 6 joint ones each carry a colorbar as well.
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
         self.assertEqual(len(panels), 10)
@@ -5473,7 +5515,7 @@ class TestDirichletMultinomial(unittest.TestCase):
         self.assertEqual(float(func(np.array([7]), np.array([6]))[0]), 0.0)
 
     def test_DirichletMultinomial_plot_pairs(self):
-        DirichletMultinomial(n=10, alpha=[2, 3, 5, 4]).plot(pairs=True)
+        DirichletMultinomial(n=10, alpha=[2, 3, 5, 4]).plot()
         plt.close("all")
 
 
@@ -5699,7 +5741,7 @@ class TestNegativeMultinomial(unittest.TestCase):
         self.assertGreater(float(func(np.array([30]), np.array([30]))[0]), 0.0)
 
     def test_NegativeMultinomial_plot_pairs(self):
-        NegativeMultinomial(r=3, p=[0.3, 0.2, 0.25]).plot(pairs=True)
+        NegativeMultinomial(r=3, p=[0.3, 0.2, 0.25]).plot()
         plt.close("all")
 
 
