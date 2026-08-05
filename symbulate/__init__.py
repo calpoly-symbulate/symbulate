@@ -122,18 +122,27 @@ from .poisson_process import (
     CoxProcess,
     CoxProcessProbabilitySpace,
 )
-from .hitting_times import hitting_time
+from .hitting_times import hitting_time, upcrossings
 from .random_walk import (
     RandomWalk,
     RandomWalkProbabilitySpace,
     RandomWalkResult,
+)
+from .branching_process import (
+    GaltonWatson,
+    GaltonWatsonProbabilitySpace,
+    GaltonWatsonResult,
 )
 from .time_series import (
     MA,
     MAProbabilitySpace,
     MAResult,
     AR,
+    ARCH,
     ARMA,
+    GARCH,
+    GARCHProbabilitySpace,
+    GARCHResult,
     ARMAProbabilitySpace,
     ARMAResult,
 )

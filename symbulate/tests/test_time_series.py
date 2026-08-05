@@ -26,6 +26,10 @@ from symbulate.time_series import (
     ARMA,
     ARMAResult,
     ARMAProbabilitySpace,
+    ARCH,
+    GARCH,
+    GARCHResult,
+    GARCHProbabilitySpace,
 )
 from symbulate.result import InfiniteVector
 
@@ -550,6 +554,232 @@ class TestARMAErrors(unittest.TestCase):
         seed()
         path = AR(coefs=[1.5], noise_dist=Bernoulli(1), initial=1).draw()
         self.assertGreater(float(path[10]), float(path[5]))
+
+
+class TestGARCHResult(unittest.TestCase):
+
+    def test_is_infinite_vector(self):
+        seed()
+        self.assertIsInstance(GARCH(omega=0.2, arch_coefs=[0.1]).draw(), InfiniteVector)
+
+    def test_recursion_matches_hand_computation(self):
+        # Starting variance 4, every shock 1. The recursion reproduces 4
+        # exactly: 0.2 + 0.1 * 4 + 0.85 * 4 = 4, so every value is sqrt(4).
+        seed()
+        path = GARCH(
+            omega=0.2,
+            arch_coefs=[0.1],
+            garch_coefs=[0.85],
+            noise_dist=Bernoulli(1),
+            initial=4,
+        ).draw()
+        for n in range(5):
+            self.assertAlmostEqual(float(path[n]), 2.0)
+
+    def test_variance_recursion_is_followed(self):
+        # With a fixed starting variance and unit shocks the whole variance
+        # path can be worked out by hand.
+        seed()
+        omega, a, b, v0 = 0.5, 0.2, 0.3, 1.0
+        path = GARCH(
+            omega=omega,
+            arch_coefs=[a],
+            garch_coefs=[b],
+            noise_dist=Bernoulli(1),
+            initial=v0,
+        ).draw()
+        path[3]
+        variances = path.get_variances()
+        expected, prev_sq, prev_var = [], v0, v0
+        for _ in range(4):
+            v = omega + a * prev_sq + b * prev_var
+            expected.append(v)
+            prev_var, prev_sq = v, v  # shock is 1, so X**2 == variance
+        for got, want in zip(variances, expected):
+            self.assertAlmostEqual(got, want)
+
+    def test_does_not_clobber_the_infinite_vector_cache(self):
+        seed()
+        path = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85]).draw()
+        first = [float(path[n]) for n in range(8)]
+        self.assertEqual(first, [float(path[n]) for n in range(8)])
+
+    def test_reading_far_ahead_keeps_earlier_values(self):
+        seed()
+        path = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85]).draw()
+        early = [float(path[n]) for n in range(8)]
+        path[200]
+        self.assertEqual([float(path[n]) for n in range(8)], early)
+
+    def test_variances_are_positive(self):
+        seed()
+        path = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85]).draw()
+        path[50]
+        self.assertTrue(all(v > 0 for v in path.get_variances()))
+
+
+class TestGARCHProbabilitySpace(unittest.TestCase):
+
+    def test_default_initial_is_the_long_run_variance(self):
+        space = GARCHProbabilitySpace(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85])
+        self.assertAlmostEqual(space.initial, 0.2 / (1 - 0.95))
+
+    def test_non_stationary_falls_back_to_omega(self):
+        # No long-run variance exists, so there is nothing better to use.
+        space = GARCHProbabilitySpace(omega=0.3, arch_coefs=[0.5], garch_coefs=[0.6])
+        self.assertEqual(space.initial, 0.3)
+
+    def test_draw_returns_result(self):
+        seed()
+        self.assertIsInstance(
+            GARCHProbabilitySpace(omega=0.2, arch_coefs=[0.1]).draw(), GARCHResult
+        )
+
+
+class TestGARCHConstruction(unittest.TestCase):
+
+    def test_is_rv(self):
+        self.assertIsInstance(GARCH(omega=0.2, arch_coefs=[0.1]), RV)
+        self.assertIsInstance(ARCH(omega=0.5, coefs=[0.5]), RV)
+
+    def test_arch_is_a_garch(self):
+        self.assertIsInstance(ARCH(omega=0.5, coefs=[0.5]), GARCH)
+
+    def test_arch_has_no_persistence_terms(self):
+        X = ARCH(omega=0.5, coefs=[0.5])
+        self.assertEqual(X.garch_coefs, [])
+        self.assertEqual(X.coefs, X.arch_coefs)
+
+    def test_getitem_returns_rv(self):
+        self.assertIsInstance(GARCH(omega=0.2, arch_coefs=[0.1])[3], RV)
+
+    def test_reproducible_under_same_seed(self):
+        seed(5)
+        first = [float(v) for v in GARCH(omega=0.2, arch_coefs=[0.1]).draw()[:12]]
+        seed(5)
+        self.assertEqual(
+            first, [float(v) for v in GARCH(omega=0.2, arch_coefs=[0.1]).draw()[:12]]
+        )
+
+
+class TestGARCHTheory(unittest.TestCase):
+    """The facts a GARCH is taught for."""
+
+    def test_long_run_variance_matches_closed_form(self):
+        # omega / (1 - sum of coefficients), and the default start means it
+        # holds from time 0 with no warm-up.
+        seed()
+        omega, a, b = 0.2, 0.1, 0.85
+        X = GARCH(omega=omega, arch_coefs=[a], garch_coefs=[b])
+        expected = omega / (1 - a - b)
+        for n in [0, 1, 5, 30]:
+            self.assertAlmostEqual(float(X[n].sim(Nsim).var()), expected, delta=0.8)
+
+    def test_values_are_centered_at_zero(self):
+        seed()
+        X = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85])
+        self.assertAlmostEqual(float(X[20].sim(Nsim).mean()), 0.0, delta=0.15)
+
+    def test_values_are_uncorrelated_but_their_sizes_are_not(self):
+        # The signature of a GARCH: no correlation between the values
+        # themselves, but positive correlation between their squares --
+        # volatility clustering.
+        seed()
+        paths = sample_paths(
+            GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85]), 6, 20000
+        )
+        plain = np.corrcoef(paths[:, 3], paths[:, 4])[0, 1]
+        squared = np.corrcoef(paths[:, 3] ** 2, paths[:, 4] ** 2)[0, 1]
+        self.assertAlmostEqual(plain, 0.0, delta=0.05)
+        self.assertGreater(squared, 0.03)
+
+    def test_arch_long_run_variance(self):
+        seed()
+        omega, a = 0.5, 0.5
+        X = ARCH(omega=omega, coefs=[a])
+        self.assertAlmostEqual(float(X[20].sim(Nsim).var()), omega / (1 - a), delta=0.3)
+
+    def test_no_coefficients_is_plain_noise(self):
+        # Variance is just omega, and there is nothing to cluster.
+        seed()
+        X = GARCH(omega=2.0, arch_coefs=[])
+        self.assertAlmostEqual(float(X[10].sim(Nsim).var()), 2.0, delta=0.2)
+
+    def test_starting_low_shows_a_warm_up(self):
+        # The counterpart to the default: start below the long-run variance
+        # and it climbs toward it.
+        seed()
+        X = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85], initial=0.2)
+        early = float(X[0].sim(Nsim).var())
+        late = float(X[30].sim(Nsim).var())
+        self.assertLess(early, 1.0)
+        self.assertGreater(late, early * 2)
+
+    def test_explosive_variance_grows(self):
+        # Coefficients summing past 1 are allowed; the variance just grows.
+        seed()
+        X = GARCH(omega=0.2, arch_coefs=[0.2], garch_coefs=[0.9])
+        self.assertGreater(
+            float(X[25].sim(3000).var()), float(X[5].sim(3000).var()) * 2
+        )
+
+
+class TestGARCHErrors(unittest.TestCase):
+
+    def test_bad_coefficients_raise_type_error(self):
+        for bad in ["abc", [0.1, "x"], 5]:
+            self.assertRaisesRegex(
+                TypeError,
+                "arch_coefs must be",
+                lambda v=bad: GARCH(omega=0.2, arch_coefs=v),
+            )
+
+    def test_negative_coefficients_raise_value_error(self):
+        self.assertRaisesRegex(
+            ValueError,
+            "cannot contain negative",
+            lambda: GARCH(omega=0.2, arch_coefs=[-0.1]),
+        )
+        self.assertRaisesRegex(
+            ValueError,
+            "cannot contain negative",
+            lambda: GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[-0.5]),
+        )
+
+    def test_non_positive_omega_raises(self):
+        self.assertRaisesRegex(
+            ValueError,
+            "omega must be positive",
+            lambda: GARCH(omega=0, arch_coefs=[0.1]),
+        )
+        self.assertRaisesRegex(
+            TypeError,
+            "omega must be a number",
+            lambda: GARCH(omega="x", arch_coefs=[0.1]),
+        )
+
+    def test_non_positive_initial_raises(self):
+        self.assertRaisesRegex(
+            ValueError,
+            "initial must be positive",
+            lambda: GARCH(omega=0.2, arch_coefs=[0.1], initial=0),
+        )
+
+    def test_bad_noise_dist_raises_type_error(self):
+        self.assertRaisesRegex(
+            TypeError,
+            "noise_dist must be",
+            lambda: GARCH(omega=0.2, arch_coefs=[0.1], noise_dist=5),
+        )
+
+    def test_stationary_start_on_explosive_process_raises(self):
+        self.assertRaisesRegex(
+            ValueError,
+            "never settles",
+            lambda: GARCH(
+                omega=0.2, arch_coefs=[0.5], garch_coefs=[0.6], initial="stationary"
+            ),
+        )
 
 
 if __name__ == "__main__":

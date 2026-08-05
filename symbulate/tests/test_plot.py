@@ -89,6 +89,7 @@ from symbulate.plot import (
     make_segmented_rug,
     make_grouped_boxplot,
     _thin_discrete_ticks,
+    _discrete_tick_labels,
     MAX_DISCRETE_TICKS,
     DEFAULT_PLOT_TYPE,
     PLOT_DISPLAY_NAME,
@@ -965,7 +966,12 @@ class TestPlot2DViolin(PlotTestCase):
 
     def test_violin_discrete_axis_tick_labels_are_the_category_values(self):
         """The discrete axis is labeled with the actual category values,
-        not the boxplot overlay's own 1..n position defaults."""
+        not the boxplot overlay's own 1..n position defaults.
+
+        The categories are stored alongside a continuous variable, so they
+        arrive as floats -- they are still labeled as the whole numbers
+        they are (see _discrete_tick_labels), not as "0.0", "1.0", ...
+        """
         # Every category 0..5 is planted, rather than simulated from
         # Binomial(5, 0.4) and hoped for: that distribution lands on 5 only
         # about 1% of the time, so in 500 draws the top category is missing
@@ -985,7 +991,7 @@ class TestPlot2DViolin(PlotTestCase):
             planted.plot(type="violin")
         ax = plt.gca()
         labels = [t.get_text() for t in ax.get_xticklabels() if t.get_text()]
-        self.assertEqual(labels, ["0.0", "1.0", "2.0", "3.0", "4.0", "5.0"])
+        self.assertEqual(labels, ["0", "1", "2", "3", "4", "5"])
 
     def test_violin_overlay_is_a_hard_error(self):
         """A violin plot is a plot of two variables, so it gets the
@@ -1457,6 +1463,91 @@ class TestPlot1DDotplot(PlotTestCase):
     def test_dotplot_returns_wrapper(self):
         p = self.sims.plot(type="dotplot")
         self.assertIsInstance(p, SymbulatePlot)
+
+
+class TestDotplotImpulseAxisConsistency(PlotTestCase):
+    """A dot plot and an impulse plot of the same discrete data frame it
+    the same way: one slot of air past the outermost value, and
+    whole-number ticks. The impulse plot used to take matplotlib's
+    defaults instead -- 5% of the data range (which collapses to nothing
+    when the range is short) and a locator free to tick at 0.5, 2.5, ...
+    """
+
+    def value_axis(self, values, type):
+        """(xlim, tick labels) for one plot type, on a fresh figure."""
+        plt.figure()
+        RVResults(list(values)).plot(type, suggest=False)
+        ax = plt.gca()
+        return ax.get_xlim(), [t.get_text() for t in ax.get_xticklabels()]
+
+    def test_padding_matches_the_dot_plot(self):
+        for values in (
+            np.resize([0, 1], 400),  # Bernoulli-like: range of 1
+            np.resize(np.arange(4), 400),  # a handful of values
+            np.resize(np.arange(150, 250), 3000),  # wide range
+        ):
+            with self.subTest(values=f"{values.min()}..{values.max()}"):
+                dot, _ = self.value_axis(values, "dotplot")
+                impulse, _ = self.value_axis(values, "impulse")
+                self.assertEqual(impulse, dot)
+
+    def test_padding_is_one_slot_not_a_share_of_the_range(self):
+        """Two values one apart get a full unit of air on each side, where
+        5% of the range would have given 0.05."""
+        (lo, hi), _ = self.value_axis(np.resize([0, 1], 400), "impulse")
+        self.assertEqual((lo, hi), (-1.0, 2.0))
+
+    def test_ticks_are_whole_numbers_and_match_the_dot_plot(self):
+        for values in (
+            np.resize([0, 1], 400),
+            np.resize(np.arange(4), 400),
+            np.resize(np.arange(1, 21), 2000),
+        ):
+            with self.subTest(values=f"{values.min()}..{values.max()}"):
+                _, dot_ticks = self.value_axis(values, "dotplot")
+                _, impulse_ticks = self.value_axis(values, "impulse")
+                self.assertEqual(impulse_ticks, dot_ticks)
+                for label in impulse_ticks:
+                    self.assertNotIn(".", label)
+
+    def test_continuous_values_keep_the_proportional_buffer(self):
+        """An impulse plot is for discrete data, but it doesn't refuse
+        continuous data -- whose smallest gap can be arbitrarily small, so
+        that data keeps the 5%-of-range buffer instead."""
+        values = np.linspace(0, 10, 200) + 0.5
+        (lo, hi), _ = self.value_axis(values, "impulse")
+        self.assertAlmostEqual(lo, 0.5 - 0.5)  # 5% of a range of 10
+        self.assertAlmostEqual(hi, 10.5 + 0.5)
+
+    def test_overlay_does_not_crop_the_first_series(self):
+        """The limits only ever widen, so a narrower second impulse plot
+        leaves the first one's range intact."""
+        plt.figure()
+        RVResults(list(np.resize(np.arange(21), 2000))).plot("impulse", suggest=False)
+        wide = plt.gca().get_xlim()
+        RVResults(list(np.resize(np.arange(5, 11), 2000))).plot(
+            "impulse", suggest=False
+        )
+        self.assertEqual(plt.gca().get_xlim(), wide)
+
+    def test_overlay_widens_for_a_broader_second_series(self):
+        plt.figure()
+        RVResults(list(np.resize(np.arange(5, 11), 2000))).plot(
+            "impulse", suggest=False
+        )
+        narrow = plt.gca().get_xlim()
+        RVResults(list(np.resize(np.arange(21), 2000))).plot("impulse", suggest=False)
+        wide = plt.gca().get_xlim()
+        self.assertLess(wide[0], narrow[0])
+        self.assertGreater(wide[1], narrow[1])
+
+    def test_categorical_impulse_still_labeled_by_category(self):
+        """The integer locator must not displace the category names."""
+        plt.figure()
+        RVResults(list(np.resize(["H", "T"], 200))).plot("impulse", suggest=False)
+        ax = plt.gca()
+        self.assertEqual([t.get_text() for t in ax.get_xticklabels()], ["H", "T"])
+        self.assertEqual(ax.get_xlim(), (-1.0, 2.0))  # same slot rule
 
 
 class TestPlot1DBoxStyling(PlotTestCase):
@@ -2960,6 +3051,124 @@ class TestPlot2DDiscreteTickThinning(PlotTestCase):
         self.assertLessEqual(len(ax.get_xticks()), MAX_DISCRETE_TICKS)
         # Labels stay horizontal, matching every other axis in the package.
         self.assertTrue(all(t.get_rotation() == 0 for t in ax.get_xticklabels()))
+
+
+# ===========================================================================
+# Discrete-axis tick label formatting (segmented rug/density/hist/box,
+# violin) -- regression coverage for the trailing ".0" a whole-number
+# discrete level used to print with, which a mixed 2-D dataset always
+# produces (one array holds both the discrete and the continuous
+# variable, so the discrete values arrive as floats).
+# ===========================================================================
+
+
+class TestDiscreteTickLabelsHelper(unittest.TestCase):
+    """Direct unit tests for the shared _discrete_tick_labels() helper."""
+
+    def test_whole_number_floats_lose_the_trailing_decimal(self):
+        self.assertEqual(_discrete_tick_labels([1.0, 2.0, 3.0]), ["1", "2", "3"])
+
+    def test_integers_are_unchanged(self):
+        self.assertEqual(_discrete_tick_labels(np.arange(3)), ["0", "1", "2"])
+
+    def test_fractional_levels_keep_their_decimals(self):
+        """All-or-nothing per axis: one fractional level means every label
+        keeps its decimal, so the axis doesn't read 0.5, 1, 1.5."""
+        self.assertEqual(_discrete_tick_labels([0.5, 1.0, 1.5]), ["0.5", "1.0", "1.5"])
+
+    def test_negative_whole_numbers(self):
+        self.assertEqual(_discrete_tick_labels([-2.0, 0.0, 2.0]), ["-2", "0", "2"])
+
+    def test_non_numeric_levels_print_as_themselves(self):
+        self.assertEqual(_discrete_tick_labels(["heads", "tails"]), ["heads", "tails"])
+
+    def test_non_finite_levels_do_not_crash(self):
+        self.assertEqual(
+            _discrete_tick_labels([1.0, np.nan]), ["1.0", str(np.float64(np.nan))]
+        )
+
+
+class TestSegmentedDiscreteTickLabelFormatting(PlotTestCase):
+    """Every plot helper that labels a discrete axis with the level values
+    themselves prints a whole number without a trailing ".0", matching how
+    the tile plot's numeric locator labels the same values."""
+
+    def test_segmented_rug(self):
+        x = np.random.normal(0, 1, 300)
+        y = np.resize(np.arange(4, dtype=float), 300)  # float-typed levels
+        ax = plt.gca()
+        make_segmented_rug(
+            x, y, ax, get_next_color(ax), discrete_x=False, discrete_y=True
+        )
+        self.assertEqual(
+            [t.get_text() for t in ax.get_yticklabels()], ["0", "1", "2", "3"]
+        )
+
+    def test_segmented_density(self):
+        x = np.random.normal(0, 1, 300)
+        y = np.resize(np.arange(4, dtype=float), 300)
+        ax = plt.gca()
+        make_segmented_density(
+            x, y, ax, get_next_color(ax), discrete_x=False, discrete_y=True
+        )
+        self.assertEqual(
+            [t.get_text() for t in ax.get_yticklabels()], ["0", "1", "2", "3"]
+        )
+
+    def test_segmented_hist(self):
+        x = np.random.normal(0, 1, 300)
+        y = np.resize(np.arange(4, dtype=float), 300)
+        ax = plt.gca()
+        make_segmented_hist(
+            x, y, ax, get_next_color(ax), discrete_x=False, discrete_y=True
+        )
+        self.assertEqual(
+            [t.get_text() for t in ax.get_yticklabels()], ["0", "1", "2", "3"]
+        )
+
+    def test_grouped_boxplot(self):
+        x = np.resize(np.arange(4, dtype=float), 300)
+        y = np.random.normal(0, 1, 300)
+        ax = plt.gca()
+        make_grouped_boxplot(
+            x, y, ax, get_next_color(ax), discrete_x=True, discrete_y=False
+        )
+        self.assertEqual(
+            [t.get_text() for t in ax.get_xticklabels()], ["0", "1", "2", "3"]
+        )
+
+    def test_violin(self):
+        positions = [0.0, 1.0, 2.0, 3.0]
+        groups = np.resize(np.array(positions), 300)
+        data = np.column_stack([groups, np.random.normal(0, 1, 300)])
+        ax = plt.gca()
+        make_violin(data, positions, ax, get_next_color(ax), "x", 0.5)
+        self.assertEqual(
+            [t.get_text() for t in ax.get_xticklabels()], ["0", "1", "2", "3"]
+        )
+
+    def test_string_levels_are_still_labeled_by_name(self):
+        """The formatter only touches numeric levels -- a categorical axis
+        keeps its category names."""
+        x = np.random.normal(0, 1, 300)
+        y = np.resize(np.array(["a", "b", "c"]), 300)
+        ax = plt.gca()
+        make_segmented_rug(
+            x, y, ax, get_next_color(ax), discrete_x=False, discrete_y=True
+        )
+        self.assertEqual([t.get_text() for t in ax.get_yticklabels()], ["a", "b", "c"])
+
+    def test_mixed_simulation_labels_the_discrete_axis_without_decimals(self):
+        """End to end through RVResults.plot(): a discrete variable paired
+        with a continuous one is stored as float, and used to be labeled
+        1.0, 2.0, ... on the segmented histogram's discrete axis."""
+        x = np.resize(np.arange(1, 7), 600)
+        y = x + np.random.exponential(1, 600)
+        RVResults(list(zip(x, y))).plot("hist")
+        self.assertEqual(
+            [t.get_text() for t in plt.gca().get_xticklabels()],
+            ["1", "2", "3", "4", "5", "6"],
+        )
 
 
 # ===========================================================================
