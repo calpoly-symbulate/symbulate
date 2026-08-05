@@ -3910,10 +3910,17 @@ class TestPairsLayout(PlotTestCase):
         # The bottom row carries x labels; every other panel has none.
         x_labels = [a.get_xlabel() for a in axes]
         self.assertEqual(sorted(l for l in x_labels if l), ["X1", "X2", "X3"])
-        # The left column carries y labels, except the diagonal panel whose
-        # y-axis is a density rather than a variable.
+        # The left column names its row's variable, top-left panel included,
+        # so every row is identified.
         y_labels = [a.get_ylabel() for a in axes]
-        self.assertEqual(sorted(l for l in y_labels if l), ["X2", "X3"])
+        self.assertEqual(sorted(l for l in y_labels if l), ["X1", "X2", "X3"])
+
+    def test_top_left_panel_names_its_row(self):
+        """The first row holds one panel; without a label it goes unnamed."""
+        plt.figure()
+        _continuous_sim(k=3).plot(pairs=True)
+        # Panels are added row by row, so the first one is (0, 0).
+        self.assertEqual(plt.gcf().axes[0].get_ylabel(), "X1")
 
     def test_inner_x_tick_labels_are_hidden(self):
         """Every panel in a column shares the variable, so they'd repeat."""

@@ -1720,11 +1720,14 @@ class RVResults(Results):
                     # panel's y-axis is a density and genuinely differs
                     # from its neighbors'.
                     ax.set_xticklabels([])
-                # A diagonal panel's y-axis is a density or a probability
-                # rather than the variable, so it is left unlabeled instead
-                # of being labeled with a variable it isn't showing -- the
-                # panel below it in the same column carries that name.
-                if col == 0 and row != col:
+                # The left column names its row's variable, so the labels read
+                # down the side in order -- including the top-left panel, which
+                # is the only one in its row and would otherwise go unnamed
+                # until the bottom of its column. That panel's y-axis is really
+                # a density rather than the variable, so the label names the
+                # row it heads rather than the axis it sits on; this is the
+                # convention seaborn's PairGrid uses too.
+                if col == 0:
                     ax.set_ylabel(self._pairs_variable_label(chosen[row]))
                 else:
                     ax.set_ylabel("")
