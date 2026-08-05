@@ -1,5 +1,7 @@
 """Tests for symbulate.time_series.
 
+Covers the moving-average process and the autoregressive/ARMA family.
+
 Covers the moving-average process: the sample-path result object, the
 probability space, and the two facts an MA(q) is taught for -- every value
 has the same distribution (there is no startup transient), and the
@@ -16,7 +18,15 @@ import numpy as np
 
 from symbulate import *
 from symbulate import distributions
-from symbulate.time_series import MA, MAResult, MAProbabilitySpace
+from symbulate.time_series import (
+    MA,
+    MAResult,
+    MAProbabilitySpace,
+    AR,
+    ARMA,
+    ARMAResult,
+    ARMAProbabilitySpace,
+)
 from symbulate.result import InfiniteVector
 
 Nsim = 10000
@@ -263,6 +273,283 @@ class TestMAErrors(unittest.TestCase):
         self.assertRaisesRegex(
             TypeError, "mean must be a number", lambda: MA(coefs=[0.5], mean="x")
         )
+
+
+class TestARMAResult(unittest.TestCase):
+
+    def test_is_infinite_vector(self):
+        seed()
+        self.assertIsInstance(AR(coefs=[0.5]).draw(), InfiniteVector)
+
+    def test_recursion_matches_hand_computation(self):
+        # Every shock is 1 and the process starts at 0, so
+        # X[0] = 1, X[n] = 0.5 * X[n-1] + 1.
+        seed()
+        path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=0).draw()
+        expected = [1.0, 1.5, 1.75, 1.875, 1.9375, 1.96875]
+        self.assertEqual([float(path[n]) for n in range(6)], expected)
+
+    def test_presample_values_are_used(self):
+        # Starting at 10 with unit shocks: X[0] = 0.5 * 10 + 1 = 6.
+        seed()
+        path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=10).draw()
+        self.assertAlmostEqual(float(path[0]), 6.0)
+
+    def test_second_order_uses_both_previous_values(self):
+        # X[0] = 0.5 * X[-1] + 0.25 * X[-2] + 1, with X[-2]=2, X[-1]=4.
+        seed()
+        path = AR(coefs=[0.5, 0.25], noise_dist=Bernoulli(1), initial=[2, 4]).draw()
+        self.assertAlmostEqual(float(path[0]), 0.5 * 4 + 0.25 * 2 + 1)
+
+    def test_does_not_clobber_the_infinite_vector_cache(self):
+        # Regression test: the internal list must not be called `values`,
+        # which InfiniteTuple already uses for its own cache. When it was,
+        # both appended to the same list and every value came out twice.
+        seed()
+        path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=0).draw()
+        first = [float(path[n]) for n in range(8)]
+        self.assertEqual(len(set(first)), 8, "values are repeating")
+        self.assertEqual(first, [float(path[n]) for n in range(8)])
+
+    def test_path_is_cached_and_stable(self):
+        seed()
+        path = ARMA(ar_coefs=[0.5], ma_coefs=[0.3]).draw()
+        first = [float(path[n]) for n in range(12)]
+        self.assertEqual(first, [float(path[n]) for n in range(12)])
+
+    def test_reading_far_ahead_keeps_earlier_values(self):
+        seed()
+        path = AR(coefs=[0.6]).draw()
+        early = [float(path[n]) for n in range(8)]
+        path[300]
+        self.assertEqual([float(path[n]) for n in range(8)], early)
+
+    def test_get_shocks_returns_the_shocks(self):
+        seed()
+        self.assertIsInstance(AR(coefs=[0.5]).draw().get_shocks(), InfiniteVector)
+
+
+class TestARMAProbabilitySpace(unittest.TestCase):
+
+    def test_stores_parameters(self):
+        space = ARMAProbabilitySpace(ar_coefs=[0.5], ma_coefs=[0.2], mean=3)
+        self.assertEqual(space.ar_coefs, [0.5])
+        self.assertEqual(space.ma_coefs, [0.2])
+        self.assertEqual(space.mean, 3)
+
+    def test_default_noise_is_standard_normal(self):
+        self.assertIsInstance(ARMAProbabilitySpace(ar_coefs=[0.5]).noise_dist, Normal)
+
+    def test_draw_returns_result(self):
+        seed()
+        self.assertIsInstance(ARMAProbabilitySpace(ar_coefs=[0.5]).draw(), ARMAResult)
+
+
+class TestARMAConstruction(unittest.TestCase):
+
+    def test_is_rv(self):
+        self.assertIsInstance(ARMA(ar_coefs=[0.5]), RV)
+        self.assertIsInstance(AR(coefs=[0.5]), RV)
+
+    def test_ar_is_an_arma(self):
+        self.assertIsInstance(AR(coefs=[0.5]), ARMA)
+
+    def test_getitem_returns_rv(self):
+        self.assertIsInstance(ARMA(ar_coefs=[0.5])[3], RV)
+
+    def test_ar_exposes_coefs_alias(self):
+        X = AR(coefs=[0.5, 0.2])
+        self.assertEqual(X.coefs, [0.5, 0.2])
+        self.assertEqual(X.coefs, X.ar_coefs)
+        self.assertEqual(X.ma_coefs, [])
+
+    def test_reproducible_under_same_seed(self):
+        seed(11)
+        first = [float(v) for v in ARMA(ar_coefs=[0.5], ma_coefs=[0.3]).draw()[:15]]
+        seed(11)
+        self.assertEqual(
+            first, [float(v) for v in ARMA(ar_coefs=[0.5], ma_coefs=[0.3]).draw()[:15]]
+        )
+
+
+class TestARMATheory(unittest.TestCase):
+    """The closed-form facts an AR/ARMA is taught with."""
+
+    def test_ar1_stationary_variance(self):
+        # Var = s**2 / (1 - phi**2), the same at every time when started
+        # from the stationary distribution.
+        seed()
+        phi = 0.7
+        expected = 1 / (1 - phi**2)
+        X = AR(coefs=[phi], initial="stationary")
+        for n in [0, 1, 5, 30]:
+            self.assertAlmostEqual(float(X[n].sim(Nsim).var()), expected, delta=0.25)
+
+    def test_ar1_autocorrelation_is_phi_to_the_k(self):
+        # The AR fingerprint: correlation decays geometrically and never
+        # reaches zero, unlike an MA's hard cutoff.
+        seed()
+        phi = 0.7
+        paths = sample_paths(AR(coefs=[phi], initial="stationary"), 6, 20000)
+        for k in [1, 2, 3]:
+            measured = np.corrcoef(paths[:, 0], paths[:, k])[0, 1]
+            self.assertAlmostEqual(measured, phi**k, delta=0.04)
+
+    def test_ar2_matches_yule_walker(self):
+        # phi = [0.5, 0.3] gives stationary variance 2.2436 and lag-1
+        # correlation phi1 / (1 - phi2) = 0.7143.
+        seed()
+        paths = sample_paths(AR(coefs=[0.5, 0.3], initial="stationary"), 4, 20000)
+        self.assertAlmostEqual(paths[:, 0].var(), 2.2436, delta=0.2)
+        self.assertAlmostEqual(
+            np.corrcoef(paths[:, 0], paths[:, 1])[0, 1], 0.5 / (1 - 0.3), delta=0.04
+        )
+
+    def test_mean_is_the_process_mean(self):
+        seed()
+        X = AR(coefs=[0.6], mean=20, initial=20)
+        self.assertAlmostEqual(float(X[40].sim(Nsim).mean()), 20.0, delta=0.3)
+
+    def test_unit_coefficient_is_a_random_walk(self):
+        # phi = 1 removes the pull home, so the variance grows with n.
+        seed()
+        X = AR(coefs=[1.0], initial=0)
+        for n in [10, 20, 40]:
+            self.assertAlmostEqual(
+                float(X[n].sim(6000).var()) / (n + 1), 1.0, delta=0.2
+            )
+
+    def test_no_ar_terms_reproduces_ma(self):
+        # ARMA with an empty AR part is exactly a moving-average process.
+        seed()
+        coefs = [0.8, 0.5]
+        arma = sample_paths(ARMA(ar_coefs=[], ma_coefs=coefs), 6, 20000)
+        expected_var = 1 + sum(c * c for c in coefs)
+        self.assertAlmostEqual(arma[:, 0].var(), expected_var, delta=0.15)
+        # ...including the hard cutoff past lag q.
+        self.assertAlmostEqual(
+            np.corrcoef(arma[:, 0], arma[:, 3])[0, 1], 0.0, delta=0.04
+        )
+
+    def test_noise_scale_scales_the_variance(self):
+        seed()
+        phi, sd = 0.5, 3.0
+        X = AR(coefs=[phi], noise_dist=Normal(0, sd), initial="stationary")
+        self.assertAlmostEqual(
+            float(X[10].sim(Nsim).var()), sd**2 / (1 - phi**2), delta=1.5
+        )
+
+
+class TestARMAInitialConditions(unittest.TestCase):
+    """The `initial` parameter's accepted forms."""
+
+    def test_number_starts_every_path_there(self):
+        seed()
+        path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=10).draw()
+        self.assertAlmostEqual(float(path[0]), 6.0)
+
+    def test_sequence_of_p_values(self):
+        seed()
+        path = AR(coefs=[0.5, 0.25], noise_dist=Bernoulli(1), initial=[2, 4]).draw()
+        self.assertAlmostEqual(float(path[0]), 0.5 * 4 + 0.25 * 2 + 1)
+
+    def test_distribution_start_is_random_per_path(self):
+        seed()
+        X = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=Normal(0, 5))
+        starts = [float(X.draw()[0]) for _ in range(50)]
+        self.assertGreater(len(set(starts)), 40)
+
+    def test_multivariate_start_is_drawn_jointly(self):
+        # For p > 1 the starting values are correlated, which only a
+        # multivariate distribution can express.
+        seed()
+        cov = [[2.0, 1.5], [1.5, 2.0]]
+        X = AR(coefs=[0.5, 0.3], initial=MultivariateNormal([0, 0], cov))
+        self.assertEqual(len(X.draw().presample), 2)
+
+    def test_stationary_has_no_transient(self):
+        # The variance is already the long-run one at time 0.
+        seed()
+        phi = 0.7
+        X = AR(coefs=[phi], initial="stationary")
+        expected = 1 / (1 - phi**2)
+        self.assertAlmostEqual(float(X[0].sim(Nsim).var()), expected, delta=0.25)
+
+    def test_fixed_start_does_have_a_transient(self):
+        # The counterpart: starting at 0 gives noise variance at time 0,
+        # growing toward the stationary variance.
+        seed()
+        X = AR(coefs=[0.7], initial=0)
+        early = float(X[0].sim(Nsim).var())
+        late = float(X[30].sim(Nsim).var())
+        self.assertAlmostEqual(early, 1.0, delta=0.15)
+        self.assertGreater(late, early + 0.5)
+
+    def test_stationary_works_for_ar2(self):
+        seed()
+        X = AR(coefs=[0.5, 0.3], initial="stationary")
+        self.assertAlmostEqual(float(X[0].sim(Nsim).var()), 2.2436, delta=0.25)
+
+
+class TestARMAErrors(unittest.TestCase):
+
+    def test_bad_coefficients_raise_type_error(self):
+        for bad in ["abc", [0.5, "x"], 5, None]:
+            self.assertRaisesRegex(
+                TypeError, "ar_coefs must be", lambda v=bad: ARMA(ar_coefs=v)
+            )
+        for bad in ["abc", [0.5, "x"], 5]:
+            self.assertRaisesRegex(
+                TypeError,
+                "ma_coefs must be",
+                lambda v=bad: ARMA(ar_coefs=[0.5], ma_coefs=v),
+            )
+
+    def test_bad_noise_dist_raises_type_error(self):
+        self.assertRaisesRegex(
+            TypeError, "noise_dist must be", lambda: ARMA(ar_coefs=[0.5], noise_dist=5)
+        )
+
+    def test_non_numeric_mean_raises_type_error(self):
+        self.assertRaisesRegex(
+            TypeError, "mean must be a number", lambda: ARMA(ar_coefs=[0.5], mean="x")
+        )
+
+    def test_wrong_length_initial_raises_value_error(self):
+        self.assertRaisesRegex(
+            ValueError,
+            "needs 2",
+            lambda: AR(coefs=[0.5, 0.2], initial=[1, 2, 3]),
+        )
+
+    def test_stationary_with_ma_terms_raises(self):
+        # No simple closed form once moving-average terms are present.
+        self.assertRaisesRegex(
+            ValueError,
+            "pure autoregressive",
+            lambda: ARMA(ar_coefs=[0.5], ma_coefs=[0.3], initial="stationary"),
+        )
+
+    def test_stationary_with_non_normal_noise_raises(self):
+        self.assertRaisesRegex(
+            ValueError,
+            "normal shocks",
+            lambda: AR(coefs=[0.5], noise_dist=Exponential(1), initial="stationary"),
+        )
+
+    def test_stationary_with_explosive_coefficients_raises(self):
+        # No long-run distribution exists to start from.
+        self.assertRaisesRegex(
+            ValueError,
+            "does not settle down",
+            lambda: AR(coefs=[1.5], initial="stationary"),
+        )
+
+    def test_explosive_process_still_simulates(self):
+        # Explosive is allowed -- only "stationary" rejects it.
+        seed()
+        path = AR(coefs=[1.5], noise_dist=Bernoulli(1), initial=1).draw()
+        self.assertGreater(float(path[10]), float(path[5]))
 
 
 if __name__ == "__main__":
