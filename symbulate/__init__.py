@@ -132,6 +132,10 @@ from .time_series import (
     MA,
     MAProbabilitySpace,
     MAResult,
+    AR,
+    ARMA,
+    ARMAProbabilitySpace,
+    ARMAResult,
 )
 from .renewal_process import (
     RenewalProcess,
