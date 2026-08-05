@@ -56,7 +56,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `queues.py` | `GG1`, `MG1`, `GM1`, `GGs` — general-service queues via Lindley's recursion (see "Queues" below) |
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `time_series.py` | `MA`, `AR`, `ARMA` — time-series processes; home for GARCH as it lands |
-| `hitting_times.py` | `hitting_time` — when a path first reaches a level; Gaussian-process family only so far (see "Hitting Times" below) |
+| `hitting_times.py` | `hitting_time` — when a path first reaches a level; jump, discrete-time, and Gaussian paths (see "Hitting Times" below) |
 | `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` and `MertonJumpDiffusion` — named special cases, both simulated exactly (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
@@ -443,22 +443,52 @@ via Lindley's Recursion" and "Decision: G/G/s — Multi-Server Queues."
 ## Hitting Times
 
 `hitting_time(process, level, ...)` in `hitting_times.py` answers "when does the
-path first reach `level`?" — added by PR #272. Two things to know before
-extending it:
+path first reach `level`?" — Tier B added by PR #272, Tier A since. It is **one
+function with per-path-type dispatch**, not one function per family; keep it
+that way (see `MODEL-DECISIONS.md`, "Decision: Hitting Times — Tier A").
 
-- **It covers the Gaussian-process family only** (`BrownianMotion`,
-  `BrownianBridge`, `OrnsteinUhlenbeck`, `FractionalBrownianMotion`,
-  `GeometricBrownianMotion`, hand-built `GaussianProcess`). Anything else —
-  random walks, Markov chains, queues, `DiffusionProcess` — raises
-  `NotImplementedError` naming itself. This is the roadmap's **Tier B**; Tier A
-  (discrete-time and jump processes, which is *easier and exact*) is **not
-  built**, so it is the open gap, not a Tier-C-style approximation problem.
-- Between two evaluated times a path can cross and come back, so the crossing
-  is decided by a Bernoulli draw using the reflection-principle probability and
-  then localized by bisection. Exact for Brownian motion and bridges at any
-  `step`; approximate for other Gaussian processes. It draws from
-  `hitting_times.rng`, so seed **that**, not `np.random.seed` — same trap as
-  `diffusion_process.rng`.
+- **Three families, dispatched on the drawn path, in this order:** a pure-jump
+  path (`DiscreteValued` whose `get_states()` *and* `get_interarrival_times()`
+  both work) is walked jump by jump; a discrete-time path (`InfiniteTuple` or
+  `DiscreteTimeFunction`) is walked step by step; a Gaussian path (`cov_func` +
+  `observed`) goes through `_prepare` and the reflection-principle machinery.
+  Tier C (`DiffusionProcess`, `CIR`, `MertonJumpDiffusion`) still raises
+  `NotImplementedError`. `MertonJumpDiffusion` is Tier C, **not** a jump path:
+  it wanders continuously between its jumps.
+- **Tier A is exact, and `step`/`tol` are ignored there.** They exist to deal
+  with what a *continuous* path does between two evaluated times; a jump path
+  can only reach a level at a jump and a discrete-time path has nothing between
+  its steps, so there is nothing to scan or localize. Do not "improve" Tier A
+  by adding interpolation.
+- **Reaching a level means reaching it *or passing it*** for Tier A — a walk
+  going 4 → 6 never sits at 5. Do not change this to equality; `_reached`
+  is the single place it is decided.
+- **`NonHomogeneousPoissonProcess` and `CoxProcess` are deliberately not Tier
+  A**, even though their counts jump: their jump times are known on the
+  expected-count scale, not the clock, so locating one means inverting
+  `cumulative_rate` — which the NHPP decision rejected. They get their own
+  explicit `NotImplementedError` in `_prepare`; keep it before the generic one.
+- **`hitting_time` dispatches on `RV`, not `RandomProcess`.** Most Tier A
+  processes (`MarkovChain`, `ContinuousTimeMarkovChain`, `RandomWalk`, `MA`,
+  `GG1`, `GGs`) are plain `RV`s, so an `isinstance(..., RandomProcess)` check
+  silently treats them as sample paths. This was the bug that made the first
+  Tier A draft fail.
+- Between two evaluated times a *Gaussian* path can cross and come back, so the
+  crossing is decided by a Bernoulli draw using the reflection-principle
+  probability and then localized by bisection. Exact for Brownian motion and
+  bridges at any `step`; approximate for other Gaussian processes. It draws
+  from `hitting_times.rng`, so seed **that**, not `np.random.seed` — same trap
+  as `diffusion_process.rng`.
+- **An epidemic path is turned away inside the jump branch, not before it.**
+  PR #283 gave `SIR`/`SEIR` paths `states` and `interarrival_times`, so they
+  match `_is_jump_path`; the compartment-vector state is then rejected by
+  `_numeric_value`. Asking about one compartment (`path.I`) does not work either
+  — it is a bare `_BoundedTimeFunction` with no states — so do not put that
+  suggestion back into either message.
+- **Still open:** `upcrossings` (the *sequence* of crossing times, as a lazy
+  `InfiniteVector`) is its own roadmap row and is not built. `start_time` is
+  the hook it will use. Hitting times for a single epidemic compartment are
+  also unbuilt, and would need the compartment to expose its jump times.
 
 ## Suggestion Messages
 
@@ -619,6 +649,8 @@ pytest tests/
 - Do not reintroduce the highest-density interval (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, `_PLOT_COVERAGE`, `_hdi_window`) — removed by team decision; there are tests asserting it stays gone.
 - Do not add a nonnegativity check to `CompoundPoissonProcess`'s `jump_dist` — negative jumps are intentional (see "Compound Poisson Process")
 - Do not add separate `MixedPoissonProcess` or `MarkovModulatedPoissonProcess` classes — both are `CoxProcess` with a different `intensity` (see "Cox Process")
+- Do not add interpolation, a `step` scan, or an equality test to `hitting_time`'s jump/discrete-time branches — they are exact, and a jump path reaching a level means reaching *or passing* it (see "Hitting Times")
+- Do not narrow `hitting_time`'s process check back to `RandomProcess` — most Tier A processes are plain `RV`s (see "Hitting Times")
 - Do not change `CoxProcess`'s intensity grid to a trapezoid/right-hand rule, a variable mesh, or `scipy.integrate.quad` — a fixed left-handed grid anchored at 0 is what keeps the event count from going backwards, and there are tests pinning it (see "Cox Process")
 - Do not rename `type=` to `kind=` or anything else — considered and decided against.
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
