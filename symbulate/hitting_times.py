@@ -42,20 +42,38 @@ a Gaussian process itself: a price reaching a level is the same event as its
 motion is an ordinary Brownian motion with drift. So the question is simply
 restated on the log scale, where the formula above applies exactly.
 
-Discrete-time and jump processes (random walks, Markov chains, queues) and
-general diffusions need different treatment, and :func:`hitting_time` says so
-plainly rather than guessing.
+None of that guesswork is needed for a process that moves in jumps, and those
+are handled separately and **exactly**. A pure-jump path -- a Poisson or
+renewal count, a compound Poisson total, a continuous-time Markov chain, a
+queue length -- holds one value at a time, so it can only reach a level *at* a
+jump; walking the jumps therefore cannot miss a crossing, and there is nothing
+to localize. A discrete-time path -- a random walk, a Markov chain, a
+moving-average series -- has no values between its steps at all, so walking the
+steps is likewise the whole story. Both are read with one difference from the
+Gaussian case worth knowing about: such a path can *leap over* a level without
+ever equaling it, so reaching a level means getting to it **or past it**.
+
+General diffusions (:class:`~symbulate.diffusion_process.DiffusionProcess`,
+:class:`~symbulate.diffusion_process.CIR`) still need their own approximation,
+and :func:`hitting_time` says so plainly rather than guessing.
 """
 
+import math
 import numbers
 
 import numpy as np
 
-from .random_processes import RandomProcess
+from .random_variables import RV
+from .result import DiscreteTimeFunction, DiscreteValued, InfiniteTuple
 
 # Guard against a singular covariance matrix when two times are nearly equal,
 # the same trick and constant gaussian_process.py uses for the same reason.
 MACHINE_EPS = 1e-12
+
+# A backstop on walking a jump path, so that a process jumping far more often
+# than the stretch of time being searched reports a readable error instead of
+# appearing to hang.
+MAX_JUMPS = 1_000_000
 
 rng = np.random.default_rng()
 
@@ -215,6 +233,245 @@ def _localize_crossing(read, level, sign, cov_func, t0, x0, t1, x1, tol):
     return 0.5 * (t0 + t1)
 
 
+def _numeric_value(value, where):
+    """Check one value read off a path, and return it as a plain number.
+
+    Parameters
+    ----------
+    value : object
+        The value the path reported. A number, if all is well.
+    where : str
+        Where it came from, phrased to begin a sentence: ``"At step 3,"``.
+        Used in the error message below.
+
+    Returns
+    -------
+    float
+        The value.
+
+    Raises
+    ------
+    TypeError
+        If the value is not a number, so cannot be compared with a level.
+    """
+    if isinstance(value, bool) or not isinstance(
+        value, (int, float, np.integer, np.floating)
+    ):
+        raise TypeError(
+            f"{where} the process is at {value!r}, which is not a number, so "
+            "there is no way to tell whether it has reached a level. Asking "
+            "when a process reaches a level only makes sense for one whose "
+            "values are numbers. If this is a Markov chain, label its states "
+            "with numbers -- MarkovChain(P, initial, state_labels=[0, 1, 2]) "
+            "-- rather than with names."
+        )
+    return float(value)
+
+
+def _reached(value, level, sign):
+    """Whether a value has got to the level, or past it.
+
+    A path that moves in jumps can step straight over a level without ever
+    equaling it, so "reached" has to mean reached *or passed* -- unlike the
+    Gaussian case, where a continuous path cannot get to the other side
+    without touching it.
+
+    Parameters
+    ----------
+    value : float
+        The value the path is at.
+    level : float
+        The level being watched for.
+    sign : float
+        ``1`` when the path has to rise to the level, ``-1`` when it has to
+        fall to it.
+
+    Returns
+    -------
+    bool
+        ``True`` once the level is reached or passed.
+    """
+    return sign * (value - level) >= 0
+
+
+def _jump_hitting_time(path, level, max_time, start_time):
+    """Return when a pure-jump path first reaches ``level``. Exact.
+
+    A pure-jump path holds one value at a time and changes only at its jumps,
+    so it can only reach a level at the moment of a jump -- which makes
+    walking the jumps exact, with nothing between them to miss and nothing to
+    narrow down afterwards. This is the same states-and-holding-times walk
+    used to read such a path anywhere else in the package: the path sits at
+    ``states[n]`` for ``interarrival_times[n]`` units of time.
+
+    Parameters
+    ----------
+    path : DiscreteValued
+        The sample path, providing ``get_states()`` and
+        ``get_interarrival_times()``.
+    level : float
+        The level to reach.
+    max_time : float
+        Give up after this time and report ``inf``.
+    start_time : float
+        Start looking from here. The direction -- rise to the level or fall to
+        it -- is taken from where the path is at this time, not from where it
+        started out.
+
+    Returns
+    -------
+    float
+        The clock time of the jump that first reached ``level``, or ``inf``.
+
+    Raises
+    ------
+    TypeError
+        If a state of the path is not a number.
+    ValueError
+        If the path jumps more than ``MAX_JUMPS`` times before ``max_time``.
+    """
+    states = path.get_states()
+    holding_times = path.get_interarrival_times()
+
+    entered = 0.0  # the clock time at which the current value was taken on
+    sign = None
+    n = 0
+
+    while entered <= max_time:
+        if n >= MAX_JUMPS:
+            raise ValueError(
+                f"The process jumps more than {MAX_JUMPS:,} times before time "
+                f"{max_time:g}, which is too many to walk through. It is "
+                "changing far more often than the stretch of time being "
+                "searched, so either lower max_time or slow the process down."
+            )
+
+        value = _numeric_value(states[n], f"In state number {n},")
+        left = entered + float(holding_times[n])
+
+        # Only stretches that reach past `start_time` are being searched; the
+        # earlier ones are walked through just to keep the clock.
+        if left > start_time:
+            reached_at = max(entered, start_time)
+            if reached_at > max_time:
+                break
+            if sign is None:
+                # The first value inside the search window fixes the direction:
+                # below the level means wait for a rise, above means a fall.
+                if value == level:
+                    return float(reached_at)
+                sign = 1.0 if value < level else -1.0
+            if _reached(value, level, sign):
+                return float(reached_at)
+
+        entered = left
+        n += 1
+
+    return float("inf")
+
+
+def _step_hitting_time(path, level, max_time, start_time, samples_per_time):
+    """Return when a discrete-time path first reaches ``level``. Exact.
+
+    A discrete-time path has no values between its steps, so there is nothing
+    to miss: reading the steps in order *is* the whole path.
+
+    Parameters
+    ----------
+    path : InfiniteTuple or DiscreteTimeFunction
+        The sample path, read as ``path[n]`` at step ``n``.
+    level : float
+        The level to reach.
+    max_time : float
+        Give up after this time and report ``inf``.
+    start_time : float
+        Start looking from here.
+    samples_per_time : float
+        How many steps make up one unit of time, so that a step index can be
+        reported as a time. This is 1 for the usual case, where a step *is*
+        the unit of time (a random walk, a Markov chain, a moving-average
+        series), and the process's sampling rate otherwise.
+
+    Returns
+    -------
+    float
+        The time of the step that first reached ``level``, or ``inf``.
+
+    Raises
+    ------
+    TypeError
+        If a value of the path is not a number.
+    """
+    first_step = math.ceil(start_time * samples_per_time)
+    last_step = math.floor(max_time * samples_per_time)
+
+    sign = None
+    for n in range(first_step, last_step + 1):
+        value = _numeric_value(path[n], f"At step {n},")
+        if sign is None:
+            if value == level:
+                return n / samples_per_time
+            sign = 1.0 if value < level else -1.0
+        if _reached(value, level, sign):
+            return n / samples_per_time
+
+    return float("inf")
+
+
+def _is_jump_path(path):
+    """Whether a path can be walked jump by jump.
+
+    A path that reports both its states and how long it holds each one changes
+    only at its jumps -- a Poisson or renewal count, a compound Poisson total,
+    a continuous-time Markov chain, a birth-death chain, a queue length.
+
+    Parameters
+    ----------
+    path : object
+        The sample path.
+
+    Returns
+    -------
+    bool
+        ``True`` if the path can be walked jump by jump.
+    """
+    if not isinstance(path, DiscreteValued):
+        return False
+    try:
+        path.get_states()
+        path.get_interarrival_times()
+    except AttributeError:
+        # A discrete-time Markov chain reports states but no holding times --
+        # its steps *are* its jumps -- so it is walked as a discrete-time path
+        # instead.
+        return False
+    return True
+
+
+def _steps_per_time(path):
+    """How many steps of a discrete-time path make up one unit of time.
+
+    Almost always 1: for a random walk, a Markov chain, or a moving-average
+    series a step *is* the unit of time, and the index and the clock are the
+    same thing. A path built on a
+    :class:`~symbulate.index_sets.DiscreteTimeSequence` can be sampled faster
+    than that, and then a step index has to be divided by the sampling rate to
+    be a time.
+
+    Parameters
+    ----------
+    path : object
+        The sample path.
+
+    Returns
+    -------
+    float
+        The number of steps per unit of time.
+    """
+    index_set = getattr(path, "index_set", None)
+    return float(getattr(index_set, "fs", 1))
+
+
 def _prepare(path, level):
     """Work out how to read a path, and on what scale to compare it.
 
@@ -279,15 +536,39 @@ def _prepare(path, level):
 
         return read, cov_func, float(level)
 
+    # A non-homogeneous Poisson or Cox count. This one is worth its own message
+    # rather than the general one below: it *is* a jump process, so being told
+    # only that it is unsupported would be baffling. What it lacks is its jump
+    # times on the clock -- it knows them on the "expected count" scale, and
+    # turning those back into clock times means undoing the cumulative rate.
+    if hasattr(path, "cumulative_rate") and hasattr(
+        path, "standard_interarrival_times"
+    ):
+        raise NotImplementedError(
+            "hitting_time cannot read a "
+            "NonHomogeneousPoissonProcess or CoxProcess path yet. Its count "
+            "does move in jumps, but unlike a PoissonProcess it does not know "
+            "when those jumps happen on the clock -- it knows them on the "
+            "'expected number of events' scale, and working back to a time "
+            "from that is not built. What you can do meanwhile is ask for the "
+            "count itself at a time, which is exact: path(t) for one path, or "
+            "N[t].sim(10000) for the whole distribution, and the chance of "
+            "having reached a level k by time t is the share of those that are "
+            "k or more."
+        )
+
     raise NotImplementedError(
-        "hitting_time currently only works for Gaussian processes -- "
-        "BrownianMotion, BrownianBridge, OrnsteinUhlenbeck, "
-        "FractionalBrownianMotion, GeometricBrownianMotion, or a "
-        f"GaussianProcess you built yourself. It was given a "
-        f"{type(path).__name__}, which needs different handling: a "
-        "discrete-time or jump process (a random walk, Markov chain, or "
-        "queue) can be checked step by step, and a DiffusionProcess needs its "
-        "own approximation. Neither is built yet."
+        f"hitting_time does not know how to read a {type(path).__name__} yet. "
+        "It handles Gaussian processes (BrownianMotion, BrownianBridge, "
+        "OrnsteinUhlenbeck, FractionalBrownianMotion, "
+        "GeometricBrownianMotion, or a GaussianProcess you built yourself), "
+        "processes that move in jumps (PoissonProcess, RenewalProcess, "
+        "CompoundPoissonProcess, ContinuousTimeMarkovChain, the birth-death "
+        "and M/M queues, and the G/G queues), and discrete-time processes "
+        "(RandomWalk, MarkovChain, MA). A DiffusionProcess or CIR needs its "
+        "own approximation, which is not built yet. A process whose value is "
+        "several numbers at once, such as an epidemic model, has no single "
+        "level to reach -- ask about one compartment of it instead."
     )
 
 
@@ -348,28 +629,56 @@ def hitting_time(process, level, max_time=100.0, start_time=0.0, step=None, tol=
     finds the first time it rises to it, and starting above it finds the
     first time it falls to it.
 
+    Three kinds of process are handled, and which one you have decides both
+    how the search is done and how accurate the answer is (see the notes):
+
+    - **Processes that move in jumps**, holding one value at a time --
+      :class:`~symbulate.poisson_process.PoissonProcess`,
+      :class:`~symbulate.renewal_process.RenewalProcess`,
+      :class:`~symbulate.renewal_process.CompoundPoissonProcess`,
+      :class:`~symbulate.markov_chains.ContinuousTimeMarkovChain`, the
+      birth-death and M/M queues, and the G/G queues. **Exact.** (Not
+      :class:`~symbulate.poisson_process.NonHomogeneousPoissonProcess` or
+      :class:`~symbulate.poisson_process.CoxProcess`, whose jumps are known on
+      the expected-count scale rather than on the clock -- see the error they
+      raise.)
+    - **Discrete-time processes**, which have a value at each step and nothing
+      in between -- :class:`~symbulate.random_walk.RandomWalk`,
+      :class:`~symbulate.markov_chains.MarkovChain`,
+      :class:`~symbulate.time_series.MA`. **Exact.**
+    - **Gaussian processes** and
+      :class:`~symbulate.gaussian_process.GeometricBrownianMotion`, whose paths
+      wiggle between any two times you look at. Exact for Brownian motion and
+      bridges, approximate otherwise.
+
     Parameters
     ----------
-    process : RandomProcess or a sample path
-        The process, or a single sample path drawn from one. Gaussian
-        processes and :class:`GeometricBrownianMotion` are supported.
+    process : RV, RandomProcess, or a sample path
+        The process, or a single sample path drawn from one.
     level : float
         The level to reach. Must be positive for a geometric Brownian motion,
         which never reaches 0.
     max_time : float, optional
-        Give up after this time and report ``inf``. Needed because a level
-        may simply never be reached. Default is 100.
+        Give up after this time and report ``inf``. Needed because a level may
+        simply never be reached. Default is 100. For a discrete-time process a
+        step *is* the unit of time, so this counts steps.
     start_time : float, optional
         Start looking from here rather than from time 0. Default is 0. Useful
-        for finding a *later* crossing after an earlier one.
+        for finding a *later* crossing after an earlier one. The direction --
+        rise to the level or fall to it -- is then taken from where the path is
+        at ``start_time``, not from where it started out.
     step : float, optional
-        How far ahead to look at a time while scanning. Defaults to one
-        hundredth of the stretch being searched. This sets how precise the
-        reported time is -- see the notes -- as well as how long the search
-        takes, so smaller is sharper and slower.
+        How far ahead to look at a time while scanning a Gaussian process.
+        Defaults to one hundredth of the stretch being searched. This sets how
+        precise the reported time is -- see the notes -- as well as how long
+        the search takes, so smaller is sharper and slower. **Ignored** for a
+        jump or discrete-time process, which is walked value by value and needs
+        no scanning.
     tol : float, optional
         When to stop halving while narrowing a crossing down. Default is
-        ``1e-6``. This is not the accuracy of the answer; ``step`` is.
+        ``1e-6``. This is not the accuracy of the answer; ``step`` is. Also
+        **ignored** for a jump or discrete-time process, which has nothing to
+        narrow down.
 
     Returns
     -------
@@ -381,17 +690,38 @@ def hitting_time(process, level, max_time=100.0, start_time=0.0, step=None, tol=
     Raises
     ------
     TypeError
-        If an argument has the wrong type.
+        If an argument has the wrong type, or the path's values are not
+        numbers -- a Markov chain labelled with names rather than numbers has
+        no level to reach.
     ValueError
-        If ``max_time`` is not after ``start_time``, or ``step`` or ``tol`` is
-        not positive.
+        If ``max_time`` is not after ``start_time``, ``step`` or ``tol`` is not
+        positive, or a jump process jumps too many times before ``max_time`` to
+        walk through.
     NotImplementedError
-        If the path is not from a Gaussian process. Only that family is
-        handled so far.
+        If the path is from a general diffusion
+        (:class:`~symbulate.diffusion_process.DiffusionProcess`,
+        :class:`~symbulate.diffusion_process.CIR`), or is not a single number
+        at each time. Neither is handled yet.
 
     Notes
     -----
-    **How accurate this is**, separated into the two questions it answers:
+    **Reaching a level means getting to it or past it** for a jump or
+    discrete-time process. Such a path can step straight over a level without
+    ever equaling it -- a random walk going from 4 to 6 never sits at 5 -- so
+    the first time it is *at or beyond* the level is the only sensible reading,
+    and it is the standard definition for these processes. For a Gaussian
+    process the question does not arise: a continuous path cannot get to the
+    other side without touching it.
+
+    **Jump and discrete-time processes are exact**, and no argument makes them
+    more or less so. A jump path holds one value at a time, so it can only
+    reach a level at the moment of a jump, and walking the jumps sees every one
+    of them; a discrete-time path has nothing between its steps at all. Neither
+    has anything hiding between the values it reports, which is what ``step``
+    and ``tol`` exist to deal with -- so both are ignored for these.
+
+    **How accurate this is** for a Gaussian process, separated into the two
+    questions it answers:
 
     *Whether the level is reached, and in which ``step``-sized stretch.* For
     :class:`BrownianMotion` (with or without drift), :class:`BrownianBridge`,
@@ -435,6 +765,18 @@ def hitting_time(process, level, max_time=100.0, start_time=0.0, step=None, tol=
     >>> hitting_time(path, level=2)   # doctest: +SKIP
     5.72
 
+    A random walk, where the answer is a step number and is exact:
+
+    >>> steps = hitting_time(RandomWalk(p=0.5), level=3, max_time=200)
+    >>> steps.sim(100).mean()   # doctest: +SKIP
+    88.4
+
+    How long until a queue first has 5 people in it:
+
+    >>> busy = hitting_time(GG1(Exponential(rate=1), Exponential(rate=1.2)), level=5)
+    >>> busy.sim(100).mean()   # doctest: +SKIP
+    37.2
+
     See Also
     --------
     BrownianMotion : The process this is exact for.
@@ -443,8 +785,9 @@ def hitting_time(process, level, max_time=100.0, start_time=0.0, step=None, tol=
 
     # Handed a whole process, hand back a random variable. apply() passes the
     # entire sample path through, so this is the same computation done once
-    # per simulated path.
-    if isinstance(process, RandomProcess):
+    # per simulated path. Every process here is an RV; only some of them are
+    # also a RandomProcess, so RV is the check that catches all of them.
+    if isinstance(process, RV):
         return process.apply(
             lambda path: hitting_time(
                 path,
@@ -454,6 +797,24 @@ def hitting_time(process, level, max_time=100.0, start_time=0.0, step=None, tol=
                 step=step,
                 tol=tol,
             )
+        )
+
+    # A path that moves in jumps, or in steps, is walked exactly -- there is
+    # nothing hiding between the values it reports, so `step` and `tol`, which
+    # exist to deal with what a continuous path does in between, have nothing
+    # to do here.
+    if _is_jump_path(process):
+        return _jump_hitting_time(
+            process, float(level), float(max_time), float(start_time)
+        )
+
+    if isinstance(process, (InfiniteTuple, DiscreteTimeFunction)):
+        return _step_hitting_time(
+            process,
+            float(level),
+            float(max_time),
+            float(start_time),
+            _steps_per_time(process),
         )
 
     read, cov_func, level = _prepare(process, level)
