@@ -878,5 +878,366 @@ class TestHittingTimeErrors(unittest.TestCase):
             hitting_time(BrownianMotion(), level=1, max_time=0.0)
 
 
+# --- upcrossings ----------------------------------------------------------
+
+
+def deterministic_walk(values, fs=1):
+    """A discrete-time path whose values are given, for exact expectations.
+
+    Upcrossings are much easier to check against a path written down by hand
+    than against a simulated one, since the answer can be read straight off the
+    list.
+    """
+    return RandomProcess(
+        Bernoulli(p=1) ** inf,
+        DiscreteTimeSequence(fs=fs),
+        lambda outcome, n: values[n % len(values)],
+    ).draw()
+
+
+class TestUpcrossingsAPI(unittest.TestCase):
+
+    def test_a_path_gives_a_sequence_of_times(self):
+        seed()
+        times = upcrossings(RandomWalk(p=0.5).draw(), level=2, max_time=200)
+        self.assertIsInstance(times, InfiniteVector)
+
+    def test_a_process_gives_a_random_variable(self):
+        seed()
+        self.assertIsInstance(upcrossings(RandomWalk(p=0.5), level=2), RV)
+
+    def test_indexing_a_process_gives_the_nth_crossing_as_a_random_variable(self):
+        seed()
+        third = upcrossings(RandomWalk(p=0.5), level=1, max_time=200)[2]
+        self.assertIsInstance(third, RV)
+        values = np.array(list(third.sim(50)), dtype=float)
+        self.assertTrue(np.all(values[np.isfinite(values)] >= 3))
+
+    def test_the_first_crossing_is_the_hitting_time(self):
+        # They agree whenever the path starts strictly below the level, which is
+        # the usual case -- upcrossings is hitting_time repeated.
+        seed()
+        path = RandomWalk(p=0.5).draw()
+        self.assertEqual(
+            upcrossings(path, level=3, max_time=400)[0],
+            hitting_time(path, level=3, max_time=400),
+        )
+
+    def test_only_as_much_of_the_sequence_as_asked_for_is_worked_out(self):
+        seed()
+        times = upcrossings(RandomWalk(p=0.5).draw(), level=1, max_time=400)
+        self.assertEqual(len(times.values), 0)
+        times[2]
+        self.assertEqual(len(times.values), 3)
+
+    def test_asking_twice_gives_the_same_answer(self):
+        seed()
+        times = upcrossings(RandomWalk(p=0.5).draw(), level=1, max_time=400)
+        self.assertEqual([times[n] for n in range(4)], [times[n] for n in range(4)])
+
+    def test_an_exhausted_sequence_is_not_walked_again(self):
+        # A path that only rises crosses the level once and never comes back, so
+        # every later position is inf. That is recorded, not rediscovered.
+        seed()
+        times = upcrossings(RandomWalk(p=1).draw(), level=3, max_time=20)
+        self.assertEqual(times[0], 3.0)
+        self.assertTrue(np.isinf(times[1]))
+        with mock.patch.object(
+            hitting_times, "_step_hitting_time", side_effect=AssertionError
+        ):
+            self.assertTrue(np.isinf(times[5]))
+
+    def test_step_and_tol_are_not_accepted(self):
+        # Nothing hides between the values of a path this reads, so there is no
+        # step size to choose and nothing to localize -- the arguments do not
+        # exist rather than being ignored.
+        seed()
+        with self.assertRaises(TypeError):
+            upcrossings(RandomWalk(p=0.5), level=1, step=0.1)
+        with self.assertRaises(TypeError):
+            upcrossings(RandomWalk(p=0.5), level=1, tol=1e-9)
+
+
+class TestUpcrossingsMeaning(unittest.TestCase):
+    """A crossing has to arrive at the level from strictly below it."""
+
+    def test_touching_the_level_and_rising_again_is_not_a_second_crossing(self):
+        # 0, 1, 2, 1, 2 sits *on* the level 1 in the middle without going under
+        # it, so there is one crossing here, not two.
+        path = deterministic_walk([0, 1, 2, 1, 2, 2, 2, 2])
+        times = upcrossings(path, level=1, max_time=7)
+        self.assertEqual(times[0], 1.0)
+        self.assertTrue(np.isinf(times[1]))
+
+    def test_dropping_below_the_level_and_rising_again_is_a_second_crossing(self):
+        # The same path with the middle value one lower does cross twice.
+        path = deterministic_walk([0, 1, 2, 0, 2, 2, 2, 2])
+        times = upcrossings(path, level=1, max_time=7)
+        self.assertEqual([times[0], times[1]], [1.0, 4.0])
+        self.assertTrue(np.isinf(times[2]))
+
+    def test_already_above_the_level_is_not_a_crossing(self):
+        # Starting at 5 with level 1, the path has to go under 1 before it can
+        # cross it, so the first crossing is step 3 rather than step 0.
+        path = deterministic_walk([5, 5, 0, 5, 5, 5, 5, 5])
+        self.assertEqual(upcrossings(path, level=1, max_time=7)[0], 3.0)
+
+    def test_a_path_that_never_goes_below_the_level_never_crosses_it(self):
+        path = deterministic_walk([5, 5, 5, 5])
+        times = upcrossings(path, level=1, max_time=50)
+        self.assertTrue(all(np.isinf(times[n]) for n in range(4)))
+
+    def test_the_first_crossing_can_come_later_than_the_hitting_time(self):
+        # The one case where they differ, and the reason is the rule above.
+        path = deterministic_walk([5, 5, 0, 5, 5, 5, 5, 5])
+        self.assertEqual(hitting_time(path, level=1, max_time=7), 2.0)
+        self.assertEqual(upcrossings(path, level=1, max_time=7)[0], 3.0)
+
+    def test_a_level_between_two_steps_is_crossed_by_passing_it(self):
+        # 0 to 2 is never at 1.5, so the step that took it to 2 is the crossing.
+        path = deterministic_walk([0, 2, 0, 2, 0, 2, 0, 2])
+        crossings = upcrossings(path, level=1.5, max_time=7)
+        self.assertEqual([crossings[n] for n in range(3)], [1.0, 3.0, 5.0])
+
+    def test_the_times_come_in_increasing_order(self):
+        seed()
+        times = upcrossings(RandomWalk(p=0.5).draw(), level=1, max_time=400)
+        found = [times[n] for n in range(8)]
+        self.assertEqual(found, sorted(found))
+
+    def test_nothing_comes_after_an_infinity(self):
+        seed()
+        times = upcrossings(RandomWalk(p=0.5).draw(), level=1, max_time=30)
+        found = [times[n] for n in range(30)]
+        first_infinite = next(n for n, t in enumerate(found) if np.isinf(t))
+        self.assertTrue(all(np.isinf(t) for t in found[first_infinite:]))
+
+    def test_crossings_stop_at_max_time(self):
+        path = deterministic_walk([0, 2, 0, 2, 0, 2, 0, 2])
+        times = upcrossings(path, level=1, max_time=4)
+        self.assertEqual([times[0], times[1]], [1.0, 3.0])
+        self.assertTrue(np.isinf(times[2]))
+
+    def test_start_time_skips_earlier_crossings(self):
+        path = deterministic_walk([0, 2, 0, 2, 0, 2, 0, 2])
+        later = upcrossings(path, level=1, max_time=8, start_time=4)
+        self.assertEqual([later[0], later[1]], [5.0, 7.0])
+
+
+class TestUpcrossingsJumpProcessesAreExact(unittest.TestCase):
+    """A jump path can only cross at a jump, so these are exact answers."""
+
+    def test_a_two_state_chain_crosses_at_every_other_jump(self):
+        # The chain alternates 0, 1, 0, 1, ..., so it upcrosses level 1 exactly
+        # at the jumps into state 1 -- the even-numbered arrival times.
+        seed()
+        path = ContinuousTimeMarkovChain([[-2, 2], [1, -1]], [1.0, 0.0]).draw()
+        times = upcrossings(path, level=1, max_time=50)
+        expected = [float(path.get_arrival_times()[2 * k]) for k in range(5)]
+        self.assertEqual([times[k] for k in range(5)], expected)
+
+    def test_gaps_between_crossings_match_the_closed_form(self):
+        # One cycle of a two-state chain is a hold in state 1 then a hold in
+        # state 0, so the gap between successive upcrossings of level 1 has mean
+        # 1 / q10 + 1 / q01 exactly.
+        seed()
+        chain = ContinuousTimeMarkovChain([[-2, 2], [1, -1]], [1.0, 0.0])
+        times = upcrossings(chain, level=1, max_time=1000)
+        gaps = np.array(list((times[1] - times[0]).sim(2000)), dtype=float)
+        self.assertTrue(np.all(np.isfinite(gaps)))
+        self.assertAlmostEqual(gaps.mean(), 1 / 1 + 1 / 2, delta=0.06)
+
+    def test_the_first_crossing_matches_the_hitting_time_mean(self):
+        seed()
+        chain = ContinuousTimeMarkovChain([[-2, 2], [1, -1]], [1.0, 0.0])
+        first = np.array(
+            list(upcrossings(chain, level=1, max_time=1000)[0].sim(2000)), dtype=float
+        )
+        self.assertAlmostEqual(first.mean(), 1 / 2, delta=0.03)
+
+    def test_a_count_crosses_a_level_at_most_once(self):
+        # A count only ever goes up, so it never comes back below a level to
+        # cross it again. Worth pinning: it is the documented behaviour.
+        seed()
+        path = PoissonProcess(rate=2).draw()
+        times = upcrossings(path, level=4, max_time=100)
+        self.assertEqual(times[0], float(path.get_arrival_times()[3]))
+        self.assertTrue(all(np.isinf(times[n]) for n in [1, 2, 5]))
+
+    def test_a_count_never_crosses_the_level_it_starts_on(self):
+        # A count starts at 0 and never goes below it, so it never arrives at 0
+        # from underneath -- unlike hitting_time, which reports time 0.
+        seed()
+        path = PoissonProcess(rate=1).draw()
+        self.assertEqual(hitting_time(path, level=0, max_time=10), 0.0)
+        self.assertTrue(np.isinf(upcrossings(path, level=0, max_time=10)[0]))
+
+    def test_queue_crossings_are_all_event_times(self):
+        seed()
+        path = GG1(Exponential(rate=1), Exponential(rate=1.5)).draw()
+        times = upcrossings(path, level=3, max_time=300)
+        found = [times[n] for n in range(5)]
+        self.assertTrue(np.all(np.isfinite(found)))
+        event_times = [float(path.get_arrival_times()[n]) for n in range(600)]
+        for time in found:
+            self.assertIn(time, event_times)
+
+    def test_a_surplus_with_negative_jumps_crosses_more_than_once(self):
+        # A compound Poisson total moves both ways, so unlike a count it really
+        # does have a sequence of crossings.
+        seed()
+        surplus = CompoundPoissonProcess(rate=2, jump_dist=Normal(mean=0, sd=1))
+        path = surplus.draw()
+        times = upcrossings(path, level=1, max_time=200)
+        found = [times[n] for n in range(4)]
+        self.assertTrue(np.all(np.isfinite(found)))
+        jump_times = [float(path.get_arrival_times()[n]) for n in range(500)]
+        for time in found:
+            self.assertIn(time, jump_times)
+
+
+class TestUpcrossingsDiscreteTimeProcessesAreExact(unittest.TestCase):
+    """A discrete-time path has nothing between its steps, so this is exact."""
+
+    def test_an_alternating_chain_crosses_at_every_other_step(self):
+        seed()
+        path = MarkovChain([[0, 1], [1, 0]], [1.0, 0.0]).draw()
+        times = upcrossings(path, level=1, max_time=10)
+        self.assertEqual([times[n] for n in range(5)], [1.0, 3.0, 5.0, 7.0, 9.0])
+
+    def test_reported_times_are_whole_numbers_of_steps(self):
+        seed()
+        times = upcrossings(RandomWalk(p=0.5).draw(), level=1, max_time=300)
+        found = [t for t in (times[n] for n in range(6)) if np.isfinite(t)]
+        self.assertTrue(all(t == int(t) for t in found))
+
+    def test_a_faster_sampling_rate_is_reported_in_time_not_steps(self):
+        # Sampled twice per unit time, a crossing at step 5 is at time 2.5.
+        path = deterministic_walk([0, 1, 2, 0, 1, 2], fs=2)
+        times = upcrossings(path, level=2, max_time=5)
+        self.assertEqual([times[0], times[1], times[2]], [1.0, 2.5, 4.0])
+
+    def test_max_time_counts_steps(self):
+        seed()
+        path = MarkovChain([[0, 1], [1, 0]], [1.0, 0.0]).draw()
+        times = upcrossings(path, level=1, max_time=4)
+        self.assertEqual([times[0], times[1]], [1.0, 3.0])
+        self.assertTrue(np.isinf(times[2]))
+
+    def test_a_moving_average_process_is_read_step_by_step(self):
+        seed()
+        times = upcrossings(MA([1, 0.5]).draw(), level=0, max_time=100)
+        found = [t for t in (times[n] for n in range(6)) if np.isfinite(t)]
+        self.assertTrue(len(found) > 1)
+        self.assertTrue(all(t == int(t) for t in found))
+
+
+class TestUpcrossingsContinuousPathsAreRefused(unittest.TestCase):
+    """A continuous path recrosses a level infinitely often, so it has no list."""
+
+    def test_brownian_motion_raises_not_implemented(self):
+        seed()
+        with self.assertRaises(NotImplementedError):
+            upcrossings(BrownianMotion().draw(), level=1)
+
+    def test_the_message_explains_that_crossings_are_not_separated(self):
+        seed()
+        with self.assertRaises(NotImplementedError) as context:
+            upcrossings(BrownianMotion().draw(), level=1)
+        message = str(context.exception)
+        self.assertIn("infinitely often", message)
+        self.assertIn("hitting_time", message)
+
+    def test_other_gaussian_processes_raise_too(self):
+        seed()
+        for process in [
+            OrnsteinUhlenbeck(),
+            BrownianBridge(),
+            FractionalBrownianMotion(hurst=0.7),
+        ]:
+            with self.assertRaises(NotImplementedError):
+                upcrossings(process.draw(), level=0.5)
+
+    def test_geometric_brownian_motion_raises_too(self):
+        seed()
+        with self.assertRaises(NotImplementedError) as context:
+            upcrossings(GeometricBrownianMotion().draw(), level=1.2)
+        self.assertIn("infinitely often", str(context.exception))
+
+    def test_a_process_is_refused_as_soon_as_it_is_simulated(self):
+        seed()
+        with self.assertRaises(NotImplementedError):
+            upcrossings(BrownianMotion(), level=1).sim(1)
+
+
+class TestUpcrossingsUnsupportedProcesses(unittest.TestCase):
+
+    def test_time_varying_rate_counts_say_why_they_are_not_supported(self):
+        seed()
+        for process in [
+            NonHomogeneousPoissonProcess(rate=lambda t: 2 * t),
+            CoxProcess(intensity=Gamma(shape=2, rate=1)),
+        ]:
+            with self.assertRaises(NotImplementedError) as context:
+                upcrossings(process.draw(), level=3, max_time=100)
+            self.assertIn("expected number of events", str(context.exception))
+
+    def test_diffusions_say_what_is_supported(self):
+        seed()
+        for path in [
+            CIR().draw(),
+            DiffusionProcess(drift=lambda x, t: 0, diffusion=lambda x, t: 1).draw(),
+            MertonJumpDiffusion().draw(),
+        ]:
+            with self.assertRaises(NotImplementedError) as context:
+                upcrossings(path, level=1.0)
+            self.assertIn("RandomWalk", str(context.exception))
+
+
+class TestUpcrossingsErrors(unittest.TestCase):
+
+    def test_non_numeric_level_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            upcrossings(RandomWalk(p=0.5), level="high")
+
+    def test_max_time_not_after_start_time_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            upcrossings(RandomWalk(p=0.5), level=1, max_time=2.0, start_time=2.0)
+
+    def test_negative_start_time_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            upcrossings(RandomWalk(p=0.5), level=1, start_time=-1.0)
+
+    def test_errors_are_raised_before_any_simulating(self):
+        with self.assertRaises(ValueError):
+            upcrossings(RandomWalk(p=0.5), level=1, max_time=0.0)
+
+    def test_named_markov_chain_states_raise_type_error_right_away(self):
+        # The sequence is lazy, so without an up-front check this would only
+        # complain once somebody indexed the result.
+        seed()
+        chain = MarkovChain(
+            [[0.5, 0.5], [0.3, 0.7]], [1.0, 0.0], state_labels=["sun", "rain"]
+        )
+        with self.assertRaises(TypeError) as context:
+            upcrossings(chain.draw(), level=1)
+        self.assertIn("state_labels", str(context.exception))
+
+    def test_multi_compartment_path_raises_right_away(self):
+        seed()
+        path = SIR(population=100, infection_rate=2, recovery_rate=1).draw()
+        with self.assertRaises(NotImplementedError) as context:
+            upcrossings(path, level=50)
+        self.assertIn("several numbers at once", str(context.exception))
+
+    def test_too_many_jumps_raises_value_error(self):
+        seed()
+        path = PoissonProcess(rate=100).draw()
+        with mock.patch.object(hitting_times, "MAX_JUMPS", 20):
+            with self.assertRaises(ValueError) as context:
+                upcrossings(path, level=1000, max_time=100)[0]
+        self.assertIn("jumps", str(context.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
