@@ -524,12 +524,24 @@ class TestHittingTimeUnsupportedProcesses(unittest.TestCase):
             hitting_time(path, level=2.0)
 
     def test_multi_compartment_path_raises_not_implemented(self):
-        # An epidemic path is several counts at once, so there is no single
-        # level for it to reach.
+        # An epidemic path reports its whole compartment vector as a state, so
+        # it reaches the jump branch and has to be turned away there -- with the
+        # message about having several numbers at once, not the one about
+        # labelling Markov chain states.
+        seed()
+        path = SIR(population=100, infection_rate=2, recovery_rate=1).draw()
+        with self.assertRaises(NotImplementedError) as context:
+            hitting_time(path, level=50)
+        self.assertIn("several numbers at once", str(context.exception))
+
+    def test_one_compartment_on_its_own_also_raises(self):
+        # Worth pinning because the error message says so: a single compartment
+        # is a plain function of time with no states to walk, so it is not a way
+        # round the limitation above.
         seed()
         path = SIR(population=100, infection_rate=2, recovery_rate=1).draw()
         with self.assertRaises(NotImplementedError):
-            hitting_time(path, level=50)
+            hitting_time(path.I, level=20, max_time=50)
 
 
 # --- Tier A: jump and discrete-time processes ----------------------------

@@ -57,17 +57,30 @@ class TestCIRConstruction(unittest.TestCase):
         self.assertIsInstance(CIR().prob_space, CIRProbabilitySpace)
 
     def test_parameters_stored_on_probability_space(self):
-        P = CIRProbabilitySpace(
-            reversion_rate=2.0, mean=0.05, scale=0.1, initial_value=0.03
-        )
+        P = CIRProbabilitySpace(reversion_rate=2.0, mean=0.05, scale=0.1, initial=0.03)
         self.assertEqual(P.reversion_rate, 2.0)
         self.assertEqual(P.mean, 0.05)
         self.assertEqual(P.scale, 0.1)
-        self.assertEqual(P.initial_value, 0.03)
+        self.assertEqual(P.initial, 0.03)
 
-    def test_initial_value_defaults_to_mean(self):
+    def test_initial_defaults_to_mean(self):
         P = CIRProbabilitySpace(mean=0.07)
-        self.assertEqual(P.initial_value, 0.07)
+        self.assertEqual(P.initial, 0.07)
+
+    def test_older_initial_value_name_still_accepted(self):
+        # CIR shipped with initial_value before the package standardised on
+        # initial, so the old spelling has to keep working.
+        self.assertEqual(
+            CIRProbabilitySpace(mean=0.05, initial_value=0.02).initial, 0.02
+        )
+        self.assertEqual(float(CIR(mean=0.05, initial_value=0.02).draw()(0)), 0.02)
+
+    def test_giving_both_names_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            CIR(mean=0.05, initial=0.01, initial_value=0.02)
+
+    def test_initial_is_reported_on_the_process(self):
+        self.assertEqual(CIR(mean=0.05, initial=0.02).initial, 0.02)
 
 
 class TestCIRPaths(unittest.TestCase):
@@ -78,15 +91,15 @@ class TestCIRPaths(unittest.TestCase):
         for _ in range(5):
             self.assertEqual(float(X.draw()(0)), 0.05)
 
-    def test_starts_at_initial_value_when_given(self):
+    def test_starts_at_initial_when_given(self):
         seed()
-        X = CIR(reversion_rate=1, mean=0.05, scale=0.1, initial_value=0.02)
+        X = CIR(reversion_rate=1, mean=0.05, scale=0.1, initial=0.02)
         for _ in range(5):
             self.assertEqual(float(X.draw()(0)), 0.02)
 
     def test_can_start_at_zero(self):
         seed()
-        X = CIR(reversion_rate=1, mean=0.05, scale=0.1, initial_value=0)
+        X = CIR(reversion_rate=1, mean=0.05, scale=0.1, initial=0)
         path = X.draw()
         self.assertEqual(float(path(0)), 0.0)
         # It is pushed straight back up, since the pull at 0 is upward.
@@ -142,7 +155,7 @@ class TestCIRTransitionLaw(unittest.TestCase):
             reversion_rate=self.rate,
             mean=self.mean,
             scale=self.scale,
-            initial_value=self.start,
+            initial=self.start,
         )
 
     def test_mean_matches_closed_form(self):
@@ -175,7 +188,7 @@ class TestCIRTransitionLaw(unittest.TestCase):
             reversion_rate=self.rate,
             mean=self.mean,
             scale=self.scale,
-            initial_value=0.20,
+            initial=0.20,
         )
         self.assertGreater(X[0.2].sim(Nsim).mean(), X[5.0].sim(Nsim).mean())
 
@@ -191,7 +204,7 @@ class TestCIRExactness(unittest.TestCase):
                 reversion_rate=rate,
                 mean=mean,
                 scale=scale,
-                initial_value=start,
+                initial=start,
             ).draw()
             value = start
             for i in range(1, n_steps + 1):
@@ -309,7 +322,7 @@ class TestCIRComparedToOrnsteinUhlenbeck(unittest.TestCase):
         # given time follows the same exponential approach.
         rate, mean, start = 1.0, 0.05, 0.02
         seed()
-        cir = CIR(reversion_rate=rate, mean=mean, scale=0.1, initial_value=start)
+        cir = CIR(reversion_rate=rate, mean=mean, scale=0.1, initial=start)
         expected = transition_mean(start, 1.0, rate, mean, 0.1)
         self.assertAlmostEqual(
             cir[1.0].sim(Nsim).mean(), expected, delta=0.06 * expected
@@ -317,9 +330,7 @@ class TestCIRComparedToOrnsteinUhlenbeck(unittest.TestCase):
 
     def test_ornstein_uhlenbeck_can_go_negative_but_cir_cannot(self):
         seed()
-        ou = OrnsteinUhlenbeck(
-            reversion_rate=1.0, mean=0.05, scale=0.2, initial_value=0.05
-        )
+        ou = OrnsteinUhlenbeck(reversion_rate=1.0, mean=0.05, scale=0.2, initial=0.05)
         ou_values = np.array(list(ou[3.0].sim(Nsim)), dtype=float)
         self.assertTrue(np.any(ou_values < 0))
 
@@ -336,7 +347,7 @@ class TestCIRErrors(unittest.TestCase):
             {"reversion_rate": "fast"},
             {"mean": "middle"},
             {"scale": "wide"},
-            {"initial_value": "low"},
+            {"initial": "low"},
         ]:
             with self.assertRaises(TypeError):
                 CIR(**kwargs)
@@ -356,13 +367,13 @@ class TestCIRErrors(unittest.TestCase):
             with self.assertRaises(ValueError):
                 CIR(scale=value)
 
-    def test_negative_initial_value_raises_value_error(self):
+    def test_negative_initial_raises_value_error(self):
         with self.assertRaises(ValueError):
-            CIR(initial_value=-0.01)
+            CIR(initial=-0.01)
 
-    def test_initial_value_error_explains_the_floor(self):
+    def test_initial_error_explains_the_floor(self):
         with self.assertRaisesRegex(ValueError, "never goes below 0"):
-            CIR(initial_value=-0.01)
+            CIR(initial=-0.01)
 
     def test_probability_space_validates_too(self):
         with self.assertRaises(ValueError):

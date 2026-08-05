@@ -561,6 +561,68 @@ user.
 
 ---
 
+## Decision: One Interface for Every Continuous-Time, Discrete-State Process
+
+**Status:** Implemented — nine new probability spaces in
+`symbulate/markov_chains.py` and `symbulate/queues.py`, `SIR`/`SEIR` paths made
+`DiscreteValued`, exports in `symbulate/__init__.py`, and a table-driven
+regression file `symbulate/tests/test_continuous_time_processes.py`.
+
+**Decision**
+> Every continuous-time, discrete-state process must offer the same four
+> things, and one test file asserts it over all of them at once:
+>
+> 1. a `<Name>ProbabilitySpace` class, exported from `symbulate`;
+> 2. `RV(P)` — the process, a discrete value at each continuous time;
+> 3. `RV(P, interarrival_times)` — the times between jumps;
+> 4. `RV(P, arrival_times)` — the times of the jumps;
+> 5. `RV(P, states)` — the values visited, ignoring durations.
+>
+> Nine processes were missing item 1: `BirthDeathProcess`, `MM1`, `MMs`,
+> `MMsK`, `MMss`, `MMsKN`, `MMInfinity` (each built a generator matrix inline
+> in the process class) and `MG1`, `GM1` (each substituted an `Exponential`
+> inline). Each now has a space, with the **rate/distribution logic moved into
+> the space** and the process class reduced to building it and copying back the
+> parameters it advertises, through a small `_init_from_space` on the family
+> base. `MMssProbabilitySpace` subclasses `MMsKProbabilitySpace`, and the six
+> M/M/ spaces subclass `BirthDeathProcessProbabilitySpace`, mirroring the
+> existing class hierarchy exactly.
+>
+> `SIR`/`SEIR` gained items 3–5 by mixing in `DiscreteValued` and exposing the
+> holding times they already had (as a `Vector`, since `arrival_times` reads it
+> through `.cumsum()`).
+
+**Rationale**
+> The requirement came from the team: these processes are one family
+> behaviorally, so a student should not have to learn which of them happens to
+> support which view, and `RV(P, states)` should work wherever `RV(P)` does. The
+> missing spaces were an artifact of how the wrappers grew — a wrapper that
+> subclasses a process-RV and calls `super().__init__(generator_matrix, ...)`
+> never creates a space of its own — not a deliberate choice. Putting the rate
+> formulas in the space also removes the duplication that a second, parallel
+> space class would otherwise have introduced.
+
+**Alternatives Considered**
+> *Leaving the wrappers alone and documenting that `ContinuousTimeMarkovChainProbabilitySpace`
+> is the space to use for M/M/ queues* — rejected: it would make a student
+> hand-build the generator matrix the wrapper exists to hide. *Copying the
+> space's attributes onto the process automatically (`vars()` loop)* — rejected
+> as too magical for this codebase; each class names the parameters it exposes.
+> *Keeping `SIR`/`SEIR` outside the trio* (the earlier decision, on the grounds
+> that their states are vectors) — reversed: a vector of compartment counts is
+> still a discrete state, the data was already stored, and the asymmetry was
+> exactly the kind of "which processes support this?" question the requirement
+> removes.
+
+**Known gap, left to its author:** `NonHomogeneousPoissonProcess` (PR #270)
+counts events on the "expected count" scale, so it has no clock-time
+`interarrival_times` and `arrival_times(path)` raises `AttributeError`.
+Supplying them needs a numerical inverse of the cumulative rate `Λ`, with a
+tolerance choice that belongs to that module's design. The test file documents
+the omission rather than asserting around it.
+
+---
+
 ## Decision: Hitting Times — Tier B First (recorded after the fact)
 
 **Status:** Implemented in PR #272 — `hitting_time` in
@@ -719,8 +781,13 @@ first — no consequence, since the tiers share only the entry point).
 >   walk forever, so there is a `MAX_JUMPS` backstop (1,000,000) that raises a
 >   readable error suggesting a lower `max_time` instead of appearing to hang.
 > - A path whose value is several numbers at once — an epidemic model's
->   compartment vector — has no single level to reach, and the generic
->   `NotImplementedError` says so and suggests asking about one compartment.
+>   compartment vector — has no single level to reach and raises
+>   `NotImplementedError`. Note this now happens *inside* the jump branch: PR
+>   #283 gave epidemic paths `states` and `interarrival_times`, so such a path
+>   matches `_is_jump_path` and is turned away by the value check rather than by
+>   the general one in `_prepare`. Asking about one compartment (`path.I`) is
+>   **not** a way round it — a compartment is a bare function of time with no
+>   states to walk — and the message says so rather than suggesting it.
 > - A `MarkovChain` labelled with names rather than numbers raises a `TypeError`
 >   naming the step and pointing at `state_labels`, since "reached" needs an
 >   order.
@@ -729,7 +796,10 @@ first — no consequence, since the tiers share only the entry point).
 as a lazy `InfiniteVector` — is its own roadmap row and is not built here.
 `start_time` is the hook it needs, and it now behaves identically across all
 three tiers, so that row is a thin loop rather than three of them. Tier C
-(`DiffusionProcess`, `CIR`) is also still its own row and still raises.
+(`DiffusionProcess`, `CIR`, `MertonJumpDiffusion`) is also still its own row and
+still raises. `MertonJumpDiffusion` is worth calling out: it is **not** one of
+the jump paths above despite the name, since it wanders continuously between its
+jumps, so the states-and-holding-times walk would miss everything in between.
 
 ---
 
@@ -1444,8 +1514,6 @@ queue, whose parent `BirthDeathProcess` does.
 > - **a univariate distribution** — the starting value is drawn from it;
 > - **a multivariate distribution** — for a process needing several
 >   starting values at once, drawn jointly so their correlations are right;
-> - **a probability vector** — over a finite state space (Markov chains,
->   until a `Categorical` distribution exists to replace it);
 > - **`"stationary"`** — the process's own long-run distribution, where
 >   that has a closed form.
 >
@@ -1453,9 +1521,18 @@ queue, whose parent `BirthDeathProcess` does.
 > case in point: it needs pre-sample *shocks*, not values, and there is
 > nothing for a student to point at, so it is handled silently (see
 > "Decision: MA(q) Pre-Sample Shocks").
+>
+> **Markov chains are carved out and keep `initial_dist`.** Unlike the
+> others, that name is already accurate: what they take is a probability
+> vector over states, which really is a distribution, so there is no
+> mismatch to fix. It is also a *required* positional argument rather than
+> an optional one, and renaming it to `initial` would invite
+> `initial=0` meaning "start in state 0" — which is not supported and would
+> be a functionality change, not a rename. Revisit if a `Categorical`
+> distribution ever lands.
 
 `initial` rather than `initial_value` or `initial_distribution` because it
-is the only one of the three that stays honest across all five forms — a
+is the only one of the three that stays honest across all of those forms — a
 number is just a degenerate distribution, and `initial_distribution=0` reads
 as badly as `initial_value=Normal(0, 1)`.
 

@@ -54,8 +54,12 @@ Gaussian case worth knowing about: such a path can *leap over* a level without
 ever equaling it, so reaching a level means getting to it **or past it**.
 
 General diffusions (:class:`~symbulate.diffusion_process.DiffusionProcess`,
-:class:`~symbulate.diffusion_process.CIR`) still need their own approximation,
-and :func:`hitting_time` says so plainly rather than guessing.
+:class:`~symbulate.diffusion_process.CIR`,
+:class:`~symbulate.diffusion_process.MertonJumpDiffusion`) still need their own
+approximation, and :func:`hitting_time` says so plainly rather than guessing.
+A Merton jump diffusion is *not* one of the jump paths above, despite its name:
+it wanders continuously between its jumps, so walking the jumps would miss
+everything that happens in between.
 """
 
 import math
@@ -251,9 +255,27 @@ def _numeric_value(value, where):
 
     Raises
     ------
+    NotImplementedError
+        If the value is several numbers at once, as an epidemic model's
+        compartment counts are. Such a path has no single level to reach, so
+        this is a missing feature rather than a mistake.
     TypeError
-        If the value is not a number, so cannot be compared with a level.
+        If the value is not a number for any other reason, so cannot be
+        compared with a level at all.
     """
+    # An epidemic path reports its whole compartment vector as a state, so it
+    # reaches this check rather than the general one at the bottom of
+    # `_prepare`. The advice a student needs is the same either way.
+    if isinstance(value, (tuple, list, np.ndarray)):
+        raise NotImplementedError(
+            f"{where} the process is at {tuple(value)!r} -- several numbers at "
+            "once rather than one. A level is a single number, so there is "
+            "nothing here to compare it with, and hitting_time cannot answer "
+            "for a process like this yet. That holds for an epidemic model's "
+            "compartments taken one at a time as well, so path.I is not a way "
+            "round it for now."
+        )
+
     if isinstance(value, bool) or not isinstance(
         value, (int, float, np.integer, np.floating)
     ):
@@ -513,11 +535,11 @@ def _prepare(path, level):
                 f"{level}. It multiplies its starting value by positive "
                 f"numbers, so it never reaches 0 or goes below it."
             )
-        initial_value = path.initial_value
+        initial = path.initial
         scale = path.scale
 
         def read(t):
-            return float(np.log(float(path(t)) / initial_value))
+            return float(np.log(float(path(t)) / initial))
 
         # log(price) is a Brownian motion with drift, whose covariance is the
         # plain Brownian one. The drift does not appear: a bridge's law does
@@ -525,7 +547,7 @@ def _prepare(path, level):
         def cov_func(s, t):
             return scale**2 * min(s, t)
 
-        return read, cov_func, float(np.log(level / initial_value))
+        return read, cov_func, float(np.log(level / initial))
 
     # An ordinary Gaussian-process path: read it directly.
     cov_func = getattr(path, "cov_func", None)
@@ -565,10 +587,13 @@ def _prepare(path, level):
         "processes that move in jumps (PoissonProcess, RenewalProcess, "
         "CompoundPoissonProcess, ContinuousTimeMarkovChain, the birth-death "
         "and M/M queues, and the G/G queues), and discrete-time processes "
-        "(RandomWalk, MarkovChain, MA). A DiffusionProcess or CIR needs its "
-        "own approximation, which is not built yet. A process whose value is "
-        "several numbers at once, such as an epidemic model, has no single "
-        "level to reach -- ask about one compartment of it instead."
+        "(RandomWalk, MarkovChain, MA). A DiffusionProcess, CIR, or "
+        "MertonJumpDiffusion needs its own approximation, which is not built "
+        "yet -- a Merton jump diffusion wanders continuously between its "
+        "jumps, so walking the jumps would miss everything in between. A "
+        "process whose value is several numbers at once, such as an epidemic "
+        "model, has no single level to reach, and neither it nor one of its "
+        "compartments on its own is handled yet."
     )
 
 
@@ -700,8 +725,9 @@ def hitting_time(process, level, max_time=100.0, start_time=0.0, step=None, tol=
     NotImplementedError
         If the path is from a general diffusion
         (:class:`~symbulate.diffusion_process.DiffusionProcess`,
-        :class:`~symbulate.diffusion_process.CIR`), or is not a single number
-        at each time. Neither is handled yet.
+        :class:`~symbulate.diffusion_process.CIR`,
+        :class:`~symbulate.diffusion_process.MertonJumpDiffusion`), or is not a
+        single number at each time. Neither is handled yet.
 
     Notes
     -----

@@ -57,7 +57,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `random_walk.py` | `RandomWalk` — running total of i.i.d. steps (simple ±1 via `p=`, or any `step_dist`) |
 | `time_series.py` | `MA` — moving-average process; home for the AR/ARMA/GARCH family as it lands |
 | `hitting_times.py` | `hitting_time` — when a path first reaches a level; jump, discrete-time, and Gaussian paths (see "Hitting Times" below) |
-| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` — named special case, simulated exactly (see "Diffusion Processes" below) |
+| `diffusion_process.py` | `DiffusionProcess` — general Ito SDE, simulated approximately; `CIR` and `MertonJumpDiffusion` — named special cases, both simulated exactly (see "Diffusion Processes" below) |
 | `independence.py` | `AssumeIndependent` |
 | `index_sets.py` | `Naturals`, `Integers`, `Reals`, `DiscreteTimeSequence`, `TimeInterval` |
 | `math.py` | Math utility functions |
@@ -251,7 +251,7 @@ Three things that are easy to get wrong:
   below 0 even in a model that should stay positive, and one `nan` poisons the
   rest of the path.
 
-`CIR(reversion_rate, mean, scale, initial_value)` lives in the same module as a
+`CIR(reversion_rate, mean, scale, initial)` lives in the same module as a
 named special case, the way `BrownianMotion` sits inside `gaussian_process.py`
 next to the general `GaussianProcess`. It does **not** go through
 `DiffusionProcess`: CIR has a known transition law — its value at any later
@@ -263,6 +263,30 @@ error the team decision explicitly removed. `test_cir.py` pins this by checking
 that one jump to a time matches fifty steps to it. The one approximate corner
 is asking for a time *between* two already-computed times, since a CIR path
 pinned at both ends has no simple formula.
+
+`MertonJumpDiffusion(...)` sits in the same module and is also **exact**, but
+by a different route: it is pure *composition*, not a new transition law. A
+path adds a Brownian motion and a `CompoundPoissonProcess` of normal jumps
+together in the exponent, then exponentiates — so it is a
+`GeometricBrownianMotion` that can also lurch. Each path keeps both pieces as
+`path.brownian_path` and `path.jump_path`.
+
+The one thing not to break: the drift subtracts a **compensator**,
+`jump_rate * (exp(jump_mean + jump_sd**2 / 2) - 1)`. Jumps multiply, and a
+multiplier averages above 1 even when its log averages 0, so without that term
+adding jumps would silently raise the mean. With it, `growth_rate` keeps
+meaning the growth rate of the mean — the same contract
+`GeometricBrownianMotion` has. `test_merton.py` pins this by checking the mean
+is unchanged across four very different jump settings. Note that with large
+jumps the *simulated* mean is noisy (the sd can reach 200), so judge that
+contract against the closed form, not against one simulation.
+
+Both follow the package-wide `initial` naming (see `MODEL-DECISIONS.md`, "One
+Name for a Process's Starting Condition"). `CIR` also still accepts the older
+`initial_value`, via `_resolve_initial`, because it shipped under that name;
+`MertonJumpDiffusion` never did, so it takes `initial` only. `CIR`'s `initial`
+defaults to `None` meaning "start at `mean`", so it passes `default=None` to
+the helper rather than a number.
 
 ## Cox Process
 
@@ -329,6 +353,47 @@ Three things that are easy to get wrong:
   `get_interarrival_times()` but not `get_arrival_times()`, which needs a
   `.cumsum()` — pass a `Vector` in a test fixture that needs it.
 
+## Continuous-Time, Discrete-State Processes — Required Interface
+
+These processes all behave the same way: they sit at one value for a random
+stretch of continuous time, jump, and sit again. **Every one of them must offer
+the same four things**, and `tests/test_continuous_time_processes.py` asserts it
+table-driven over all of them, so a new process cannot quietly skip one:
+
+1. A `<Name>ProbabilitySpace` class, exported from `symbulate/__init__.py`.
+2. `RV(P)` — the process itself, a discrete value at each continuous time.
+3. `RV(P, interarrival_times)` — the times between jumps.
+4. `RV(P, arrival_times)` — the times of the jumps.
+5. `RV(P, states)` — the values visited, ignoring how long each lasted.
+
+Items 3–5 come free from `DiscreteValued`: a Result only has to set `states` and
+`interarrival_times` (an object with `.cumsum()` — an `InfiniteVector`, or a
+`Vector` for an eagerly simulated finite path). `arrival_times` is their running
+total. See "classify_data" style conventions in `math.py` for the three free
+functions themselves.
+
+**A wrapper class needs its own space too.** `MM1`, `MMs`, `MMsK`, `MMss`,
+`MMsKN`, `MMInfinity` and `BirthDeathProcess` all used to build a generator
+matrix inline, which left them with no space of their own; each now has one, with
+the **rate formulas living in the space** and the process class copying the
+parameters back out via `_init_from_space`. `MG1`/`GM1` follow the same shape
+over `GG1ProbabilitySpace`. Do not put rate or distribution logic in the process
+class — the space is what `RV(P, ...)` users get.
+
+**Known gap:** `NonHomogeneousPoissonProcess` counts events on the
+"expected count" scale and never converts back to clock time, so it has no
+clock-time `interarrival_times`/`arrival_times`; `CoxProcess` inherits the gap,
+since `CoxProcessResult` builds on that class. Fixing it needs a numerical
+inverse of the cumulative rate. Both are in `TIME_CHANGED` in
+`test_continuous_time_processes.py`, which asserts the three views they *do*
+support and pins the gap, so the test fails (and they move up into the main
+table) once it is closed.
+
+**One deliberate oddity:** `SIR`/`SEIR` states are whole *vectors* of
+compartment counts, not single numbers, and their final holding time is `inf`
+(the outbreak has ended). They are eagerly simulated, so their sequences are
+finite `Vector`s rather than `InfiniteVector`s.
+
 ## Queues
 
 Queues live in **two** files, split by whether the model is Markovian:
@@ -387,7 +452,9 @@ that way (see `MODEL-DECISIONS.md`, "Decision: Hitting Times — Tier A").
   both work) is walked jump by jump; a discrete-time path (`InfiniteTuple` or
   `DiscreteTimeFunction`) is walked step by step; a Gaussian path (`cov_func` +
   `observed`) goes through `_prepare` and the reflection-principle machinery.
-  Tier C (`DiffusionProcess`, `CIR`) still raises `NotImplementedError`.
+  Tier C (`DiffusionProcess`, `CIR`, `MertonJumpDiffusion`) still raises
+  `NotImplementedError`. `MertonJumpDiffusion` is Tier C, **not** a jump path:
+  it wanders continuously between its jumps.
 - **Tier A is exact, and `step`/`tol` are ignored there.** They exist to deal
   with what a *continuous* path does between two evaluated times; a jump path
   can only reach a level at a jump and a discrete-time path has nothing between
@@ -412,9 +479,16 @@ that way (see `MODEL-DECISIONS.md`, "Decision: Hitting Times — Tier A").
   bridges at any `step`; approximate for other Gaussian processes. It draws
   from `hitting_times.rng`, so seed **that**, not `np.random.seed` — same trap
   as `diffusion_process.rng`.
+- **An epidemic path is turned away inside the jump branch, not before it.**
+  PR #283 gave `SIR`/`SEIR` paths `states` and `interarrival_times`, so they
+  match `_is_jump_path`; the compartment-vector state is then rejected by
+  `_numeric_value`. Asking about one compartment (`path.I`) does not work either
+  — it is a bare `_BoundedTimeFunction` with no states — so do not put that
+  suggestion back into either message.
 - **Still open:** `upcrossings` (the *sequence* of crossing times, as a lazy
   `InfiniteVector`) is its own roadmap row and is not built. `start_time` is
-  the hook it will use.
+  the hook it will use. Hitting times for a single epidemic compartment are
+  also unbuilt, and would need the compartment to expose its jump times.
 
 ## Suggestion Messages
 
@@ -463,11 +537,49 @@ raise ValueError(
 
 ## dim > 2 Behavior
 
-RVResults with dim > 2 currently falls through to a catch-all branch that
-produces a connected-dot index plot. This is not correct behavior for joint
-distribution visualization. If you encounter dim > 2 in plot code, raise
-NotImplementedError with a student-friendly message explaining that joint
-plotting of 3+ variables is not yet supported and what to do instead.
+**There is now a way to plot 3+ simulated variables: `.plot(pairs=True)`** — a
+matrix of panels, mirroring `MultivariateDistribution.plot(pairs=True)` so a
+simulation and its distribution can be read side by side. See "Pairs Matrix of
+Simulated Results" below.
+
+`.plot()` with **no** arguments on dim > 2 still falls through to the old
+catch-all branch that produces a connected-dot index plot. That is still not
+correct behavior for joint distribution visualization — the intended fix is to
+raise NotImplementedError pointing at `pairs=True`, and it was deliberately left
+alone when the pairs matrix landed (that change alters existing behavior, so it
+needs its own decision).
+
+## Pairs Matrix of Simulated Results
+
+`RVResults.plot(pairs=True, dims=None)` in `results.py`. The panels are chosen
+by the **same** classification the 1-D and 2-D dispatches use, always in the
+large-sample form so a matrix never mixes a mesh with a scatter:
+
+| Panel | Data | Type |
+|---|---|---|
+| diagonal | continuous-ish (`B_1D`) | `density` |
+| diagonal | discrete-ish | `impulse` — a density over repeated values would smear a pmf |
+| off-diagonal | both discrete (`K_2D` per axis) | `tile` |
+| off-diagonal | both continuous | `hist2d` |
+| off-diagonal | mixed | `tile`, continuous axis binned |
+
+Conventions shared with the theoretical version, by design — change both or
+neither: lower triangle only, `JOINT_PAIRS_MAX_DIM` cap, `JOINT_PAIRS_PANEL_SIZE`
+per panel, `JOINT_PAIRS_OVERLAY_ERROR` when the figure already has a plot,
+`X1`-style labels on the outer edges only, `"Pairs Plot"` suptitle.
+
+Three implementation notes:
+- **Diagonal panels route through `.plot()`** (full reuse of the 1-D dispatch)
+  after `plt.sca(ax)` — which works because every helper draws on `plt.gca()`.
+  **Joint panels call `make_tile`/`make_hist2d` directly**, because the 2-D
+  dispatch hardcodes `colorbar=not marginal` and a colorbar per panel would
+  spend the figure on scales instead of data.
+- **One bin count for the whole matrix.** Equal-width bins over the same column
+  of data with the same count give identical edges, which is what makes a column
+  comparable. Don't pass `bins` to `make_tile` when both axes are discrete — it
+  warns.
+- `dims` is only meaningful with `pairs=True`; on its own it raises rather than
+  leaking into matplotlib.
 
 ## Testing Requirements
 
@@ -493,8 +605,10 @@ plotting of 3+ variables is not yet supported and what to do instead.
 | `test_random_walk.py` | `RandomWalk` |
 | `test_time_series.py` | `MA` (and the rest of the time-series family as it lands) |
 | `test_hitting_times.py` | `hitting_time` |
+| `test_continuous_time_processes.py` | The interface **every** continuous-time discrete-state process shares (see "Continuous-Time, Discrete-State Processes" below) — table-driven over all of them |
 | `test_diffusion_process.py` | Diffusion processes |
 | `test_cir.py` | The `CIR` process |
+| `test_merton.py` | The `MertonJumpDiffusion` process |
 | `test_random_processes.py` | Random processes |
 | `test_independence.py` | `AssumeIndependent` |
 | `test_index_sets.py` | Index sets |
