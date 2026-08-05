@@ -1,3 +1,4 @@
+import math
 import numbers
 
 import numpy as np
@@ -829,3 +830,466 @@ class AR(ARMA):
             initial=initial,
         )
         self.coefs = self.ar_coefs
+
+
+def _garch_is_stationary(arch_coefs, garch_coefs):
+    """Whether a GARCH process has a finite long-run variance.
+
+    True when the coefficients sum to less than 1. At 1 or above the
+    variance keeps growing instead of settling, so there is no
+    unconditional variance to speak of.
+
+    Parameters
+    ----------
+    arch_coefs, garch_coefs : list of float
+        The two sets of coefficients.
+
+    Returns
+    -------
+    bool
+        ``True`` if the process settles down.
+    """
+    return sum(arch_coefs) + sum(garch_coefs) < 1
+
+
+def _unconditional_variance(omega, arch_coefs, garch_coefs):
+    """The long-run variance ``omega / (1 - sum of all coefficients)``.
+
+    Parameters
+    ----------
+    omega : float
+        The constant term in the variance recursion.
+    arch_coefs, garch_coefs : list of float
+        The two sets of coefficients. Must sum to less than 1.
+
+    Returns
+    -------
+    float
+        The variance the process settles at.
+    """
+    return omega / (1 - sum(arch_coefs) - sum(garch_coefs))
+
+
+def _validate_garch(omega, arch_coefs, garch_coefs, noise_dist, initial):
+    """Check the parameters of a GARCH process.
+
+    Raises
+    ------
+    TypeError
+        If a coefficient list is not a sequence of numbers, ``omega`` or
+        ``initial`` is not a number, or ``noise_dist`` is neither a
+        ``Distribution`` nor an ``RV``.
+    ValueError
+        If ``omega`` or ``initial`` is not positive, any coefficient is
+        negative, or ``initial="stationary"`` is asked of a process that
+        does not settle down.
+    """
+    for name, coefs in (("arch_coefs", arch_coefs), ("garch_coefs", garch_coefs)):
+        try:
+            bad = isinstance(coefs, (str, bytes)) or any(
+                not isinstance(c, numbers.Real) for c in coefs
+            )
+        except TypeError:
+            bad = True
+        if bad:
+            raise TypeError(
+                f"{name} must be a list of numbers, for example {name}=[0.1]. "
+                f"Use [] for none of that kind of term."
+            )
+        if any(c < 0 for c in coefs):
+            raise ValueError(
+                f"{name} cannot contain negative numbers: they weight "
+                f"squared quantities in the variance recursion, so a "
+                f"negative one could make the variance negative."
+            )
+    if not isinstance(omega, numbers.Real):
+        raise TypeError(
+            f"omega must be a number, got {type(omega).__name__}. It is the "
+            f"constant term in the variance, for example omega=0.2."
+        )
+    if omega <= 0:
+        raise ValueError(
+            f"omega must be positive, got {omega}. With omega at 0 the "
+            f"variance can collapse to 0 and the process dies out."
+        )
+    if not isinstance(noise_dist, (Distribution, RV)):
+        raise TypeError(
+            f"noise_dist must be a Symbulate Distribution (e.g. Normal(0, 1)) "
+            f"or a random variable built from one, got "
+            f"{type(noise_dist).__name__}. It is the standardized shock that "
+            f"gets scaled by the current volatility."
+        )
+    if initial is None:
+        return
+    if initial == STATIONARY:
+        if not _garch_is_stationary(arch_coefs, garch_coefs):
+            raise ValueError(
+                'initial="stationary" is impossible when the coefficients sum '
+                "to 1 or more: the variance never settles, so there is no "
+                "long-run value to start from. Give a positive starting "
+                "variance instead, for example initial=1."
+            )
+        return
+    if not isinstance(initial, numbers.Real):
+        raise TypeError(
+            f"initial must be a positive number (the starting variance) or "
+            f'the word "stationary", got {type(initial).__name__}.'
+        )
+    if initial <= 0:
+        raise ValueError(
+            f"initial must be positive, got {initial}. It is the variance the "
+            f"process starts from, and a variance cannot be zero or negative."
+        )
+
+
+class GARCHResult(InfiniteVector):
+    """One simulated sample path of a GARCH process.
+
+    Two sequences are built side by side and cached: the variance at each
+    time, and the value itself. Reading ``path[500]`` and then ``path[10]``
+    describes one single path, the same lazily-extending pattern the other
+    processes here use.
+
+    Parameters
+    ----------
+    shocks : InfiniteVector
+        The i.i.d. standardized shocks, one per time step.
+    omega : float
+        The constant term in the variance recursion.
+    arch_coefs : list of float
+        The weight on each previous *squared value*.
+    garch_coefs : list of float
+        The weight on each previous *variance*.
+    initial : float
+        The variance the recursion starts from, used for every time before
+        0 for both the variance and the squared value.
+
+    Attributes
+    ----------
+    shocks : InfiniteVector
+        The standardized shocks.
+    omega : float
+        The constant term.
+    arch_coefs, garch_coefs : list of float
+        The two sets of coefficients.
+    initial : float
+        The starting variance.
+    generated : list
+        The values generated so far.
+    variances : list
+        The variance at each of those times.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> path = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85],
+    ...              noise_dist=Bernoulli(1), initial=4).draw()
+    >>> float(path[0])  # variance stays at 4, and the shock is always 1
+    2.0
+    """
+
+    def __init__(self, shocks, omega, arch_coefs, garch_coefs, initial):
+        """Create one simulated sample path of a GARCH process."""
+        self.shocks = shocks
+        self.omega = omega
+        self.arch_coefs = list(arch_coefs)
+        self.garch_coefs = list(garch_coefs)
+        self.initial = initial
+        # Not `self.values`: InfiniteTuple already uses that name for its own
+        # cache, and writing to it here would interleave two sets of appends.
+        self.generated = []
+        self.variances = []
+
+        def squared_at(index):
+            # Before time 0 the process is treated as having been sitting at
+            # the starting variance, so a squared value equals it too.
+            if index >= 0:
+                return self.generated[index] ** 2
+            return self.initial
+
+        def variance_at(index):
+            if index >= 0:
+                return self.variances[index]
+            return self.initial
+
+        def _func(n):
+            m = len(self.generated)
+            if n >= m:
+                for k in range(m, n + 1):
+                    var = self.omega
+                    for i, a in enumerate(self.arch_coefs, start=1):
+                        var += a * squared_at(k - i)
+                    for j, b in enumerate(self.garch_coefs, start=1):
+                        var += b * variance_at(k - j)
+                    self.variances.append(var)
+                    self.generated.append(math.sqrt(var) * self.shocks[k])
+            return self.generated[n]
+
+        super().__init__(_func)
+
+    def get_variances(self):
+        """Return the variance at each time step of this path.
+
+        The variance is what a GARCH model is really about -- the value
+        itself is just a standardized shock scaled by it -- so it is worth
+        being able to look at directly.
+
+        Returns
+        -------
+        list of float
+            The variances at the times generated so far.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> path = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85],
+        ...              noise_dist=Bernoulli(1), initial=4).draw()
+        >>> path[3]  # generate a few values first
+        2.0
+        >>> [round(v, 4) for v in path.get_variances()]
+        [4.0, 4.0, 4.0, 4.0]
+        """
+        return self.variances
+
+
+class GARCHProbabilitySpace(ProbabilitySpace):
+    """The probability space underlying a GARCH process.
+
+    Each draw produces one simulated sample path.
+
+    Parameters
+    ----------
+    omega : float
+        The constant term in the variance recursion. Must be positive.
+    arch_coefs : list of float
+        The weight on each previous squared value. Must be non-negative.
+    garch_coefs : list of float, optional
+        The weight on each previous variance. Must be non-negative. Default
+        is none, which gives an ARCH process.
+    noise_dist : Distribution or RV, optional
+        The standardized shock. Default is ``Normal(0, 1)``.
+    initial : float or str, optional
+        The variance the process starts from. Default is the long-run
+        variance where one exists, so the process is already settled.
+
+    Attributes
+    ----------
+    omega : float
+        The constant term.
+    arch_coefs, garch_coefs : list of float
+        The two sets of coefficients.
+    noise_dist : Distribution or RV
+        The standardized shock.
+    initial : float
+        The starting variance, resolved to a number.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> space = GARCHProbabilitySpace(omega=0.2, arch_coefs=[0.1],
+    ...                               garch_coefs=[0.85])
+    >>> round(space.initial, 6)  # the long-run variance, 0.2 / (1 - 0.95)
+    4.0
+    """
+
+    def __init__(
+        self, omega, arch_coefs, garch_coefs=None, noise_dist=None, initial=None
+    ):
+        """Create a probability space for a GARCH process."""
+        if garch_coefs is None:
+            garch_coefs = []
+        if noise_dist is None:
+            noise_dist = Normal(0, 1)
+        _validate_garch(omega, arch_coefs, garch_coefs, noise_dist, initial)
+
+        self.omega = omega
+        self.arch_coefs = list(arch_coefs)
+        self.garch_coefs = list(garch_coefs)
+        self.noise_dist = noise_dist
+
+        settles = _garch_is_stationary(self.arch_coefs, self.garch_coefs)
+        if initial is None or initial == STATIONARY:
+            # Starting at the long-run variance means there is no warm-up:
+            # the variance is already where it belongs at time 0. When the
+            # process does not settle there is no such value, so fall back to
+            # omega and let the warm-up show.
+            self.initial = (
+                _unconditional_variance(omega, self.arch_coefs, self.garch_coefs)
+                if settles
+                else omega
+            )
+        else:
+            self.initial = initial
+
+        def draw():
+            return GARCHResult(
+                _iid_source(self.noise_dist),
+                self.omega,
+                self.arch_coefs,
+                self.garch_coefs,
+                self.initial,
+            )
+
+        super().__init__(draw)
+
+
+class GARCH(RV):
+    """A GARCH process: the size of the swings is itself random and clusters.
+
+    Most processes here have a fixed amount of randomness. A GARCH lets the
+    *volatility* change over time, and makes it depend on what just
+    happened::
+
+        variance[n] = omega + arch_coefs[0] * X[n-1] ** 2 + ...
+                            + garch_coefs[0] * variance[n-1] + ...
+        X[n]        = sqrt(variance[n]) * shock[n]
+
+    A big move makes the next variance bigger, which makes another big move
+    more likely. That is **volatility clustering** -- calm stretches and
+    turbulent stretches, rather than a steady hum -- and it is the single
+    most recognisable feature of financial returns, which is what this model
+    was invented for.
+
+    The values themselves are uncorrelated, like plain noise; it is their
+    *sizes* that are correlated. That is what makes a GARCH different from
+    an :class:`AR`, where the values are correlated directly.
+
+    Parameters
+    ----------
+    omega : float
+        The constant term in the variance. Must be positive.
+    arch_coefs : list of float
+        The weight on each previous squared value -- how strongly a big move
+        raises the next variance. Must be non-negative.
+    garch_coefs : list of float, optional
+        The weight on each previous variance -- how much the volatility
+        level persists. Must be non-negative. Default is none, which gives
+        an :class:`ARCH` process.
+    noise_dist : Distribution or RV, optional
+        The standardized shock that gets scaled by the volatility. Default
+        is ``Normal(0, 1)``.
+    initial : float or str, optional
+        The variance the process starts from. By default this is the
+        process's own long-run variance, so there is no warm-up. Give a
+        number to start somewhere else and watch it settle.
+
+    Attributes
+    ----------
+    prob_space : GARCHProbabilitySpace
+        The underlying probability space used to generate sample paths.
+    omega : float
+        The constant term.
+    arch_coefs, garch_coefs : list of float
+        The two sets of coefficients.
+    noise_dist : Distribution or RV
+        The standardized shock.
+    initial : float
+        The starting variance, resolved to a number.
+
+    Notes
+    -----
+    The classic model is GARCH(1,1) -- one coefficient of each kind:
+    ``GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85])``. Longer lists
+    give higher orders.
+
+    The process settles down when the coefficients sum to less than 1, and
+    its long-run variance is then ``omega / (1 - sum of all coefficients)``.
+    Since that is where ``initial`` starts by default, every value has the
+    same variance from time 0 onward. Coefficients summing to 1 or more are
+    allowed and simulate fine -- the variance simply grows instead of
+    settling -- but ``initial="stationary"`` rejects them, since there is no
+    long-run value to start from.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85])
+    >>> round(X.initial, 6)  # the long-run variance, 0.2 / (1 - 0.95)
+    4.0
+    >>> X[20].sim(1000).var()  # close to 4  # doctest: +SKIP
+    3.96
+    >>> X[20].sim(1000).mean()  # values are centered at 0  # doctest: +SKIP
+    -0.02
+
+    See Also
+    --------
+    ARCH : The special case with no variance-persistence terms.
+    AR : A process whose *values*, rather than their sizes, are correlated.
+    """
+
+    def __init__(
+        self, omega, arch_coefs, garch_coefs=None, noise_dist=None, initial=None
+    ):
+        """Create a GARCH process."""
+        prob_space = GARCHProbabilitySpace(
+            omega=omega,
+            arch_coefs=arch_coefs,
+            garch_coefs=garch_coefs,
+            noise_dist=noise_dist,
+            initial=initial,
+        )
+        self.omega = prob_space.omega
+        self.arch_coefs = prob_space.arch_coefs
+        self.garch_coefs = prob_space.garch_coefs
+        self.noise_dist = prob_space.noise_dist
+        self.initial = prob_space.initial
+        super().__init__(prob_space)
+
+
+class ARCH(GARCH):
+    """An ARCH process: today's variance depends on recent squared values.
+
+    The original volatility-clustering model, and the special case of
+    :class:`GARCH` with no variance-persistence terms::
+
+        variance[n] = omega + coefs[0] * X[n-1] ** 2 + ...
+        X[n]        = sqrt(variance[n]) * shock[n]
+
+    A big move raises the variance for the next few steps, and then its
+    influence stops -- the memory reaches back exactly ``len(coefs)`` steps.
+    Adding ``garch_coefs`` to carry the variance level forward as well is
+    what turns it into a GARCH, and is why a GARCH(1,1) usually fits real
+    data with far fewer parameters than a long ARCH.
+
+    Parameters
+    ----------
+    omega : float
+        The constant term in the variance. Must be positive.
+    coefs : list of float
+        The weight on each previous squared value. Must be non-negative.
+    noise_dist : Distribution or RV, optional
+        The standardized shock. Default is ``Normal(0, 1)``.
+    initial : float or str, optional
+        The variance the process starts from. Defaults to the long-run
+        variance, so there is no warm-up.
+
+    Attributes
+    ----------
+    coefs : list of float
+        The weight on each previous squared value (the same list as
+        ``arch_coefs``).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = ARCH(omega=0.5, coefs=[0.5])
+    >>> X.initial  # long-run variance 0.5 / (1 - 0.5)
+    1.0
+    >>> X.garch_coefs
+    []
+
+    See Also
+    --------
+    GARCH : The general case, which also carries the variance level forward.
+    """
+
+    def __init__(self, omega, coefs, noise_dist=None, initial=None):
+        """Create an ARCH process."""
+        super().__init__(
+            omega=omega,
+            arch_coefs=coefs,
+            garch_coefs=None,
+            noise_dist=noise_dist,
+            initial=initial,
+        )
+        self.coefs = self.arch_coefs
