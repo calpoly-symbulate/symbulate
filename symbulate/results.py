@@ -36,6 +36,13 @@ from .plot import (
     JOINT_PAIRS_PANEL_SIZE,
     add_pairs_panel_colorbar,
     MARGINAL_OVERLAY_ERROR,
+    setup_marginal_axes,
+    pairs_colorbar_pair_label,
+    advance_pairs_diagonal_color,
+    align_pairs_columns,
+    PAIRS_SUPTITLE,
+    thin_marginal_frequency_ticks,
+    marginal_rug_tick_height,
     auto_jitter_mode,
     classify_values,
     default_plot_type,
@@ -186,6 +193,7 @@ def _sim_with_progress(draw_func, n, progress_delay=5.0, bar_width=30):
 
 def _draw_marginal_panel(
     ax_marg,
+    main_ax,
     values,
     discrete,
     main_type,
@@ -224,6 +232,9 @@ def _draw_marginal_panel(
     ----------
     ax_marg : matplotlib.axes.Axes
         The marginal panel to draw on (``ax_marg_x`` or ``ax_marg_y``).
+    main_ax : matplotlib.axes.Axes
+        The joint panel. Only its size is used, to scale a rug's ticks so
+        they match the joint panel's (see ``marginal_rug_tick_height``).
     values : numpy.ndarray
         This axis's simulated values (``x`` or ``y``).
     discrete : bool
@@ -283,6 +294,7 @@ def _draw_marginal_panel(
         make_density(
             values, ax_marg, color, bandwidth=bandwidth, orientation=orientation
         )
+        thin_marginal_frequency_ticks(ax_marg, orientation)
         ax_marg.set_title("")
         return
 
@@ -291,9 +303,14 @@ def _draw_marginal_panel(
     if discrete and offset is not None:
         plot_values = np.searchsorted(np.unique(values), values) + offset
 
+    # A dot plot always shows counts; the others show counts only with
+    # normalize=False. A count axis gets whole-number ticks -- there is no
+    # such thing as half a simulated value.
+    counts = normalize is False
     if discrete:
         if small_n:
             make_dotplot(plot_values, ax_marg, color, orientation=orientation)
+            counts = True
         else:
             make_impulse(
                 plot_values,
@@ -304,7 +321,16 @@ def _draw_marginal_panel(
             )
     else:
         if small_n:
-            make_rug(plot_values, ax_marg, color, orientation=orientation)
+            # Sized against the joint panel rather than this strip, so a
+            # marginal rug's ticks are the same length as the joint panel's
+            # own rug ticks instead of shrinking with the strip.
+            make_rug(
+                plot_values,
+                ax_marg,
+                color,
+                orientation=orientation,
+                tick_height=marginal_rug_tick_height(main_ax, ax_marg, orientation),
+            )
         else:
             make_hist(
                 plot_values,
@@ -314,6 +340,7 @@ def _draw_marginal_panel(
                 normalize=normalize,
                 orientation=orientation,
             )
+    thin_marginal_frequency_ticks(ax_marg, orientation, integer=counts)
     ax_marg.set_title("")
 
 
@@ -1659,9 +1686,13 @@ class RVResults(Results):
         # (mappable, row, col) per joint panel, so each can be given its own
         # colorbar once the layout has settled (see the end of this method).
         joint_panels = []
+        # Every panel by cell, so the columns can be put on one x scale once
+        # they have all drawn (see align_pairs_columns).
+        cells = {}
         for row in range(k):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
+                cells[(row, col)] = ax
                 if row == col:
                     # The diagonal is this variable on its own, so it is
                     # exactly the univariate plot -- reuse the whole 1-D
@@ -1669,12 +1700,25 @@ class RVResults(Results):
                     # on plt.gca(), so making this panel current is what
                     # routes the plot into it.
                     plt.sca(ax)
+                    # Walk the palette down the diagonal, so each variable's
+                    # own distribution reads as its own series.
+                    advance_pairs_diagonal_color(ax, row)
+                    diagonal_type = self._pairs_diagonal_type(chosen[row])
+                    diagonal_kwargs = dict(kwargs)
+                    if diagonal_type == "hist":
+                        # The same bin count the joint panels use, so a column
+                        # really is one binning of one variable -- a histogram
+                        # on the diagonal over a mesh whose columns are those
+                        # same bins. Only passed to the one diagonal type that
+                        # bins: the others draw every value where it falls and
+                        # warn if handed a bin count.
+                        diagonal_kwargs["bins"] = panel_bins
                     self._pairs_subset((chosen[row],)).plot(
-                        type=self._pairs_diagonal_type(chosen[row]),
+                        type=diagonal_type,
                         alpha=alpha,
                         normalize=normalize,
                         suggest=False,
-                        **kwargs,
+                        **diagonal_kwargs,
                     )
                 else:
                     joint_panels.append(
@@ -1695,7 +1739,7 @@ class RVResults(Results):
                 # Drop the title each panel drew for itself. On its own a plot
                 # is titled with its type ("Density Curve", "Tile Plot"), but
                 # in a matrix that repeats the same two or three words down
-                # every panel and crowds them; the figure's own "Pairs Plot"
+                # every panel and crowds them; the figure's own suptitle
                 # says what the layout is. The theoretical pairs plot clears
                 # its panels' titles the same way.
                 ax.set_title("")
@@ -1726,7 +1770,12 @@ class RVResults(Results):
                 if row == k - 1 and col == 0:
                     corner = ax
 
-        fig.suptitle("Pairs Plot")
+        # A column all shows one variable, so its panels have to line up --
+        # a stem on the diagonal directly above the tile cell for that value.
+        # Each panel type frames its own axes differently, so this is not free.
+        align_pairs_columns(cells)
+
+        fig.suptitle(PAIRS_SUPTITLE)
         fig.tight_layout()
 
         # Each joint panel gets its own colorbar, in the empty cell mirroring
@@ -1740,11 +1789,7 @@ class RVResults(Results):
                 fig,
                 gs[col, row].get_position(fig),
                 mappable,
-                "%s & %s"
-                % (
-                    self._pairs_variable_label(chosen[col]),
-                    self._pairs_variable_label(chosen[row]),
-                ),
+                pairs_colorbar_pair_label(chosen[col], chosen[row]),
                 quantity,
             )
 
@@ -2005,6 +2050,14 @@ class RVResults(Results):
 
         Notes
         -----
+        With ``marginal=True``, a **two-variable** plot adds a strip beside
+        each axis -- above for x, to the right for y -- showing that
+        variable's own (marginal) distribution, drawn the way a plot of it
+        alone would be. Because those three panels fill the figure, such a
+        plot cannot share a figure with another plot. (A *theoretical*
+        distribution's two-variable plot always shows them and takes no
+        such keyword; see ``MultivariateDistribution.plot``.)
+
         With three or more variables there is no single joint plot, so
         ``.plot()`` draws a **matrix of every pair**: each variable's own
         distribution down the diagonal, and each pair's joint distribution
@@ -2053,11 +2106,11 @@ class RVResults(Results):
                     "e.g. .plot(type='hist', marginal=True)."
                 )
 
-        # Overlay policy, hard-error tier: a prior marginal=True plot built
-        # a three-panel layout on this figure that a second plot can't
-        # share. Fail with a student-friendly message instead of silently
-        # drawing into one of the marginal strips. (A fresh Jupyter cell
-        # gets a fresh figure, so this only fires on a genuine second plot.)
+        # Overlay policy, hard-error tier: a prior two-variable plot built a
+        # three-panel layout on this figure that a second plot can't share.
+        # Fail with a student-friendly message instead of silently drawing
+        # into one of the marginal strips. (A fresh Jupyter cell gets a fresh
+        # figure, so this only fires on a genuine second plot.)
         if getattr(plt.gcf(), "_symbulate_marginal", False):
             raise ValueError(MARGINAL_OVERLAY_ERROR)
 
@@ -2349,25 +2402,15 @@ class RVResults(Results):
 
             if marginal:
                 fig = plt.gcf()
-                # A marginal layout builds its own three-panel GridSpec, so
-                # it can't be retrofitted onto a figure that already has a
-                # plot on it. Fail the same way overlaying onto a marginal
-                # layout does (see MARGINAL_OVERLAY_ERROR) rather than
-                # stacking a second GridSpec on top of existing content.
-                if fig.axes:
-                    raise ValueError(MARGINAL_OVERLAY_ERROR)
-                # Tag the figure so a later .plot() call hits the hard-error
-                # guard at the top of this method instead of drawing into
-                # one of the marginal panels.
-                fig._symbulate_marginal = True
-                # Narrow the right margin so a colormap-based main panel's
-                # colorbar has room on the far right (add_colorbar places it
-                # there for the marginal layout); the non-colorbar plot types
-                # simply leave that strip empty.
-                gs = GridSpec(4, 4, right=0.84)
-                ax = fig.add_subplot(gs[1:4, 0:3])
-                ax_marg_x = fig.add_subplot(gs[0, 0:3])
-                ax_marg_y = fig.add_subplot(gs[1:4, 3])
+                # Builds its own three-panel GridSpec, so it can't be
+                # retrofitted onto a figure that already has a plot on it --
+                # setup_marginal_axes raises MARGINAL_OVERLAY_ERROR if it is
+                # asked to, the same way overlaying *onto* this layout does.
+                ax, ax_marg_x, ax_marg_y = setup_marginal_axes(fig)
+                # The helpers all draw on plt.gca(), so make the joint panel
+                # current -- it is also the panel this call's SymbulatePlot
+                # wraps and the one a reader means by "the plot".
+                plt.sca(ax)
                 color = get_next_color(ax)
             else:
                 fig = plt.gcf()
@@ -2623,6 +2666,7 @@ class RVResults(Results):
                 marg_y_color = get_next_color(ax)
                 _draw_marginal_panel(
                     ax_marg_x,
+                    ax,
                     x,
                     discrete_x,
                     _resolved_main_type_x,
@@ -2637,6 +2681,7 @@ class RVResults(Results):
                 )
                 _draw_marginal_panel(
                     ax_marg_y,
+                    ax,
                     y,
                     discrete_y,
                     _resolved_main_type_y,
@@ -2673,6 +2718,11 @@ class RVResults(Results):
                 # The marginal layout has no room for the center panel's
                 # title -- it would collide with the top marginal panel.
                 ax.set_title("")
+                # Leave the joint panel current. Drawing the strips and the
+                # colorbar moved plt.gca() off it (fig.add_axes makes its new
+                # axes current), and the joint panel is the one plt.gca()
+                # should mean after a two-variable plot.
+                plt.sca(ax)
         elif self.index_set is None and _is_categorical_1d(self.results):
             # 1D categorical (string) outcomes. These are not numbers, so
             # they get dim=None and skip the dim == 1 branch, but they are a
@@ -2724,7 +2774,12 @@ class RVResults(Results):
             kwargs.setdefault("label", "_nolegend_")
             for result in self.results:
                 result.plot(alpha=alpha, color=color, **kwargs)
-            plt.xlabel("Index")
+            # No x-label set here: each result already named its own axis when
+            # it drew, and it knows which it is. A tuple or vector is plotted
+            # against its position, so it says "Index"; a random process's path
+            # is plotted against time, so it says "Time". Forcing "Index" on
+            # every one of them relabeled a Brownian motion's clock as an
+            # index.
 
         # Print the suggestion notes after the plot has rendered: the
         # plot being shown with its reasonable alternatives, and -- for

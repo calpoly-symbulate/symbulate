@@ -17,10 +17,17 @@ from .plot import (
     make_joint_pdf,
     make_joint_pmf,
     ECDF_LINEWIDTH,
+    JOINT_CBAR_DECIMALS,
     JOINT_PAIRS_MAX_DIM,
+    setup_marginal_axes,
+    pairs_colorbar_pair_label,
+    advance_pairs_diagonal_color,
+    align_pairs_columns,
+    thin_marginal_frequency_ticks,
     JOINT_PMF_MAX_CELLS,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
+    add_colorbar,
     add_pairs_panel_colorbar,
     SHADE_COLOR,
     SHADE_ALPHA,
@@ -5290,7 +5297,23 @@ class MultivariateDistribution(Distribution):
         """
         n = self._n_components()
         free = self._free_dim()
-        if free < 2:
+
+        # A single number means that one variable, the same as a one-element
+        # list: variables=2 and variables=[2] both ask for the 2nd variable's
+        # own distribution. Normalized here so everything below sees a
+        # sequence, and so the range and whole-number checks apply to it too.
+        if isinstance(variables, numbers.Integral) and not isinstance(variables, bool):
+            variables = (variables,)
+
+        # Naming one variable asks for that variable's own distribution, which
+        # exists no matter how the rest of them are constrained -- so this is
+        # checked before the "needs two directions" gate below. Plotting one
+        # marginal of a two-category Multinomial is a reasonable thing to ask
+        # for, even though its *joint* plot is refused.
+        one_variable = (
+            isinstance(variables, (tuple, list, np.ndarray)) and len(variables) == 1
+        )
+        if free < 2 and not one_variable:
             raise Exception(
                 "A joint plot needs two variables, and this distribution "
                 "varies in only one direction, so there is nothing to plot "
@@ -5312,27 +5335,30 @@ class MultivariateDistribution(Distribution):
                 # every pair at once rather than asking which one to pick.
                 variables = tuple(range(n))
 
-        # Checked before converting, so a single number or other non-sequence
-        # reports this instead of a cryptic TypeError from the conversion.
+        # Checked before converting, so a non-sequence that isn't a single
+        # variable number reports this instead of a cryptic TypeError from the
+        # conversion.
         if not isinstance(variables, (tuple, list, np.ndarray)):
             raise Exception(
-                "variables must be a list or tuple of variable numbers -- for "
-                "example variables=[0, 2] for the 1st and 3rd, or "
+                "variables must be a variable number or a list of them -- for "
+                "example variables=2 for the 3rd variable on its own, "
+                "variables=[0, 2] for the 1st and 3rd together, or "
                 "variables=[0, 1, 3] for the 1st, 2nd and 4th. You passed "
                 "variables=%r." % (variables,)
             )
         variables = tuple(variables)
 
-        # Two variables have one joint distribution between them, so they are
-        # drawn as one plot; any more than that becomes a matrix of pairs.
+        # One variable is its own distribution, two have one joint
+        # distribution between them, and more become a matrix of every pair.
         pairs = len(variables) > 2
-        if len(variables) < 2:
+        if len(variables) < 1:
             raise Exception(
-                "variables chooses which variables to plot, so it needs at least "
-                "two -- name two for their joint distribution, for example "
-                "variables=(0, 2), or more for a matrix of every pair among them, "
-                "for example variables=(0, 1, 3). You passed variables=%r."
-                % (variables,)
+                "variables chooses which variables to plot, so it needs at "
+                "least one -- name one for that variable's own distribution, "
+                "for example variables=2; two for their joint distribution, "
+                "for example variables=(0, 2); or more for a matrix of every "
+                "pair among them, for example variables=(0, 1, 3). You passed "
+                "variables=%r." % (variables,)
             )
 
         for d in variables:
@@ -5425,6 +5451,68 @@ class MultivariateDistribution(Distribution):
             **kwargs,
         )
 
+    def _plot_marginal_panel(self, i, ax, orientation, alpha=None):
+        """Draw one variable's own distribution in a strip beside a joint plot.
+
+        The strip is that variable's marginal pdf or pmf -- the exact
+        closed-form one from :meth:`_marginal_1d`, not a slice of the joint
+        surface -- drawn by the univariate :meth:`Distribution.plot` so it
+        looks the same as plotting that variable on its own.
+
+        The strip to the *right* of a joint panel has to run sideways, with
+        the variable on the y-axis, so it lines up with the joint panel's y
+        variable. Rather than reimplement the univariate plot in the other
+        direction, this draws it the usual way and then transposes what was
+        drawn -- so the two directions cannot drift apart in styling.
+
+        Parameters
+        ----------
+        i : int
+            Index of the component, counting from 0.
+        ax : matplotlib.axes.Axes
+            The strip to draw on.
+        orientation : {"vertical", "horizontal"}
+            ``"vertical"`` puts the variable on the x-axis, for the strip
+            above a joint panel; ``"horizontal"`` puts it on the y-axis, for
+            the strip to the right of one.
+        alpha : float, optional
+            Transparency of the curve.
+        """
+        # Framed on the same window the joint panel uses, so the strip covers
+        # the variable over exactly the range the joint panel shows it over.
+        self._marginal_1d(i).plot(xlim=self._plot_window(i), ax=ax, alpha=alpha)
+        # Each strip is one variable's distribution, not a plot in its own
+        # right -- the figure's title names what the whole thing is.
+        ax.set_title("")
+        # A strip is a fraction of the joint panel's size, so the tick count
+        # a full-size axes would take crowds into itself here.
+        thin_marginal_frequency_ticks(ax, orientation)
+        if orientation == "vertical":
+            # The joint panel below already names this variable on its x-axis,
+            # and the two axes are shared, so the strip's own copy of the label
+            # would be clutter right next to it. The density/probability label
+            # stays: it is what the strip's height means.
+            ax.set_xlabel("")
+            return
+
+        # Turn the plot on its side: the values move to the y-axis and the
+        # density/probability to the x-axis. A continuous marginal is one
+        # curve (a Line2D); a discrete one is a dot per value (a
+        # PathCollection from scatter) plus a dashed connector.
+        for line in ax.lines:
+            xdata, ydata = line.get_data()
+            line.set_data(ydata, xdata)
+        for collection in ax.collections:
+            offsets = np.asarray(collection.get_offsets())
+            collection.set_offsets(offsets[:, ::-1])
+        value_lim, freq_lim = ax.get_xlim(), ax.get_ylim()
+        ax.set_xlim(*freq_lim)
+        ax.set_ylim(*value_lim)
+        # The labels transpose with the data: what named the height now names
+        # the width. The value label is dropped for the same reason as above.
+        ax.set_xlabel(ax.get_ylabel())
+        ax.set_ylabel("")
+
     def _plot_pairs(self, variables, contour, alpha=None, **kwargs):
         """Draw a matrix of every pair of the chosen variables.
 
@@ -5483,9 +5571,13 @@ class MultivariateDistribution(Distribution):
         # (mappable, row, col) per joint panel, so each can be given its own
         # colorbar once the layout has settled (see the end of this method).
         joint_panels = []
+        # Every panel by cell, so the columns can be put on one x scale once
+        # they have all drawn (see align_pairs_columns).
+        cells = {}
         for row in range(k):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
+                cells[(row, col)] = ax
                 if row == col:
                     # The diagonal is this variable on its own, so it is
                     # exactly the univariate plot -- reuse it rather than
@@ -5495,6 +5587,7 @@ class MultivariateDistribution(Distribution):
                     # column use, so every panel in a column really does
                     # cover the variable over the same range -- which is
                     # what makes hiding the inner x tick labels below safe.
+                    advance_pairs_diagonal_color(ax, row)
                     self._marginal_1d(variables[row]).plot(
                         xlim=self._plot_window(variables[row]), ax=ax, alpha=alpha
                     )
@@ -5552,6 +5645,12 @@ class MultivariateDistribution(Distribution):
         # matrix is an exact distribution -- a density for a continuous
         # family, a set of probabilities for a discrete one -- so the title
         # says which, rather than naming the layout.
+        # A column all shows one variable, so its panels have to line up: a
+        # mass on the diagonal directly above the joint pmf cell for that
+        # value. Each panel type frames its own axes differently, so this is
+        # not free -- and the simulated matrix uses the same helper.
+        align_pairs_columns(cells)
+
         fig.suptitle(
             "Probability Mass Functions"
             if self.discrete
@@ -5571,11 +5670,7 @@ class MultivariateDistribution(Distribution):
                 fig,
                 gs[col, row].get_position(fig),
                 mappable,
-                "%s & %s"
-                % (
-                    self._variable_label(variables[col]),
-                    self._variable_label(variables[row]),
-                ),
+                pairs_colorbar_pair_label(variables[col], variables[row]),
                 quantity,
             )
         return corner
@@ -5604,6 +5699,9 @@ class MultivariateDistribution(Distribution):
         - **One particular pair**: name the two variables you want with
           ``variables``, e.g. ``variables=(0, 2)`` for the 1st and 3rd. Naming three
           or more instead draws the matrix of just those.
+        - **One variable on its own**: name just it, e.g. ``variables=2``,
+          for that variable's own (marginal) distribution -- the same exact
+          curve the diagonal of the matrix shows.
 
         Each panel shows an *exact* distribution, not an approximation:
         every one of these families has a closed-form distribution for one
@@ -5612,13 +5710,17 @@ class MultivariateDistribution(Distribution):
 
         Parameters
         ----------
-        variables : tuple of int, optional
-            Which variables to plot, numbered from 0. Name exactly two for
-            their joint distribution, e.g. ``variables=(0, 2)`` for the 1st and
-            3rd; name three or more for a matrix of every pair among them.
-            Left out, a distribution of two freely varying variables draws
-            its one joint plot, and one of three or more draws the matrix of
-            all of them.
+        variables : int or sequence of int, optional
+            Which variables to plot, numbered from 0. Name **one** for that
+            variable's own distribution, e.g. ``variables=2`` (or
+            ``variables=[2]``) for the 3rd variable's marginal pdf/pmf;
+            **two** for their joint distribution, e.g. ``variables=(0, 2)``
+            for the 1st and 3rd; **three or more** for a matrix of every pair
+            among them. Left out, a distribution of two freely varying
+            variables draws its one joint plot, and one of three or more draws
+            the matrix of all of them. The panels are labeled by the numbers
+            asked for, so ``variables=[0, 2, 4]`` labels them "Variable 1",
+            "Variable 3" and "Variable 5".
         contour : bool, default True
             Whether to draw a continuous density surface as discrete
             contour bands with outlines between them, so a band can be
@@ -5644,10 +5746,11 @@ class MultivariateDistribution(Distribution):
         Raises
         ------
         Exception
-            If the distribution varies in only one direction (plot it as
-            the one-dimensional distribution it is); if ``variables`` does not
-            name at least two distinct, in-range variables; or if a matrix
-            would have more panels than fit.
+            If the distribution varies in only one direction and more than one
+            variable was asked for (plot it as the one-dimensional
+            distribution it is); if ``variables`` does not name at least one
+            distinct, in-range variable; or if a matrix would have more panels
+            than fit.
         ValueError
             If a pairs matrix is drawn on a figure that already has a plot
             on it, or if the removed ``pairs=`` keyword is passed.
@@ -5659,6 +5762,7 @@ class MultivariateDistribution(Distribution):
         >>> X = MultivariateNormal(mean=[1, 2, 3, 4], cov=np.eye(4))  # doctest: +SKIP
         >>> X.plot(variables=(0, 2))  # the 1st and 3rd variables  # doctest: +SKIP
         >>> X.plot()  # every pair at once, for three or more variables  # doctest: +SKIP
+        >>> X.plot(variables=2)  # just the 3rd variable's own distribution  # doctest: +SKIP
         >>> Multinomial(n=10, p=[0.5, 0.3, 0.2]).plot()  # doctest: +SKIP
         """
         # A joint plot shows a whole surface rather than one curve, so
@@ -5695,6 +5799,20 @@ class MultivariateDistribution(Distribution):
                 "4th."
             )
 
+        # A theoretical two-variable plot always shows each variable's own
+        # distribution beside the joint one, so there is nothing to switch on.
+        # (Simulated results *do* take marginal=, since a plot of data has
+        # reasons to want the bare joint panel -- overlaying two of them, for
+        # one. An exact distribution has no such need.)
+        if "marginal" in kwargs:
+            raise ValueError(
+                "marginal= is not needed here: a distribution's plot of two "
+                "variables always shows each variable's own distribution in a "
+                "strip beside the main panel, so .plot() alone does it. Drop "
+                "marginal=True. (Simulated results still take marginal= -- it "
+                "is only a distribution's own plot that always shows them.)"
+            )
+
         if "pairs" in kwargs:
             raise ValueError(
                 "pairs= is no longer needed: a distribution of three or more "
@@ -5705,21 +5823,85 @@ class MultivariateDistribution(Distribution):
 
         variables, pairs = self._resolve_variables(variables)
 
+        # One variable named: draw that variable's own distribution, which is
+        # the exact closed-form marginal -- the same curve the diagonal of a
+        # pairs matrix shows, and the same one plotting that marginal directly
+        # would give. No joint surface, so `contour` has nothing to apply to.
+        if len(variables) == 1:
+            (only,) = variables
+            plot = self._marginal_1d(only).plot(alpha=alpha, ax=ax, **kwargs)
+            # Name the variable rather than leaving the univariate plot's
+            # generic "Value": the caller asked for a numbered variable of this
+            # distribution, so say which one it is.
+            plot.ax.set_xlabel(self._variable_label(only))
+            return plot
+
         if pairs:
             ax = self._plot_pairs(variables, contour, alpha=alpha, **kwargs)
             return JointDistributionPlot(ax, self, variables)
 
-        # Use the current axes if a figure already exists, so a joint plot
-        # lands on the same axes as anything drawn before it, exactly like
-        # the univariate plot().
-        if ax is None:
-            ax = plt.gca()
-        # Advance the color cycle once per plot() call, as every plot type
-        # does. A joint plot colors by a colormap rather than the cycle, but
-        # skipping this would leave a curve drawn onto the same axes
-        # afterwards reusing a color already on the plot.
+        # An axes was handed in, so draw the joint distribution on it and
+        # nothing else: one axes has no room for the strips, and a caller
+        # who named the axes is placing this plot inside a layout of their
+        # own. Advance the color cycle once per plot() call, as every plot
+        # type does -- a joint plot colors by a colormap rather than the
+        # cycle, but skipping this would leave a curve drawn onto the same
+        # axes afterwards reusing a color already on the plot.
+        if ax is not None:
+            get_next_color(ax)
+            self._plot_joint(
+                variables[0], variables[1], ax, contour, alpha=alpha, **kwargs
+            )
+            return JointDistributionPlot(ax, self, variables)
+
+        # Two variables are shown on three panels: their joint distribution,
+        # plus each one's own distribution in a strip beside the matching
+        # axis. Built by the same helper the simulated side uses, so the two
+        # layouts stay identical.
+        fig = plt.gcf()
+        ax, ax_marg_x, ax_marg_y = setup_marginal_axes(fig)
+        plt.sca(ax)
         get_next_color(ax)
-        self._plot_joint(variables[0], variables[1], ax, contour, alpha=alpha, **kwargs)
+        # The joint helpers put their own colorbar immediately right of the
+        # axes, which here would land on top of the y strip -- so suppress it
+        # and let add_colorbar place it past the strip instead, exactly as a
+        # simulated two-variable plot does.
+        mappable = self._plot_joint(
+            variables[0],
+            variables[1],
+            ax,
+            contour,
+            colorbar=False,
+            alpha=alpha,
+            **kwargs,
+        )
+        quantity = "Probability" if self.discrete else "Density"
+        if mappable is not None:
+            add_colorbar(fig, True, mappable, quantity, decimals=JOINT_CBAR_DECIMALS)
+
+        self._plot_marginal_panel(variables[0], ax_marg_x, "vertical", alpha=alpha)
+        self._plot_marginal_panel(variables[1], ax_marg_y, "horizontal", alpha=alpha)
+        # Lock each strip to the joint panel's own final limits rather than
+        # re-deriving them, so the strip lines up with whatever extent the
+        # joint plot actually drew (a pmf mesh runs half a unit past its
+        # outermost values). sharex/sharey then keeps them together for any
+        # later interaction.
+        ax_marg_x.set_xlim(ax.get_xlim())
+        ax_marg_x.sharex(ax)
+        ax_marg_y.set_ylim(ax.get_ylim())
+        ax_marg_y.sharey(ax)
+        plt.setp(ax_marg_x.get_xticklabels(), visible=False)
+        plt.setp(ax_marg_y.get_yticklabels(), visible=False)
+        # There is no room for the joint panel's own title -- it would collide
+        # with the strip above it -- but what the plot is ("Joint Contour
+        # Plot", "Joint PMF Plot") is worth keeping, so it moves to the figure,
+        # above all three panels. Read back from the panel rather than
+        # re-derived, so it stays whatever the joint plot titled itself.
+        fig.suptitle(ax.get_title())
+        ax.set_title("")
+        # Leave the joint panel current: drawing the strips and the colorbar
+        # moved plt.gca() off it, and it is the panel plt.gca() should mean.
+        plt.sca(ax)
         return JointDistributionPlot(ax, self, variables)
 
     def __pow__(self, exponent):

@@ -713,6 +713,59 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
+## Decision: Two Variables Are Drawn Joint-Plus-Marginals (Theoretical Only)
+
+**Decision, as revised.** A **theoretical** plot of two variables
+(`MultivariateDistribution.plot()`) always shows the joint distribution *and*
+each variable's own, on three panels, and takes no keyword for it — a stray
+`marginal=` raises. A **simulated** plot (`RVResults.plot()`) keeps
+`marginal=` as an opt-in with default `False`, exactly as before.
+`type="marginal"` was never valid on either side and still isn't.
+
+This started out symmetric: both sides always drew the strips, and `marginal=`
+was removed from both. **That was reverted for simulated data**, because the
+three panels cannot be shared and so every 2-D overlay became a hard error —
+see "What it cost" below, which is the record of why the simulated side went
+back to opt-in. The asymmetry is the point: two plots of *data* are routinely
+compared on one set of axes, and an exact distribution has no such need.
+
+**Why.** The joint picture and the two one-variable pictures answer different
+questions, and a student reading a scatter or a tile plot needs both to
+interpret it — a dense band in the middle of a tile plot means something
+different when x is uniform than when x is itself concentrated there. Making
+it the default rather than a keyword follows "default behavior must work
+without configuration": the useful view should not have to be asked for.
+
+**How.** `setup_marginal_axes(fig)` in `plot.py` builds the layout and both
+sides call it, so the simulated and theoretical layouts cannot drift apart.
+The theoretical strips are the exact closed-form `_marginal_1d(i)`, drawn by
+the univariate `Distribution.plot()`; the right-hand strip is drawn upright
+and then **transposed** (`set_data` / `set_offsets`) rather than reimplemented
+sideways, so the two orientations can't diverge in styling.
+
+**What it cost when it applied to simulated data too — the reason that half
+was reverted.**
+
+- **No 2-D plot could be overlaid.** The three panels can't be shared, so
+  every two-variable plot became the hard-error tier of the overlay policy,
+  which made the readability-warning tier unreachable for 2-D data and meant
+  two scatters could no longer be compared on shared axes with a legend. This
+  is what sent the simulated side back to `marginal=False`; a theoretical
+  two-variable plot still cannot be overlaid, which is accepted.
+- **The title.** The strip sits where the main panel's title would go. A
+  theoretical two-variable plot moves it to `fig.suptitle`, since that is its
+  only title; a simulated `marginal=True` plot clears it, as it always did.
+- **`marginal=True` with `type="mosaic"` raises**, since a mosaic already
+  shows both marginals itself. Pairs-matrix panels never opt in, so they need
+  no guard.
+- **`ax=` on a theoretical plot draws the joint alone** — one axes has no room
+  for strips. This is the only route to a bare joint panel.
+
+**Not a concern:** mixed discrete/continuous pairs. `make_joint_pmf` lays its
+mesh out at real values, so a strip drawn at real values lines up without the
+rank-index conversion `tile` needs; and the strips are locked to the joint
+panel's own final limits rather than re-deriving any plot type's extent.
+
 ## Decision: Equal-Width Mosaic Columns (`equal_width=` on `make_mosaic`) — "100%-Stacked Bar Chart"
 
 **Status:** Implemented (`plot.py`'s `make_mosaic`; dispatched automatically via `RVResults.plot(type="mosaic", ...)`'s existing `**kwargs` passthrough — no `results.py` dispatch changes needed).
