@@ -713,13 +713,21 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ---
 
-## Decision: Two Variables Are Drawn Joint-Plus-Marginals (`marginal=` Removed)
+## Decision: Two Variables Are Drawn Joint-Plus-Marginals (Theoretical Only)
 
-**Decision.** A plot of two variables shows the joint distribution *and* each
-variable's own distribution, on three panels, always. On both sides:
-`RVResults.plot()` for simulated data and `MultivariateDistribution.plot()`
-for a theoretical one. The `marginal=` keyword that used to opt into the
-strips is **gone**; `type="marginal"` was never valid and still isn't.
+**Decision, as revised.** A **theoretical** plot of two variables
+(`MultivariateDistribution.plot()`) always shows the joint distribution *and*
+each variable's own, on three panels, and takes no keyword for it — a stray
+`marginal=` raises. A **simulated** plot (`RVResults.plot()`) keeps
+`marginal=` as an opt-in with default `False`, exactly as before.
+`type="marginal"` was never valid on either side and still isn't.
+
+This started out symmetric: both sides always drew the strips, and `marginal=`
+was removed from both. **That was reverted for simulated data**, because the
+three panels cannot be shared and so every 2-D overlay became a hard error —
+see "What it cost" below, which is the record of why the simulated side went
+back to opt-in. The asymmetry is the point: two plots of *data* are routinely
+compared on one set of axes, and an exact distribution has no such need.
 
 **Why.** The joint picture and the two one-variable pictures answer different
 questions, and a student reading a scatter or a tile plot needs both to
@@ -735,22 +743,21 @@ the univariate `Distribution.plot()`; the right-hand strip is drawn upright
 and then **transposed** (`set_data` / `set_offsets`) rather than reimplemented
 sideways, so the two orientations can't diverge in styling.
 
-**What it cost, accepted deliberately.**
+**What it cost when it applied to simulated data too — the reason that half
+was reverted.**
 
-- **No 2-D plot can be overlaid any more.** The three panels can't be shared,
-  so every two-variable plot is the hard-error tier of the overlay policy.
-  That makes the readability-warning tier unreachable for 2-D data:
-  `VIOLIN_OVERLAY_WARNING` and the two-tile / two-hist2d warnings are still in
-  `plot.py` but nothing reaches them. They are left in place as what that tier
-  would use if a no-strips escape hatch is ever added. Two 2-D scatters can no
-  longer be compared on shared axes with a legend.
-- **The plot's title moved to `fig.suptitle`.** The strip sits where the main
-  panel's title would go. Clearing it (what `marginal=True` used to do) threw
-  away what the plot *was*, so it moves to the figure instead. Read a 2-D
-  plot's type with `plt.gcf().get_suptitle()`.
-- **Two exceptions get no strips**, neither a user choice: a mosaic already
-  shows both marginals itself, and a panel of a pairs matrix has no room (the
-  matrix's diagonal is already each variable on its own).
+- **No 2-D plot could be overlaid.** The three panels can't be shared, so
+  every two-variable plot became the hard-error tier of the overlay policy,
+  which made the readability-warning tier unreachable for 2-D data and meant
+  two scatters could no longer be compared on shared axes with a legend. This
+  is what sent the simulated side back to `marginal=False`; a theoretical
+  two-variable plot still cannot be overlaid, which is accepted.
+- **The title.** The strip sits where the main panel's title would go. A
+  theoretical two-variable plot moves it to `fig.suptitle`, since that is its
+  only title; a simulated `marginal=True` plot clears it, as it always did.
+- **`marginal=True` with `type="mosaic"` raises**, since a mosaic already
+  shows both marginals itself. Pairs-matrix panels never opt in, so they need
+  no guard.
 - **`ax=` on a theoretical plot draws the joint alone** — one axes has no room
   for strips. This is the only route to a bare joint panel.
 

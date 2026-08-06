@@ -5799,6 +5799,20 @@ class MultivariateDistribution(Distribution):
                 "4th."
             )
 
+        # A theoretical two-variable plot always shows each variable's own
+        # distribution beside the joint one, so there is nothing to switch on.
+        # (Simulated results *do* take marginal=, since a plot of data has
+        # reasons to want the bare joint panel -- overlaying two of them, for
+        # one. An exact distribution has no such need.)
+        if "marginal" in kwargs:
+            raise ValueError(
+                "marginal= is not needed here: a distribution's plot of two "
+                "variables always shows each variable's own distribution in a "
+                "strip beside the main panel, so .plot() alone does it. Drop "
+                "marginal=True. (Simulated results still take marginal= -- it "
+                "is only a distribution's own plot that always shows them.)"
+            )
+
         if "pairs" in kwargs:
             raise ValueError(
                 "pairs= is no longer needed: a distribution of three or more "

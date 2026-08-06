@@ -1671,12 +1671,6 @@ class RVResults(Results):
         # follow rather than stacking two layouts on top of each other.
         if fig.axes:
             raise ValueError(JOINT_PAIRS_OVERLAY_ERROR)
-        # Tag the figure so a joint panel routed back through the 2-D dispatch
-        # (a scatter or a segmented rug -- see _draw_pairs_joint) draws just
-        # the panel, instead of building the three-panel layout a standalone
-        # two-variable plot gets. There is no room for strips inside a panel,
-        # and the matrix's diagonal already shows each variable on its own.
-        fig._symbulate_pairs = True
         # Size the figure to the grid, so panels stay readable as variables
         # are added instead of each one shrinking inside a single-plot figure.
         fig.set_size_inches(k * JOINT_PAIRS_PANEL_SIZE, k * JOINT_PAIRS_PANEL_SIZE)
@@ -1914,6 +1908,7 @@ class RVResults(Results):
         normalize=True,
         jitter=None,
         bins=None,
+        marginal=False,
         suggest=None,
         **kwargs,
     ):
@@ -1973,6 +1968,13 @@ class RVResults(Results):
             Number of bins for histograms (1D, 2D, and segmented), or
             for a continuous axis of a tile plot. Defaults to 30. Dot
             plots are never binned.
+        marginal : bool, default False
+            2D data only. If True, add two extra panels along the top
+            and right edges of the main plot showing each variable's
+            own (marginal) distribution -- a histogram or impulse plot
+            for each axis, matching that axis's discreteness. Combine
+            with ``type=`` to choose the main panel's plot type, e.g.
+            ``.plot(type="tile", marginal=True)``.
         suggest : bool or None, optional
             Whether to print a note under the plot naming the plot
             being shown and the reasonable alternatives for this
@@ -2048,16 +2050,13 @@ class RVResults(Results):
 
         Notes
         -----
-        **Two variables** are drawn on three panels: the two of them
-        together in the main panel, and each one on its own in a strip
-        beside the matching axis -- above for x, to the right for y. The
-        strips are that variable's own (marginal) distribution, drawn the
-        way a plot of it alone would be, so the joint picture and the two
-        one-variable pictures can be read against each other. This is the
-        layout for every two-variable plot type, so there is no keyword to
-        ask for it (``marginal=True`` used to be that keyword). Because the
-        three panels fill the figure, a two-variable plot cannot share a
-        figure with another plot.
+        With ``marginal=True``, a **two-variable** plot adds a strip beside
+        each axis -- above for x, to the right for y -- showing that
+        variable's own (marginal) distribution, drawn the way a plot of it
+        alone would be. Because those three panels fill the figure, such a
+        plot cannot share a figure with another plot. (A *theoretical*
+        distribution's two-variable plot always shows them and takes no
+        such keyword; see ``MultivariateDistribution.plot``.)
 
         With three or more variables there is no single joint plot, so
         ``.plot()`` draws a **matrix of every pair**: each variable's own
@@ -2102,11 +2101,9 @@ class RVResults(Results):
                 )
             if "marginal" in type:
                 raise ValueError(
-                    "'marginal' is not a type= value. A plot of two "
-                    "variables always shows each variable's own "
-                    "distribution in a strip beside the main panel, so "
-                    "there is nothing to ask for -- use type= to choose "
-                    "the main panel's plot type, e.g. .plot(type='tile')."
+                    "'marginal' is no longer a type= value -- it's now "
+                    "its own keyword argument. Use marginal=True instead, "
+                    "e.g. .plot(type='hist', marginal=True)."
                 )
 
         # Overlay policy, hard-error tier: a prior two-variable plot built a
@@ -2124,17 +2121,6 @@ class RVResults(Results):
         # layout matters.
         _suggestion = None
         _jitter_note = None
-
-        # marginal=True used to be how the strips showing each variable on its
-        # own were asked for. Every two-variable plot has them now, so say so
-        # rather than letting the stray keyword reach matplotlib.
-        if "marginal" in kwargs:
-            raise ValueError(
-                "marginal= is no longer needed: a plot of two variables "
-                "always shows each variable's own distribution in a strip "
-                "beside the main panel, so .plot() alone does it. Drop "
-                "marginal=True."
-            )
 
         # pairs=True used to be how the matrix was asked for. It is the default
         # now, so say so rather than letting the stray keyword reach matplotlib
@@ -2378,20 +2364,15 @@ class RVResults(Results):
             # has no per-type constant yet.
             legacy_alpha = 0.5 if alpha is None else alpha
 
-            # Every two-variable plot shows each variable's own distribution
-            # in a strip beside the main panel. Two exceptions, neither of
-            # them a user choice:
-            #
-            # - A mosaic plot already shows both -- x's through its column
-            #   widths, y's through its own marginal column -- so strips
-            #   would draw each of them twice.
-            # - A panel of a pairs matrix has no room for them, and the
-            #   matrix's own diagonal is already each variable on its own.
-            #   (A joint panel that draws a scatter or a segmented rug comes
-            #   back through here; see _draw_pairs_joint.)
-            marginal = "mosaic" not in type and not getattr(
-                plt.gcf(), "_symbulate_pairs", False
-            )
+            if marginal and "mosaic" in type:
+                raise ValueError(
+                    "marginal=True isn't supported with type='mosaic' -- a "
+                    "mosaic plot already shows x's marginal distribution "
+                    "through its column widths and y's marginal "
+                    "distribution through its own marginal column. Use "
+                    "type='mosaic', marginal_column=True (the default) "
+                    "instead of marginal=True."
+                )
             # Peeked (not popped) before the main-panel dispatch below,
             # since some branches (segmented density) pop "bandwidth" out
             # of kwargs for their own use -- the marginal density curve
@@ -2698,13 +2679,8 @@ class RVResults(Results):
                 # Count) on each marginal is kept.
                 ax_marg_x.set_xlabel("")
                 ax_marg_y.set_ylabel("")
-                # There is no room for the main panel's own title -- it would
-                # collide with the strip above it -- but what the plot *is*
-                # ("Tile Plot", "2-D Histogram") is worth keeping, so it moves
-                # to the figure, above all three panels. Read it back from the
-                # panel rather than re-deriving it, so it stays whatever the
-                # plot type actually titled itself.
-                fig.suptitle(ax.get_title())
+                # The marginal layout has no room for the center panel's
+                # title -- it would collide with the top marginal panel.
                 ax.set_title("")
                 # Leave the joint panel current. Drawing the strips and the
                 # colorbar moved plt.gca() off it (fig.add_axes makes its new

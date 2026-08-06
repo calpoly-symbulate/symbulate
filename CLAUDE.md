@@ -143,17 +143,15 @@ the same axes. Three outcomes:
 - Readability warning: draws on shared axes, prints warning below.
   Warning cases: two 2D tile plots, two 2D histograms on same axes.
 - Hard error: multi-panel GridSpec layout cannot be joined.
-  Error cases: **any plot of two variables** (they all use the three-panel
-  layout now — see below), and any pairs matrix.
+  Error cases: a simulated plot drawn with `marginal=True`, **every**
+  theoretical two-variable plot (they always show the strips), and any pairs
+  matrix.
 See design document Section 5 for exact warning and error text.
 
-**Every 2-D plot is now a hard error for overlay**, because every 2-D plot
-builds the three-panel layout. That makes the readability-warning tier
-unreachable for 2-D data: `VIOLIN_OVERLAY_WARNING`, and the two-tile /
-two-hist2d warnings, are still in `plot.py` but nothing can reach them from
-`RVResults.plot()`. Left in place deliberately rather than deleted — they are
-what the tier would use if a no-strips escape hatch is ever added. 1-D
-overlay is untouched.
+A simulated 2-D plot overlays normally, because it is a single panel unless
+`marginal=True` is asked for — which is exactly why that keyword stayed
+opt-in. A theoretical two-variable plot has no such escape hatch: it always
+builds the three panels, so it can never be overlaid.
 
 ## classify_data
 
@@ -637,33 +635,39 @@ message naming the replacement rather than reaching matplotlib.
 
 ## Two Variables: Joint Plus Each Variable's Own
 
-**A plot of two variables is three panels**, on both the simulated and the
-theoretical side: the joint distribution in the main panel, and each
+**Three panels** — the joint distribution in the main panel, and each
 variable's own distribution in a strip beside the matching axis (above for x,
 right for y). `setup_marginal_axes(fig)` in `plot.py` builds the layout and
 **both sides call it**, so they cannot drift apart; `MARGINAL_GRID`,
 `MARGINAL_GRID_RIGHT` and `MARGINAL_COLORBAR_RECT` are its geometry.
 
-**There is no `marginal=` keyword.** It used to be the opt-in for these
-strips; they are what a 2-D plot *is* now, so a stray `marginal=True` raises a
-message saying so. `type=` still chooses the *main panel's* plot type, and
-`type="marginal"` is not a value.
+**Who gets them is asymmetric, deliberately:**
+
+| | Strips | Keyword |
+|---|---|---|
+| `RVResults.plot()` (simulated) | only with `marginal=True` | `marginal=`, default `False` |
+| `MultivariateDistribution.plot()` (theoretical) | always | none — a stray `marginal=` raises |
+
+The reason is overlay. Two plots of simulated data are routinely compared on
+one set of axes, and the three-panel layout can't be shared — so making it the
+default cost every 2-D overlay, and it was reverted. An exact distribution has
+no such need, so it always shows the strips and takes no keyword.
+`type="marginal"` is not a value on either side.
 
 Things to respect:
-- **The title moves to the figure.** There is no room for the main panel's own
-  title (the strip sits on top of it), so it becomes `fig.suptitle` and the
-  panel's title is cleared. Read a 2-D plot's type with
-  `plt.gcf().get_suptitle()`, not `plt.gca().get_title()`. 1-D plots and
-  mosaic keep their title on the axes.
+- **What happens to the title differs by side.** A simulated `marginal=True`
+  plot *clears* the main panel's title (no room — the strip sits on top of it)
+  and sets no figure title. A theoretical two-variable plot moves it to
+  `fig.suptitle`, since that is its only title. So read a theoretical joint
+  plot's type with `plt.gcf().get_suptitle()`, and a simulated 2-D plot's with
+  `plt.gca().get_title()`.
 - **`plt.gca()` is the joint panel.** Drawing the strips and the colorbar
   moves the current axes (`fig.add_axes` makes its axes current), so both
   sides call `plt.sca(ax)` at the end.
-- **Two exceptions get no strips, neither of them a user choice.** A mosaic
-  already shows both marginals itself (column widths and its own marginal
-  column), and a *panel of a pairs matrix* has no room — the matrix tags its
-  figure `fig._symbulate_pairs` and the 2-D dispatch checks it, because a
-  joint panel drawing a scatter or segmented rug comes back through that
-  dispatch (`_draw_pairs_joint`).
+- **`marginal=True` with `type="mosaic"` raises.** A mosaic already shows
+  both marginals itself (column widths and its own marginal column), so strips
+  would draw each of them twice. Pairs-matrix panels need no such guard: they
+  never pass `marginal=True`.
 - **The theoretical strips are exact.** They come from `_marginal_1d(i)`, the
   closed-form marginal, drawn by the univariate `Distribution.plot()` — not a
   slice or a sum over the joint surface. `_plot_marginal_panel` draws the
@@ -854,10 +858,11 @@ pytest tests/
 - Do not hardcode colors, font sizes, or figure/spine/grid values inline — use `symbulate.mplstyle`
 - Do not hardcode per-plot-type alpha or line-width values inline — use the named constants at the top of `plot.py` (rcParams can't express per-plot-type values)
 - Do not reintroduce `is_discrete()` into `results.py` — `classify_data()` is the live discreteness check there now. (`is_discrete()` remains a standalone utility in `math.py`; leave it.)
-- Do not reintroduce a `marginal=` keyword or a `type="marginal"` value — the three-panel layout is what every two-variable plot is now (see "Two Variables"). Do not build that layout inline either; call `setup_marginal_axes` so both sides stay identical.
+- Do not make the three-panel layout the default for simulated 2-D plots, and do not remove `marginal=` from `RVResults.plot()` — that was tried and reverted, because it cost every 2-D overlay (see "Two Variables"). Do not add a `marginal=` keyword to `MultivariateDistribution.plot()` either; there the strips are always shown.
+- Do not build the three-panel layout inline — call `setup_marginal_axes` so both sides stay identical.
 - Do not set a pairs-matrix panel's limits without going through `align_pairs_columns`, and do not drop the `_symbulate_value_lim` / `_symbulate_freq_ticks` records — a dot plot rebuilds its own framing and locators on every draw, so a plain `set_xlim`/`set_major_locator` silently reverts on the next render (see "Pairs Matrix" and "Two Variables")
 - Do not force whole-number ticks on a sample path unconditionally — `make_sample_path` applies them only when every time is a whole number, which is what keeps a continuous-time path (Brownian motion, a Poisson process, a queue's clock) reading as continuous
-- Do not read a 2-D plot's type from `plt.gca().get_title()` — it moved to `plt.gcf().get_suptitle()` (see "Two Variables")
+- Do not read a *theoretical* two-variable plot's type from `plt.gca().get_title()` — it is on `plt.gcf().get_suptitle()` there. A simulated 2-D plot keeps its title on the axes (see "Two Variables")
 - Do not hardcode the discreteness thresholds — use `B_1D` (1-D) and `K_2D` (2-D per axis) from `plot.py`, passed into `classify_data()` at the `results.py` dispatch (`B_1D` for 1-D, `K_2D` per axis for 2-D). Values are provisional (see `DECISIONS.md`).
 - Do not set `self.xlim` in a new distribution's `__init__`, and do not compute a window there — `Distribution._compute_xlim` derives it from scipy's `support()` on first read (see "Distribution Plotting Window"). The only exception is a degenerate branch that skips `Distribution.__init__` and so has no scipy object.
 - Do not reintroduce the highest-density interval (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, `_PLOT_COVERAGE`, `_hdi_window`) — removed by team decision; there are tests asserting it stays gone.

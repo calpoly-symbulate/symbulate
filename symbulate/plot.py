@@ -566,16 +566,17 @@ VIOLIN_OVERLAY_WARNING = (
     "instead."
 )
 
-# A two-variable plot builds a three-panel GridSpec layout -- the joint
-# distribution plus each variable's own -- that a later .plot() call cannot
-# share (a second plot would draw into whichever panel is current, silently
-# corrupting the figure). This is the "hard error" tier of the overlay policy
-# -- see DECISIONS.md, "Decision: Overlay Behavior".
+# The three-panel layout -- the joint distribution plus each variable's own --
+# cannot be shared by a later .plot() call (a second plot would draw into
+# whichever panel is current, silently corrupting the figure). This is the
+# "hard error" tier of the overlay policy -- see DECISIONS.md, "Decision:
+# Overlay Behavior". Simulated data opts into the layout with marginal=True,
+# so it has a way out; a theoretical two-variable plot always uses it.
 MARGINAL_OVERLAY_ERROR = (
-    "You can't draw another plot on top of a plot of two variables. It "
-    "uses three separate panels -- the two variables together, plus each "
-    "one on its own -- and a second plot can't share them. Plot each one "
-    "in its own cell."
+    "You can't draw another plot on top of a plot that shows each variable's "
+    "own distribution beside the main panel. It uses three separate panels "
+    "that a second plot can't share. Plot each one in its own cell -- or, for "
+    "simulated data, draw both without marginal=True so they can overlay."
 )
 # Geometry of that three-panel layout, as a GridSpec of MARGINAL_GRID by
 # MARGINAL_GRID cells: the joint panel takes all but the first row and last
