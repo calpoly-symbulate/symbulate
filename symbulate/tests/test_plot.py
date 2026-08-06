@@ -2250,6 +2250,110 @@ class TestPlot2DBox(PlotTestCase):
         self.assertEqual(n_flier_points(), 0)
 
 
+class TestPlot2DCombinedTypes(PlotTestCase):
+    """A 2D .plot() given several types draws all of them, the way two
+    .plot() calls in one cell already did.
+
+    The 2D dispatch used to be one long if/elif chain, so the first
+    branch that matched won and every other type the caller asked for
+    was dropped without a word -- .plot(["hist", "density"]) drew the
+    histogram alone. It is now two tiers, like the 1D branch: one main
+    type, plus the density and rug overlays on top.
+    """
+
+    def setUp(self):
+        super().setUp()
+        np.random.seed(42)
+        X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+        self.mixed = (X & Y).sim(1000)
+        C1, C2 = RV(Normal(0, 1) * Normal(0, 1))
+        self.cont = (C1 & C2).sim(1000)
+
+    def counts(self, ax):
+        return len(ax.patches), len(ax.lines), len(ax.collections), len(ax.images)
+
+    def one_call(self, results, types, **kwargs):
+        plt.figure()
+        results.plot(list(types), suggest=False, **kwargs)
+        return self.counts(plt.gca())
+
+    def two_calls(self, results, types, **kwargs):
+        plt.figure()
+        for type in types:
+            results.plot(type, suggest=False, **kwargs)
+        return self.counts(plt.gca())
+
+    def test_hist_and_density_matches_two_calls(self):
+        """The reported case."""
+        combo = ("hist", "density")
+        self.assertEqual(
+            self.one_call(self.mixed, combo), self.two_calls(self.mixed, combo)
+        )
+
+    def test_hist_and_density_draws_both_kinds_of_artist(self):
+        patches, lines, _, _ = self.one_call(self.mixed, ("hist", "density"))
+        self.assertGreater(patches, 0)  # the histogram's bars
+        self.assertGreater(lines, 0)  # the density's curves
+
+    def test_order_in_the_list_does_not_change_what_is_drawn(self):
+        """['density','hist'] used to draw the histogram alone, because
+        'hist' sat above 'density' in the internal chain -- the caller's
+        own ordering was never consulted."""
+        self.assertEqual(
+            self.one_call(self.mixed, ("hist", "density")),
+            self.one_call(self.mixed, ("density", "hist")),
+        )
+
+    def test_combinations_match_two_calls(self):
+        for results, combo in [
+            (self.mixed, ("hist", "rug")),
+            (self.mixed, ("tile", "density")),
+            (self.mixed, ("hist", "density", "rug")),
+            (self.cont, ("hist", "density")),
+            (self.cont, ("scatter", "density")),
+            (self.cont, ("hist2d", "density2d")),
+        ]:
+            with self.subTest(combo=combo):
+                self.assertEqual(
+                    self.one_call(results, combo), self.two_calls(results, combo)
+                )
+
+    def test_an_overlay_type_alone_is_still_the_whole_plot(self):
+        for type, title in [
+            ("density", "Segmented Density Plot"),
+            ("rug", "Segmented Rug Plot"),
+            ("segmented_density", "Segmented Density Plot"),
+        ]:
+            with self.subTest(type=type):
+                plt.figure()
+                self.mixed.plot(type, suggest=False)
+                self.assertEqual(plt.gca().get_title(), title)
+
+    def test_marginal_layout_draws_both_on_the_main_panel(self):
+        """marginal=True builds its own panels, so the combined types have
+        to land on the main one rather than a marginal strip."""
+        plt.figure()
+        self.mixed.plot(["hist", "density"], marginal=True, suggest=False)
+        main = plt.gcf().axes[0]
+        self.assertGreater(len(main.patches), 0)
+        self.assertGreater(len(main.lines), 0)
+
+    def test_bandwidth_reaches_the_density_without_reaching_the_histogram(self):
+        """bandwidth is the density's alone -- passed straight through to
+        a histogram it would be a stray matplotlib kwarg."""
+        plt.figure()
+        self.mixed.plot(["hist", "density"], bandwidth=0.5, suggest=False)
+        ax = plt.gca()
+        self.assertGreater(len(ax.patches), 0)
+        self.assertGreater(len(ax.lines), 0)
+
+    def test_two_main_types_still_pick_one(self):
+        """Two panel-filling types would hide each other, so one wins --
+        the same way the 1D branch treats hist vs bar vs impulse."""
+        patches, lines, _, _ = self.one_call(self.cont, ("scatter", "hist2d"))
+        self.assertEqual((patches, lines), (0, 0))
+
+
 class TestPlot2DSegmentedDensity(PlotTestCase):
     """The new type='segmented_density' for mixed discrete/continuous data."""
 
@@ -2731,11 +2835,76 @@ class TestThinDiscreteTicksHelper(unittest.TestCase):
         pos, lab = _thin_discrete_ticks(positions, labels, 20)
         self.assertLessEqual(len(pos), 20)
         self.assertEqual(len(pos), len(lab))
-        # The edges are always kept so the axis's full range still reads.
-        self.assertEqual(pos[0], positions[0])
-        self.assertEqual(pos[-1], positions[-1])
         # Every kept label is one of the real distinct values.
         self.assertTrue(np.isin(lab, labels).all())
+        # The kept positions step evenly along the axis. (They no longer
+        # have to include the first and last level: pinning the ends is
+        # what used to bend the step out of shape beside them.)
+        self.assertEqual(len(np.unique(np.diff(pos))), 1)
+
+
+class TestDiscreteTickStepIsConstant(unittest.TestCase):
+    """Thinned discrete-axis labels step evenly, and land on round values
+    whenever the levels allow it.
+
+    The old rule picked its labels with linspace().round(), whose step
+    drifts: 20 levels came out labeled 1, 3, 5, 7, 9, *12*, 14, 16, 18, 20
+    -- the gap widening to 3 once in the middle for no reason a reader
+    could see.
+    """
+
+    def thin(self, labels, max_ticks=10):
+        positions = np.arange(len(labels))
+        pos, lab = _thin_discrete_ticks(positions, np.asarray(labels), max_ticks)
+        return pos, list(lab)
+
+    def test_the_reported_case(self):
+        """20 discrete levels, the segmented histogram in the report."""
+        pos, lab = self.thin(np.arange(1, 21))
+        self.assertEqual(lab, [2, 4, 6, 8, 10, 12, 14, 16, 18, 20])
+
+    def test_step_is_constant_across_many_shapes(self):
+        cases = {
+            "consecutive": np.arange(1, 21),
+            "poisson-like": np.arange(172, 225),
+            "just over the cap": np.arange(11),
+            "wide": np.arange(1000),
+            "negative through zero": np.arange(-30, 31),
+            "fractional levels": np.arange(20) * 0.5,
+            "categorical": np.array(list("abcdefghijklmnopqrstuvwxyz")),
+            "irregular": np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 50]),
+        }
+        for name, labels in cases.items():
+            with self.subTest(levels=name):
+                pos, lab = self.thin(labels)
+                self.assertEqual(len(np.unique(np.diff(pos))), 1)
+                self.assertGreaterEqual(len(pos), 2)
+                self.assertLessEqual(len(pos), 10)
+
+    def test_round_values_are_preferred(self):
+        """Whole-number levels get the scale matplotlib's own locator
+        would pick, so a segmented plot reads like the tile plot of the
+        same data (29 levels 0-28 -> 0, 3, 6, ...)."""
+        _, lab = self.thin(np.arange(29))
+        self.assertEqual(lab, [0, 3, 6, 9, 12, 15, 18, 21, 24, 27])
+
+    def test_irregular_levels_fall_back_to_a_fixed_stride(self):
+        """Round values that land on levels 4, 9 and 11 would read as an
+        even scale on an axis where they are nothing of the sort, so the
+        honest fixed stride wins instead."""
+        pos, lab = self.thin(np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 50]))
+        self.assertEqual(lab, [1, 3, 5, 7, 9, 11])
+
+    def test_categorical_levels_use_a_fixed_stride(self):
+        pos, lab = self.thin(np.array(list("abcdefghijklmnopqrstuvwxyz")))
+        self.assertEqual(lab, ["a", "d", "g", "j", "m", "p", "s", "v", "y"])
+
+    def test_never_labels_a_level_that_does_not_exist(self):
+        """The locator's round values are only ever *matched* to levels --
+        a value no level carries is never invented as a label."""
+        levels = np.arange(172, 225)
+        _, lab = self.thin(levels)
+        self.assertTrue(set(lab).issubset(set(levels.tolist())))
 
 
 class TestPlot2DDiscreteTickThinning(PlotTestCase):
@@ -2895,6 +3064,27 @@ class TestDiscreteTickLabelsHelper(unittest.TestCase):
         self.assertEqual(
             _discrete_tick_labels([1.0, np.nan]), ["1.0", str(np.float64(np.nan))]
         )
+
+
+class TestSegmentedTickStepEndToEnd(PlotTestCase):
+    """The reported plot itself: a segmented histogram of 20 discrete
+    levels used to label 1, 3, 5, 7, 9, 12, 14, 16, 18, 20."""
+
+    def setUp(self):
+        super().setUp()
+        groups = np.resize(np.arange(1, 21), 6000)
+        rng = np.random.default_rng(0)
+        self.res = RVResults(list(zip(groups, groups + rng.exponential(1, 6000))))
+
+    def test_every_segmented_type_steps_evenly(self):
+        for type in ("hist", "density", "rug", "box", "violin"):
+            with self.subTest(type=type):
+                plt.figure()
+                self.res.plot(type, suggest=False)
+                labels = [t.get_text() for t in plt.gca().get_xticklabels()]
+                values = [int(label) for label in labels]
+                self.assertEqual(len(set(np.diff(values))), 1)
+                self.assertEqual(values, [2, 4, 6, 8, 10, 12, 14, 16, 18, 20])
 
 
 class TestSegmentedDiscreteTickLabelFormatting(PlotTestCase):

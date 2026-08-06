@@ -1418,20 +1418,91 @@ def _discrete_tick_labels(labels):
     return [str(value) for value in labels]
 
 
+def _nice_discrete_tick_indices(labels, max_ticks):
+    """Which levels matplotlib's numeric locator would put a tick on.
+
+    A slot-based axis (one position per level, the levels themselves as
+    labels) can't be handed to a locator the way a real-valued axis can,
+    so the round tick values are worked out here and then matched back to
+    the levels that carry them. That is what keeps a segmented plot's
+    scale reading like the tile plot's for the same data: 29 levels
+    0-28 get labels at 0, 3, 6, ... either way.
+
+    Parameters
+    ----------
+    labels : numpy.ndarray
+        The value at each level, in axis order.
+    max_ticks : int
+        Largest number of labels to keep.
+
+    Returns
+    -------
+    numpy.ndarray or None
+        Indices of the levels to label, or ``None`` when the levels
+        can't be labeled this way -- they aren't numbers (categories),
+        or the round values miss them (levels 1, 2, 3, 50 leave the
+        locator's 0, 5, 10, ... with a single level to land on). The
+        caller falls back to a fixed stride for those.
+    """
+    values = np.asarray(labels)
+    if values.dtype == bool or not np.issubdtype(values.dtype, np.number):
+        return None
+    values = values.astype(float)
+    if not np.all(np.isfinite(values)):
+        return None
+    # integer=True keeps the locator from offering 2.5 as a round number
+    # for whole-number levels, which no level could ever sit on.
+    whole_number = np.all(values == np.round(values))
+    # The locator treats its tick count as a target, not a ceiling, and it
+    # can only land on the round values its step allows -- so ask for
+    # fewer and fewer until what comes back fits the axis. Levels -30..30
+    # overshoot at 10 (a step of 6 wants 11 ticks) and settle at a step of
+    # 10, which is the scale a reader would have drawn by hand anyway.
+    for nbins in range(max_ticks, 1, -1):
+        nice = MaxNLocator(nbins=nbins, integer=whole_number).tick_values(
+            values[0], values[-1]
+        )
+        keep = np.flatnonzero(np.isclose(values[:, None], nice[None, :]).any(axis=1))
+        # Three labels is the least that reads as a scale. Below that the
+        # fixed stride is simply the better axis -- levels 1..11 and 50
+        # can be matched by two round values, against six evenly strided
+        # ones for the same axis.
+        if len(keep) < 3 or len(keep) > max_ticks:
+            continue
+        # Round values only help if they also land a constant number of
+        # slots apart. Levels 1, 2, ..., 11, 50 would put labels on slots
+        # 4, 9 and 11 -- round values (5, 10, 50) reading as an even scale
+        # on an axis where they are nothing of the sort. Let a fixed
+        # stride, which is honest about the slots, handle those.
+        if len(np.unique(np.diff(keep))) == 1:
+            return keep
+    return None
+
+
 def _thin_discrete_ticks(positions, labels, max_ticks):
     """Evenly spaced subset of discrete-axis tick positions and labels.
 
     A discrete axis labels every distinct value by default, which reads
     fine for a handful of levels but overlaps into an unreadable smear
     past a few dozen (see ``MAX_DISCRETE_TICKS`` at the top of this
-    module). Above ``max_ticks``, keep only an evenly
-    spaced subset of positions -- always including the first and last, so
-    the axis's full range still reads -- instead of forcing every label
-    onto the axis regardless of how many there are. This only thins which
-    labels are *displayed*; it never changes how many cells/bands/bars are
-    drawn for the underlying data (callers pass the full, untouched
-    position list for drawing and only the thinned result to
-    ``set_xticks``/``set_yticks``).
+    module). Above ``max_ticks``, only some of the levels keep a label.
+
+    Which ones is decided the same way the rest of the package decides
+    it -- matplotlib's numeric locator, so the labels land on round
+    values a constant step apart (see ``_nice_discrete_tick_indices``).
+    Levels the locator can't be used on (categories, or values too
+    irregular for round numbers to land on) fall back to a fixed stride,
+    which still steps evenly along the axis.
+
+    Neither rule promises a label on the *first* and *last* level: an
+    axis reads by its scale, not by its end points, and forcing the ends
+    in is what used to bend the step out of shape near them (20 levels
+    labeled 1, 3, 5, 7, 9, **12**, 14, 16, 18, 20).
+
+    This only thins which labels are *displayed*; it never changes how
+    many cells/bands/bars are drawn for the underlying data (callers pass
+    the full, untouched position list for drawing and only the thinned
+    result to ``set_xticks``/``set_yticks``).
 
     Parameters
     ----------
@@ -1454,7 +1525,9 @@ def _thin_discrete_ticks(positions, labels, max_ticks):
     n = len(positions)
     if n <= max_ticks:
         return positions, labels
-    keep = np.unique(np.linspace(0, n - 1, max_ticks).round().astype(int))
+    keep = _nice_discrete_tick_indices(labels, max_ticks)
+    if keep is None:
+        keep = np.arange(0, n, int(np.ceil(n / max_ticks)))
     return positions[keep], labels[keep]
 
 
@@ -2443,9 +2516,13 @@ def make_violin(data, positions, ax, color, axis, alpha):
     # tile plot and segmented rug/box/density.
     slot_positions = list(range(1, len(positions) + 1))
     tick_pos, tick_lab = _thin_discrete_ticks(
-        slot_positions, _discrete_tick_labels(positions), MAX_DISCRETE_TICKS
+        slot_positions, positions, MAX_DISCRETE_TICKS
     )
-    setup_ticks(tick_pos, tick_lab, ax.xaxis if axis == "x" else ax.yaxis)
+    setup_ticks(
+        tick_pos,
+        _discrete_tick_labels(tick_lab),
+        ax.xaxis if axis == "x" else ax.yaxis,
+    )
     for body in violins["bodies"]:
         body.set_facecolor(color)
         body.set_edgecolor(VIOLIN_EDGECOLOR)
@@ -4010,21 +4087,17 @@ def make_segmented_rug(
     # labeled, mirroring the mixed tile plot.
     positions = np.arange(len(levels))
     if discrete_y:
-        tick_pos, tick_lab = _thin_discrete_ticks(
-            positions, _discrete_tick_labels(levels), MAX_DISCRETE_TICKS
-        )
+        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
         ax.set_yticks(tick_pos)
-        ax.set_yticklabels(tick_lab)
+        ax.set_yticklabels(_discrete_tick_labels(tick_lab))
         # Minor ticks at every band, so a gridline can mark each distinct
         # rug even where the (major) label was thinned away above.
         ax.set_yticks(positions, minor=True)
         ax.set_ylim(-0.5, len(levels) - 0.5)
     else:
-        tick_pos, tick_lab = _thin_discrete_ticks(
-            positions, _discrete_tick_labels(levels), MAX_DISCRETE_TICKS
-        )
+        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
         ax.set_xticks(tick_pos)
-        ax.set_xticklabels(tick_lab)
+        ax.set_xticklabels(_discrete_tick_labels(tick_lab))
         ax.set_xticks(positions, minor=True)
         ax.set_xlim(-0.5, len(levels) - 0.5)
     ax.set_xlabel("Variable 1")
@@ -4366,18 +4439,14 @@ def make_segmented_density(
     # evenly spaced subset of the baselines is labeled, mirroring the
     # mixed tile plot and segmented rug.
     if discrete_y:
-        tick_pos, tick_lab = _thin_discrete_ticks(
-            ticks, _discrete_tick_labels(all_levels), MAX_DISCRETE_TICKS
-        )
+        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
         ax.set_yticks(tick_pos)
-        ax.set_yticklabels(tick_lab)
+        ax.set_yticklabels(_discrete_tick_labels(tick_lab))
         ax.set_ylim(lo, hi)
     else:
-        tick_pos, tick_lab = _thin_discrete_ticks(
-            ticks, _discrete_tick_labels(all_levels), MAX_DISCRETE_TICKS
-        )
+        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
         ax.set_xticks(tick_pos)
-        ax.set_xticklabels(tick_lab)
+        ax.set_xticklabels(_discrete_tick_labels(tick_lab))
         ax.set_xlim(lo, hi)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
@@ -4707,18 +4776,14 @@ def make_segmented_hist(
     # evenly spaced subset of the baselines is labeled, mirroring the
     # segmented density plot.
     if discrete_y:
-        tick_pos, tick_lab = _thin_discrete_ticks(
-            ticks, _discrete_tick_labels(all_levels), MAX_DISCRETE_TICKS
-        )
+        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
         ax.set_yticks(tick_pos)
-        ax.set_yticklabels(tick_lab)
+        ax.set_yticklabels(_discrete_tick_labels(tick_lab))
         ax.set_ylim(lo, hi)
     else:
-        tick_pos, tick_lab = _thin_discrete_ticks(
-            ticks, _discrete_tick_labels(all_levels), MAX_DISCRETE_TICKS
-        )
+        tick_pos, tick_lab = _thin_discrete_ticks(ticks, all_levels, MAX_DISCRETE_TICKS)
         ax.set_xticks(tick_pos)
-        ax.set_xticklabels(tick_lab)
+        ax.set_xticklabels(_discrete_tick_labels(tick_lab))
         ax.set_xlim(lo, hi)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
@@ -4918,17 +4983,13 @@ def make_grouped_boxplot(
     # `positions`); past MAX_DISCRETE_TICKS, only an evenly spaced subset
     # of the boxes is labeled.
     if discrete_y:
-        tick_pos, tick_lab = _thin_discrete_ticks(
-            positions, _discrete_tick_labels(levels), MAX_DISCRETE_TICKS
-        )
+        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
         ax.set_yticks(tick_pos)
-        ax.set_yticklabels(tick_lab)
+        ax.set_yticklabels(_discrete_tick_labels(tick_lab))
     else:
-        tick_pos, tick_lab = _thin_discrete_ticks(
-            positions, _discrete_tick_labels(levels), MAX_DISCRETE_TICKS
-        )
+        tick_pos, tick_lab = _thin_discrete_ticks(positions, levels, MAX_DISCRETE_TICKS)
         ax.set_xticks(tick_pos)
-        ax.set_xticklabels(tick_lab)
+        ax.set_xticklabels(_discrete_tick_labels(tick_lab))
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
     ax.set_title("Box Plot")
