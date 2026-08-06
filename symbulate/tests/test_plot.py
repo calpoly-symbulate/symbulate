@@ -26,6 +26,7 @@ import matplotlib
 matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
 import matplotlib.pyplot as plt
 from matplotlib.collections import PolyCollection, PathCollection, LineCollection
+from matplotlib.ticker import MaxNLocator
 
 from symbulate import (
     RV,
@@ -45,6 +46,9 @@ from symbulate import (
     BoxModel,
     MarkovChain,
     PoissonProcess,
+    ContinuousTimeMarkovChain,
+    BrownianMotion,
+    Tuple,
     ProbabilitySpace,
     cos,
     pi,
@@ -60,6 +64,7 @@ from symbulate.plot import (
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
     MARGINAL_FREQ_TICKS,
+    PAIRS_SUPTITLE,
     JOINT_PAIRS_COLORBAR_TITLE_SIZE,
     classify_values,
     default_plot_type,
@@ -883,7 +888,7 @@ class TestTwoVariableLayoutIsTheDefault(PlotTestCase):
         (A & B & C).sim(40).plot(suggest=False)
         # 3 diagonal + 3 joint, and nothing else.
         self.assertEqual(len(self._panels()), 6)
-        self.assertEqual(plt.gcf().get_suptitle(), "Pairs Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), PAIRS_SUPTITLE)
 
 
 class TestPlot2DDiscrete(PlotTestCase):
@@ -3614,6 +3619,91 @@ class TestProcessPlots(PlotTestCase):
 # ===========================================================================
 
 
+class TestSamplePathWholeNumberTicks(PlotTestCase):
+    """A path stepping through whole numbers gets whole-number ticks.
+
+    An index, or discrete time, has nothing between one step and the next, so
+    ticks at 0.5 mark positions the path does not have. A continuous-time path
+    is evaluated at real times and must keep its fractional ticks.
+    """
+
+    def _forces_integers(self):
+        plt.gcf().canvas.draw()
+        locator = plt.gca().xaxis.get_major_locator()
+        return isinstance(locator, MaxNLocator) and bool(
+            getattr(locator, "_integer", False)
+        )
+
+    def test_index_paths_get_whole_numbers(self):
+        X = RV(BoxModel([1, 2, 3, 4, 5, 6], size=4))
+        X.sim(20).plot(type="path", suggest=False)
+        self.assertEqual(plt.gca().get_xlabel(), "Index")
+        self.assertTrue(self._forces_integers())
+        for tick in plt.gca().get_xticks():
+            self.assertEqual(tick, round(tick))
+
+    def test_a_tuple_plots_against_whole_number_indices(self):
+        Tuple([1, 4, 2, 8, 5]).plot()
+        self.assertTrue(self._forces_integers())
+
+    def test_discrete_time_processes_get_whole_numbers(self):
+        MarkovChain([[0.5, 0.5], [0.3, 0.7]], [1, 0]).draw().plot(tmin=0, tmax=6)
+        self.assertTrue(self._forces_integers())
+
+    def test_an_ensemble_of_paths_names_its_own_axis(self):
+        """Each result knows what it is plotted against, so the ensemble must
+        not relabel them all: a Brownian motion's clock read "Index"."""
+        cases = [
+            ("Brownian motion", RV(BrownianMotion()), "Time"),
+            ("Poisson process", RV(PoissonProcess(rate=2)), "Time"),
+            (
+                "continuous-time Markov chain",
+                RV(ContinuousTimeMarkovChain([[-1, 1], [1, -1]], [1, 0])),
+                "Time",
+            ),
+            (
+                "discrete-time Markov chain",
+                RV(MarkovChain([[0.5, 0.5], [0.3, 0.7]], [1, 0])),
+                "Index",
+            ),
+            ("tuple of variables", RV(BoxModel([1, 2, 3], size=4)), "Index"),
+        ]
+        for name, rv, expected in cases:
+            with self.subTest(process=name):
+                plt.close("all")
+                plt.figure()
+                sims = rv.sim(3)
+                if expected == "Index":
+                    sims.plot(type="path", suggest=False)
+                else:
+                    sims.plot(suggest=False)
+                self.assertEqual(plt.gca().get_xlabel(), expected)
+
+    def test_continuous_time_paths_keep_real_times(self):
+        """The one thing this must not break: a continuous path's clock."""
+        cases = [
+            ("Brownian motion", BrownianMotion()),
+            ("Poisson process", PoissonProcess(rate=3)),
+            (
+                "continuous-time Markov chain",
+                ContinuousTimeMarkovChain([[-1, 1], [1, -1]], [1, 0]),
+            ),
+        ]
+        for name, process in cases:
+            with self.subTest(process=name):
+                plt.close("all")
+                plt.figure()
+                # A short window, where the correct ticks are fractional.
+                process.draw().plot(tmin=0, tmax=1.5)
+                self.assertEqual(plt.gca().get_xlabel(), "Time")
+                self.assertFalse(
+                    self._forces_integers(),
+                    "a continuous-time path was forced onto whole-number ticks",
+                )
+                fractional = [t for t in plt.gca().get_xticks() if t != round(float(t))]
+                self.assertGreater(len(fractional), 0)
+
+
 class TestMakeSamplePath(PlotTestCase):
     """The sample path helper: solid line, package defaults, auto legend."""
 
@@ -4410,6 +4500,224 @@ class TestPairsPanelChoice(PlotTestCase):
         self.assertEqual(len(_pairs_panels()), 6)
 
 
+class TestVariablesChoosesWhatIsDrawn(PlotTestCase):
+    """``variables=`` picks the variables, and its length picks the plot.
+
+    One variable is that variable's own distribution, two are their joint
+    distribution, three or more are a matrix of every pair.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.dist = MultivariateNormal(mean=[0, 1, 2, 3, 4], cov=np.eye(5))
+
+    def _panels(self):
+        return [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+
+    def test_a_single_number_draws_that_variables_own_distribution(self):
+        for arg in [2, [2], (2,), np.array([2])]:
+            with self.subTest(variables=arg):
+                plt.close("all")
+                plt.figure()
+                p = self.dist.plot(variables=arg)
+                self.assertEqual(len(self._panels()), 1)
+                self.assertEqual(p.ax.get_title(), "PDF Plot")
+                # Named for the variable asked for, not a generic "Value".
+                self.assertEqual(p.ax.get_xlabel(), "Variable 3")
+                self.assertEqual(p.ax.get_ylabel(), "Density")
+
+    def test_a_single_variable_is_the_exact_marginal(self):
+        """Not a slice or a sum over the joint surface."""
+        p = self.dist.plot(variables=2)
+        (curve,) = p.ax.get_lines()
+        xs, ys = curve.get_data()
+        expected = self.dist._marginal_1d(2).pdf(np.asarray(xs))
+        np.testing.assert_allclose(ys, expected, rtol=1e-10)
+
+    def test_a_single_discrete_variable_draws_its_pmf(self):
+        p = Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot(variables=1)
+        self.assertEqual(p.ax.get_title(), "PMF Plot")
+        self.assertEqual(p.ax.get_xlabel(), "Variable 2")
+
+    def test_one_variable_works_where_the_joint_plot_is_refused(self):
+        """A two-category Multinomial varies in only one direction, so it has
+        no joint plot -- but each of its marginals is a Binomial."""
+        dist = Multinomial(n=10, p=[0.4, 0.6])
+        with self.assertRaises(Exception):
+            dist.plot()
+        p = dist.plot(variables=0)
+        self.assertEqual(p.ax.get_xlabel(), "Variable 1")
+
+    def test_labels_follow_the_numbers_asked_for(self):
+        self.dist.plot(variables=[0, 2, 4])
+        labels = set()
+        for ax in self._panels():
+            labels |= {ax.get_xlabel(), ax.get_ylabel()}
+        self.assertEqual(
+            {l for l in labels if l.startswith("Variable")},
+            {"Variable 1", "Variable 3", "Variable 5"},
+        )
+
+    def test_two_variables_still_draw_their_joint_distribution(self):
+        self.dist.plot(variables=[0, 2])
+        self.assertEqual(len(self._panels()), 3)
+        self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
+        self.assertEqual(plt.gca().get_ylabel(), "Variable 3")
+
+    def test_bad_variables_explain_themselves(self):
+        cases = [
+            (7, "asks for a variable it doesn't have"),
+            ([7], "asks for a variable it doesn't have"),
+            ([], "needs at least one"),
+            (1.5, "variable number or a list of them"),
+            ("x", "variable number or a list of them"),
+            (True, "variable number or a list of them"),
+            ([1, 1], "must be different"),
+        ]
+        for arg, expected in cases:
+            with self.subTest(variables=arg):
+                plt.close("all")
+                plt.figure()
+                with self.assertRaises(Exception) as cm:
+                    self.dist.plot(variables=arg)
+                self.assertIn(expected, str(cm.exception))
+
+
+class TestPairsColumnsShareAScale(PlotTestCase):
+    """A column of a pairs matrix shows one variable at one scale.
+
+    A stem or bar on the diagonal has to sit directly above the tile cell or
+    mesh column for that same value. Each panel type frames its own axes
+    differently, so this takes ``align_pairs_columns`` -- and both matrices
+    call it.
+    """
+
+    def _cells(self):
+        cells = {}
+        for ax in plt.gcf().axes:
+            spec = ax.get_subplotspec()
+            if spec is not None:
+                cells[(spec.rowspan.start, spec.colspan.start)] = ax
+        return cells
+
+    def _assert_one_scale_per_variable(self):
+        cells = self._cells()
+        k = max(row for row, _ in cells) + 1
+        for variable in range(k):
+            down = {
+                tuple(ax.get_xlim())
+                for (row, col), ax in cells.items()
+                if col == variable
+            }
+            self.assertEqual(
+                len(down), 1, f"column {variable} is drawn at {len(down)} scales"
+            )
+            # The same variable is the y variable of the joint panels along
+            # its row, so it must be at that scale there too.
+            across = {
+                tuple(ax.get_ylim())
+                for (row, col), ax in cells.items()
+                if row == variable and row != col
+            }
+            if across:
+                self.assertEqual(
+                    down,
+                    across,
+                    f"variable {variable} is drawn at one scale down its "
+                    "column and another across its row",
+                )
+
+    def test_columns_share_a_scale_for_every_configuration(self):
+        cases = [
+            ("discrete large n", RV(Binomial(5, 0.4) ** 3), 600),
+            ("continuous large n", RV(Normal(0, 1) ** 3), 600),
+            ("discrete small n", RV(Binomial(5, 0.4) ** 3), 40),
+            ("continuous small n", RV(Normal(0, 1) ** 3), 40),
+        ]
+        for name, rvs, n in cases:
+            with self.subTest(case=name):
+                plt.close("all")
+                plt.figure()
+                A, B, C = rvs
+                (A & B & C).sim(n).plot(suggest=False)
+                # Drawn first: a dot plot re-frames its own value axis on
+                # every draw, and used to undo the alignment here.
+                plt.gcf().canvas.draw()
+                self._assert_one_scale_per_variable()
+
+    def test_theoretical_columns_share_a_scale(self):
+        for dist in [
+            MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3)),
+            Multinomial(n=10, p=[0.3, 0.3, 0.2, 0.2]),
+        ]:
+            with self.subTest(dist=type(dist).__name__):
+                plt.close("all")
+                plt.figure()
+                dist.plot()
+                plt.gcf().canvas.draw()
+                self._assert_one_scale_per_variable()
+
+    def test_bins_applies_to_the_diagonal_too(self):
+        """One bin count for the whole matrix -- the diagonal histogram used
+        to keep the default 30 while the joint panels honored bins=."""
+        X, Y, Z = RV(Normal(0, 1) ** 3)
+        (X & Y & Z).sim(600).plot(bins=12, suggest=False)
+        for (row, col), ax in self._cells().items():
+            if row == col:
+                self.assertEqual(len(ax.patches), 12)
+            else:
+                meshes = [
+                    c.get_array()
+                    for c in ax.collections
+                    if getattr(c, "get_array", None) is not None
+                    and c.get_array() is not None
+                ]
+                self.assertEqual(meshes[0].shape, (12, 12))
+
+    def test_bins_leaves_a_discrete_diagonal_alone(self):
+        """A discrete panel is never binned, so bins= must not disturb it."""
+        A, B, C = RV(Binomial(5, 0.4) ** 3)
+        (A & B & C).sim(600).plot(bins=12, suggest=False)
+        for (row, col), ax in self._cells().items():
+            if row == col:
+                self.assertEqual(len(ax.patches), 0)  # stems, not bars
+                self.assertGreater(len(ax.collections), 0)
+
+    def test_the_diagonal_walks_the_palette(self):
+        """Each variable's own distribution reads as its own series, rather
+        than every diagonal panel taking the first color."""
+        import matplotlib.colors as mcolors
+
+        palette = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        A, B, C = RV(Binomial(5, 0.4) ** 3)
+        (A & B & C).sim(600).plot(suggest=False)
+        seen = []
+        for (row, col), ax in sorted(self._cells().items()):
+            if row != col:
+                continue
+            seen.append(mcolors.to_hex(ax.collections[0].get_color()[0]))
+        self.assertEqual(len(set(seen)), 3)
+        self.assertEqual(seen, [mcolors.to_hex(c) for c in palette[:3]])
+
+    def test_the_figure_title_names_what_the_panels_are(self):
+        A, B, C = RV(Normal(0, 1) ** 3)
+        (A & B & C).sim(200).plot(suggest=False)
+        self.assertEqual(PAIRS_SUPTITLE, "Joint and Marginal Distributions")
+        self.assertEqual(plt.gcf().get_suptitle(), PAIRS_SUPTITLE)
+
+    def test_a_colorbar_names_its_pair_compactly(self):
+        A, B, C = RV(Normal(0, 1) ** 3)
+        (A & B & C).sim(200).plot(suggest=False)
+        titles = sorted(
+            a.get_title()
+            for a in plt.gcf().axes
+            if a.get_subplotspec() is None and a.get_title()
+        )
+        self.assertEqual(
+            titles, ["Variables 1 & 2", "Variables 1 & 3", "Variables 2 & 3"]
+        )
+
+
 class TestPairsLayout(PlotTestCase):
     """The grid of panels the matrix builds."""
 
@@ -4433,7 +4741,7 @@ class TestPairsLayout(PlotTestCase):
 
         Two variables get the three-panel two-variable layout instead, which
         also has three panels -- so the giveaway is the title: a matrix is
-        titled "Pairs Plot", a single joint plot by its own plot type.
+        titled by PAIRS_SUPTITLE, a single joint plot by its own type.
         """
         plt.figure()
         _continuous_sim(k=2).plot(suggest=False)
@@ -4524,9 +4832,9 @@ class TestPairsLayout(PlotTestCase):
         self.assertEqual(
             titles,
             [
-                "Variable 1 & Variable 2",
-                "Variable 1 & Variable 3",
-                "Variable 2 & Variable 3",
+                "Variables 1 & 2",
+                "Variables 1 & 3",
+                "Variables 2 & 3",
             ],
         )
 
@@ -4631,7 +4939,7 @@ class TestPairsLayout(PlotTestCase):
                     sim.plot()
 
     def test_panels_have_no_titles_of_their_own(self):
-        """One "Pairs Plot" title, not a plot-type title on every panel."""
+        """One title for the figure, not a plot-type title per panel."""
         for label, sim in [
             ("continuous", _continuous_sim()),
             ("discrete", _discrete_sim()),
@@ -4643,7 +4951,7 @@ class TestPairsLayout(PlotTestCase):
                 sim.plot()
                 fig = plt.gcf()
                 self.assertEqual([a.get_title() for a in _pairs_panels(fig)], [""] * 6)
-                self.assertEqual(fig._suptitle.get_text(), "Pairs Plot")
+                self.assertEqual(fig._suptitle.get_text(), PAIRS_SUPTITLE)
 
     def test_panels_do_not_print_suggestion_notes(self):
         """One note per panel would bury the plot in text."""

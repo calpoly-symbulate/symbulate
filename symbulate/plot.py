@@ -425,6 +425,13 @@ JOINT_PAIRS_OVERLAY_ERROR = (
 # variables is 36 pair panels), so it asks for a subset instead of
 # rendering one unreadably.
 JOINT_PAIRS_MAX_DIM = 8
+# Title over a matrix of simulated results. It says what the panels are --
+# each variable's own distribution down the diagonal, each pair's joint
+# distribution below it -- rather than naming the layout. The theoretical
+# matrix is titled by its own kind of exactness instead ("Probability Density
+# Functions" / "Probability Mass Functions"), which would not be true of
+# simulated estimates.
+PAIRS_SUPTITLE = "Joint and Marginal Distributions"
 JOINT_PAIRS_PANEL_SIZE = 2.2  # width and height, in inches, of one panel of
 # a pairs matrix. The figure is sized to the grid rather than left at the
 # single-plot figure.figsize from symbulate.mplstyle, which would shrink
@@ -1640,6 +1647,104 @@ def add_colorbar(fig, marginal, mappable, label, decimals=None):
             FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
         )
     return caxes
+
+
+def align_pairs_columns(panels):
+    """Put every panel in a column of a pairs matrix on the same x scale.
+
+    A column all shows the same variable, so the panels in it are meant to
+    line up: a stem or a bar on the diagonal should sit directly above the
+    tile cell or the mesh column for that same value. They do not line up on
+    their own, because each panel type frames its own axes differently -- an
+    impulse plot pads a margin around its values, while a tile's cells tile
+    its axes edge to edge. Same tick *values*, different limits, so the same
+    value lands at a different place across the column.
+
+    The joint panels in a column already agree with each other (they bin the
+    same data the same way), so their framing is the one adopted: the
+    diagonal is brought onto it. That costs the diagonal its cosmetic padding
+    and crops nothing -- a joint panel spans the data itself, so every stem
+    and bar is still inside.
+
+    Both the simulated and the theoretical matrix call this, so a column of
+    either lines up the same way. Rows need no equivalent: the joint panels
+    in a row share their y variable and already agree, and the only other
+    panel in a row is its diagonal, whose y-axis is a density rather than
+    that variable.
+
+    Parameters
+    ----------
+    panels : dict
+        ``{(row, col): axes}`` for every panel drawn, diagonal included.
+    """
+    columns = {}
+    for (row, col), ax in panels.items():
+        columns.setdefault(col, []).append((row, ax))
+    for col, entries in columns.items():
+        joint = [ax for row, ax in entries if row != col]
+        if joint:
+            limits = joint[0].get_xlim()
+        else:
+            # The last column holds only its diagonal, so there is no joint
+            # panel beneath it to match. That same variable is the *y*
+            # variable of the joint panels along its row, though, so borrow
+            # the scale from there -- otherwise the last variable would be
+            # drawn at one scale down its column and another across its row.
+            in_row = [ax for (r, c), ax in panels.items() if r == col and c != col]
+            if not in_row:
+                continue
+            limits = in_row[0].get_ylim()
+        for _, ax in entries:
+            ax.set_xlim(limits)
+            # A dot plot re-frames its own value axis every time it is drawn
+            # (_dotplot_relayout), so setting the limits here is not enough on
+            # its own -- record them where that rebuild can find them.
+            ax._symbulate_value_lim = limits
+
+
+def advance_pairs_diagonal_color(ax, position):
+    """Give a pairs matrix's diagonal panel its own color from the palette.
+
+    Every panel of the matrix is a fresh axes, and each ``.plot()`` call takes
+    the *first* color of its own axes' cycle -- so left alone, every panel down
+    the diagonal comes out the same color. Skipping ``position`` colors first
+    makes the diagonal walk the categorical palette instead, so each variable
+    reads as its own.
+
+    Call this *before* drawing the panel; the draw itself takes the next color.
+    Both the simulated and the theoretical matrix call it, so the two
+    diagonals color the same way.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The diagonal panel, before anything is drawn on it.
+    position : int
+        Which diagonal panel this is, counting from 0 at the top left.
+    """
+    for _ in range(position):
+        get_next_color(ax)
+
+
+def pairs_colorbar_pair_label(first, second):
+    """Name the pair a colorbar explains, e.g. ``"Variables 1 & 2"``.
+
+    Shorter than repeating the word for each one ("Variable 1 & Variable 2"),
+    which is worth the brevity over a narrow bar. Both the simulated and the
+    theoretical matrix call this, so they can't drift apart.
+
+    Parameters
+    ----------
+    first, second : int
+        The two variables, counting from 0 the way the code indexes them.
+        Written out counting from 1, the way the variables are labeled.
+
+    Returns
+    -------
+    str
+        The label for the bar's title.
+    """
+    return "Variables %d & %d" % (first + 1, second + 1)
 
 
 def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
@@ -4017,6 +4122,18 @@ def make_sample_path(
         **kwargs,
     )
 
+    # Whole-number times get whole-number ticks, the same rule the impulse
+    # and dot plots follow (see configure_axes). A path drawn against its
+    # index, or against discrete time, has nothing between one step and the
+    # next, so matplotlib's default 0.0, 0.5, 1.0 marks positions the path
+    # does not have. A continuous-time path is evaluated on a fine grid of
+    # real times, so this leaves it alone -- which is what keeps a Brownian
+    # motion or a queue's clock time reading as continuous.
+    finite = np.asarray(times, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if len(finite) and np.all(finite == np.round(finite)):
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
     ax.set_xlabel("Time" if xlabel is None else xlabel)
     ax.set_ylabel("Value" if ylabel is None else ylabel)
     ax.set_title("Sample Path")
@@ -5222,8 +5339,14 @@ def _dotplot_relayout(ax):
     # Each batch gets its own lane inside the slot around each value.
     lane_width = spacing / n_series
 
-    # Value-axis padding: one slot of air beyond the outermost stacks.
-    value_lim = (positions[0] - spacing, positions[-1] + spacing)
+    # Value-axis padding: one slot of air beyond the outermost stacks. This
+    # runs on every draw, so it would undo a value range imposed from outside
+    # -- a dot plot on the diagonal of a pairs matrix is put on its column's
+    # scale (align_pairs_columns, which records the range on the axes), so
+    # honor that if it is there. The dots themselves are still laid out from
+    # the data, so only the framing changes.
+    imposed = getattr(ax, "_symbulate_value_lim", None)
+    value_lim = imposed or (positions[0] - spacing, positions[-1] + spacing)
     set_value_lim = ax.set_xlim if vertical else ax.set_ylim
     set_value_lim(*value_lim)
 

@@ -37,6 +37,10 @@ from .plot import (
     add_pairs_panel_colorbar,
     MARGINAL_OVERLAY_ERROR,
     setup_marginal_axes,
+    pairs_colorbar_pair_label,
+    advance_pairs_diagonal_color,
+    align_pairs_columns,
+    PAIRS_SUPTITLE,
     thin_marginal_frequency_ticks,
     marginal_rug_tick_height,
     auto_jitter_mode,
@@ -1688,9 +1692,13 @@ class RVResults(Results):
         # (mappable, row, col) per joint panel, so each can be given its own
         # colorbar once the layout has settled (see the end of this method).
         joint_panels = []
+        # Every panel by cell, so the columns can be put on one x scale once
+        # they have all drawn (see align_pairs_columns).
+        cells = {}
         for row in range(k):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
+                cells[(row, col)] = ax
                 if row == col:
                     # The diagonal is this variable on its own, so it is
                     # exactly the univariate plot -- reuse the whole 1-D
@@ -1698,12 +1706,25 @@ class RVResults(Results):
                     # on plt.gca(), so making this panel current is what
                     # routes the plot into it.
                     plt.sca(ax)
+                    # Walk the palette down the diagonal, so each variable's
+                    # own distribution reads as its own series.
+                    advance_pairs_diagonal_color(ax, row)
+                    diagonal_type = self._pairs_diagonal_type(chosen[row])
+                    diagonal_kwargs = dict(kwargs)
+                    if diagonal_type == "hist":
+                        # The same bin count the joint panels use, so a column
+                        # really is one binning of one variable -- a histogram
+                        # on the diagonal over a mesh whose columns are those
+                        # same bins. Only passed to the one diagonal type that
+                        # bins: the others draw every value where it falls and
+                        # warn if handed a bin count.
+                        diagonal_kwargs["bins"] = panel_bins
                     self._pairs_subset((chosen[row],)).plot(
-                        type=self._pairs_diagonal_type(chosen[row]),
+                        type=diagonal_type,
                         alpha=alpha,
                         normalize=normalize,
                         suggest=False,
-                        **kwargs,
+                        **diagonal_kwargs,
                     )
                 else:
                     joint_panels.append(
@@ -1724,7 +1745,7 @@ class RVResults(Results):
                 # Drop the title each panel drew for itself. On its own a plot
                 # is titled with its type ("Density Curve", "Tile Plot"), but
                 # in a matrix that repeats the same two or three words down
-                # every panel and crowds them; the figure's own "Pairs Plot"
+                # every panel and crowds them; the figure's own suptitle
                 # says what the layout is. The theoretical pairs plot clears
                 # its panels' titles the same way.
                 ax.set_title("")
@@ -1755,7 +1776,12 @@ class RVResults(Results):
                 if row == k - 1 and col == 0:
                     corner = ax
 
-        fig.suptitle("Pairs Plot")
+        # A column all shows one variable, so its panels have to line up --
+        # a stem on the diagonal directly above the tile cell for that value.
+        # Each panel type frames its own axes differently, so this is not free.
+        align_pairs_columns(cells)
+
+        fig.suptitle(PAIRS_SUPTITLE)
         fig.tight_layout()
 
         # Each joint panel gets its own colorbar, in the empty cell mirroring
@@ -1769,11 +1795,7 @@ class RVResults(Results):
                 fig,
                 gs[col, row].get_position(fig),
                 mappable,
-                "%s & %s"
-                % (
-                    self._pairs_variable_label(chosen[col]),
-                    self._pairs_variable_label(chosen[row]),
-                ),
+                pairs_colorbar_pair_label(chosen[col], chosen[row]),
                 quantity,
             )
 
@@ -2740,7 +2762,12 @@ class RVResults(Results):
             kwargs.setdefault("label", "_nolegend_")
             for result in self.results:
                 result.plot(alpha=alpha, color=color, **kwargs)
-            plt.xlabel("Index")
+            # No x-label set here: each result already named its own axis when
+            # it drew, and it knows which it is. A tuple or vector is plotted
+            # against its position, so it says "Index"; a random process's path
+            # is plotted against time, so it says "Time". Forcing "Index" on
+            # every one of them relabeled a Brownian motion's clock as an
+            # index.
 
         # Print the suggestion notes after the plot has rendered: the
         # plot being shown with its reasonable alternatives, and -- for

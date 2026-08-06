@@ -622,9 +622,14 @@ families count *free* variables — a 3-category `Multinomial` has 2, so it stil
 draws its one joint plot.
 
 **Choosing which variables to show is asymmetric on purpose.** A distribution
-takes `variables=` — any list of two or more, Python-indexed, so
-`variables=[0, 1, 3]` draws `Variable 1`, `Variable 2`, `Variable 4` (two of them
-means their single joint plot; three or more means a matrix of those). Simulated
+takes `variables=`, Python-indexed, and the count decides what is drawn: **one**
+(`variables=2` or `variables=[2]`) is that variable's own marginal pdf/pmf,
+**two** is their single joint plot, **three or more** is a matrix of those.
+Labels follow the numbers asked for, so `variables=[0, 1, 3]` draws
+`Variable 1`, `Variable 2`, `Variable 4`. A one-variable request is honored even
+when the joint plot would be refused for varying in only one direction (a
+two-category `Multinomial`'s marginal is a `Binomial` — a fine thing to plot),
+so that check is made *after* the single-variable case. Simulated
 results have **no such argument**: index the random variable before simulating,
 `X[[0, 2]].sim(1000).plot()`, since that already exists and avoids two ways to say
 the same thing. Both removed keywords (`dims=` on either side, `pairs=`) raise a
@@ -716,13 +721,42 @@ per panel, `JOINT_PAIRS_OVERLAY_ERROR` when the figure already has a plot,
 `Variable 1`-style labels on the outer edges only, no per-panel titles (each
 panel's own type title is cleared, and the figure carries one suptitle instead).
 
+**A column is one variable at one scale.** Each panel type frames its own
+axes differently (an impulse pads a margin around its values; a tile's cells
+tile the axes edge to edge), so a diagonal panel did *not* line up with the
+joint panels under it — same tick values, different limits, so a stem sat off
+the center of its tile cell. `align_pairs_columns(cells)` in `plot.py` puts
+every panel in a column on the joint panels' framing, and **both matrices call
+it**. The last column has no joint panel beneath it, so it borrows the scale
+from the joint panels along its *row*, where that same variable is the y
+variable. **A dot-plot diagonal needs more than `set_xlim`**: `_dotplot_relayout`
+re-frames its own value axis on every draw, so the helper also records the
+range as `ax._symbulate_value_lim` and that rebuild honors it — the same trap
+as `_symbulate_freq_ticks`.
+
+**`bins=` applies to the diagonal too**, not just the joint panels, so a column
+really is one binning of one variable. It is passed *only* when the diagonal is
+a histogram — every other diagonal type draws each value where it falls and
+warns if handed a bin count.
+
+**The diagonal walks the categorical palette** (`advance_pairs_diagonal_color`,
+called before the panel draws). Every panel is a fresh axes and each `.plot()`
+takes the first color of its own cycle, so left alone the whole diagonal came
+out one color.
+
+**Colorbar pair labels are `"Variables 1 & 2"`**, from the shared
+`pairs_colorbar_pair_label` — shorter than repeating the word over a narrow bar.
+
 **The suptitle differs by design.** A theoretical matrix is titled
 `"Probability Density Functions"` or `"Probability Mass Functions"` by
 `self.discrete`, because every panel of it *is* an exact pdf/pmf. A simulated
-matrix keeps `"Pairs Plot"`: its panels are estimates, a mixed matrix has both
-kinds of variable at once, `normalize=False` shows counts, and a small
-simulation's panels are scatters and rugs — so no single pdf/pmf claim would be
-true of it.
+matrix is titled `PAIRS_SUPTITLE` ("Joint and Marginal Distributions"), which
+names what the panels are without claiming exactness: its panels are estimates,
+a mixed matrix has both kinds of variable at once, `normalize=False` shows
+counts, and a small simulation's panels are scatters and rugs — so no single
+pdf/pmf claim would be true of it. Note `PLOT_DISPLAY_NAME["pairs"]` in the
+suggestion note still reads "Pairs Plot", since that names the `type=` token
+rather than the figure (the same split as `density2d`).
 
 **Both matrices label the whole left column**, top-left panel included, so every
 row is named (`Variable 1`, `Variable 2`, `Variable 3` down the side — seaborn
@@ -821,6 +855,8 @@ pytest tests/
 - Do not hardcode per-plot-type alpha or line-width values inline — use the named constants at the top of `plot.py` (rcParams can't express per-plot-type values)
 - Do not reintroduce `is_discrete()` into `results.py` — `classify_data()` is the live discreteness check there now. (`is_discrete()` remains a standalone utility in `math.py`; leave it.)
 - Do not reintroduce a `marginal=` keyword or a `type="marginal"` value — the three-panel layout is what every two-variable plot is now (see "Two Variables"). Do not build that layout inline either; call `setup_marginal_axes` so both sides stay identical.
+- Do not set a pairs-matrix panel's limits without going through `align_pairs_columns`, and do not drop the `_symbulate_value_lim` / `_symbulate_freq_ticks` records — a dot plot rebuilds its own framing and locators on every draw, so a plain `set_xlim`/`set_major_locator` silently reverts on the next render (see "Pairs Matrix" and "Two Variables")
+- Do not force whole-number ticks on a sample path unconditionally — `make_sample_path` applies them only when every time is a whole number, which is what keeps a continuous-time path (Brownian motion, a Poisson process, a queue's clock) reading as continuous
 - Do not read a 2-D plot's type from `plt.gca().get_title()` — it moved to `plt.gcf().get_suptitle()` (see "Two Variables")
 - Do not hardcode the discreteness thresholds — use `B_1D` (1-D) and `K_2D` (2-D per axis) from `plot.py`, passed into `classify_data()` at the `results.py` dispatch (`B_1D` for 1-D, `K_2D` per axis for 2-D). Values are provisional (see `DECISIONS.md`).
 - Do not set `self.xlim` in a new distribution's `__init__`, and do not compute a window there — `Distribution._compute_xlim` derives it from scipy's `support()` on first read (see "Distribution Plotting Window"). The only exception is a degenerate branch that skips `Distribution.__init__` and so has no scipy object.

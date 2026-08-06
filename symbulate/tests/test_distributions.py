@@ -4362,9 +4362,9 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
         self.assertEqual(
             sorted(a.get_title() for a in bars),
             [
-                "Variable 1 & Variable 2",
-                "Variable 1 & Variable 3",
-                "Variable 2 & Variable 3",
+                "Variables 1 & 2",
+                "Variables 1 & 3",
+                "Variables 2 & 3",
             ],
         )
         self.assertEqual({a.get_ylabel() for a in bars}, {"Density"})
@@ -4419,13 +4419,24 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
 
     def test_MultivariateNormal_plot_bad_variables(self):
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
-        # Too few variables, out of range, repeated, not a number. (Three or
-        # more is no longer an error -- it asks for a matrix of every pair.)
-        self.assertRaises(Exception, lambda: X.plot(variables=(0,)))
+        # No variables at all, out of range, repeated, not a number. (Three or
+        # more is no longer an error -- it asks for a matrix of every pair --
+        # and neither is one, which asks for that variable's own distribution.)
         self.assertRaises(Exception, lambda: X.plot(variables=()))
         self.assertRaises(Exception, lambda: X.plot(variables=(0, 7)))
         self.assertRaises(Exception, lambda: X.plot(variables=(1, 1)))
         self.assertRaises(Exception, lambda: X.plot(variables=(0, "a")))
+        plt.close("all")
+
+    def test_MultivariateNormal_plot_one_variable_is_its_own_distribution(self):
+        X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
+        for arg in [1, [1], (1,)]:
+            plt.close("all")
+            X.plot(variables=arg)
+            panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+            self.assertEqual(len(panels), 1)
+            self.assertEqual(plt.gca().get_xlabel(), "Variable 2")
+            self.assertEqual(plt.gca().get_title(), "PDF Plot")
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_cannot_share_a_figure(self):
