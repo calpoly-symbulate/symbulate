@@ -2417,6 +2417,31 @@ class RVResults(Results):
                 ax = plt.gca()
                 color = get_next_color(ax)
 
+            # Two tiers, exactly like the 1D branch above: one *main*
+            # type -- the plot that fills the panel, picked by the
+            # if/elif chain, since two of them would hide each other --
+            # and then the *overlay* types, drawn on top of it by
+            # independent ifs. That is what lets .plot(["hist",
+            # "density"]) draw both in one call, the way two .plot()
+            # calls in a cell already did; the chain used to run to
+            # completion on the first match and drop every other type
+            # the caller asked for without saying so.
+            #
+            # The overlays are the density and rug families, matching
+            # which 1D types compose. Everything else is a main type.
+            wants_density = (
+                "density" in type or "density2d" in type or "segmented_density" in type
+            )
+            wants_rug = "rug" in type or "segmented_rug" in type
+            # bandwidth belongs to the density overlay alone. Pop it up
+            # front so it can't reach a main type's helper as a stray
+            # matplotlib kwarg when both are asked for in one call -- the
+            # 1D branch pops it for the same reason, and could do it
+            # inside its density block only because that block runs first.
+            # Only when a density was actually asked for, so bandwidth
+            # passed to anything else is left to fail exactly as before.
+            bandwidth = kwargs.pop("bandwidth", None) if wants_density else None
+
             # The 'marginal' layout keeps the legacy left-side colorbar
             # (add_colorbar): the mesh helpers' own right-side colorbar
             # would squeeze the y-marginal panel, so they are called with
@@ -2482,52 +2507,6 @@ class RVResults(Results):
                         _marginal_hist_edges = (histo[1], histo[2])
                 else:
                     make_hist2d(x, y, ax, bins=bins, normalize=normalize, **kwargs)
-            elif "density" in type or "density2d" in type:
-                # On mixed data the short name "density" means the segmented
-                # density; "density2d" always forces the 2D surface.
-                if configuration == "2D_mixed" and "density2d" not in type:
-                    make_segmented_density(
-                        x,
-                        y,
-                        ax,
-                        color,
-                        bandwidth=kwargs.pop("bandwidth", None),
-                        alpha=alpha,
-                        discrete_x=discrete_x,
-                        discrete_y=discrete_y,
-                        **kwargs,
-                    )
-                    _resolved_main_type_x = _resolved_main_type_y = "segmented_density"
-                elif marginal:
-                    den = make_density2D(x, y, ax, colorbar=False, **kwargs)
-                    add_colorbar(fig, marginal, den, "Density")
-                    _resolved_main_type_x = _resolved_main_type_y = "density2d"
-                else:
-                    make_density2D(x, y, ax, **kwargs)
-            elif "rug" in type or "segmented_rug" in type:
-                make_segmented_rug(
-                    x,
-                    y,
-                    ax,
-                    color,
-                    alpha=alpha,
-                    discrete_x=discrete_x,
-                    discrete_y=discrete_y,
-                )
-                _resolved_main_type_x = _resolved_main_type_y = "segmented_rug"
-            elif "segmented_density" in type:
-                make_segmented_density(
-                    x,
-                    y,
-                    ax,
-                    color,
-                    bandwidth=kwargs.pop("bandwidth", None),
-                    alpha=alpha,
-                    discrete_x=discrete_x,
-                    discrete_y=discrete_y,
-                    **kwargs,
-                )
-                _resolved_main_type_x = _resolved_main_type_y = "segmented_density"
             elif "segmented_hist" in type:
                 make_segmented_hist(
                     x,
@@ -2623,9 +2602,66 @@ class RVResults(Results):
                 )
                 _resolved_main_type_x = _resolved_main_type_y = "box"
 
+            # Overlay tier. These draw after the main type, so a curve or
+            # a rug tick lands on top of the bars rather than under them,
+            # and they share the one color this .plot() call took from
+            # the cycle -- both the same conventions the 1D branch uses
+            # for its own overlay types.
+            #
+            # An overlay asked for on its own is the main plot, so it
+            # still reports the resolved renderer name the marginal
+            # panels align to; when it sits on top of a main type, that
+            # main type keeps the name.
+            drew_main = (
+                _resolved_main_type_x is not None or _resolved_main_type_y is not None
+            )
+            if wants_density:
+                # On mixed data the short name "density" means the segmented
+                # density; "density2d" always forces the 2D surface. Asking
+                # for "segmented_density" by name always means the segmented
+                # one whatever the data looks like -- that is what lets the
+                # helper explain, on two continuous or two discrete
+                # variables, that a segmented density is not what they want.
+                if "segmented_density" in type or (
+                    configuration == "2D_mixed" and "density2d" not in type
+                ):
+                    make_segmented_density(
+                        x,
+                        y,
+                        ax,
+                        color,
+                        bandwidth=bandwidth,
+                        alpha=alpha,
+                        discrete_x=discrete_x,
+                        discrete_y=discrete_y,
+                        **kwargs,
+                    )
+                    if not drew_main:
+                        _resolved_main_type_x = _resolved_main_type_y = (
+                            "segmented_density"
+                        )
+                elif marginal:
+                    den = make_density2D(x, y, ax, colorbar=False, **kwargs)
+                    add_colorbar(fig, marginal, den, "Density")
+                    if not drew_main:
+                        _resolved_main_type_x = _resolved_main_type_y = "density2d"
+                else:
+                    make_density2D(x, y, ax, **kwargs)
+            if wants_rug:
+                make_segmented_rug(
+                    x,
+                    y,
+                    ax,
+                    color,
+                    alpha=alpha,
+                    discrete_x=discrete_x,
+                    discrete_y=discrete_y,
+                )
+                if not drew_main:
+                    _resolved_main_type_x = _resolved_main_type_y = "segmented_rug"
+
             if marginal:
                 edges_x, edges_y = _marginal_hist_edges
-                wants_density = "density" in type or "density2d" in type
                 marg_x_color = get_next_color(ax)
                 marg_y_color = get_next_color(ax)
                 _draw_marginal_panel(
