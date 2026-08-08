@@ -1385,7 +1385,13 @@ of the two threads answers that question unilaterally, the other has to
 
 ## Decision: Phase 3 — Hierarchical Models
 
-**Status:** Proposed
+**Status:** Implemented
+
+> Shipped: the lambda-only core mechanism — `HierarchicalProbabilitySpace`,
+> `Hierarchical(prior, cond_func)`, and `>>` (`ProbabilitySpace.__rshift__`),
+> with the `TypeError` guard for a conditional function that doesn't return a
+> `ProbabilitySpace`. Still deferred: `Placeholder` (sub-phase 3b) and
+> `AssumeHierarchical` (sub-phase 3c).
 
 **Decision**
 > Build the core mechanism first — `HierarchicalProbabilitySpace`,

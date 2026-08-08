@@ -1,5 +1,7 @@
 from .probability_space import (
     ProbabilitySpace,
+    HierarchicalProbabilitySpace,
+    Hierarchical,
     BoxModel,
     DeckOfCards,
     POKER_HANDS,

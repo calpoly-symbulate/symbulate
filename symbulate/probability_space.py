@@ -199,6 +199,138 @@ class ProbabilitySpace:
 
         return ProbabilitySpace(draw)
 
+    def __rshift__(self, cond_space_func):
+        """Create a hierarchical probability space from a prior and a conditional function.
+
+        Parameters
+        ----------
+        cond_space_func : callable
+            A function that takes one outcome drawn from ``self`` (the
+            prior) and returns a ``ProbabilitySpace`` (the conditional,
+            or "child," space to draw from given that outcome).
+
+        Returns
+        -------
+        ProbabilitySpace
+            A new probability space whose draws produce one outcome from
+            ``self`` and one from the conditional space it determines,
+            joined into a single tuple.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> P = Beta(1, 2) >> (lambda x: Binomial(10, x))
+        >>> P.draw()  # doctest: +SKIP
+        (0.34, 3)
+        """
+        return Hierarchical(self, cond_space_func)
+
+
+class HierarchicalProbabilitySpace(ProbabilitySpace):
+    """Defines a probability space built from a prior and a conditional space.
+
+    A hierarchical probability space draws an outcome from a prior
+    probability space, uses that outcome to determine a second
+    ("conditional," or "child") probability space, and draws from that
+    child space. The two outcomes are joined into a single tuple. This is
+    the mechanism behind the ``>>`` operator.
+
+    Parameters
+    ----------
+    prior_space : ProbabilitySpace
+        The probability space to draw the prior outcome from.
+    cond_space_func : callable
+        A function that takes one outcome drawn from ``prior_space`` and
+        returns a ``ProbabilitySpace`` to draw the conditional outcome
+        from.
+
+    Attributes
+    ----------
+    prior_space : ProbabilitySpace
+        The probability space the prior outcome is drawn from.
+    cond_space_func : callable
+        The function mapping a prior outcome to a conditional
+        probability space.
+
+    Raises
+    ------
+    TypeError
+        If ``prior_space`` is not a ``ProbabilitySpace``, if
+        ``cond_space_func`` is not callable, or if calling
+        ``cond_space_func`` on a prior outcome does not return a
+        ``ProbabilitySpace``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = HierarchicalProbabilitySpace(Beta(1, 2), lambda x: Binomial(10, x))
+    >>> P.draw()  # doctest: +SKIP
+    (0.34, 3)
+    """
+
+    def __init__(self, prior_space, cond_space_func):
+        """Initialize the hierarchical probability space."""
+        if not isinstance(prior_space, ProbabilitySpace):
+            raise TypeError(
+                "The left-hand side of '>>' must be a ProbabilitySpace "
+                f"(e.g., a distribution), but got {type(prior_space).__name__}."
+            )
+        if not callable(cond_space_func):
+            raise TypeError(
+                "The right-hand side of '>>' must be a callable (e.g., a "
+                "lambda or function) that takes the prior's value and "
+                f"returns a ProbabilitySpace, but got {type(cond_space_func).__name__}."
+            )
+        self.prior_space = prior_space
+        self.cond_space_func = cond_space_func
+
+        def draw():
+            prior_value = prior_space.draw()
+            cond_space = cond_space_func(prior_value)
+            if not isinstance(cond_space, ProbabilitySpace):
+                raise TypeError(
+                    "The function passed to '>>' must return a "
+                    "ProbabilitySpace, but got "
+                    f"{type(cond_space).__name__}. Did you forget to wrap "
+                    "the return value in a distribution, e.g. "
+                    "'lambda x: Binomial(10, x)'?"
+                )
+            return join(prior_value, cond_space.draw())
+
+        super().__init__(draw)
+
+
+def Hierarchical(prior_space, cond_space_func):
+    """Create a hierarchical probability space from a prior and a conditional function.
+
+    A convenience alias for ``HierarchicalProbabilitySpace``, and the
+    function that ``prior_space >> cond_space_func`` calls.
+
+    Parameters
+    ----------
+    prior_space : ProbabilitySpace
+        The probability space to draw the prior outcome from.
+    cond_space_func : callable
+        A function that takes one outcome drawn from ``prior_space`` and
+        returns a ``ProbabilitySpace`` to draw the conditional outcome
+        from.
+
+    Returns
+    -------
+    ProbabilitySpace
+        A new probability space whose draws produce one outcome from
+        ``prior_space`` and one from the conditional space it determines,
+        joined into a single tuple.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = Hierarchical(Beta(1, 2), lambda x: Binomial(10, x))
+    >>> P.draw()  # doctest: +SKIP
+    (0.34, 3)
+    """
+    return HierarchicalProbabilitySpace(prior_space, cond_space_func)
+
 
 class Event(Logical):
     """Defines an event in a probability space.
