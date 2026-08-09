@@ -1,0 +1,140 @@
+From a68d10a0ab834bd1cedd0c8fa20a4fb4b513cd8a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 02:58:16 +0000
+Subject: [PATCH 4/4] feature: add scale parameter to Rayleigh distribution
+
+Rayleigh(scale=1.0) generalizes the existing Rayleigh distribution
+(previously fixed at scale=1) so it also models the magnitude of a
+2D vector whose normal components have standard deviation other than
+1 -- scale * Rayleigh() is now exactly Rayleigh(scale). The default
+preserves the previous behavior exactly. Tests added covering the
+default scale, distributional agreement with scipy, mean/variance
+formulas, the stretch identity, and error handling for an invalid
+scale.
+---
+ symbulate/distributions.py            | 41 +++++++++++++++++++----
+ symbulate/tests/test_distributions.py | 47 +++++++++++++++++++++++++++
+ 2 files changed, 82 insertions(+), 6 deletions(-)
+
+diff --git a/symbulate/distributions.py b/symbulate/distributions.py
+index 43b44ec..606a61f 100644
+--- a/symbulate/distributions.py
++++ b/symbulate/distributions.py
+@@ -4450,9 +4450,21 @@ class Lomax(Distribution):
+ class Rayleigh(Distribution):
+     """Probability space for a Rayleigh distribution.
+ 
+-    Arises when computing the magnitude of a two-dimensional vector
+-    whose components are independent, identically distributed normal
+-    random variables. Often used in signal processing.
++    Arises when computing the magnitude of a two-dimensional vector whose
++    components are independent, identically distributed mean-zero normal
++    random variables -- ``scale`` is the standard deviation shared by those
++    two components. Often used in signal processing.
++
++    Parameters
++    ----------
++    scale : float, optional
++        Scale parameter -- the standard deviation of each underlying
++        mean-zero normal component. Must be positive. Default is 1.0.
++
++    Attributes
++    ----------
++    scale : float
++        Scale parameter.
+ 
+     Examples
+     --------
+@@ -4462,11 +4474,28 @@ class Rayleigh(Distribution):
+     1.2533
+     >>> X.draw()  # doctest: +SKIP
+     0.88
++    >>> Y = Rayleigh(scale=2)
++    >>> round(float(Y.mean()), 4)
++    2.5066
+     """
+ 
+-    def __init__(self):
+-        """Initialize a Rayleigh distribution."""
+-        params = {}
++    def __init__(self, scale=1.0):
++        """Initialize a Rayleigh distribution.
++
++        Raises
++        ------
++        Exception
++            If ``scale`` is not a positive number.
++        """
++        _validate(
++            (
++                not isinstance(scale, numbers.Real) or scale <= 0,
++                "scale must be a positive number",
++            ),
++        )
++        self.scale = scale
++
++        params = {"scale": scale}
+         super().__init__(params, stats.rayleigh, False)
+ 
+ 
+diff --git a/symbulate/tests/test_distributions.py b/symbulate/tests/test_distributions.py
+index 2055e00..5cd0343 100644
+--- a/symbulate/tests/test_distributions.py
++++ b/symbulate/tests/test_distributions.py
+@@ -3740,6 +3740,53 @@ class TestRayleigh(unittest.TestCase):
+         pval = stats.kstest(sims, cdf).pvalue
+         self.assertTrue(pval > 0.01)
+ 
++    def test_Rayleigh_default_scale_is_one(self):
++        X = Rayleigh()
++        self.assertEqual(X.scale, 1.0)
++
++    def test_Rayleigh_scale_distributional(self):
++        distributions.rng = np.random.default_rng(42)
++        X = RV(Rayleigh(scale=2))
++        sims = X.sim(Nsim)
++        cdf = stats.rayleigh(scale=2).cdf
++        pval = stats.kstest(sims, cdf).pvalue
++        self.assertTrue(pval > 0.01)
++
++    def test_Rayleigh_scale_mean_var(self):
++        for scale in [0.5, 1, 2, 5]:
++            X = Rayleigh(scale=scale)
++            th = stats.rayleigh(scale=scale)
++            self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
++            self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
++
++    def test_Rayleigh_scale_stretches_standard_Rayleigh(self):
++        # If X ~ Rayleigh() then scale * X ~ Rayleigh(scale).
++        distributions.rng = np.random.default_rng(42)
++        scale = 3
++        X = RV(Rayleigh())
++        sims = (scale * X).sim(Nsim)
++        cdf = stats.rayleigh(scale=scale).cdf
++        pval = stats.kstest(sims, cdf).pvalue
++        self.assertTrue(pval > 0.01)
++
++    def test_Rayleigh_draw_is_scalar_in_support(self):
++        distributions.rng = np.random.default_rng(0)
++        value = Rayleigh(scale=2).draw()
++        self.assertIsInstance(value, Scalar)
++        self.assertGreaterEqual(float(value), 0.0)
++
++    def test_Rayleigh_invalid_scale_raises(self):
++        for bad in [-1, 0, "a"]:
++            self.assertRaises(Exception, lambda b=bad: Rayleigh(scale=b))
++
++    def test_Rayleigh_plots_without_error(self):
++        # draw / RV / sim / plot all wired through the base class.
++        Rayleigh(scale=2).draw()
++        RV(Rayleigh(scale=2)).sim(100).plot()
++        Rayleigh(scale=2).plot()
++        Rayleigh(scale=2).plot(cdf=True)
++        plt.close("all")
++
+ 
+ class TestHalfNormal(unittest.TestCase):
+ 
+-- 
+2.43.0
+

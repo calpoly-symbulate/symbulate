@@ -1,0 +1,225 @@
+From de597389012cbe58d9065aaf5d89ee37a19ae760 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 02:57:43 +0000
+Subject: [PATCH 1/4] feature: add Benford's law distribution
+
+Adds Benford(base=10), a discrete distribution over leading digits
+1..base-1 with pmf log_base(1 + 1/d). Not available in scipy, so it is
+implemented via a small custom rv_discrete generator (_benford_gen),
+following the same pattern _makeham_gen uses for Makeham. Exported from
+symbulate/__init__.py; tests added to test_distributions.py covering
+the pmf formula, normalization, the classic ~30% leading-1 fact,
+non-default bases, error handling, and plotting.
+---
+ symbulate/__init__.py                 |  1 +
+ symbulate/distributions.py            | 93 +++++++++++++++++++++++++++
+ symbulate/tests/test_distributions.py | 77 ++++++++++++++++++++++
+ 3 files changed, 171 insertions(+)
+
+diff --git a/symbulate/__init__.py b/symbulate/__init__.py
+index b7a366e..999d921 100644
+--- a/symbulate/__init__.py
++++ b/symbulate/__init__.py
+@@ -31,6 +31,7 @@ from .distributions import (
+     DiscreteUniform,
+     Zipf,
+     Zeta,
++    Benford,
+     Uniform,
+     IrwinHall,
+     Bates,
+diff --git a/symbulate/distributions.py b/symbulate/distributions.py
+index 22f75a6..b4969e8 100644
+--- a/symbulate/distributions.py
++++ b/symbulate/distributions.py
+@@ -1581,6 +1581,99 @@ class Zeta(Distribution):
+         super().__init__(params, stats.zipf, True)
+ 
+ 
++class _benford_gen(stats.rv_discrete):
++    """scipy generator for Benford's law (the leading-digit distribution).
++
++    A single shape parameter, ``base``, generalizes the familiar base-10
++    law to leading "digits" ``1, ..., base - 1`` in any base. scipy has no
++    Benford's law built in, so it is defined here; every other discrete
++    distribution in this module wraps an existing scipy distribution
++    directly. The support is small and fixed for a given ``base``, so the
++    generic ``rv_discrete`` machinery (summing the pmf over the support) is
++    all that is needed for the cdf, ppf, moments, and sampling -- no custom
++    ``_cdf`` or ``_rvs`` required, unlike :class:`_makeham_gen`.
++    """
++
++    def _argcheck(self, base):
++        return (base == np.floor(base)) & (base >= 2)
++
++    def _get_support(self, base):
++        return 1, base - 1
++
++    def _pmf(self, k, base):
++        return np.log1p(1.0 / k) / np.log(base)
++
++
++_benford = _benford_gen(name="benford")
++
++
++class Benford(Distribution):
++    """Probability space for Benford's law.
++
++    The distribution of the leading digit of numbers drawn from many
++    naturally occurring data sets -- financial records, populations,
++    physical constants -- where small leading digits (1, 2, ...) occur far
++    more often than large ones (in base 10, a leading 1 shows up about 30%
++    of the time, a leading 9 less than 5%). This makes it a standard tool
++    in forensic accounting and fraud detection: real financial data tends
++    to follow Benford's law, so a data set that does not is a red flag
++    worth investigating further.
++
++    Parameters
++    ----------
++    base : int, optional
++        Numeral base the leading digit is taken in. Must be an integer
++        greater than or equal to 2. Default is 10, the classic base-10
++        version of the law. The leading digit then ranges over
++        ``1, ..., base - 1``.
++
++    Attributes
++    ----------
++    base : int
++        Numeral base the leading digit is taken in.
++
++    Notes
++    -----
++    The probability of leading digit ``d`` is
++    ``P(D = d) = log_base(1 + 1 / d)`` for ``d = 1, ..., base - 1`` -- in
++    base 10, ``P(D = 1) = log10(2) ~ 0.301`` and ``P(D = 9) = log10(10/9)
++    ~ 0.046``. This closed form comes from data whose logarithms are
++    spread roughly uniformly across many orders of magnitude, which is
++    common for quantities such as populations or stock prices that grow
++    multiplicatively rather than additively.
++
++    Examples
++    --------
++    >>> from symbulate import *
++    >>> X = Benford()
++    >>> round(float(X.pmf(1)), 4)
++    0.301
++    >>> round(float(X.pmf(9)), 4)
++    0.0458
++    >>> X.draw()  # doctest: +SKIP
++    1
++    """
++
++    def __init__(self, base=10):
++        """Initialize a Benford's law distribution.
++
++        Raises
++        ------
++        Exception
++            If ``base`` is not an integer greater than or equal to 2.
++        """
++        _validate(
++            (
++                not _is_whole_number(base) or base < 2,
++                "base must be an integer greater than or equal to 2",
++            ),
++        )
++        self.base = int(base)
++
++        params = {"base": self.base}
++        super().__init__(params, _benford, True)
++
++
+ ## Continuous Distributions
+ 
+ 
+diff --git a/symbulate/tests/test_distributions.py b/symbulate/tests/test_distributions.py
+index 9d505a7..911ebcf 100644
+--- a/symbulate/tests/test_distributions.py
++++ b/symbulate/tests/test_distributions.py
+@@ -1021,6 +1021,83 @@ class TestZeta(unittest.TestCase):
+         plt.close("all")
+ 
+ 
++class TestBenford(unittest.TestCase):
++
++    def test_Benford_pmf_matches_formula(self):
++        # P(D = d) = log10(1 + 1/d)
++        X = Benford()
++        for d in range(1, 10):
++            expected = math.log10(1 + 1 / d)
++            self.assertAlmostEqual(float(X.pmf(d)), expected, places=12)
++
++    def test_Benford_pmf_sums_to_one(self):
++        X = Benford()
++        total = sum(float(X.pmf(d)) for d in range(1, 10))
++        self.assertAlmostEqual(total, 1.0, places=10)
++
++    def test_Benford_leading_one_about_30_percent(self):
++        # The headline fact of Benford's law.
++        X = Benford()
++        self.assertAlmostEqual(float(X.pmf(1)), 0.30103, places=5)
++
++    def test_Benford_pmf_is_decreasing(self):
++        X = Benford()
++        probs = [float(X.pmf(d)) for d in range(1, 10)]
++        self.assertEqual(probs, sorted(probs, reverse=True))
++
++    def test_Benford_support_is_one_through_nine(self):
++        X = Benford()
++        self.assertEqual(X.xlim, (1, 9))
++        self.assertEqual(float(X.pmf(0)), 0.0)
++        self.assertEqual(float(X.pmf(10)), 0.0)
++
++    def test_Benford_mean(self):
++        # Known constant: E[D] ~ 3.4402 for base 10.
++        X = Benford()
++        self.assertAlmostEqual(float(X.mean()), 3.440237, places=5)
++
++    def test_Benford_other_base(self):
++        # In base 2 the only possible leading digit is 1.
++        X = Benford(base=2)
++        self.assertAlmostEqual(float(X.pmf(1)), 1.0, places=10)
++        self.assertEqual(X.xlim, (1, 1))
++
++    def test_Benford_distributional(self):
++        distributions.rng = np.random.default_rng(42)
++        X = RV(Benford())
++        sims = X.sim(Nsim)
++        simulated = sims.tabulate()
++        exp_list, obs_list = [], []
++        for d in range(1, 10):
++            expected = Nsim * math.log10(1 + 1 / d)
++            exp_list.append(expected)
++            obs_list.append(simulated[d])
++        pval = stats.chisquare(
++            obs_list, np.array(exp_list) * sum(obs_list) / sum(exp_list)
++        ).pvalue
++        self.assertTrue(pval > 0.01)
++
++    def test_Benford_draw_is_scalar_in_support(self):
++        distributions.rng = np.random.default_rng(0)
++        value = Benford().draw()
++        self.assertIsInstance(value, Scalar)
++        self.assertIn(int(value), range(1, 10))
++
++    def test_Benford_default_base_is_ten(self):
++        self.assertEqual(Benford().base, 10)
++
++    def test_Benford_invalid_base_raises(self):
++        for bad in [1, 0, -2, 1.5, "a"]:
++            self.assertRaises(Exception, lambda b=bad: Benford(base=b))
++
++    def test_Benford_plots_without_error(self):
++        # draw / RV / sim / plot all wired through the base class.
++        Benford().draw()
++        RV(Benford()).sim(100).plot()
++        Benford().plot()
++        plt.close("all")
++
++
+ class TestUniform(unittest.TestCase):
+ 
+     def test_Uniform_error(self):
+-- 
+2.43.0
+

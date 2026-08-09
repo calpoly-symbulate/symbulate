@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 01:14:57 +0000
+Subject: [PATCH] fix: rotate right-hand marginal strip's frequency tick labels
+
+The strip to the right of a two-variable joint plot (both the simulated
+marginal=True layout and the theoretical MultivariateDistribution.plot(),
+which share setup_marginal_axes/thin_marginal_frequency_ticks) is narrow,
+so its density/count/probability axis's decimal tick labels ('0.00',
+'0.15', '0.30') ran into each other when laid out horizontally -- visibly
+so on any continuous joint plot. Rotate that axis's tick labels 90
+degrees so the same tick count and precision fit the strip's width. The
+strip above the joint panel is wide, not narrow, so it is left
+unaffected.
+---
+ symbulate/plot.py            | 21 ++++++++++++++
+ symbulate/tests/test_plot.py | 56 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 77 insertions(+)
+
+diff --git a/symbulate/plot.py b/symbulate/plot.py
+index 6c61719..02dff77 100644
+--- a/symbulate/plot.py
++++ b/symbulate/plot.py
+@@ -624,6 +624,11 @@ MARGINAL_COLORBAR_RECT = (0.80, 0.11, 0.03, 0.52)
+ # itself there -- 0, 2, 4, 6, 8 running together. The value axis is left
+ # alone: it is shared with the joint panel, which sets the ticks there.
+ MARGINAL_FREQ_TICKS = 3
++MARGINAL_FREQ_TICK_ROTATION = 90  # degrees. The right-hand strip's
++# frequency-axis tick labels are rotated by this much so decimal labels
++# ("0.00", "0.15", "0.30") fit in the strip's narrow width without running
++# into each other (see thin_marginal_frequency_ticks). The strip above the
++# joint panel is wide, not narrow, so its tick labels are left horizontal.
+ 
+ 
+ class SymbulatePlot:
+@@ -1672,6 +1677,22 @@ def thin_marginal_frequency_ticks(marg_ax, orientation, integer=False):
+     # (_dotplot_relayout, which runs on draw), so setting the locator here is
+     # not enough on its own -- record the cap where that rebuild can find it.
+     marg_ax._symbulate_freq_ticks = MARGINAL_FREQ_TICKS
++    if orientation == "horizontal":
++        # The right-hand strip is narrow (a fraction of the joint panel's
++        # width), and its frequency axis's decimal tick labels ("0.00",
++        # "0.15", "0.30") are wide enough that even MARGINAL_FREQ_TICKS (3)
++        # of them run into each other laid out horizontally -- unlike the
++        # strip above the joint panel, which is wide and short, so the same
++        # 3 labels have plenty of room stacked side by side there. Rotating
++        # keeps the same tick count and precision while fitting the width.
++        # Set here (on this axis object) rather than after the caller's
++        # later value/frequency transpose: rotation is a tick-label display
++        # property, not tied to which values are currently on this axis, so
++        # it survives that transpose unchanged.
++        axis.set_tick_params(rotation=MARGINAL_FREQ_TICK_ROTATION)
++        for label in axis.get_ticklabels():
++            label.set_horizontalalignment("center")
++            label.set_verticalalignment("top")
+ 
+ 
+ def marginal_rug_tick_height(main_ax, marg_ax, orientation):
+diff --git a/symbulate/tests/test_plot.py b/symbulate/tests/test_plot.py
+index b9287bd..5967eae 100644
+--- a/symbulate/tests/test_plot.py
++++ b/symbulate/tests/test_plot.py
+@@ -836,6 +836,42 @@ class TestMarginalLayoutIsOptIn(PlotTestCase):
+                     labels = [t for t in axis.get_ticklabels() if t.get_text()]
+                     self.assertLessEqual(len(labels), MARGINAL_FREQ_TICKS + 2)
+ 
++    def test_right_strips_frequency_labels_are_rotated_to_avoid_overlap(self):
++        """Regression: the right-hand strip is narrow, so its frequency
++        axis's decimal tick labels ("0.00", "0.15", "0.30") laid out
++        horizontally ran into each other -- rotating them fits the same
++        tick count in the strip's width. The strip above the joint panel
++        is wide, not narrow, so its labels stay horizontal."""
++        A, B = RV(Normal(0, 1) ** 2)
++        p = (A & B).sim(500).plot(marginal=True, suggest=False)
++        fig = plt.gcf()
++        fig.canvas.draw()
++        strips = [a for a in self._panels() if a is not p.ax]
++        marg_x = min(strips, key=lambda a: a.get_position().y0)
++        marg_y = max(strips, key=lambda a: a.get_position().x0)
++        for label in marg_y.get_xticklabels():
++            if label.get_text():
++                self.assertNotEqual(label.get_rotation(), 0)
++        for label in marg_x.get_yticklabels():
++            if label.get_text():
++                self.assertEqual(label.get_rotation(), 0)
++
++    def test_no_bounding_box_overlap_between_strip_frequency_labels(self):
++        """The within-strip crowding this rotation fixes, checked directly
++        via rendered bounding boxes rather than just the rotation angle."""
++        A, B = RV(Normal(0, 1) ** 2)
++        p = (A & B).sim(500).plot(marginal=True, suggest=False)
++        fig = plt.gcf()
++        fig.canvas.draw()
++        renderer = fig.canvas.get_renderer()
++        strips = [a for a in self._panels() if a is not p.ax]
++        marg_y = max(strips, key=lambda a: a.get_position().x0)
++        labels = [t for t in marg_y.get_xticklabels() if t.get_text()]
++        boxes = [t.get_window_extent(renderer=renderer) for t in labels]
++        for i in range(len(boxes)):
++            for j in range(i + 1, len(boxes)):
++                self.assertFalse(boxes[i].overlaps(boxes[j]))
++
+     def test_a_count_axis_stays_whole_numbers(self):
+         """Half a simulated value doesn't exist, so thinning a count axis
+         must not introduce fractional ticks."""
+@@ -4490,6 +4526,26 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
+         self.assertTrue(np.all(np.asarray(xdata) >= 0))
+         self.assertAlmostEqual(min(ydata), p.ax.get_ylim()[0], places=6)
+ 
++    def test_right_strips_frequency_labels_are_rotated_to_avoid_overlap(self):
++        """Regression: the right-hand strip is narrow, so its density-axis
++        decimal tick labels ran into each other laid out horizontally --
++        rotating them fits the same tick count. Same fix as the simulated
++        side (setup_marginal_axes/thin_marginal_frequency_ticks are
++        shared), checked here too since the theoretical side hits it
++        independently through MultivariateDistribution.plot()."""
++        p = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
++        _, marg_y = self._strips(p.ax)
++        plt.gcf().canvas.draw()
++        labels = [t for t in marg_y.get_xticklabels() if t.get_text()]
++        self.assertGreater(len(labels), 0)
++        for label in labels:
++            self.assertNotEqual(label.get_rotation(), 0)
++        renderer = plt.gcf().canvas.get_renderer()
++        boxes = [t.get_window_extent(renderer=renderer) for t in labels]
++        for i in range(len(boxes)):
++            for j in range(i + 1, len(boxes)):
++                self.assertFalse(boxes[i].overlaps(boxes[j]))
++
+     def test_a_discrete_strip_keeps_its_masses(self):
+         """A pmf strip is dots plus a dashed connector, transposed the same
+         way -- the dots are a PathCollection, not a line."""
+-- 
+2.43.0
+

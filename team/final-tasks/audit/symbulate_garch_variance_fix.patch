@@ -1,0 +1,206 @@
+diff --git a/symbulate/tests/test_time_series.py b/symbulate/tests/test_time_series.py
+index 0720761..637e4c7 100644
+--- a/symbulate/tests/test_time_series.py
++++ b/symbulate/tests/test_time_series.py
+@@ -723,6 +723,61 @@ class TestGARCHTheory(unittest.TestCase):
+             float(X[25].sim(3000).var()), float(X[5].sim(3000).var()) * 2
+         )
+ 
++    def test_long_run_variance_accounts_for_noise_variance(self):
++        # Regression test: arch_coefs + garch_coefs = 0.95 < 1 looks
++        # stationary if you assume a unit-variance shock, but a shock with
++        # variance 2 makes the true persistence 0.1 * 2 + 0.85 = 1.05 -- the
++        # variance grows without bound instead of settling.
++        seed()
++        omega, a, b = 0.2, 0.1, 0.85
++        X = GARCH(omega=omega, arch_coefs=[a], garch_coefs=[b], noise_dist=Normal(0, 2))
++        self.assertGreater(
++            float(X[60].sim(3000).var()), float(X[5].sim(3000).var()) * 2
++        )
++
++    def test_long_run_variance_matches_closed_form_for_non_unit_variance_noise(self):
++        # A shock with variance 4 rather than 1, and a low persistence
++        # (0.05 * 4 + 0.1 = 0.3) so the warm-up decays within a handful of
++        # steps -- see the note below on why n has to be past that warm-up.
++        #
++        # X's own unconditional variance is the long-run *conditional*
++        # variance (what _unconditional_variance computes, and what
++        # X.initial is set to) times the shock's variance -- Var(X) =
++        # E[sigma**2] * Var(shock) -- so this closed form has an extra
++        # factor of noise_var that GARCHProbabilitySpace.initial itself
++        # does not: initial is E[sigma**2], not Var(X).
++        #
++        # Note: GARCHResult's pre-time-0 stand-in uses `initial` for both
++        # the squared-value slot and the variance slot (see squared_at /
++        # variance_at in GARCHResult), which are only the same quantity
++        # when noise_var == 1. With noise_var != 1 that mismatch shows up
++        # as a real (separate, pre-existing) warm-up transient at small n
++        # even though initial itself is now the correct long-run value --
++        # so this test checks n large enough for that transient to have
++        # decayed, rather than n=0.
++        seed()
++        omega, a, b = 0.7, 0.05, 0.1
++        noise_var = 4
++        X = GARCH(
++            omega=omega, arch_coefs=[a], garch_coefs=[b],
++            noise_dist=Normal(0, noise_var ** 0.5),
++        )
++        expected = (omega / (1 - a * noise_var - b)) * noise_var
++        for n in [20, 40]:
++            self.assertAlmostEqual(float(X[n].sim(Nsim).var()), expected, delta=0.6)
++
++    def test_stationary_initial_rejects_a_shock_variance_that_tips_it_over(self):
++        # arch_coefs + garch_coefs = 0.95 < 1, so this would incorrectly be
++        # accepted as stationary if noise_dist's variance were ignored.
++        self.assertRaisesRegex(
++            ValueError,
++            'initial="stationary" is impossible',
++            lambda: GARCH(
++                omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85],
++                noise_dist=Normal(0, 2), initial="stationary",
++            ),
++        )
++
+ 
+ class TestGARCHErrors(unittest.TestCase):
+ 
+diff --git a/symbulate/time_series.py b/symbulate/time_series.py
+index 047281d..2d4b048 100644
+--- a/symbulate/time_series.py
++++ b/symbulate/time_series.py
+@@ -832,42 +832,59 @@ class AR(ARMA):
+         self.coefs = self.ar_coefs
+ 
+ 
+-def _garch_is_stationary(arch_coefs, garch_coefs):
++def _garch_is_stationary(arch_coefs, garch_coefs, noise_var):
+     """Whether a GARCH process has a finite long-run variance.
+ 
+-    True when the coefficients sum to less than 1. At 1 or above the
+-    variance keeps growing instead of settling, so there is no
+-    unconditional variance to speak of.
++    True when the persistence -- the ARCH coefficients scaled by the
++    variance of one standardized shock, plus the GARCH coefficients --
++    is less than 1. At 1 or above the variance keeps growing instead of
++    settling, so there is no unconditional variance to speak of.
++
++    The scaling matters because the ARCH terms weight *squared* shocks:
++    a shock with variance other than 1 changes how much persistence
++    those coefficients actually carry, even though the coefficients
++    themselves didn't change. See ``_unconditional_variance`` for the
++    matching long-run-variance formula.
+ 
+     Parameters
+     ----------
+     arch_coefs, garch_coefs : list of float
+         The two sets of coefficients.
++    noise_var : float
++        The variance of one draw from ``noise_dist`` (the standardized
++        shock). The textbook GARCH convention is a shock with variance
++        1, but Symbulate's ``noise_dist`` can be any distribution, so
++        this is not assumed here -- pass ``float(noise_dist.var())``.
+ 
+     Returns
+     -------
+     bool
+         ``True`` if the process settles down.
+     """
+-    return sum(arch_coefs) + sum(garch_coefs) < 1
++    return sum(arch_coefs) * noise_var + sum(garch_coefs) < 1
+ 
+ 
+-def _unconditional_variance(omega, arch_coefs, garch_coefs):
+-    """The long-run variance ``omega / (1 - sum of all coefficients)``.
++def _unconditional_variance(omega, arch_coefs, garch_coefs, noise_var):
++    """The long-run variance ``omega / (1 - persistence)``.
+ 
+     Parameters
+     ----------
+     omega : float
+         The constant term in the variance recursion.
+     arch_coefs, garch_coefs : list of float
+-        The two sets of coefficients. Must sum to less than 1.
++        The two sets of coefficients. Must give a persistence below 1
++        (see ``_garch_is_stationary``).
++    noise_var : float
++        The variance of one draw from ``noise_dist``. See
++        ``_garch_is_stationary`` for why this has to be passed in rather
++        than assumed to be 1.
+ 
+     Returns
+     -------
+     float
+         The variance the process settles at.
+     """
+-    return omega / (1 - sum(arch_coefs) - sum(garch_coefs))
++    return omega / (1 - sum(arch_coefs) * noise_var - sum(garch_coefs))
+ 
+ 
+ def _validate_garch(omega, arch_coefs, garch_coefs, noise_dist, initial):
+@@ -922,12 +939,14 @@ def _validate_garch(omega, arch_coefs, garch_coefs, noise_dist, initial):
+     if initial is None:
+         return
+     if initial == STATIONARY:
+-        if not _garch_is_stationary(arch_coefs, garch_coefs):
++        if not _garch_is_stationary(arch_coefs, garch_coefs, float(noise_dist.var())):
+             raise ValueError(
+-                'initial="stationary" is impossible when the coefficients sum '
+-                "to 1 or more: the variance never settles, so there is no "
+-                "long-run value to start from. Give a positive starting "
+-                "variance instead, for example initial=1."
++                'initial="stationary" is impossible with these coefficients '
++                "and this noise_dist: the persistence -- arch_coefs scaled "
++                "by the shock's variance, plus garch_coefs -- is 1 or more, "
++                "so the variance never settles and there is no long-run "
++                "value to start from. Give a positive starting variance "
++                "instead, for example initial=1."
+             )
+         return
+     if not isinstance(initial, numbers.Real):
+@@ -1107,14 +1126,17 @@ class GARCHProbabilitySpace(ProbabilitySpace):
+         self.garch_coefs = list(garch_coefs)
+         self.noise_dist = noise_dist
+ 
+-        settles = _garch_is_stationary(self.arch_coefs, self.garch_coefs)
++        noise_var = float(self.noise_dist.var())
++        settles = _garch_is_stationary(self.arch_coefs, self.garch_coefs, noise_var)
+         if initial is None or initial == STATIONARY:
+             # Starting at the long-run variance means there is no warm-up:
+             # the variance is already where it belongs at time 0. When the
+             # process does not settle there is no such value, so fall back to
+             # omega and let the warm-up show.
+             self.initial = (
+-                _unconditional_variance(omega, self.arch_coefs, self.garch_coefs)
++                _unconditional_variance(
++                    omega, self.arch_coefs, self.garch_coefs, noise_var
++                )
+                 if settles
+                 else omega
+             )
+@@ -1192,13 +1214,19 @@ class GARCH(RV):
+     ``GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85])``. Longer lists
+     give higher orders.
+ 
+-    The process settles down when the coefficients sum to less than 1, and
+-    its long-run variance is then ``omega / (1 - sum of all coefficients)``.
+-    Since that is where ``initial`` starts by default, every value has the
+-    same variance from time 0 onward. Coefficients summing to 1 or more are
+-    allowed and simulate fine -- the variance simply grows instead of
+-    settling -- but ``initial="stationary"`` rejects them, since there is no
+-    long-run value to start from.
++    The process settles down when its *persistence* -- ``arch_coefs``
++    scaled by the variance of one shock from ``noise_dist``, plus
++    ``garch_coefs`` -- sums to less than 1, and its long-run variance is
++    then ``omega / (1 - persistence)``. With the default ``Normal(0, 1)``
++    shock (variance 1) persistence is just the coefficients' own sum, which
++    is the formula most textbooks show; a ``noise_dist`` with a different
++    variance changes how much persistence the same coefficients carry, and
++    both formulas above account for that. Since the long-run variance is
++    where ``initial`` starts by default, every value has the same variance
++    from time 0 onward. Coefficients (and shock variance) giving a
++    persistence of 1 or more are allowed and simulate fine -- the variance
++    simply grows instead of settling -- but ``initial="stationary"`` rejects
++    them, since there is no long-run value to start from.
+ 
+     Examples
+     --------

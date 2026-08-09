@@ -1,0 +1,218 @@
+diff --git a/symbulate/results.py b/symbulate/results.py
+index 219701a..aacd839 100644
+--- a/symbulate/results.py
++++ b/symbulate/results.py
+@@ -80,6 +80,53 @@ from .table import Table
+ # Standards".
+ 
+ 
++def _call_plot_helper(func, *args, **kwargs):
++    """Call a plot-drawing helper (a ``make_*`` function in ``plot.py``),
++    turning a mistyped keyword argument into a message a student can act
++    on instead of a raw traceback from deep inside matplotlib.
++
++    A bad keyword aimed at the underlying matplotlib call surfaces two
++    different ways depending on which matplotlib function ends up
++    handling it: a function that forwards leftover kwargs to a
++    matplotlib Artist's ``.set()`` (``ax.hist``, ``ax.vlines``,
++    ``ax.scatter``, ...) raises ``AttributeError``; a function that
++    checks its own signature directly (``ax.boxplot``, ``ax.violinplot``)
++    raises ``TypeError``. Both are caught here; anything else -- a
++    genuine bug inside the ``make_*`` helper itself, unrelated to a bad
++    kwarg -- is left to propagate as-is rather than being mislabeled.
++
++    Parameters
++    ----------
++    func : callable
++        The ``make_*`` plot-drawing helper to call.
++    *args, **kwargs
++        Passed through to ``func`` unchanged.
++
++    Returns
++    -------
++    object
++        Whatever ``func`` returns.
++
++    Raises
++    ------
++    TypeError
++        If ``func`` raised because of an unexpected keyword argument,
++        re-raised with a message that names the plot type and points at
++        `.plot()`'s keyword arguments as the likely cause.
++    """
++    try:
++        return func(*args, **kwargs)
++    except (TypeError, AttributeError) as e:
++        message = str(e)
++        if "unexpected keyword argument" in message:
++            raise TypeError(
++                f"plot() got a keyword argument that isn't valid for this "
++                f"plot type ({message}). Check the spelling -- some keyword "
++                f"arguments only apply to certain plot types."
++            ) from None
++        raise
++
++
+ def _is_hashable(obj):
+     """Check whether an object is hashable.
+ 
+@@ -2238,7 +2285,8 @@ class RVResults(Results):
+             color = get_next_color(ax)
+ 
+             if "dotplot" in type:
+-                make_dotplot(
++                _call_plot_helper(
++                    make_dotplot,
+                     _plot_array,
+                     ax,
+                     color,
+@@ -2255,7 +2303,8 @@ class RVResults(Results):
+                 else:
+                     # bandwidth is popped here so it never leaks into the
+                     # hist/impulse branches of a combined type.
+-                    make_density(
++                    _call_plot_helper(
++                        make_density,
+                         _plot_array,
+                         ax,
+                         color,
+@@ -2263,7 +2312,8 @@ class RVResults(Results):
+                         alpha=alpha,
+                     )
+             if "hist" in type:
+-                make_hist(
++                _call_plot_helper(
++                    make_hist,
+                     _plot_array,
+                     ax,
+                     color,
+@@ -2273,7 +2323,8 @@ class RVResults(Results):
+                     **kwargs,
+                 )
+             elif "bar" in type:
+-                make_bar(
++                _call_plot_helper(
++                    make_bar,
+                     _plot_array,
+                     ax,
+                     color,
+@@ -2282,7 +2333,8 @@ class RVResults(Results):
+                     **kwargs,
+                 )
+             elif "impulse" in type:
+-                make_impulse(
++                _call_plot_helper(
++                    make_impulse,
+                     _plot_array,
+                     ax,
+                     color,
+@@ -2291,13 +2343,24 @@ class RVResults(Results):
+                     **kwargs,
+                 )
+             elif "box" in type or "boxplot" in type:
+-                make_boxplot(_plot_array, ax, color, alpha=alpha, **kwargs)
++                _call_plot_helper(
++                    make_boxplot, _plot_array, ax, color, alpha=alpha, **kwargs
++                )
+             elif "violin" in type:
+-                make_violinplot(_plot_array, ax, color, alpha=alpha, **kwargs)
++                _call_plot_helper(
++                    make_violinplot, _plot_array, ax, color, alpha=alpha, **kwargs
++                )
+             if "rug" in type:
+-                make_rug(_plot_array, ax, color, alpha=alpha)
++                # Previously missing **kwargs here (unlike every sibling
++                # branch above), so e.g. plot(type='rug', linewidth=10)
++                # silently ignored linewidth instead of applying it or
++                # raising like the other plot types do.
++                _call_plot_helper(
++                    make_rug, _plot_array, ax, color, alpha=alpha, **kwargs
++                )
+             if "ecdf" in type:
+-                make_ecdf(
++                _call_plot_helper(
++                    make_ecdf,
+                     _plot_array,
+                     ax,
+                     color,
+@@ -2502,7 +2565,12 @@ class RVResults(Results):
+                 else:
+                     make_density2D(x, y, ax, **kwargs)
+             elif "rug" in type or "segmented_rug" in type:
+-                make_segmented_rug(
++                # Previously missing **kwargs here, the same gap as the 1D
++                # rug branch above -- a bad or custom kwarg was silently
++                # dropped instead of applied or raising like its sibling
++                # 2D branches (hist2d, density2d) do.
++                _call_plot_helper(
++                    make_segmented_rug,
+                     x,
+                     y,
+                     ax,
+@@ -2510,6 +2578,7 @@ class RVResults(Results):
+                     alpha=alpha,
+                     discrete_x=discrete_x,
+                     discrete_y=discrete_y,
++                    **kwargs,
+                 )
+                 _resolved_main_type_x = _resolved_main_type_y = "segmented_rug"
+             elif "segmented_density" in type:
+diff --git a/symbulate/tests/test_results.py b/symbulate/tests/test_results.py
+index 4d065e6..f1c6a36 100644
+--- a/symbulate/tests/test_results.py
++++ b/symbulate/tests/test_results.py
+@@ -19,6 +19,10 @@ import sys
+ import unittest
+ 
+ import numpy as np
++import matplotlib
++
++matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
++import matplotlib.pyplot as plt
+ 
+ from symbulate.result import Scalar, Vector
+ from symbulate.results import (
+@@ -573,6 +577,43 @@ class TestRVResultsPlot(unittest.TestCase):
+         with self.assertRaises(Exception):
+             rvr.plot(type=42)
+ 
++    def test_rug_forwards_kwargs(self):
++        # Regression test: type='rug' used to silently drop every keyword
++        # argument (unlike every other 1D plot type), so linewidth=10 had
++        # no effect at all.
++        rvr = RVResults(list(range(20)))
++        rvr.plot(type="rug", linewidth=10)
++        ax = plt.gca()
++        self.assertEqual(list(ax.collections[-1].get_linewidth()), [10.0])
++        plt.close("all")
++
++    def test_rug_bad_kwarg_raises_friendly_typeerror(self):
++        # Regression test: a bad kwarg on type='hist' already raised a raw
++        # AttributeError straight from matplotlib; type='rug' silently
++        # swallowed the same mistake instead. Both should now raise the
++        # same kind of friendly, actionable message.
++        rvr = RVResults(list(range(20)))
++        with self.assertRaisesRegex(TypeError, "keyword argument"):
++            rvr.plot(type="rug", not_a_real_kwarg=5)
++        plt.close("all")
++
++    def test_hist_bad_kwarg_raises_friendly_typeerror_not_raw(self):
++        # The matplotlib AttributeError CLAUDE.md says should never reach
++        # a student now gets rewrapped as an informative TypeError.
++        rvr = RVResults(list(range(20)))
++        with self.assertRaisesRegex(TypeError, "keyword argument"):
++            rvr.plot(type="hist", not_a_real_kwarg=5)
++        plt.close("all")
++
++    def test_boxplot_bad_kwarg_raises_friendly_typeerror(self):
++        # boxplot/violinplot raise TypeError natively (not AttributeError
++        # like the Artist-based plot types) -- confirm that path is also
++        # caught and rewrapped, not just the AttributeError path.
++        rvr = RVResults(list(range(20)))
++        with self.assertRaisesRegex(TypeError, "keyword argument"):
++            rvr.plot(type="box", not_a_real_kwarg=5)
++        plt.close("all")
++
+ 
+ # ---------------------------------------------------------------------------
+ # RVResults.__init__

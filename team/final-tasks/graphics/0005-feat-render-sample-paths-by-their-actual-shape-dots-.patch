@@ -1,0 +1,564 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 02:02:34 +0000
+Subject: [PATCH] feat: render sample paths by their actual shape (dots, steps,
+ or line)
+
+make_sample_path() gains a style= parameter ("line" | "dots" | "steps")
+so each kind of sample path is drawn the way it actually behaves,
+instead of always as a plain connected line:
+
+- Tuple.plot(), InfiniteVector.plot(), and DiscreteTimeFunction.plot()
+  now default to style="dots" -- a marker at each index/time step
+  joined by a dashed line -- since there is nothing "between" one
+  discrete step and the next.
+- ContinuousTimeFunction.plot() now detects a continuous-time,
+  discrete-valued jump process (anything mixing in DiscreteValued --
+  PoissonProcess, ContinuousTimeMarkovChain, renewal/compound-Poisson
+  processes, queues, YuleProcess, ...) and draws it from its exact
+  jump times and states (style="steps"), rather than sampling it on a
+  fixed 200-point grid that only approximates where it actually jumps.
+  A new _discrete_valued_step_path() helper walks the states/
+  interarrival_times sequence documented on DiscreteValued to build
+  the exact step data.
+- Every other continuous-time function (a genuinely smooth path like
+  Brownian motion) keeps today's dense-grid plain-line rendering,
+  unchanged.
+- A DiscreteValued path that only implements get_states() and not
+  get_arrival_times() (the documented NonHomogeneousPoissonProcess/
+  CoxProcess gap in CLAUDE.md) falls back to the dense-grid line
+  instead of raising, so this stays a plotting-only change.
+
+Regression tests added in test_plot.py (make_sample_path's style=
+parameter directly) and test_result.py (each Result type's default
+style, the exact step data at various tmin/tmax windows, the smooth-
+path no-op case, and the AttributeError fallback).
+---
+ symbulate/plot.py              |  48 +++++++++--
+ symbulate/result.py            | 151 ++++++++++++++++++++++++++-------
+ symbulate/tests/test_plot.py   |  24 ++++++
+ symbulate/tests/test_result.py | 121 ++++++++++++++++++++++++--
+ 4 files changed, 303 insertions(+), 41 deletions(-)
+
+diff --git a/symbulate/plot.py b/symbulate/plot.py
+index 02dff77..19fc274 100644
+--- a/symbulate/plot.py
++++ b/symbulate/plot.py
+@@ -4240,6 +4240,7 @@ def make_sample_path(
+     values,
+     ax,
+     color,
++    style="line",
+     linewidth=None,
+     alpha=None,
+     label=None,
+@@ -4247,15 +4248,35 @@ def make_sample_path(
+     ylabel=None,
+     **kwargs,
+ ):
+-    """Draw one simulated sample path as a plain connected line.
++    """Draw one simulated sample path.
+ 
+     This replaces the ``plt.plot(ts, ys, ".--", **kwargs)`` calls
+     previously duplicated across ``Tuple.plot()``,
+     ``InfiniteVector.plot()``, ``DiscreteTimeFunction.plot()``, and
+-    ``ContinuousTimeFunction.plot()`` in ``result.py``: the dot-dash
+-    marker is dropped in favor of a plain solid line (readable whether
+-    the path has 10 points or 1000), and the package's color cycle,
+-    axis labels, and title are added.
++    ``ContinuousTimeFunction.plot()`` in ``result.py``, and adds the
++    package's color cycle, axis labels, and title. The ``style``
++    argument controls how the points are connected, since a discrete
++    sequence of values, an exact jump process, and a densely-sampled
++    continuous path all read best with a different line style:
++
++    - ``"line"`` (default): a plain solid line connecting every point.
++      Readable whether the path has 10 points or 1000, and the right
++      choice for a continuous process sampled on a fine time grid
++      (e.g. Brownian motion), where the fine grid itself makes the
++      line look smooth.
++    - ``"dots"``: a marker at every point joined by a dashed line
++      (matplotlib's ``".--"`` style). Meant for a discrete sequence of
++      values, e.g. a ``Tuple``, an ``InfiniteVector``, or a
++      ``DiscreteTimeFunction`` -- there is nothing "between" one index
++      and the next, so marking each one and dashing the segments
++      between them keeps the plot from implying values exist there.
++    - ``"steps"``: a solid line held flat at the current value until
++      it jumps to the next one (matplotlib's ``drawstyle="steps-post"``).
++      Meant for a continuous-time jump process (e.g. a Poisson
++      process, a Markov chain's continuous-time path, a queue's
++      customer count) drawn from its exact arrival times and states,
++      rather than the fine time grid used for smooth processes -- the
++      flat-then-jump shape matches how the process actually moves.
+ 
+     Sample paths overlay naturally: a second call on the same axes
+     draws on top of the first, and a legend appears automatically in
+@@ -4282,6 +4303,9 @@ def make_sample_path(
+         The axes to draw on.
+     color : color
+         Line color, from ``get_next_color(ax)``.
++    style : str, optional
++        How to connect the points: ``"line"`` (default), ``"dots"``,
++        or ``"steps"``. See above.
+     linewidth : float, optional
+         Line width. Defaults to the package standard for sample paths
+         (``SAMPLE_PATH_LINEWIDTH``, 1.5 -- unchanged from matplotlib's
+@@ -4316,6 +4340,11 @@ def make_sample_path(
+     >>> ax = plt.gca()
+     >>> make_sample_path(times, values, ax, get_next_color(ax))  # doctest: +SKIP
+     """
++    if style not in ("line", "dots", "steps"):
++        raise ValueError(
++            f"style={style!r} is not a valid sample path style. "
++            'Use "line", "dots", or "steps".'
++        )
+     if linewidth is None:
+         linewidth = SAMPLE_PATH_LINEWIDTH
+     if alpha is None:
+@@ -4329,6 +4358,13 @@ def make_sample_path(
+         label = f"Path {n_prior_paths + 1}"
+     ax._sample_path_count = n_prior_paths + 1
+ 
++    style_kwargs = {}
++    if style == "dots":
++        style_kwargs = dict(marker=".", linestyle="--")
++    elif style == "steps":
++        style_kwargs = dict(drawstyle="steps-post")
++    style_kwargs.update(kwargs)
++
+     (line,) = ax.plot(
+         times,
+         values,
+@@ -4336,7 +4372,7 @@ def make_sample_path(
+         linewidth=linewidth,
+         alpha=alpha,
+         label=label,
+-        **kwargs,
++        **style_kwargs,
+     )
+ 
+     # Whole-number times get whole-number ticks, the same rule the impulse
+diff --git a/symbulate/result.py b/symbulate/result.py
+index 200ee8c..e6c498e 100644
+--- a/symbulate/result.py
++++ b/symbulate/result.py
+@@ -465,18 +465,20 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
+         """
+         Plot the values of the tuple as a sample path.
+ 
+-        The values are drawn over their index as a plain solid
+-        connected line (``make_sample_path``), colored by the package
+-        color cycle. Overlaid paths -- a second ``.plot()`` call on the
+-        same axes -- get distinct colors and an automatic "Path 1",
+-        "Path 2", ... legend.
++        The values are drawn over their index as a marker at each
++        index joined by a dashed line (``make_sample_path``, ``style=
++        "dots"``), colored by the package color cycle -- there is
++        nothing "between" one index and the next, so this avoids
++        implying values exist there. Overlaid paths -- a second
++        ``.plot()`` call on the same axes -- get distinct colors and
++        an automatic "Path 1", "Path 2", ... legend.
+ 
+         Parameters
+         ----------
+         **kwargs
+             Additional keyword arguments passed to
+-            ``make_sample_path`` (e.g. ``label``, ``alpha``), and from
+-            there to ``matplotlib.axes.Axes.plot``.
++            ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
++            and from there to ``matplotlib.axes.Axes.plot``.
+ 
+         Returns
+         -------
+@@ -503,6 +505,7 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
+         if color is None:
+             color = get_next_color(ax)
+         kwargs.setdefault("xlabel", "Index")
++        kwargs.setdefault("style", "dots")
+         make_sample_path(range(len(self)), self.values, ax, color, **kwargs)
+         return SymbulatePlot(ax)
+ 
+@@ -900,11 +903,13 @@ class InfiniteVector(InfiniteTuple):
+         """
+         Plot values from the vector over a specified index range.
+ 
+-        The values are drawn over their index as a plain solid
+-        connected line (``make_sample_path``), colored by the package
+-        color cycle. Overlaid paths -- a second ``.plot()`` call on the
+-        same axes -- get distinct colors and an automatic "Path 1",
+-        "Path 2", ... legend.
++        The values are drawn over their index as a marker at each
++        index joined by a dashed line (``make_sample_path``, ``style=
++        "dots"``), colored by the package color cycle -- there is
++        nothing "between" one index and the next, so this avoids
++        implying values exist there. Overlaid paths -- a second
++        ``.plot()`` call on the same axes -- get distinct colors and
++        an automatic "Path 1", "Path 2", ... legend.
+ 
+         Parameters
+         ----------
+@@ -914,8 +919,8 @@ class InfiniteVector(InfiniteTuple):
+             Ending index (exclusive), by default 10.
+         **kwargs
+             Additional keyword arguments passed to
+-            ``make_sample_path`` (e.g. ``label``, ``alpha``), and from
+-            there to ``matplotlib.axes.Axes.plot``.
++            ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
++            and from there to ``matplotlib.axes.Axes.plot``.
+ 
+         Returns
+         -------
+@@ -944,6 +949,7 @@ class InfiniteVector(InfiniteTuple):
+         if color is None:
+             color = get_next_color(ax)
+         kwargs.setdefault("xlabel", "Index")
++        kwargs.setdefault("style", "dots")
+         make_sample_path(xs, ys, ax, color, **kwargs)
+         return SymbulatePlot(ax)
+ 
+@@ -1282,11 +1288,13 @@ class DiscreteTimeFunction(TimeFunction):
+         """
+         Plot values over a specified time range.
+ 
+-        The values are drawn over their times as a plain solid
+-        connected line (``make_sample_path``), colored by the package
+-        color cycle. Overlaid paths -- a second ``.plot()`` call on the
+-        same axes -- get distinct colors and an automatic "Path 1",
+-        "Path 2", ... legend.
++        The values are drawn over their times as a marker at each
++        time joined by a dashed line (``make_sample_path``, ``style=
++        "dots"``), colored by the package color cycle -- there is
++        nothing "between" one discrete time step and the next, so this
++        avoids implying values exist there. Overlaid paths -- a second
++        ``.plot()`` call on the same axes -- get distinct colors and
++        an automatic "Path 1", "Path 2", ... legend.
+ 
+         Parameters
+         ----------
+@@ -1296,8 +1304,8 @@ class DiscreteTimeFunction(TimeFunction):
+             Ending time, by default 10.
+         **kwargs
+             Additional keyword arguments passed to
+-            ``make_sample_path`` (e.g. ``label``, ``alpha``), and from
+-            there to ``matplotlib.axes.Axes.plot``.
++            ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
++            and from there to ``matplotlib.axes.Axes.plot``.
+ 
+         Returns
+         -------
+@@ -1327,10 +1335,70 @@ class DiscreteTimeFunction(TimeFunction):
+         color = kwargs.pop("color", None)
+         if color is None:
+             color = get_next_color(ax)
++        kwargs.setdefault("style", "dots")
+         make_sample_path(ts, ys, ax, color, **kwargs)
+         return SymbulatePlot(ax)
+ 
+ 
++def _discrete_valued_step_path(discrete_valued, tmin, tmax):
++    """Build the exact (times, values) step data for a jump process.
++
++    ``discrete_valued`` sits in ``states[n]`` for ``interarrival_times[n]``
++    units of time and jumps out of it at ``get_arrival_times()[n]`` (the
++    convention documented on ``DiscreteValued`` and
++    ``ContinuousTimeMarkovChainResult``). This walks that sequence forward
++    from whichever state is held at ``tmin``, collecting one point at the
++    start of each state and one at every jump strictly before ``tmax``, so
++    the result can be drawn with ``make_sample_path(..., style="steps")``
++    as a flat-then-jump line -- the actual shape of the process, rather
++    than the dense, evenly-spaced grid used for smooth continuous paths.
++
++    A process that reaches an absorbing state (e.g. an epidemic that has
++    run its course) reports an infinite holding time for that final state,
++    which stops the walk from advancing past it -- the returned line then
++    simply holds flat out to ``tmax``.
++
++    Parameters
++    ----------
++    discrete_valued : DiscreteValued
++        The sample path to read ``get_states()`` and ``get_arrival_times()``
++        from.
++    tmin : float
++        Start of the time window to draw.
++    tmax : float
++        End of the time window to draw.
++
++    Returns
++    -------
++    times : list of float
++        The times at which the path starts a new state, plus ``tmin`` and
++        ``tmax`` as the first and last entries.
++    values : list
++        The state held from each entry of ``times`` up to the next one.
++    """
++    states = discrete_valued.get_states()
++    arrival_times = discrete_valued.get_arrival_times()
++
++    # Find the state already in progress at tmin: the one held during the
++    # half-open interval [arrival_times[n - 1], arrival_times[n]) that
++    # contains tmin, with arrival_times[-1] taken to be 0.
++    n = 0
++    while arrival_times[n] <= tmin:
++        n += 1
++
++    times = [tmin]
++    values = [states[n]]
++    while arrival_times[n] < tmax:
++        times.append(arrival_times[n])
++        n += 1
++        values.append(states[n])
++    # Extend the last state visually out to tmax, the same way the dense
++    # grid used for smooth processes always reaches tmax exactly.
++    times.append(tmax)
++    values.append(values[-1])
++    return times, values
++
++
+ class ContinuousTimeFunction(TimeFunction):
+     """
+     Function defined over continuous time.
+@@ -1539,11 +1607,21 @@ class ContinuousTimeFunction(TimeFunction):
+         """
+         Plot values over a specified time range.
+ 
+-        The values are drawn over their times as a plain solid
+-        connected line (``make_sample_path``), colored by the package
+-        color cycle. Overlaid paths -- a second ``.plot()`` call on the
+-        same axes -- get distinct colors and an automatic "Path 1",
+-        "Path 2", ... legend.
++        A continuous-time, discrete-*valued* jump process (any path that
++        also mixes in ``DiscreteValued`` -- a Poisson process, a
++        continuous-time Markov chain, a queue's customer count, and
++        similar) is drawn from its exact states and jump times as a flat
++        line that steps to the next value at each jump (``make_sample_path``,
++        ``style="steps"``), rather than being sampled on a fixed grid --
++        the process only actually changes at its jump times, so this
++        draws the real shape instead of a fine-grained approximation of
++        it. Every other continuous-time function -- a genuinely smooth
++        path like Brownian motion, or one with a continuum of possible
++        values -- is sampled on a fine, evenly-spaced grid of times and
++        drawn as a plain solid connected line, as before. Either way the
++        path is colored by the package color cycle, and overlaid paths --
++        a second ``.plot()`` call on the same axes -- get distinct colors
++        and an automatic "Path 1", "Path 2", ... legend.
+ 
+         Parameters
+         ----------
+@@ -1553,8 +1631,8 @@ class ContinuousTimeFunction(TimeFunction):
+             Ending time, by default 10.
+         **kwargs
+             Additional keyword arguments passed to
+-            ``make_sample_path`` (e.g. ``label``, ``alpha``), and from
+-            there to ``matplotlib.axes.Axes.plot``.
++            ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
++            and from there to ``matplotlib.axes.Axes.plot``.
+ 
+         Returns
+         -------
+@@ -1577,8 +1655,21 @@ class ContinuousTimeFunction(TimeFunction):
+         >>> f.plot(tmin=0, tmax=2 * np.pi)  # doctest: +SKIP
+         >>> plt.show()  # doctest: +SKIP
+         """
+-        ts = np.linspace(tmin, tmax, 200)
+-        ys = [self(t) for t in ts]
++        ts = ys = None
++        if isinstance(self, DiscreteValued):
++            try:
++                ts, ys = _discrete_valued_step_path(self, tmin, tmax)
++                kwargs.setdefault("style", "steps")
++            except AttributeError:
++                # DiscreteValued only promises get_states(); a path that
++                # does not also define interarrival_times (and so cannot
++                # answer get_arrival_times()) has no jump times to step
++                # between. Fall back to the dense grid below rather than
++                # letting that surface as a plot()-time crash.
++                pass
++        if ts is None:
++            ts = np.linspace(tmin, tmax, 200)
++            ys = [self(t) for t in ts]
+         ax = plt.gca()
+         color = kwargs.pop("color", None)
+         if color is None:
+diff --git a/symbulate/tests/test_plot.py b/symbulate/tests/test_plot.py
+index 5967eae..b24ce10 100644
+--- a/symbulate/tests/test_plot.py
++++ b/symbulate/tests/test_plot.py
+@@ -4024,6 +4024,30 @@ class TestMakeSamplePath(PlotTestCase):
+         self.draw_path(label="_nolegend_")
+         self.assertIsNone(plt.gca().get_legend())
+ 
++    def test_default_style_is_a_plain_line(self):
++        line = self.draw_path()
++        self.assertEqual(line.get_drawstyle(), "default")
++        self.assertEqual(line.get_linestyle(), "-")
++        self.assertEqual(line.get_marker(), "None")
++
++    def test_dots_style_marks_each_point_with_a_dashed_line(self):
++        line = self.draw_path(style="dots")
++        self.assertEqual(line.get_linestyle(), "--")
++        self.assertEqual(line.get_marker(), ".")
++
++    def test_steps_style_holds_flat_until_the_next_point(self):
++        line = self.draw_path(style="steps")
++        self.assertEqual(line.get_drawstyle(), "steps-post")
++
++    def test_invalid_style_raises_helpful_error(self):
++        with self.assertRaises(ValueError) as cm:
++            self.draw_path(style="scatter")
++        message = str(cm.exception)
++        self.assertIn("scatter", message)
++        self.assertIn("line", message)
++        self.assertIn("dots", message)
++        self.assertIn("steps", message)
++
+ 
+ # ===========================================================================
+ # Error handling
+diff --git a/symbulate/tests/test_result.py b/symbulate/tests/test_result.py
+index 77c5965..4b9abbc 100644
+--- a/symbulate/tests/test_result.py
++++ b/symbulate/tests/test_result.py
+@@ -842,18 +842,48 @@ class TestResultPlotsReturnWrapper(unittest.TestCase):
+ class TestResultSamplePathPlots(unittest.TestCase):
+     """Result-type plot() methods draw sample paths via make_sample_path.
+ 
+-    The old ".--" dot-dash format is replaced by a plain solid line;
+-    index-based results label the x-axis "Index", time-based ones
+-    "Time"; overlaid paths get distinct colors and an automatic
+-    "Path 1", "Path 2", ... legend.
++    A discrete sequence of values -- Tuple, InfiniteVector,
++    DiscreteTimeFunction -- draws a marker at each point joined by a
++    dashed line (``style="dots"``), since there is nothing "between" one
++    index or discrete time step and the next. Index-based results label
++    the x-axis "Index", time-based ones "Time"; overlaid paths get
++    distinct colors and an automatic "Path 1", "Path 2", ... legend.
+     """
+ 
+     def tearDown(self):
+         plt.close("all")
+ 
+-    def test_tuple_plot_is_solid_line_without_markers(self):
++    def test_tuple_plot_is_dots_joined_by_dashed_line(self):
+         Tuple([1, 4, 2, 8, 5]).plot()
+         (line,) = plt.gca().lines
++        self.assertEqual(line.get_linestyle(), "--")
++        self.assertEqual(line.get_marker(), ".")
++
++    def test_infinite_vector_plot_is_dots_joined_by_dashed_line(self):
++        InfiniteVector(lambda n: n**2).plot(tmin=0, tmax=5)
++        (line,) = plt.gca().lines
++        self.assertEqual(line.get_linestyle(), "--")
++        self.assertEqual(line.get_marker(), ".")
++
++    def test_discrete_time_function_plot_is_dots_joined_by_dashed_line(self):
++        DiscreteTimeFunction(lambda n: n, fs=1).plot(tmin=0, tmax=5)
++        (line,) = plt.gca().lines
++        self.assertEqual(line.get_linestyle(), "--")
++        self.assertEqual(line.get_marker(), ".")
++
++    def test_continuous_time_function_plot_is_still_a_plain_solid_line(self):
++        """A smooth (non-DiscreteValued) continuous-time path is
++        unaffected: still a plain solid line sampled on a fine grid."""
++        ContinuousTimeFunction(lambda t: np.sin(t)).plot(tmin=0, tmax=6)
++        (line,) = plt.gca().lines
++        self.assertEqual(line.get_linestyle(), "-")
++        self.assertEqual(line.get_marker(), "None")
++        self.assertEqual(line.get_drawstyle(), "default")
++        self.assertEqual(len(line.get_xdata()), 200)
++
++    def test_explicit_style_kwarg_overrides_the_default(self):
++        Tuple([1, 4, 2, 8, 5]).plot(style="line")
++        (line,) = plt.gca().lines
+         self.assertEqual(line.get_linestyle(), "-")
+         self.assertEqual(line.get_marker(), "None")
+ 
+@@ -902,5 +932,86 @@ class TestResultSamplePathPlots(unittest.TestCase):
+         self.assertEqual(labels, ["First walk", "Path 2"])
+ 
+ 
++# ---------------------------------------------------------------------------
++# ContinuousTimeFunction.plot() steps through exact jumps for DiscreteValued
++# paths, instead of sampling a dense grid.
++# ---------------------------------------------------------------------------
++
++
++class _JumpPath(ContinuousTimeFunction, DiscreteValued):
++    """A deterministic jump process, for testing the step-plot dispatch.
++
++    Jumps to the next integer state every ``step`` units of time,
++    forever: state ``n`` holds from ``n * step`` to ``(n + 1) * step``.
++    """
++
++    def __init__(self, step=1.0):
++        super().__init__(func=lambda t: int(t // step))
++        self.states = InfiniteVector(lambda n: n)
++        self.interarrival_times = InfiniteVector(lambda n: step)
++
++
++class _StatesOnlyPath(ContinuousTimeFunction, DiscreteValued):
++    """A DiscreteValued path that defines states but not interarrival_times.
++
++    Mirrors the documented gap in ``NonHomogeneousPoissonProcessResult``
++    (and ``CoxProcessResult``, which builds on it): it counts events on
++    a scale where ``get_states()`` makes sense, but never converts back
++    to clock time, so it has no ``interarrival_times`` and
++    ``get_arrival_times()`` is unavailable.
++    """
++
++    def get_states(self):
++        return InfiniteVector(lambda n: n)
++
++
++class TestContinuousTimeFunctionStepPlots(unittest.TestCase):
++
++    def tearDown(self):
++        plt.close("all")
++
++    def test_jump_process_plot_uses_steps_drawstyle(self):
++        _JumpPath().plot(tmin=0, tmax=3)
++        (line,) = plt.gca().lines
++        self.assertEqual(line.get_drawstyle(), "steps-post")
++
++    def test_jump_process_plot_uses_exact_arrival_times(self):
++        _JumpPath(step=1.0).plot(tmin=0, tmax=3)
++        (line,) = plt.gca().lines
++        np.testing.assert_allclose(line.get_xdata(), [0, 1, 2, 3])
++        np.testing.assert_allclose(line.get_ydata(), [0, 1, 2, 2])
++
++    def test_jump_process_plot_holds_state_already_in_progress_at_tmin(self):
++        # Starting the window mid-state (tmin=1.5) holds state 1 from
++        # tmin, rather than restarting the walk at state 0.
++        _JumpPath(step=1.0).plot(tmin=1.5, tmax=3)
++        (line,) = plt.gca().lines
++        np.testing.assert_allclose(line.get_xdata(), [1.5, 2, 3])
++        np.testing.assert_allclose(line.get_ydata(), [1, 2, 2])
++
++    def test_jump_process_plot_point_count_reflects_actual_jumps_not_200(self):
++        _JumpPath(step=1.0).plot(tmin=0, tmax=3)
++        (line,) = plt.gca().lines
++        self.assertEqual(len(line.get_xdata()), 4)
++
++    def test_jump_process_style_kwarg_can_override_the_steps_default(self):
++        _JumpPath().plot(tmin=0, tmax=3, style="line")
++        (line,) = plt.gca().lines
++        self.assertEqual(line.get_drawstyle(), "default")
++
++    def test_smooth_continuous_process_plot_is_unaffected(self):
++        ContinuousTimeFunction(lambda t: np.sin(t)).plot(tmin=0, tmax=6)
++        (line,) = plt.gca().lines
++        self.assertEqual(line.get_drawstyle(), "default")
++        self.assertEqual(len(line.get_xdata()), 200)
++
++    def test_discrete_valued_without_arrival_times_falls_back_to_dense_grid(self):
++        path = _StatesOnlyPath(func=lambda t: int(t))
++        path.plot(tmin=0, tmax=3)
++        (line,) = plt.gca().lines
++        self.assertEqual(line.get_drawstyle(), "default")
++        self.assertEqual(len(line.get_xdata()), 200)
++
++
+ if __name__ == "__main__":
+     unittest.main()
+-- 
+2.43.0
+

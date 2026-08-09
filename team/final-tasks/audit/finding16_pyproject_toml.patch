@@ -1,0 +1,46 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..4a85092
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,3 @@
++[build-system]
++requires = ["setuptools>=61", "wheel"]
++build-backend = "setuptools.build_meta"
+diff --git a/setup.py b/setup.py
+index 5b55976..1c78412 100644
+--- a/setup.py
++++ b/setup.py
+@@ -1,9 +1,17 @@
++from pathlib import Path
++
+ from setuptools import setup, find_packages
+ 
++# Renders as the PyPI project description; without this a PyPI listing
++# shows a blank page below the summary line.
++long_description = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
++
+ setup(
+     name="symbulate",
+     version="0.5.5",
+     description="A symbolic algebra for specifying simulations.",
++    long_description=long_description,
++    long_description_content_type="text/markdown",
+     url="https://github.com/dlsun/symbulate",
+     author="Dennis Sun",
+     author_email="dsun09@calpoly.edu",
+@@ -22,5 +30,13 @@ setup(
+     package_data={
+         "symbulate": ["symbulate.mplstyle"],
+     },
+-    install_requires=["numpy", "scipy", "matplotlib"],
++    # A floor, not a pin: old enough to be permissive, recent enough to
++    # rule out versions that predate APIs this package already relies on
++    # (e.g. np.random.default_rng, added in numpy 1.17).
++    python_requires=">=3.8",
++    install_requires=[
++        "numpy>=1.17",
++        "scipy>=1.4",
++        "matplotlib>=3.2",
++    ],
+ )

@@ -1,0 +1,715 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 00:35:15 +0000
+Subject: [PATCH] fix: guard degenerate distribution params and pdf/cdf overlay
+ on Distribution.plot()
+
+- Raise a friendly ValueError when a distribution's parameters make the
+  pdf/pmf/cdf undefined or infinite everywhere in the plotting window,
+  instead of letting a raw NumPy error (or a silently blank plot) through.
+- Raise a hard error when a pdf/pmf and a cdf are overlaid on the same
+  axes -- they use incompatible y-scales, so there is no correct reading
+  of the combined plot.
+- Change Distribution.plot()'s title from always-overwrite to keep-first
+  (matching the existing keep-first policy already used for axis labels),
+  and rename the default titles to full names: 'PDF Plot' ->
+  'Probability Density Function', 'CDF Plot' -> 'Cumulative Distribution
+  Function', 'PMF Plot' -> 'Probability Mass Function'.
+- Update tests accordingly, including isolating several
+  test_..._plots_without_error methods that were relying on unintended
+  overlay of different theoretical-plot kinds on a shared, leaked axes.
+---
+ symbulate/distributions.py            | 75 ++++++++++++++++++++---
+ symbulate/plot.py                     | 12 ++++
+ symbulate/tests/test_distributions.py | 88 +++++++++++++++++++++++++--
+ symbulate/tests/test_plot.py          |  4 +-
+ 4 files changed, 163 insertions(+), 16 deletions(-)
+
+diff --git a/symbulate/distributions.py b/symbulate/distributions.py
+index 22f75a6..610220a 100644
+--- a/symbulate/distributions.py
++++ b/symbulate/distributions.py
+@@ -12,6 +12,7 @@ from matplotlib.gridspec import GridSpec
+ from .probability_space import ProbabilitySpace
+ from .plot import (
+     get_next_color,
++    THEORETICAL_CDF_PDF_OVERLAY_ERROR,
+     DistributionPlot,
+     JointDistributionPlot,
+     make_joint_pdf,
+@@ -401,9 +402,13 @@ class Distribution(ProbabilitySpace):
+         ``type=`` argument -- a theoretical distribution has only these two
+         curves to show, so the choice is the single boolean ``cdf``.
+ 
+-        The plot is titled by what it shows: "CDF Plot" for ``cdf=True``,
+-        and for the default view "PDF Plot" (continuous) or "PMF Plot"
+-        (discrete).
++        The plot is titled by what it shows: "Cumulative Distribution
++        Function" for ``cdf=True``, and for the default view "Probability
++        Density Function" (continuous) or "Probability Mass Function"
++        (discrete) -- only when the axes doesn't already have a title, so
++        overlaying onto an existing plot keeps that plot's title. Overlaying
++        a pdf/pmf and a cdf on the same axes raises instead of drawing an
++        unreadable plot -- see ``ax=`` below for comparing both side by side.
+ 
+         Parameters
+         ----------
+@@ -491,12 +496,29 @@ class Distribution(ProbabilitySpace):
+             xs = np.linspace(xlim[0], xlim[1], 200)
+         ys = self.cdf(xs) if cdf else self.pdf(xs)
+ 
++        # A degenerate parameter (zero variance, a shape parameter at an
++        # extreme edge, bounds that collapse to a point, ...) can make every
++        # evaluated value non-finite, which would otherwise reach a bare
++        # NumPy "zero-size array" crash below with no context for a student.
++        # Name the likely cause and point at the fix instead.
++        finite = np.isfinite(ys)
++        if not np.any(finite):
++            raise ValueError(
++                f"{type(self).__name__}'s parameters make the "
++                f"{'cdf' if cdf else 'pdf/pmf' if not self.discrete else 'pmf'} "
++                f"undefined or infinite everywhere in the plotting window "
++                f"{tuple(xlim)}. This usually means a parameter is at a "
++                f"degenerate edge -- zero variance, a shape parameter at 0, "
++                f"or bounds that collapse to a single point -- rather than a "
++                f"bug in your code. Check the distribution's parameters."
++            )
++
+         # determine limits for y-axes based on y values. Anchor the baseline
+         # at exactly 0 so the curve sits right on the x-axis: a pdf/pmf height
+         # is never negative and only reads correctly against a zero baseline,
+         # and a CDF likewise runs from 0 upward. Padding below 0 would float
+         # the curve off the axis and misrepresent it.
+-        ymax = ys[np.isfinite(ys)].max()
++        ymax = ys[finite].max()
+         ylim = 0, 1.05 * ymax
+ 
+         # get the current axis (creating one if the figure has none) unless
+@@ -504,6 +526,25 @@ class Distribution(ProbabilitySpace):
+         if ax is None:
+             ax = plt.gca()
+ 
++        # A pdf/pmf and a cdf use different y-axis scales (one can exceed 1,
++        # the other runs from 0 to 1), so overlaying both on one axes -- e.g.
++        # Normal(0,1).plot(); Normal(0,1).plot(cdf=True) -- produces a plot
++        # that can't be read correctly no matter which curve's title/label
++        # wins. Tag the axes with which kind was drawn (the same pattern
++        # RVResults.plot() uses for _symbulate_marginal) and refuse a second,
++        # mismatched call rather than silently drawing an unreadable overlay.
++        # Different Axes objects (e.g. ax1, ax2 = ax1.twinx()) are unaffected,
++        # since each has its own tag -- that's the escape hatch for anyone who
++        # deliberately wants both curves side by side.
++        new_kind = "cdf" if cdf else "pdf/pmf"
++        existing_kind = getattr(ax, "_symbulate_theoretical_kind", None)
++        if existing_kind is not None and existing_kind != new_kind and ax.has_data():
++            raise ValueError(
++                THEORETICAL_CDF_PDF_OVERLAY_ERROR.format(
++                    existing=existing_kind, new=new_kind
++                )
++            )
++
+         # If the axes already has a plot on it, widen the window to the union
+         # of both, so overlaying a second curve doesn't crop the first. An
+         # axes with nothing drawn on it yet has placeholder limits of (0, 1),
+@@ -572,12 +613,22 @@ class Distribution(ProbabilitySpace):
+         # Title the plot by what it shows: the cumulative distribution
+         # function, or -- for the default view -- the probability density
+         # function (continuous) or probability mass function (discrete).
+-        if cdf:
+-            ax.set_title("CDF Plot")
+-        elif self.discrete:
+-            ax.set_title("PMF Plot")
+-        else:
+-            ax.set_title("PDF Plot")
++        # Only set it when the axes doesn't already have a title, matching
++        # the same "keep the first plot's framing" rule the labels below
++        # already followed -- title and label used to disagree (title always
++        # overwritten, label only filled if unset), which is exactly how a
++        # pdf-then-cdf overlay used to end up titled "CDF Plot" while still
++        # y-labeled "Density". The overlay guard above blocks that specific
++        # combination outright now, but this keeps title and label in
++        # agreement for every other overlay too (e.g. a pdf curve added on
++        # top of a histogram keeps that histogram's title).
++        if not ax.get_title():
++            if cdf:
++                ax.set_title("Cumulative Distribution Function")
++            elif self.discrete:
++                ax.set_title("Probability Mass Function")
++            else:
++                ax.set_title("Probability Density Function")
+ 
+         # Label the axes for context: the x-axis shows the possible values of
+         # the variable, and the y-axis names what its height means for this
+@@ -602,6 +653,10 @@ class Distribution(ProbabilitySpace):
+         # this plot type specifically.
+         ax.grid(True, axis="both")
+ 
++        # Record what this call drew, for the overlay guard above to check
++        # on the next call.
++        ax._symbulate_theoretical_kind = new_kind
++
+         return DistributionPlot(ax, self, "cdf" if cdf else "pdf")
+ 
+ 
+diff --git a/symbulate/plot.py b/symbulate/plot.py
+index 59e25f5..9ad51b4 100644
+--- a/symbulate/plot.py
++++ b/symbulate/plot.py
+@@ -578,6 +578,18 @@ MARGINAL_OVERLAY_ERROR = (
+     "that a second plot can't share. Plot each one in its own cell -- or, for "
+     "simulated data, draw both without marginal=True so they can overlay."
+ )
++# Distribution.plot(): a pdf/pmf and a cdf on the same axes use incompatible
++# y-scales (one can exceed 1, the other runs 0 to 1), so this is a hard error
++# rather than a natural overlay or a readability warning -- there is no
++# reading of the combined plot that is correct.
++THEORETICAL_CDF_PDF_OVERLAY_ERROR = (
++    "This axes already has a {existing} plotted on it, and you're now trying "
++    "to add a {new}. A density/mass curve and a cumulative distribution "
++    "curve use different y-axis scales (one can exceed 1, the other runs "
++    "from 0 to 1), so overlaying them on the same axes produces a plot that "
++    "can't be read correctly. Draw them in separate cells, or pass ax= to "
++    "place them in your own subplots (e.g. via plt.subplots())."
++)
+ # Geometry of that three-panel layout, as a GridSpec of MARGINAL_GRID by
+ # MARGINAL_GRID cells: the joint panel takes all but the first row and last
+ # column, each variable's own distribution takes the strip beside it.
+diff --git a/symbulate/tests/test_distributions.py b/symbulate/tests/test_distributions.py
+index 9d505a7..cddd581 100644
+--- a/symbulate/tests/test_distributions.py
++++ b/symbulate/tests/test_distributions.py
+@@ -208,10 +208,12 @@ class TestBetaBinomial(unittest.TestCase):
+             )
+ 
+     def test_BetaBinomial_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         BetaBinomial(n=10, shape1=2, shape2=3).draw()
+         RV(BetaBinomial(n=10, shape1=2, shape2=3)).sim(100).plot()
+         BetaBinomial(n=10, shape1=2, shape2=3).plot()
++        plt.figure()
+         BetaBinomial(n=10, shape1=2, shape2=3).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -282,10 +284,12 @@ class TestBetaNegativeBinomial(unittest.TestCase):
+             )
+ 
+     def test_BetaNegativeBinomial_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         BetaNegativeBinomial(r=5, shape1=3, shape2=2).draw()
+         RV(BetaNegativeBinomial(r=5, shape1=3, shape2=2)).sim(100).plot()
+         BetaNegativeBinomial(r=5, shape1=3, shape2=2).plot()
++        plt.figure()
+         BetaNegativeBinomial(r=5, shape1=3, shape2=2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -431,10 +435,12 @@ class TestNegativeHypergeometric(unittest.TestCase):
+             )
+ 
+     def test_NegativeHypergeometric_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         NegativeHypergeometric(r=3, N0=7, N1=5).draw()
+         RV(NegativeHypergeometric(r=3, N0=7, N1=5)).sim(100).plot()
+         NegativeHypergeometric(r=3, N0=7, N1=5).plot()
++        plt.figure()
+         NegativeHypergeometric(r=3, N0=7, N1=5).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -892,11 +898,14 @@ class TestZipf(unittest.TestCase):
+         Zipf(shape=1, n=1)
+ 
+     def test_Zipf_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Zipf(shape=1.2, n=10).draw()
+         RV(Zipf(shape=1.2, n=10)).sim(100).plot()
+         Zipf(shape=1.2, n=10).plot()
++        plt.figure()
+         Zipf(shape=1.2, n=10).plot(cdf=True)
++        plt.figure()
+         Zipf(shape=1.2, n=500).plot(xlim="zoom")
+         plt.close("all")
+ 
+@@ -1012,11 +1021,14 @@ class TestZeta(unittest.TestCase):
+             self.assertRaises(Exception, lambda b=bad: Zeta(shape=b))
+ 
+     def test_Zeta_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Zeta(shape=2.5).draw()
+         RV(Zeta(shape=2.5)).sim(100).plot()
+         Zeta(shape=2.5).plot()
++        plt.figure()
+         Zeta(shape=2.5).plot(cdf=True)
++        plt.figure()
+         Zeta(shape=1.5).plot()
+         plt.close("all")
+ 
+@@ -1218,11 +1230,14 @@ class TestIrwinHall(unittest.TestCase):
+         self.assertRaises(Exception, lambda: IrwinHall(n=3, a=0, b="b"))
+ 
+     def test_IrwinHall_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         IrwinHall(5).draw()
+         RV(IrwinHall(5)).sim(100).plot()
+         IrwinHall(5).plot()
++        plt.figure()
+         IrwinHall(5).plot(cdf=True)
++        plt.figure()
+         IrwinHall(30).plot(xlim="zoom")
+         plt.close("all")
+ 
+@@ -1292,10 +1307,12 @@ class TestBates(unittest.TestCase):
+         self.assertRaises(Exception, lambda: Bates(n=3, a=5, b=1))
+ 
+     def test_Bates_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Bates(n=5).draw()
+         RV(Bates(n=5)).sim(100).plot()
+         Bates(n=5).plot()
++        plt.figure()
+         Bates(n=5).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -1365,10 +1382,12 @@ class TestLogUniform(unittest.TestCase):
+         self.assertRaises(Exception, lambda: LogUniform(a=5, b=5))
+ 
+     def test_LogUniform_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         LogUniform(a=1, b=100).draw()
+         RV(LogUniform(a=1, b=100)).sim(100).plot()
+         LogUniform(a=1, b=100).plot()
++        plt.figure()
+         LogUniform(a=1, b=100).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -1385,6 +1404,7 @@ class TestReciprocal(unittest.TestCase):
+         self.assertEqual(float(X.median()), float(Y.median()))
+ 
+     def test_Reciprocal_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         Reciprocal(a=1, b=100).draw()
+         RV(Reciprocal(a=1, b=100)).sim(100).plot()
+         Reciprocal(a=1, b=100).plot()
+@@ -1609,10 +1629,13 @@ class TestTruncatedNormal(unittest.TestCase):
+         self.assertEqual(X.xlim, (-2, 2))
+ 
+     def test_TruncatedNormal_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         TruncatedNormal(mean=0, sd=1, a=-2, b=2).draw()
+         RV(TruncatedNormal(mean=0, sd=1, a=-2, b=2)).sim(100).plot()
+         TruncatedNormal(mean=0, sd=1, a=-2, b=2).plot()
++        plt.figure()
+         TruncatedNormal(mean=0, sd=1, a=-2, b=2).plot(cdf=True)
++        plt.figure()
+         TruncatedNormal(mean=0, sd=1, a=0).plot()
+         plt.close("all")
+ 
+@@ -1786,11 +1809,14 @@ class TestSkewNormal(unittest.TestCase):
+         self.assertIn("left tail", message)
+ 
+     def test_SkewNormal_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         SkewNormal().draw()
+         RV(SkewNormal(loc=0, scale=1, shape=4)).sim(100).plot()
+         SkewNormal(loc=0, scale=1, shape=4).plot()
++        plt.figure()
+         SkewNormal(loc=0, scale=1, shape=-4).plot(cdf=True)
++        plt.figure()
+         SkewNormal(loc=0, scale=1, shape=20).plot(xlim="zoom")
+         plt.close("all")
+ 
+@@ -2029,11 +2055,14 @@ class TestExponentiallyModifiedGaussian(unittest.TestCase):
+         self.assertIn("Normal", str(caught.exception))
+ 
+     def test_EMG_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         ExponentiallyModifiedGaussian().draw()
+         RV(ExponentiallyModifiedGaussian()).sim(100).plot()
+         ExponentiallyModifiedGaussian().plot()
++        plt.figure()
+         ExponentiallyModifiedGaussian().plot(cdf=True)
++        plt.figure()
+         ExponentiallyModifiedGaussian(mean=0, sd=1, rate=0.05).plot(xlim="zoom")
+         plt.close("all")
+ 
+@@ -2158,10 +2187,12 @@ class TestInverseGamma(unittest.TestCase):
+             self.assertRaises(Exception, lambda v=bad: InverseGamma(shape=3, scale=v))
+ 
+     def test_InverseGamma_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         InverseGamma(shape=3, scale=2).draw()
+         RV(InverseGamma(shape=3, scale=2)).sim(100).plot()
+         InverseGamma(shape=3, scale=2).plot()
++        plt.figure()
+         InverseGamma(shape=3, scale=2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -2234,10 +2265,12 @@ class TestScaledInverseChiSquare(unittest.TestCase):
+             )
+ 
+     def test_ScaledInverseChiSquare_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all inherited from InverseGamma / base class.
+         ScaledInverseChiSquare(df=6, scale=2).draw()
+         RV(ScaledInverseChiSquare(df=6, scale=2)).sim(100).plot()
+         ScaledInverseChiSquare(df=6, scale=2).plot()
++        plt.figure()
+         ScaledInverseChiSquare(df=6, scale=2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -2324,10 +2357,12 @@ class TestLogGamma(unittest.TestCase):
+         self.assertRaises(Exception, lambda: LogGamma(shape=2, loc="a"))
+ 
+     def test_LogGamma_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         LogGamma(shape=2).draw()
+         RV(LogGamma(shape=2)).sim(100).plot()
+         LogGamma(shape=2).plot()
++        plt.figure()
+         LogGamma(shape=2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -2473,10 +2508,12 @@ class TestPERT(unittest.TestCase):
+         self.assertRaises(Exception, lambda: PERT(low=0, mode=5, high="a"))
+ 
+     def test_PERT_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         PERT(1, 2, 10).draw()
+         RV(PERT(1, 2, 10)).sim(100).plot()
+         PERT(1, 2, 10).plot()
++        plt.figure()
+         PERT(1, 2, 10).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -2566,10 +2603,12 @@ class TestTriangular(unittest.TestCase):
+         self.assertRaises(Exception, lambda: Triangular(low=0, mode=5, high="a"))
+ 
+     def test_Triangular_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Triangular(1, 2, 10).draw()
+         RV(Triangular(1, 2, 10)).sim(100).plot()
+         Triangular(1, 2, 10).plot()
++        plt.figure()
+         Triangular(1, 2, 10).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -2824,11 +2863,14 @@ class TestKumaraswamy(unittest.TestCase):
+         Kumaraswamy(shape1=0.1, shape2=0.1)
+ 
+     def test_Kumaraswamy_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Kumaraswamy(shape1=2, shape2=3).draw()
+         RV(Kumaraswamy(shape1=2, shape2=3)).sim(100).plot()
+         Kumaraswamy(shape1=2, shape2=3).plot()
++        plt.figure()
+         Kumaraswamy(shape1=2, shape2=3).plot(cdf=True)
++        plt.figure()
+         Kumaraswamy(shape1=2, shape2=5).plot(xlim="zoom")
+         Kumaraswamy(shape1=0.5, shape2=0.5).plot()  # infinite density at both edges
+         plt.close("all")
+@@ -2899,9 +2941,11 @@ class TestStudentT(unittest.TestCase):
+         self.assertRaises(Exception, lambda: StudentT(df=5, noncentrality="a"))
+ 
+     def test_StudentT_noncentral_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         StudentT(df=8, noncentrality=1.5).draw()
+         RV(StudentT(df=8, noncentrality=1.5)).sim(100).plot()
+         StudentT(df=8, noncentrality=1.5).plot()
++        plt.figure()
+         StudentT(df=8, noncentrality=1.5).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -2957,9 +3001,11 @@ class TestSkewT(unittest.TestCase):
+         self.assertAlmostEqual(float(left.mean()), -float(right.mean()), places=9)
+ 
+     def test_SkewT_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         SkewT(shape1=5, shape2=2).draw()
+         RV(SkewT(shape1=5, shape2=2)).sim(100).plot()
+         SkewT(shape1=5, shape2=2).plot()
++        plt.figure()
+         SkewT(shape1=5, shape2=2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3029,8 +3075,10 @@ class TestChiSquare(unittest.TestCase):
+         self.assertRaises(Exception, lambda: ChiSquare(df=4, noncentrality=-1))
+ 
+     def test_ChiSquare_noncentral_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         RV(ChiSquare(df=4, noncentrality=3)).sim(100).plot()
+         ChiSquare(df=4, noncentrality=3).plot()
++        plt.figure()
+         ChiSquare(df=4, noncentrality=3).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3104,8 +3152,10 @@ class TestF(unittest.TestCase):
+         self.assertRaises(Exception, lambda: F(dfN=5, dfD=10, noncentrality=-2))
+ 
+     def test_F_noncentral_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         RV(F(dfN=5, dfD=10, noncentrality=4)).sim(100).plot()
+         F(dfN=5, dfD=10, noncentrality=4).plot()
++        plt.figure()
+         F(dfN=5, dfD=10, noncentrality=4).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3167,9 +3217,11 @@ class TestHotelling(unittest.TestCase):
+         self.assertTrue(pval > 0.01)
+ 
+     def test_Hotelling_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         Hotelling(dim=3, df=10).draw()
+         RV(Hotelling(dim=3, df=10)).sim(100).plot()
+         Hotelling(dim=3, df=10).plot()
++        plt.figure()
+         Hotelling(dim=3, df=10).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3315,6 +3367,7 @@ class TestLognormal(unittest.TestCase):
+             plt.figure()
+             try:
+                 LogNormal(mu=0, sigma=0).plot()
++                plt.figure()
+                 LogNormal(mu=0, sigma=0).plot(cdf=True)
+             finally:
+                 plt.close("all")
+@@ -3425,12 +3478,14 @@ class TestBurr(unittest.TestCase):
+             )
+ 
+     def test_Burr_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class; a < 1 also
+         # exercises the monotone-decreasing high-density x-window.
+         Burr(shape1=3, shape2=2, scale=1).draw()
+         RV(Burr(shape1=3, shape2=2, scale=1)).sim(100).plot()
+         Burr(shape1=3, shape2=2, scale=1).plot()
+         Burr(shape1=0.5, shape2=2, scale=1).plot()
++        plt.figure()
+         Burr(shape1=3, shape2=2, scale=1).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3498,10 +3553,12 @@ class TestLomax(unittest.TestCase):
+             self.assertRaises(Exception, lambda v=bad: Lomax(shape=2, scale=v))
+ 
+     def test_Lomax_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Lomax(shape=3, scale=1).draw()
+         RV(Lomax(shape=3, scale=1)).sim(100).plot()
+         Lomax(shape=3, scale=1).plot()
++        plt.figure()
+         Lomax(shape=3, scale=1).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3593,10 +3650,12 @@ class TestHalfNormal(unittest.TestCase):
+             self.assertRaises(Exception, lambda b=bad: HalfNormal(scale=b))
+ 
+     def test_HalfNormal_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         HalfNormal(2).draw()
+         RV(HalfNormal(2)).sim(100).plot()
+         HalfNormal(2).plot()
++        plt.figure()
+         HalfNormal(2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3667,11 +3726,14 @@ class TestHalfCauchy(unittest.TestCase):
+             self.assertRaises(Exception, lambda b=bad: HalfCauchy(scale=b))
+ 
+     def test_HalfCauchy_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         HalfCauchy(2).draw()
+         RV(HalfCauchy(2)).sim(100).plot()
+         HalfCauchy(2).plot()
++        plt.figure()
+         HalfCauchy(2).plot(cdf=True)
++        plt.figure()
+         HalfCauchy(2).plot(xlim=(0, 10))
+         plt.close("all")
+ 
+@@ -3724,10 +3786,12 @@ class TestWeibull(unittest.TestCase):
+             self.assertRaises(Exception, lambda b=bad: Weibull(shape=1.5, scale=b))
+ 
+     def test_Weibull_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Weibull(1.5, 2).draw()
+         RV(Weibull(1.5, 2)).sim(100).plot()
+         Weibull(1.5, 2).plot()
++        plt.figure()
+         Weibull(1.5, 2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3780,10 +3844,12 @@ class TestLogistic(unittest.TestCase):
+             self.assertRaises(Exception, lambda b=bad: Logistic(scale=b))
+ 
+     def test_Logistic_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Logistic(0, 1).draw()
+         RV(Logistic(0, 1)).sim(100).plot()
+         Logistic(0, 1).plot()
++        plt.figure()
+         Logistic(0, 1).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3832,10 +3898,12 @@ class TestGompertz(unittest.TestCase):
+             self.assertRaises(Exception, lambda b=bad: Gompertz(shape=1.5, scale=b))
+ 
+     def test_Gompertz_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Gompertz(1.5, 2).draw()
+         RV(Gompertz(1.5, 2)).sim(100).plot()
+         Gompertz(1.5, 2).plot()
++        plt.figure()
+         Gompertz(1.5, 2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3918,10 +3986,12 @@ class TestMakeham(unittest.TestCase):
+             )
+ 
+     def test_Makeham_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Makeham(1.5, 0.3, 2).draw()
+         RV(Makeham(1.5, 0.3, 2)).sim(100).plot()
+         Makeham(1.5, 0.3, 2).plot()
++        plt.figure()
+         Makeham(1.5, 0.3, 2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -3972,10 +4042,12 @@ class TestLaplace(unittest.TestCase):
+             self.assertRaises(Exception, lambda b=bad: Laplace(scale=b))
+ 
+     def test_Laplace_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         Laplace(0, 1).draw()
+         RV(Laplace(0, 1)).sim(100).plot()
+         Laplace(0, 1).plot()
++        plt.figure()
+         Laplace(0, 1).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -4016,10 +4088,12 @@ class TestDeMoivre(unittest.TestCase):
+             self.assertRaises(Exception, lambda b=bad: DeMoivre(omega=b))
+ 
+     def test_DeMoivre_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         DeMoivre(100).draw()
+         RV(DeMoivre(100)).sim(100).plot()
+         DeMoivre(100).plot()
++        plt.figure()
+         DeMoivre(100).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -4080,10 +4154,12 @@ class TestGEV(unittest.TestCase):
+         self.assertRaises(Exception, lambda: GEV(shape="a"))
+ 
+     def test_GEV_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         GEV(0, 1, 0.2).draw()
+         RV(GEV(0, 1, 0.2)).sim(100).plot()
+         GEV(0, 1, 0.2).plot()
++        plt.figure()
+         GEV(0, 1, 0.2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -4143,10 +4219,12 @@ class TestGumbel(unittest.TestCase):
+         self.assertRaises(Exception, lambda: Gumbel(loc="a"))
+ 
+     def test_Gumbel_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all inherited from GEV / the base class.
+         Gumbel(0, 1).draw()
+         RV(Gumbel(0, 1)).sim(100).plot()
+         Gumbel(0, 1).plot()
++        plt.figure()
+         Gumbel(0, 1).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -4218,10 +4296,12 @@ class TestGPD(unittest.TestCase):
+         self.assertRaises(Exception, lambda: GPD(shape="a"))
+ 
+     def test_GPD_plots_without_error(self):
++        plt.close("all")  # isolate from any prior test's leftover current axes
+         # draw / RV / sim / plot all wired through the base class.
+         GPD(0, 1, 0.2).draw()
+         RV(GPD(0, 1, 0.2)).sim(100).plot()
+         GPD(0, 1, 0.2).plot()
++        plt.figure()
+         GPD(0, 1, 0.2).plot(cdf=True)
+         plt.close("all")
+ 
+@@ -4436,7 +4516,7 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
+             panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+             self.assertEqual(len(panels), 1)
+             self.assertEqual(plt.gca().get_xlabel(), "Variable 2")
+-            self.assertEqual(plt.gca().get_title(), "PDF Plot")
++            self.assertEqual(plt.gca().get_title(), "Probability Density Function")
+         plt.close("all")
+ 
+     def test_MultivariateNormal_plot_pairs_cannot_share_a_figure(self):
+@@ -6844,16 +6924,16 @@ class TestDistributionCDFPlot(unittest.TestCase):
+     def test_cdf_title(self):
+         for d in [Poisson(3), Normal(0, 1)]:
+             plt.figure()
+-            self.assertEqual(d.plot(cdf=True).ax.get_title(), "CDF Plot")
++            self.assertEqual(d.plot(cdf=True).ax.get_title(), "Cumulative Distribution Function")
+             plt.close("all")
+ 
+     def test_default_pmf_title_for_discrete(self):
+         plt.figure()
+-        self.assertEqual(Binomial(10, 0.5).plot().ax.get_title(), "PMF Plot")
++        self.assertEqual(Binomial(10, 0.5).plot().ax.get_title(), "Probability Mass Function")
+ 
+     def test_default_pdf_title_for_continuous(self):
+         plt.figure()
+-        self.assertEqual(Normal(0, 1).plot().ax.get_title(), "PDF Plot")
++        self.assertEqual(Normal(0, 1).plot().ax.get_title(), "Probability Density Function")
+ 
+     # --- both vertical and horizontal gridlines, like the ECDF plot ---
+ 
+diff --git a/symbulate/tests/test_plot.py b/symbulate/tests/test_plot.py
+index 750bfa1..1eb8005 100644
+--- a/symbulate/tests/test_plot.py
++++ b/symbulate/tests/test_plot.py
+@@ -4685,7 +4685,7 @@ class TestVariablesChoosesWhatIsDrawn(PlotTestCase):
+                 plt.figure()
+                 p = self.dist.plot(variables=arg)
+                 self.assertEqual(len(self._panels()), 1)
+-                self.assertEqual(p.ax.get_title(), "PDF Plot")
++                self.assertEqual(p.ax.get_title(), "Probability Density Function")
+                 # Named for the variable asked for, not a generic "Value".
+                 self.assertEqual(p.ax.get_xlabel(), "Variable 3")
+                 self.assertEqual(p.ax.get_ylabel(), "Density")
+@@ -4700,7 +4700,7 @@ class TestVariablesChoosesWhatIsDrawn(PlotTestCase):
+ 
+     def test_a_single_discrete_variable_draws_its_pmf(self):
+         p = Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot(variables=1)
+-        self.assertEqual(p.ax.get_title(), "PMF Plot")
++        self.assertEqual(p.ax.get_title(), "Probability Mass Function")
+         self.assertEqual(p.ax.get_xlabel(), "Variable 2")
+ 
+     def test_one_variable_works_where_the_joint_plot_is_refused(self):
+-- 
+2.43.0
+

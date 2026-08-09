@@ -1,0 +1,19 @@
+diff --git a/setup.py b/setup.py
+index 5b55976..8593bb7 100644
+--- a/setup.py
++++ b/setup.py
+@@ -7,12 +7,12 @@ setup(
+     url="https://github.com/dlsun/symbulate",
+     author="Dennis Sun",
+     author_email="dsun09@calpoly.edu",
+-    license="GPLv3",
++    license="MIT",
+     classifiers=[
+         "Development Status :: 3 - Alpha",
+         "Intended Audience :: Education",
+         "Topic :: Scientific/Engineering :: Mathematics",
+-        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
++        "License :: OSI Approved :: MIT License",
+         "Programming Language :: Python :: 3",
+     ],
+     keywords="probability simulation",

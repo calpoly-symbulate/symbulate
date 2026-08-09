@@ -1,0 +1,436 @@
+diff --git a/symbulate/plot.py b/symbulate/plot.py
+index 59e25f5..f75a4a1 100644
+--- a/symbulate/plot.py
++++ b/symbulate/plot.py
+@@ -3075,6 +3075,154 @@ def make_impulse(
+     return xs, freqs
+ 
+ 
++def resolve_hist_bins(
++    values, bins=None, bin_width=None, equal_area=False, default_bins=None
++):
++    """Resolve ``bins``/``bin_width``/``equal_area`` into one ``bins`` value.
++
++    ``make_hist`` (and ``ax.hist`` underneath it) only understands a single
++    ``bins`` argument -- an int (equal-width bin *count*) or an array of
++    explicit edges. ``bin_width`` and ``equal_area`` are two more ways for
++    a caller to say what they want; this resolves whichever combination
++    was given down to that one value, warning about any conflict rather
++    than silently picking a winner.
++
++    Precedence, in order:
++
++    1. If ``bins`` is already an explicit array of edges, it wins outright
++       -- ``bin_width``/``equal_area`` are ignored (with a warning). This
++       matches the long-standing rule that an explicit ``bins=`` (int or
++       edges array) always wins over any automatic binning scheme (see
++       DECISIONS.md, "Outlier/Skew-Aware Histogram Binning").
++    2. ``bin_width`` and ``equal_area`` are mutually exclusive -- they ask
++       for opposite things (fixed-width bins vs. fixed-area/variable-width
++       bins). If both are given, ``equal_area`` wins (with a warning).
++    3. If ``bin_width`` is given, it is converted to an equivalent integer
++       bin count spanning the data's range, the same
++       ceiling-division scheme ``Results.tabulate(bin=True, binwidth=...)``
++       already uses. If ``bins`` (an int) was *also* given, ``bin_width``
++       wins (with a warning) -- ``bins`` is ignored.
++    4. If ``equal_area`` is True, ``bins`` (or ``default_bins`` if ``bins``
++       is None) is treated as the bin *count*, and edges are placed at
++       that many evenly spaced quantiles of ``values``, so each bin holds
++       (approximately) the same number of observations -- and, once
++       normalized, the same area. Repeated values in the data can force
++       two requested quantile edges to coincide; when that happens the
++       duplicate is dropped (a zero-width bin would have infinite
++       density) and fewer bins than requested are drawn, with a warning.
++    5. Otherwise, ``bins`` is returned unchanged (including ``None``,
++       which every ``make_*`` histogram helper already treats as its own
++       flat default).
++
++    Parameters
++    ----------
++    values : array-like
++        The data the histogram will be drawn from -- used to convert
++        ``bin_width`` to a bin count and to place ``equal_area`` quantile
++        edges. Not used otherwise.
++    bins : int, array-like, or None, optional
++        The caller's ``bins=`` argument.
++    bin_width : float, optional
++        The caller's ``bin_width=`` argument: width of each bin, with the
++        number of bins determined automatically from ``values``' range.
++    equal_area : bool, default False
++        If True, place bin edges at evenly spaced quantiles of ``values``
++        instead of at evenly spaced values, so every bin has
++        (approximately) equal area rather than equal width.
++    default_bins : int, optional
++        Bin count to use for ``equal_area`` when ``bins`` is None.
++        Defaults to ``HIST_DEFAULT_BINS``.
++
++    Returns
++    -------
++    int or numpy.ndarray
++        A ``bins`` value safe to pass straight through to ``make_hist``
++        (and, for the plain-int case, ``make_hist2d`` / ``setup_tile_axis``
++        / ``make_segmented_hist`` too).
++
++    Raises
++    ------
++    ValueError
++        If ``bin_width`` is given and is not a positive number.
++
++    Examples
++    --------
++    >>> import numpy as np
++    >>> values = np.random.default_rng().normal(0, 1, 1000)
++    >>> resolve_hist_bins(values, bin_width=0.5)  # doctest: +SKIP
++    >>> resolve_hist_bins(values, bins=30, equal_area=True)  # doctest: +SKIP
++    """
++    if default_bins is None:
++        default_bins = HIST_DEFAULT_BINS
++    values = np.asarray(values)
++
++    explicit_edges = bins is not None and not isinstance(bins, (int, np.integer))
++    if explicit_edges:
++        if bin_width is not None or equal_area:
++            warnings.warn(
++                "bins was given as an explicit array of bin edges, so "
++                "bin_width and equal_area have no effect and were "
++                "ignored. Use only one of bins (an array), bin_width, or "
++                "equal_area to set the bins.",
++                UserWarning,
++                stacklevel=3,
++            )
++        return bins
++
++    if bin_width is not None and equal_area:
++        warnings.warn(
++            "Cannot use bin_width and equal_area together -- bin_width "
++            "asks for equal-width bins and equal_area asks for "
++            "equal-area (variable-width) bins. Using equal_area and "
++            "ignoring bin_width.",
++            UserWarning,
++            stacklevel=3,
++        )
++        bin_width = None
++
++    if bin_width is not None:
++        if bin_width <= 0:
++            raise ValueError(f"bin_width must be a positive number, not {bin_width!r}.")
++        if bins is not None:
++            warnings.warn(
++                f"Both bins ({bins!r}) and bin_width ({bin_width!r}) were "
++                "given. bin_width takes precedence; bins is ignored. Use "
++                "only one of bins or bin_width.",
++                UserWarning,
++                stacklevel=3,
++            )
++        if values.size == 0:
++            return default_bins
++        data_range = float(values.max() - values.min())
++        if data_range <= 0:
++            return 1
++        return max(1, int(np.ceil(data_range / bin_width)))
++
++    if equal_area:
++        n = bins if bins is not None else default_bins
++        if values.size == 0:
++            return default_bins
++        edges = np.quantile(values, np.linspace(0, 1, n + 1))
++        unique_edges = np.unique(edges)
++        n_actual = len(unique_edges) - 1
++        if n_actual < 1:
++            # Degenerate: every value is identical. Fall back to the
++            # flat default rather than handing ax.hist a single zero-
++            # width bin.
++            return default_bins
++        if n_actual < n:
++            warnings.warn(
++                f"Requested {n} equal_area bins, but repeated values in "
++                f"the data forced some bin boundaries together -- drew "
++                f"{n_actual} bins instead.",
++                UserWarning,
++                stacklevel=3,
++            )
++        return unique_edges
++
++    return bins
++
++
+ def make_hist(
+     values,
+     ax,
+diff --git a/symbulate/results.py b/symbulate/results.py
+index ffb73dd..dff530f 100644
+--- a/symbulate/results.py
++++ b/symbulate/results.py
+@@ -61,6 +61,7 @@ from .plot import (
+     make_ecdf,
+     make_hist,
+     make_hist2d,
++    resolve_hist_bins,
+     make_impulse,
+     make_mosaic,
+     make_segmented_density,
+@@ -1908,6 +1909,8 @@ class RVResults(Results):
+         normalize=True,
+         jitter=None,
+         bins=None,
++        bin_width=None,
++        equal_area=False,
+         marginal=False,
+         suggest=None,
+         **kwargs,
+@@ -1964,10 +1967,32 @@ class RVResults(Results):
+             ``False`` (exact positions). Has no effect on 1D impulse
+             and dot plots -- overlays of those already spread apart
+             automatically.
+-        bins : int, optional
+-            Number of bins for histograms (1D, 2D, and segmented), or
+-            for a continuous axis of a tile plot. Defaults to 30. Dot
+-            plots are never binned.
++        bins : int, array-like, or None, optional
++            Number of equal-width bins for histograms (1D, 2D, and
++            segmented), or for a continuous axis of a tile plot, OR an
++            explicit array of bin edges for ``type="hist"`` (1D and
++            segmented only -- an edges array cannot be used with
++            ``"hist2d"`` axes together or with ``"tile"``), which need not
++            be evenly spaced. Defaults to 30. Dot plots are never binned.
++        bin_width : float, optional
++            Width of each bin for a single-variable ``type="hist"``; the
++            number of bins is determined automatically from the data's
++            range, the same way ``Results.tabulate(bin=True,
++            binwidth=...)`` does. Cannot be used together with
++            ``equal_area``. If both ``bins`` and ``bin_width`` are given,
++            ``bin_width`` wins and a warning is printed. Not yet supported
++            for two-variable plots (``"hist2d"``, ``"segmented_hist"``,
++            ``"tile"``) -- ``bins`` still works there.
++        equal_area : bool, default False
++            If True, draw a single-variable ``type="hist"`` with bin
++            *edges* placed at evenly spaced quantiles of the data, rather
++            than at evenly spaced values -- so every bin holds
++            (approximately) the same number of observations and, once
++            normalized, the same area, instead of the same width. ``bins``
++            still sets how many bins to use (default 30). Cannot be used
++            together with ``bin_width``. Not yet supported for
++            two-variable plots (``"hist2d"``, ``"segmented_hist"``,
++            ``"tile"``).
+         marginal : bool, default False
+             2D data only. If True, add two extra panels along the top
+             and right edges of the main plot showing each variable's
+@@ -2014,6 +2039,8 @@ class RVResults(Results):
+         Exception
+             If ``type`` is not a recognized string, tuple, or
+             list.
++        ValueError
++            If ``bin_width`` is given and is not a positive number.
+ 
+         See Also
+         --------
+@@ -2027,6 +2054,18 @@ class RVResults(Results):
+         >>> X = RV(BoxModel([1, 2, 3, 4, 5, 6]))
+         >>> X.sim(1000).plot()  # doctest: +SKIP
+ 
++        Plot a histogram of a continuous variable with a fixed bin width
++        instead of a fixed bin count:
++
++        >>> Y = RV(Normal(0, 1))
++        >>> Y.sim(1000).plot(type="hist", bin_width=0.25)  # doctest: +SKIP
++
++        Plot an equal-area histogram (30 bins, each holding about the same
++        number of observations, so bins are narrow where data is dense and
++        wide in the tails):
++
++        >>> Y.sim(1000).plot(type="hist", bins=30, equal_area=True)  # doctest: +SKIP
++
+         Plot an impulse chart for a discrete distribution:
+ 
+         >>> X.sim(1000).plot(type="impulse")  # doctest: +SKIP
+@@ -2143,6 +2182,14 @@ class RVResults(Results):
+             default, alternatives = default_plot_type("nD", False)
+             if type is None:
+                 type = (default,)
++            if (bin_width is not None or equal_area) and "pairs" in type:
++                warnings.warn(
++                    "bin_width and equal_area are not yet supported for "
++                    "the pairs matrix (3+ variables) -- they were "
++                    "ignored. Use bins= instead.",
++                    UserWarning,
++                    stacklevel=2,
++                )
+             if "pairs" in type:
+                 # Printed here rather than at the end, because the matrix
+                 # returns early; the panels themselves stay quiet.
+@@ -2238,6 +2285,13 @@ class RVResults(Results):
+                     UserWarning,
+                     stacklevel=2,
+                 )
++            if (bin_width is not None or equal_area) and "hist" not in type:
++                warnings.warn(
++                    "bin_width and equal_area only have an effect on "
++                    "type='hist'. They were ignored for this plot.",
++                    UserWarning,
++                    stacklevel=2,
++                )
+             n = len(self)
+ 
+             # initialize figure
+@@ -2271,11 +2325,17 @@ class RVResults(Results):
+                         alpha=alpha,
+                     )
+             if "hist" in type:
++                _hist_bins = resolve_hist_bins(
++                    _plot_array,
++                    bins=bins,
++                    bin_width=bin_width,
++                    equal_area=equal_area,
++                )
+                 make_hist(
+                     _plot_array,
+                     ax,
+                     color,
+-                    bins=bins,
++                    bins=_hist_bins,
+                     normalize=normalize,
+                     alpha=alpha,
+                     **kwargs,
+@@ -2341,6 +2401,14 @@ class RVResults(Results):
+             default, alternatives = default_plot_type(configuration, small_n)
+             if type is None:
+                 type = (default,)
++            if bin_width is not None or equal_area:
++                warnings.warn(
++                    "bin_width and equal_area are not yet supported for "
++                    "two-variable plots ('hist2d', 'segmented_hist', "
++                    "'tile') -- they were ignored. Use bins= instead.",
++                    UserWarning,
++                    stacklevel=2,
++                )
+             # On continuous x continuous data the short names hist/density
+             # mean the 2D mesh variants, so map them to the explicit tokens
+             # for the suggestion note's display name ("2D Histogram" rather
+diff --git a/symbulate/tests/test_plot.py b/symbulate/tests/test_plot.py
+index 750bfa1..916bf2f 100644
+--- a/symbulate/tests/test_plot.py
++++ b/symbulate/tests/test_plot.py
+@@ -102,6 +102,7 @@ from symbulate.plot import (
+     SAMPLE_PATH_LINEWIDTH,
+     TILE_DEFAULT_BINS,
+     HIST_DEFAULT_BINS,
++    resolve_hist_bins,
+ )
+ from symbulate.results import RVResults
+ 
+@@ -1114,6 +1115,115 @@ class TestPlot1DHistStyling(PlotTestCase):
+         self.assertIn("Second", labels)
+ 
+ 
++class TestPlot1DHistBinWidthAndEqualArea(PlotTestCase):
++    """bin_width= and equal_area= on a single-variable type="hist"."""
++
++    def setUp(self):
++        np.random.seed(42)
++        self.sims = RV(Normal(0, 1)).sim(2000)
++        self.values = np.asarray(self.sims.results)
++
++    def test_bin_width_produces_expected_bin_count(self):
++        data_range = self.values.max() - self.values.min()
++        expected = max(1, int(np.ceil(data_range / 0.25)))
++        self.sims.plot(type="hist", bin_width=0.25)
++        self.assertEqual(len(plt.gca().patches), expected)
++
++    def test_bin_width_bins_are_no_wider_than_requested(self):
++        """The ceiling-division scheme (matching Results.tabulate's
++        binwidth=) can only shrink bins to fit the exact data range, never
++        widen them past what was asked for."""
++        self.sims.plot(type="hist", bin_width=0.5)
++        widths = [p.get_width() for p in plt.gca().patches]
++        self.assertTrue(all(0 < w <= 0.5 + 1e-9 for w in widths))
++
++    def test_bin_width_zero_raises(self):
++        with self.assertRaises(ValueError):
++            self.sims.plot(type="hist", bin_width=0)
++
++    def test_bin_width_negative_raises(self):
++        with self.assertRaises(ValueError):
++            self.sims.plot(type="hist", bin_width=-1.0)
++
++    def test_bins_and_bin_width_together_warns_and_bin_width_wins(self):
++        data_range = self.values.max() - self.values.min()
++        expected = max(1, int(np.ceil(data_range / 0.5)))
++        with self.assertWarns(UserWarning):
++            self.sims.plot(type="hist", bins=10, bin_width=0.5)
++        self.assertEqual(len(plt.gca().patches), expected)
++
++    def test_bin_width_ignored_outside_hist_warns(self):
++        with self.assertWarns(UserWarning):
++            self.sims.plot(type="density", bin_width=0.5)
++
++    def test_equal_area_produces_requested_bin_count(self):
++        self.sims.plot(type="hist", bins=20, equal_area=True)
++        self.assertEqual(len(plt.gca().patches), 20)
++
++    def test_equal_area_bins_have_approximately_equal_area(self):
++        self.sims.plot(type="hist", bins=20, equal_area=True)
++        areas = [p.get_width() * p.get_height() for p in plt.gca().patches]
++        target = 1.0 / 20
++        for area in areas:
++            self.assertAlmostEqual(area, target, delta=target * 0.35)
++
++    def test_equal_area_widths_are_not_all_equal(self):
++        """Sanity check that this differs from a plain equal-width
++        histogram -- equal-area bins should be narrow where data is
++        dense and wide in the tails, not a constant width."""
++        self.sims.plot(type="hist", bins=20, equal_area=True)
++        widths = {round(p.get_width(), 6) for p in plt.gca().patches}
++        self.assertGreater(len(widths), 1)
++
++    def test_equal_area_and_bin_width_together_warns_and_equal_area_wins(self):
++        with self.assertWarns(UserWarning):
++            self.sims.plot(type="hist", bins=20, bin_width=0.5, equal_area=True)
++        self.assertEqual(len(plt.gca().patches), 20)
++
++    def test_equal_area_ignored_outside_hist_warns(self):
++        with self.assertWarns(UserWarning):
++            self.sims.plot(type="density", equal_area=True)
++
++    def test_explicit_bin_edges_array_wins_over_bin_width(self):
++        edges = [-3, -1, 0, 1, 3]
++        with self.assertWarns(UserWarning):
++            self.sims.plot(type="hist", bins=edges, bin_width=0.5)
++        self.assertEqual(len(plt.gca().patches), len(edges) - 1)
++
++    def test_explicit_bin_edges_array_wins_over_equal_area(self):
++        edges = [-3, -1, 0, 1, 3]
++        with self.assertWarns(UserWarning):
++            self.sims.plot(type="hist", bins=edges, equal_area=True)
++        self.assertEqual(len(plt.gca().patches), len(edges) - 1)
++
++    def test_equal_area_repeated_values_collapse_bins_with_warning(self):
++        """Heavily repeated values can force requested quantile edges to
++        coincide; resolve_hist_bins should drop the duplicate rather than
++        hand ax.hist a zero-width bin, and say so."""
++        lumpy = np.array([0.0] * 50 + list(np.linspace(1, 2, 50)))
++        with self.assertWarns(UserWarning):
++            n_actual = len(resolve_hist_bins(lumpy, bins=40, equal_area=True)) - 1
++        self.assertLess(n_actual, 40)
++
++
++class TestPlot2DHistBinWidthAndEqualAreaUnsupported(PlotTestCase):
++    """bin_width=/equal_area= are not yet wired up for two-variable plots;
++    they must warn and be ignored rather than fail silently or error."""
++
++    def setUp(self):
++        np.random.seed(42)
++        X, Y = RV(Normal(0, 1) ** 2)
++        self.sims = (X & Y).sim(500)
++
++    def test_bin_width_warns_on_hist2d(self):
++        with self.assertWarns(UserWarning):
++            self.sims.plot(type="hist", bin_width=0.5, suggest=False)
++
++    def test_equal_area_warns_on_hist2d(self):
++        with self.assertWarns(UserWarning):
++            self.sims.plot(type="hist", equal_area=True, suggest=False)
++
++
+ class TestPlot1DBar(PlotTestCase):
+     """The integrated make_bar: a no-binning categorical/discrete bar chart."""
+ 

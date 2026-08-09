@@ -1,0 +1,101 @@
+diff --git a/symbulate/random_variables.py b/symbulate/random_variables.py
+index 037f84b..939f098 100644
+--- a/symbulate/random_variables.py
++++ b/symbulate/random_variables.py
+@@ -237,9 +237,15 @@ class RV(Arithmetic, Transformable, Comparable):
+             return self.apply(lambda x: Vector(x[i] for i in n))
+         # if the indices are a slice, return a random vector
+         elif isinstance(n, slice):
+-            return self.apply(
+-                lambda x: Vector(x[i] for i in range(n.start or 0, n.stop, n.step or 1))
+-            )
++            # x is the RV's own realized value (e.g. a tuple/Vector from a
++            # fixed-size draw), which already knows its own length and
++            # already supports native slicing -- so slice it directly
++            # rather than rebuilding a range() from n.start/stop/step.
++            # The old range()-based version broke on any open-ended slice
++            # (X[1:], with n.stop is None) with a raw
++            # "TypeError: 'NoneType' object cannot be interpreted as an
++            # integer", since range() requires an actual integer stop.
++            return self.apply(lambda x: Vector(x[n]))
+         # otherwise, return the nth value
+         return self.apply(lambda x: x[n])
+ 
+diff --git a/symbulate/result.py b/symbulate/result.py
+index 200ee8c..c325152 100644
+--- a/symbulate/result.py
++++ b/symbulate/result.py
+@@ -1122,6 +1122,22 @@ class DiscreteTimeFunction(TimeFunction):
+         elif is_numeric_vector(n):
+             return Vector(self._get_value_at_index(e) for e in n)
+         elif isinstance(n, slice):
++            if n.stop is None:
++                # Unlike RV.__getitem__, there is no underlying container
++                # to delegate to here: each value is generated on demand
++                # from a function over an index set unbounded in both
++                # directions (negative indices work too), so there is no
++                # length to infer and no way to materialize "the rest of
++                # an infinite Vector" eagerly. This used to fall through
++                # to range(n.start or 0, n.stop, ...) and crash with a raw
++                # "TypeError: 'NoneType' object cannot be interpreted as
++                # an integer" the moment n.stop was None.
++                raise ValueError(
++                    "Cannot slice a DiscreteTimeFunction without a stop "
++                    "index (e.g. f[2:10]) -- it has no end to slice up "
++                    "to. Index individual values with f(t) or f[n], or "
++                    "give an explicit stop."
++                )
+             return Vector(
+                 self._get_value_at_index(e)
+                 for e in range(n.start or 0, n.stop, n.step or 1)
+diff --git a/symbulate/tests/test_random_variables.py b/symbulate/tests/test_random_variables.py
+index 17d7bd3..226072f 100644
+--- a/symbulate/tests/test_random_variables.py
++++ b/symbulate/tests/test_random_variables.py
+@@ -271,6 +271,26 @@ class TestRVGetItem(unittest.TestCase):
+         sims = Z[0].sim(100)
+         self.assertTrue(all(v == 1 for v in sims))
+ 
++    def test_open_ended_slice_does_not_crash(self):
++        # Regression test: X[1:] used to crash with a raw
++        # "TypeError: 'NoneType' object cannot be interpreted as an
++        # integer" because __getitem__ rebuilt a range() from the slice's
++        # start/stop/step instead of slicing the realized value directly.
++        seed()
++        X = RV(BoxModel([0, 1, 2, 3, 4], size=5))
++        sub = X[1:].draw()
++        self.assertEqual(len(sub), 4)
++
++    def test_open_ended_slice_matches_native_slicing(self):
++        # Compare against the *same* underlying outcome (not two separate
++        # random draws) so this actually pins the slicing logic itself.
++        P = BoxModel([0, 1, 2, 3, 4], size=5)
++        X = RV(P)
++        outcome = P.draw()
++        full = X.func(outcome)
++        self.assertEqual(tuple(X[1:].func(outcome)), tuple(full[1:]))
++        self.assertEqual(tuple(X[::2].func(outcome)), tuple(full[::2]))
++
+ 
+ class TestRVArithmetic(unittest.TestCase):
+ 
+diff --git a/symbulate/tests/test_result.py b/symbulate/tests/test_result.py
+index 77c5965..b1b7c41 100644
+--- a/symbulate/tests/test_result.py
++++ b/symbulate/tests/test_result.py
+@@ -361,6 +361,15 @@ class TestDiscreteTimeFunction(unittest.TestCase):
+         self.assertIsInstance(result, Vector)
+         self.assertEqual(list(result), [0, 1, 2])
+ 
++    def test_getitem_open_ended_slice_raises_clear_value_error(self):
++        # Regression test: f[2:] used to crash with a raw
++        # "TypeError: 'NoneType' object cannot be interpreted as an
++        # integer" from range(n.start or 0, n.stop, ...) since there is
++        # no length to infer a stop from.
++        f = DiscreteTimeFunction(lambda n: n * 3, fs=1)
++        with self.assertRaisesRegex(ValueError, "without a stop"):
++            f[2:]
++
+     def test_getitem_bad_type_raises(self):
+         f = DiscreteTimeFunction(lambda n: n)
+         with self.assertRaises(TypeError):

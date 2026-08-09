@@ -1,0 +1,253 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 02:30:12 +0000
+Subject: [PATCH] fix: dispatch two dependent categorical variables to a real
+ 2D plot
+
+X, Y = RV(ProbabilitySpace(event_sim)) (each draw returning a pair of
+strings, e.g. one categorical variable's outcome depending on another's)
+produced a nonsensical plot: (X & Y).sim(n).plot() drew each pair as a
+meaningless two-point line against index (0, 1), titled "Sample Path".
+
+The cause: RVResults.dim is only computed for numeric results (see
+RVResults.__init__), so a Tuple of two strings gets dim=None. plot()
+already has a dedicated branch for 1D categorical data for exactly this
+reason (_is_categorical_1d), but had no 2D counterpart, so a categorical
+pair fell through every dim==1/dim==2/1D-categorical check straight to
+the generic ensemble path-plot branch meant for TimeFunction results.
+
+Added _is_categorical_2d() (mirroring _is_categorical_1d) and a new
+dispatch branch that routes such a pair to type="tile" (default),
+"mosaic", or "stackedbar" -- the three renderers that already accept
+raw categorical arrays directly. A categorical scatter is deliberately
+not offered: make_scatter's jitter modes ("spiral"/"bins") assume
+integer-coded positions, and extending them to categorical data is
+future work rather than something to work around here; requesting
+type="scatter" (or marginal=True, whose layout code is similarly
+untested against string axes) now raises a clear, actionable error
+instead of an obscure crash further down.
+
+Note: "tile" is the default for both small and large samples (unlike
+plain 2D_dd's small-n default of "scatter", not offered here). Whether
+"mosaic" should instead be the default for this case -- the original
+suggestion -- is intentionally left as an open question; see the
+accompanying summary document.
+
+Regression tests added in test_plot.py, including the exact
+event_sim example this was reported against.
+---
+ symbulate/results.py         | 107 +++++++++++++++++++++++++++++++++++
+ symbulate/tests/test_plot.py |  65 +++++++++++++++++++++
+ 2 files changed, 172 insertions(+)
+
+diff --git a/symbulate/results.py b/symbulate/results.py
+index 7d68a01..fe0fc31 100644
+--- a/symbulate/results.py
++++ b/symbulate/results.py
+@@ -151,6 +151,42 @@ def _is_categorical_1d(results):
+     return False
+ 
+ 
++def _is_categorical_2d(results):
++    """Check whether results are a 2D collection of categorical (string) pairs.
++
++    The two-variable counterpart of ``_is_categorical_1d`` -- e.g. a joint
++    outcome like ``X, Y = RV(ProbabilitySpace(event_sim))`` where each draw
++    returns a pair of strings. Such a ``Tuple`` is not a numeric vector, so
++    ``RVResults.dim`` is ``None`` and the numeric ``dim == 2`` branch is
++    skipped; ``RVResults.plot()`` uses this to route the pair to the plot
++    types that already accept raw categorical arrays directly (tile,
++    mosaic, stackedbar) instead of falling through to the path-plot
++    catch-all, which would draw each pair as a meaningless two-point line.
++
++    Parameters
++    ----------
++    results : iterable
++        The stored simulation outcomes.
++
++    Returns
++    -------
++    bool
++        True if the outcomes are a 2D collection of strings/bytes, False
++        otherwise (numeric, some other dimension, or non-string objects).
++    """
++    try:
++        arr = np.asarray(list(results))
++    except Exception:
++        return False
++    if arr.ndim != 2 or arr.shape[1] != 2:
++        return False
++    if arr.dtype.kind in ("U", "S"):
++        return True
++    if arr.dtype.kind == "O":
++        return all(isinstance(v, (str, bytes)) for row in arr.tolist() for v in row)
++    return False
++
++
+ def _sim_with_progress(draw_func, n, progress_delay=5.0, bar_width=30):
+     """Run n draws, showing a live progress bar on stderr if simulation takes longer than progress_delay seconds.
+ 
+@@ -1959,6 +1995,12 @@ class RVResults(Results):
+             (or a plain ``Tuple``/``DiscreteTimeFunction``/
+             ``ContinuousTimeFunction`` result, which only ever draws a
+             sample path) raises rather than being silently ignored.
++            Two dependent categorical (string) variables -- e.g.
++            ``X, Y = RV(ProbabilitySpace(event_sim))`` where each draw
++            returns a pair of strings -- default to ``"tile"``, with
++            ``"mosaic"`` and ``"stackedbar"`` as alternatives (a
++            categorical scatter is not offered); ``marginal=True`` is
++            not yet supported for this case.
+         alpha : float, optional
+             Transparency of plotted elements, between 0 and 1. Each
+             plot type has its own default: histograms (1D, 2D, and
+@@ -2760,6 +2802,71 @@ class RVResults(Results):
+                 # axes current), and the joint panel is the one plt.gca()
+                 # should mean after a two-variable plot.
+                 plt.sca(ax)
++        elif self.index_set is None and _is_categorical_2d(self.results):
++            # 2D categorical (string) outcomes, e.g. two dependent
++            # categorical variables built from a raw ProbabilitySpace:
++            #
++            #   def event_sim():
++            #       a = BoxModel(["a", "not a"], probs=[0.8, 0.2]).draw()
++            #       b = BoxModel(["b", "not b"], probs=[0.7, 0.3]).draw()
++            #       return a, b
++            #   X, Y = RV(ProbabilitySpace(event_sim))
++            #   (X & Y).sim(1000).plot()
++            #
++            # A pair of strings is not a numeric vector, so this gets
++            # dim=None and skips the numeric dim == 2 branch above; without
++            # this branch it fell through all the way to the path-plot
++            # catch-all at the bottom, which drew each pair as a
++            # meaningless two-point "path" against index (0, 1).
++            #
++            # Only tile, mosaic, and stackedbar are offered: all three
++            # already accept raw categorical arrays directly (unlike
++            # make_scatter, whose jitter modes assume integer-coded
++            # positions -- extending scatter to categorical data is future
++            # work, not silently worked around here). "tile" is the
++            # default, matching plain 2D_dd's large-n numeric default
++            # (which two categorical variables always resolve to, since
++            # classify_values treats string data as discrete-ish
++            # regardless of sample size) -- whether "mosaic" should
++            # instead be the default for this case is an open, unresolved
++            # question (see the accompanying writeup), so this does not
++            # unilaterally special-case it.
++            arr = np.asarray(list(self.results))
++            x, y = arr[:, 0], arr[:, 1]
++            default, alternatives = "tile", ["mosaic", "stackedbar"]
++            if type is None:
++                type = (default,)
++            _suggestion = (type[0], default, alternatives)
++            if marginal:
++                raise ValueError(
++                    "marginal=True isn't supported yet for two categorical "
++                    "(text) variables -- only for numeric or mixed data. "
++                    "Drop marginal=True."
++                )
++            if "equal_width" in kwargs:
++                raise ValueError(
++                    "equal_width= is no longer how a mosaic plot is drawn "
++                    "as a stacked bar chart -- use type='stackedbar' "
++                    "instead of type='mosaic', equal_width=True."
++                )
++            ax = plt.gca()
++            color = get_next_color(ax)
++            if "tile" in type:
++                make_tile(
++                    x, y, ax, normalize=normalize, bins=bins,
++                    discrete_x=True, discrete_y=True, **kwargs
++                )
++            elif "mosaic" in type or "stackedbar" in type:
++                make_mosaic(
++                    x, y, ax, normalize=normalize,
++                    equal_width=("stackedbar" in type), **kwargs
++                )
++            else:
++                raise ValueError(
++                    f"{type[0]!r} can't be used for two categorical (text) "
++                    "variables. This works with type='tile', type='mosaic', "
++                    "or type='stackedbar'."
++                )
+         elif self.index_set is None and _is_categorical_1d(self.results):
+             # 1D categorical (string) outcomes. These are not numbers, so
+             # they get dim=None and skip the dim == 1 branch, but they are a
+diff --git a/symbulate/tests/test_plot.py b/symbulate/tests/test_plot.py
+index d4121bb..fd14108 100644
+--- a/symbulate/tests/test_plot.py
++++ b/symbulate/tests/test_plot.py
+@@ -1342,6 +1342,71 @@ class TestPlotCategorical(PlotTestCase):
+         self.assertEqual(labels, ["a", "b", "c"])
+ 
+ 
++class TestPlot2DCategorical(PlotTestCase):
++    """2D categorical (string, string) outcomes, routed through .plot().
++
++    Before this dispatch existed, a pair of dependent categorical
++    variables built from a raw ProbabilitySpace -- not a numeric vector,
++    so RVResults.dim is None -- fell all the way through to the
++    ensemble path-plot branch and drew each pair as a meaningless
++    two-point line against index (0, 1) instead of a real 2D plot.
++    """
++
++    def setUp(self):
++        np.random.seed(42)
++
++        def event_sim():
++            a = BoxModel(["a", "not a"], probs=[0.8, 0.2]).draw()
++            if a == "a":
++                b = BoxModel(["b", "not b"], probs=[0.7, 0.3]).draw()
++            else:
++                b = BoxModel(["b", "not b"], probs=[0.6, 0.4]).draw()
++            return a, b
++
++        self.X, self.Y = RV(ProbabilitySpace(event_sim))
++
++    def test_default_is_a_real_2d_plot_not_a_sample_path(self):
++        (self.X & self.Y).sim(1000).plot(suggest=False)
++        ax = plt.gca()
++        self.assertNotEqual(ax.get_title(), "Sample Path")
++        self.assertEqual(ax.get_title(), "Tile Plot")
++
++    def test_explicit_mosaic_type(self):
++        (self.X & self.Y).sim(1000).plot(type="mosaic", suggest=False)
++        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
++
++    def test_explicit_stackedbar_type(self):
++        (self.X & self.Y).sim(1000).plot(type="stackedbar", suggest=False)
++        self.assertEqual(plt.gca().get_title(), "Stacked Bar Chart")
++
++    def test_tile_labels_use_category_names(self):
++        (self.X & self.Y).sim(1000).plot(type="tile", suggest=False)
++        ax = plt.gca()
++        xlabels = [t.get_text() for t in ax.get_xticklabels()]
++        self.assertIn("a", xlabels)
++        self.assertIn("not a", xlabels)
++
++    def test_small_n_still_uses_tile_default(self):
++        """No categorical scatter is offered, so small samples still get
++        tile rather than an unsupported scatter default."""
++        (self.X & self.Y).sim(10).plot(suggest=False)
++        self.assertEqual(plt.gca().get_title(), "Tile Plot")
++
++    def test_unsupported_type_raises_helpful_error(self):
++        with self.assertRaises(ValueError) as cm:
++            (self.X & self.Y).sim(100).plot(type="scatter", suggest=False)
++        message = str(cm.exception)
++        self.assertIn("categorical", message)
++        self.assertIn("tile", message)
++        self.assertIn("mosaic", message)
++        self.assertIn("stackedbar", message)
++
++    def test_marginal_not_yet_supported_raises_helpful_error(self):
++        with self.assertRaises(ValueError) as cm:
++            (self.X & self.Y).sim(100).plot(marginal=True, suggest=False)
++        self.assertIn("marginal=True", str(cm.exception))
++
++
+ class TestMakeImpulseWeights(PlotTestCase):
+     """make_impulse(weights=...): sum weights per value instead of counting.
+ 
+-- 
+2.43.0
+

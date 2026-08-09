@@ -1,0 +1,49 @@
+diff --git a/symbulate/results.py b/symbulate/results.py
+index 219701a..c4f7425 100644
+--- a/symbulate/results.py
++++ b/symbulate/results.py
+@@ -1362,7 +1362,19 @@ class RVResults(Results):
+         """
+         self._set_array()
+         if self.dim is not None:
+-            return (self - self.mean()) / self.std()
++            std = self.std()
++            # A constant RV (e.g. BoxModel([5])) or a single-draw
++            # simulation (.sim(1)) both have a standard deviation of
++            # exactly 0, which used to divide silently into a raw
++            # ZeroDivisionError instead of an explanatory message.
++            if np.any(np.asarray(std, dtype=float) == 0):
++                raise Exception(
++                    "Can't standardize data with no variability -- every "
++                    f"value is {self.mean()!r}. Standardizing divides by "
++                    "the standard deviation, which is 0 when every "
++                    "simulated value is the same."
++                )
++            return (self - self.mean()) / std
+         else:
+             raise Exception("Could not standardize the given results.")
+ 
+diff --git a/symbulate/tests/test_results.py b/symbulate/tests/test_results.py
+index 4d065e6..e18e8f5 100644
+--- a/symbulate/tests/test_results.py
++++ b/symbulate/tests/test_results.py
+@@ -709,6 +709,19 @@ class TestRVResultsStandardize(unittest.TestCase):
+         with self.assertRaises(Exception):
+             RVResults(["H", "T"]).standardize()
+ 
++    def test_standardize_constant_data_raises_clear_message(self):
++        # Regression test: standardizing zero-variance data used to raise
++        # a raw ZeroDivisionError instead of an explanatory message.
++        rvr = RVResults([5.0] * 20)
++        with self.assertRaisesRegex(Exception, "no variability"):
++            rvr.standardize()
++
++    def test_standardize_single_draw_raises_clear_message(self):
++        # A single value also has zero sample standard deviation.
++        rvr = RVResults([3.0])
++        with self.assertRaisesRegex(Exception, "no variability"):
++            rvr.standardize()
++
+ 
+ # ---------------------------------------------------------------------------
+ # RVResults.tabulate

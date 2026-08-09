@@ -1,0 +1,54 @@
+diff --git a/symbulate/distributions.py b/symbulate/distributions.py
+index 1472b34..00d70cf 100644
+--- a/symbulate/distributions.py
++++ b/symbulate/distributions.py
+@@ -5089,11 +5089,22 @@ class MultivariateDistribution(Distribution):
+         numpy.ndarray
+             The correlation matrix, obtained by scaling the covariance matrix
+             by the outer product of the component standard deviations. Its
+-            diagonal entries are all 1.
++            diagonal entries are all 1, except that a row/column for a
++            component with zero variance (e.g. ``Multinomial(n=10, p=[1, 0,
++            0])`` -- a category with probability 0 never varies) is entirely
++            ``nan``: correlation with a component that never varies from its
++            mean is undefined, not zero, so ``nan`` is the honest answer
++            rather than a number that looks precise but isn't.
+         """
+         cov = np.asarray(self.cov(), dtype=float)
+         sd = np.sqrt(np.diag(cov))
+-        return cov / np.outer(sd, sd)
++        # A zero-variance component makes the corresponding outer-product
++        # entries 0, so this division would otherwise raise a raw
++        # "RuntimeWarning: invalid value encountered in divide" with no
++        # context -- the result (nan) is correct and now documented above,
++        # so the warning is suppressed rather than the calculation changed.
++        with np.errstate(invalid="ignore", divide="ignore"):
++            return cov / np.outer(sd, sd)
+ 
+     # Whether the components must add up to a fixed total -- True for the
+     # families whose draws are a breakdown of a whole (``Multinomial``
+diff --git a/symbulate/tests/test_distributions.py b/symbulate/tests/test_distributions.py
+index c1900da..fab98da 100644
+--- a/symbulate/tests/test_distributions.py
++++ b/symbulate/tests/test_distributions.py
+@@ -5028,6 +5028,20 @@ class TestMultinomial(MultivariatePlotTestCase):
+         draw = X.draw()
+         self.assertEqual(sum(draw), 20)
+ 
++    def test_Multinomial_corr_zero_variance_component_is_nan_not_warning(self):
++        # Regression test: a category with probability 0 never varies, so
++        # its correlation row/column is undefined (nan). This used to leak
++        # a raw "RuntimeWarning: invalid value encountered in divide" with
++        # no context; it should now compute quietly, with nan as the
++        # documented, intentional result.
++        import warnings
++
++        X = Multinomial(n=10, p=[1, 0, 0])
++        with warnings.catch_warnings():
++            warnings.simplefilter("error")
++            corr = X.corr()
++        self.assertTrue(np.all(np.isnan(corr)))
++
+     def test_Multinomial_marginals_match_Binomial(self):
+         distributions.rng = np.random.default_rng(42)
+         p = [0.3, 0.5, 0.2]

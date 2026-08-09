@@ -1,0 +1,159 @@
+From a4748a5dc7625f1e161c36fb1c0a0fc966d7c5d7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 02:58:08 +0000
+Subject: [PATCH 3/4] feature: add xmin/xmax parameters to Beta distribution
+
+Beta(shape1, shape2, xmin=0.0, xmax=1.0) generalizes the existing
+Beta distribution from [0, 1] to [xmin, xmax]: if X ~ Beta(a, b) is
+the standard beta distribution, xmin + (xmax - xmin) * X now has this
+distribution, implemented via scipy's loc/scale (the same
+stretch-and-shift PERT already uses internally). Defaults preserve the
+previous [0, 1] behavior exactly, so existing call sites are
+unaffected. Tests added covering the default bounds, the
+stretch-and-shift identity, mean, support, and error handling for
+xmax <= xmin and non-numeric bounds.
+---
+ symbulate/distributions.py            | 38 ++++++++++++++++++++---
+ symbulate/tests/test_distributions.py | 44 +++++++++++++++++++++++++++
+ 2 files changed, 78 insertions(+), 4 deletions(-)
+
+diff --git a/symbulate/distributions.py b/symbulate/distributions.py
+index d0754c6..43b44ec 100644
+--- a/symbulate/distributions.py
++++ b/symbulate/distributions.py
+@@ -3077,6 +3077,10 @@ class Beta(Distribution):
+         First shape parameter (often written α). Must be positive.
+     shape2 : float
+         Second shape parameter (often written β). Must be positive.
++    xmin : float, optional
++        Smallest possible value. Default is 0.
++    xmax : float, optional
++        Largest possible value. Must be greater than ``xmin``. Default is 1.
+ 
+     Attributes
+     ----------
+@@ -3084,6 +3088,17 @@ class Beta(Distribution):
+         First shape parameter (α). Must be positive.
+     shape2 : float
+         Second shape parameter (β). Must be positive.
++    xmin : float
++        Smallest possible value.
++    xmax : float
++        Largest possible value.
++
++    Notes
++    -----
++    If ``X ~ Beta(shape1, shape2)`` is the standard beta distribution on
++    ``[0, 1]``, then ``xmin + (xmax - xmin) * X`` has this generalized beta
++    distribution on ``[xmin, xmax]`` -- the same stretch-and-shift ``PERT``
++    applies to a beta distribution, exposed directly as parameters here.
+ 
+     Examples
+     --------
+@@ -3095,17 +3110,24 @@ class Beta(Distribution):
+     1.0
+     >>> X.draw()  # doctest: +SKIP
+     0.632
++    >>> Y = Beta(shape1=1, shape2=1, xmin=2, xmax=4)
++    >>> float(Y.mean())
++    3.0
+     """
+ 
+-    def __init__(self, shape1, shape2):
++    def __init__(self, shape1, shape2, xmin=0.0, xmax=1.0):
+         """Initialize a beta distribution.
+ 
+         Raises
+         ------
+         Exception
+-            If ``shape1`` or ``shape2`` is not a positive number.
++            If ``shape1`` or ``shape2`` is not a positive number, if
++            ``xmin`` or ``xmax`` is not a number, or if ``xmax`` is not
++            greater than ``xmin``.
+         """
+-
++        numeric_bounds = isinstance(xmin, numbers.Real) and isinstance(
++            xmax, numbers.Real
++        )
+         _validate(
+             (
+                 not isinstance(shape1, numbers.Real) or shape1 <= 0,
+@@ -3115,11 +3137,19 @@ class Beta(Distribution):
+                 not isinstance(shape2, numbers.Real) or shape2 <= 0,
+                 "shape2 must be a positive number",
+             ),
++            (not isinstance(xmin, numbers.Real), "xmin must be a number"),
++            (not isinstance(xmax, numbers.Real), "xmax must be a number"),
++            (
++                numeric_bounds and xmax <= xmin,
++                "xmax must be greater than xmin",
++            ),
+         )
+         self.shape1 = shape1
+         self.shape2 = shape2
++        self.xmin = xmin
++        self.xmax = xmax
+ 
+-        params = {"a": shape1, "b": shape2}
++        params = {"a": shape1, "b": shape2, "loc": xmin, "scale": xmax - xmin}
+         super().__init__(params, stats.beta, False)
+ 
+ 
+diff --git a/symbulate/tests/test_distributions.py b/symbulate/tests/test_distributions.py
+index b5ae16e..2055e00 100644
+--- a/symbulate/tests/test_distributions.py
++++ b/symbulate/tests/test_distributions.py
+@@ -2526,6 +2526,50 @@ class TestBeta(unittest.TestCase):
+         self.assertAlmostEqual(float(X.mean()), 2 / 7)
+         self.assertAlmostEqual(float(X.pdf(0.5)), stats.beta(a=2, b=5).pdf(0.5))
+ 
++    def test_Beta_default_xmin_xmax(self):
++        X = Beta(shape1=2, shape2=5)
++        self.assertEqual(X.xmin, 0.0)
++        self.assertEqual(X.xmax, 1.0)
++
++    def test_Beta_xmin_xmax_matches_stretched_standard_beta(self):
++        # If X ~ Beta(a, b) then xmin + (xmax - xmin) * X ~ Beta(a, b, xmin, xmax).
++        distributions.rng = np.random.default_rng(42)
++        shape1, shape2, xmin, xmax = 2, 5, 3, 8
++        X = RV(Beta(shape1=shape1, shape2=shape2))
++        sims = (xmin + (xmax - xmin) * X).sim(Nsim)
++        cdf = stats.beta(a=shape1, b=shape2, loc=xmin, scale=xmax - xmin).cdf
++        pval = stats.kstest(sims, cdf).pvalue
++        self.assertTrue(pval > 0.01)
++
++    def test_Beta_xmin_xmax_mean(self):
++        # Mean of the stretched beta is xmin + (xmax - xmin) * mean of the
++        # standard beta.
++        X = Beta(shape1=2, shape2=2, xmin=2, xmax=4)
++        standard_mean = 2 / (2 + 2)
++        self.assertAlmostEqual(float(X.mean()), 2 + (4 - 2) * standard_mean, places=8)
++
++    def test_Beta_xmin_xmax_support(self):
++        X = Beta(shape1=2, shape2=5, xmin=10, xmax=20)
++        low, high = X._support()
++        self.assertAlmostEqual(low, 10.0)
++        self.assertAlmostEqual(high, 20.0)
++
++    def test_Beta_error_xmax_not_greater_than_xmin(self):
++        self.assertRaises(Exception, lambda: Beta(shape1=1, shape2=1, xmin=5, xmax=1))
++        self.assertRaises(Exception, lambda: Beta(shape1=1, shape2=1, xmin=5, xmax=5))
++
++    def test_Beta_error_xmin_xmax_non_numeric(self):
++        self.assertRaises(Exception, lambda: Beta(shape1=1, shape2=1, xmin="a", xmax=1))
++        self.assertRaises(Exception, lambda: Beta(shape1=1, shape2=1, xmin=0, xmax="a"))
++
++    def test_Beta_plots_without_error(self):
++        # draw / RV / sim / plot all wired through the base class, including
++        # with a non-default xmin/xmax.
++        Beta(shape1=2, shape2=5).draw()
++        RV(Beta(shape1=2, shape2=5, xmin=2, xmax=4)).sim(100).plot()
++        Beta(shape1=2, shape2=5, xmin=2, xmax=4).plot()
++        plt.close("all")
++
+ 
+ class TestPERT(unittest.TestCase):
+ 
+-- 
+2.43.0
+

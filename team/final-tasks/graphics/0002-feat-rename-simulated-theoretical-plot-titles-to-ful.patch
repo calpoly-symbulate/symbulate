@@ -1,0 +1,1573 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 00:55:30 +0000
+Subject: [PATCH] feat: rename simulated/theoretical plot titles to fuller,
+ clearer names
+
+- Distribution.plot() (already done in previous commit) and the
+  simulated/theoretical 2D plots: collapse mode-dependent titles
+  ('Contour Plot'/'2D Density Plot', 'Joint Contour Plot'/'Joint PDF
+  Plot') into one name each ('Joint Density (Estimated)', 'Joint
+  Probability Density Function') since contour= only changes the
+  shading, not what's being shown.
+- Impulse/Histogram: drop the normalize=True/False-dependent title
+  ('Relative Frequency Impulse Plot'/'Count Impulse Plot',
+  'Density Histogram'/'Count Histogram') in favor of one name each.
+- Density Curve -> Density (Estimated); Segmented Density Plot ->
+  Conditional Density (Estimated); Segmented Histogram -> Conditional
+  Histogram; 2-D Histogram -> Joint Histogram; Joint PMF Plot -> Joint
+  Probability Mass Function.
+- make_tile: title is 'Tile Plot' only when both axes are genuinely
+  discrete; a mixed (one axis binned) tile is titled 'Joint Histogram'
+  instead of claiming to tile discrete cells on both sides.
+- Update PLOT_DISPLAY_NAME and CLAUDE.md's stale note about the
+  now-collapsed 2D density title/suggestion-note split.
+- Update every affected literal-title assertion in test_plot.py.
+---
+ CLAUDE.md                    |  16 +-
+ symbulate/plot.py            | 292 +++++++++++++++++++---------
+ symbulate/results.py         |  93 ++++++---
+ symbulate/tests/test_plot.py | 364 ++++++++++++++++++++---------------
+ 4 files changed, 478 insertions(+), 287 deletions(-)
+
+diff --git a/CLAUDE.md b/CLAUDE.md
+index e63741d..ecd246d 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -103,11 +103,12 @@ places, not scattered inline.
+ `type="density2d"`, a theoretical joint pdf, and every continuous joint panel of a
+ pairs matrix) is drawn as `DENSITY2D_LEVELS`/`JOINT_PDF_LEVELS` discrete bands with
+ thin white outlines, which can be read against the colorbar. `contour=False` gives
+-the old smooth gradient (`*_CONTINUOUS_LEVELS` bands). Note the panel title follows
+-the mode — "Contour Plot" / "Joint Contour Plot" by default, "2D Density Plot" /
+-"Joint PDF Plot" with `contour=False` — while `PLOT_DISPLAY_NAME["density2d"]` in
+-the suggestion note still reads "2D Density Plot", since that names the `type=`
+-token rather than the shading.
++the old smooth gradient (`*_CONTINUOUS_LEVELS` bands). The panel title is the same
++either way — "Joint Density (Estimated)" (simulated) / "Joint Probability Density
++Function" (theoretical) — since `contour=` only changes the shading, not what is
++being shown; this also means `PLOT_DISPLAY_NAME["density2d"]` in the suggestion
++note matches the panel title exactly (unlike `"pairs"`, which still names the
++`type=` token rather than the figure's own title — see "Pairs Matrix" below).
+ 
+ **Color palette:** categorical palette is **Okabe-Ito** (7 hues, excluding
+ black) — colorblind-safe and print-friendly. Do not substitute other colors.
+@@ -664,8 +665,9 @@ Things to respect:
+ - **`plt.gca()` is the joint panel.** Drawing the strips and the colorbar
+   moves the current axes (`fig.add_axes` makes its axes current), so both
+   sides call `plt.sca(ax)` at the end.
+-- **`marginal=True` with `type="mosaic"` raises.** A mosaic already shows
+-  both marginals itself (column widths and its own marginal column), so strips
++- **`marginal=True` with `type="mosaic"` or `type="stackedbar"` raises.**
++  Both already show both marginals themselves (column widths/counts and,
++  with `marginal_column=True`, their own reference column), so strips
+   would draw each of them twice. Pairs-matrix panels need no such guard: they
+   never pass `marginal=True`.
+ - **The theoretical strips are exact.** They come from `_marginal_1d(i)`, the
+diff --git a/symbulate/plot.py b/symbulate/plot.py
+index 9ad51b4..6c61719 100644
+--- a/symbulate/plot.py
++++ b/symbulate/plot.py
+@@ -537,13 +537,26 @@ MOSAIC_YAXIS_TICKS = [0.0, 0.25, 0.5, 0.75, 1.0]  # every column's
+ # cumulative share of that column, so unlike the x-axis, one shared
+ # proportion scale on the left is meaningful across every column
+ 
+-MOSAIC_OVERLAY_WARNING = (
+-    "Warning: you drew a second mosaic plot on the same axes. A mosaic "
+-    "plot re-partitions the entire plot area for its own data, so the "
+-    "second call covers up the first one. Try two separate plots (e.g. "
+-    "subplots) instead."
++MOSAIC_OVERLAY_ERROR = (
++    "This axes already has a plot on it. A mosaic (or stacked bar) plot "
++    "re-partitions the entire plot area for its own data, so it can't "
++    "share axes with anything else -- a second call would just cover up "
++    "the first one rather than combining with it. Draw them in separate "
++    "cells, or pass ax= to place them in your own subplots (e.g. via "
++    "plt.subplots())."
+ )
+ 
++MOSAIC_MANY_CATEGORIES_THRESHOLD = 4  # distinct values on an axis above
++# which a mosaic plot's proportional column widths get hard to compare by
++# eye (a narrow column's segments are hard to read), and a stackedbar
++# plot's equal-width columns become the more readable choice -- and,
++# below which, stackedbar's columns are wide enough that mosaic's extra
++# marginal-frequency information is worth showing instead. Deliberately
++# the same "more than a few categories" scale as the crowding budgets in
++# classify_values, but kept as its own constant since it answers a
++# different question (mosaic vs. stackedbar readability, not
++# discrete-vs-continuous classification).
++
+ # Box plot.
+ BOXPLOT_ALPHA = 0.75
+ BOXPLOT_EDGECOLOR = "black"
+@@ -1230,22 +1243,22 @@ PLOT_DISPLAY_NAME = {
+     "bar": "Bar Chart",
+     "impulse": "Impulse Plot",
+     "hist": "Histogram",
+-    "density": "Density Plot",
++    "density": "Density (Estimated)",
+     "ecdf": "ECDF Plot",
+     "rug": "Rug Plot",
+     "dotplot": "Dot Plot",
+     "scatter": "Scatter Plot",
+     "tile": "Tile Plot",
+     "mosaic": "Mosaic Plot",
+-    "mosaic_equal_width": "Stacked Plot",
+-    "hist2d": "2D Histogram",
+-    "density2d": "2D Density Plot",
++    "stackedbar": "Stacked Bar Chart",
++    "hist2d": "Joint Histogram",
++    "density2d": "Joint Density (Estimated)",
+     "violin": "Violin Plot",
+     "box": "Box Plot",
+     "boxplot": "Box Plot",
+     "segmented_rug": "Segmented Rug Plot",
+-    "segmented_density": "Segmented Density Plot",
+-    "segmented_hist": "Segmented Histogram",
++    "segmented_density": "Conditional Density (Estimated)",
++    "segmented_hist": "Conditional Histogram",
+     "pairs": "Pairs Plot",
+     "path": "Path Plot",
+ }
+@@ -2043,7 +2056,9 @@ def make_tile(
+     ``symbulate.mplstyle``), with a colorbar on the right labeled
+     "Relative Frequency" (or "Count" when ``normalize=False``). The
+     x-axis is labeled "X", the y-axis "Y", and the title reads "Tile
+-    Plot". The color scale always starts from 0 so a cell that never
++    Plot" when both axes are discrete, or "Joint Histogram" when one
++    axis is binned (see ``discrete_x`` / ``discrete_y``). The color
++    scale always starts from 0 so a cell that never
+     occurred reads as "no data" rather than an arbitrary color. The
+     colorbar ticks both endpoints (0 and the peak value) with
+     ``TILE_CBAR_TICKS`` (8) evenly spaced ticks; relative-frequency
+@@ -2238,7 +2253,11 @@ def make_tile(
+         ax.set_yticklabels(y_ticks[1])
+     ax.set_xlabel("Variable 1")
+     ax.set_ylabel("Variable 2")
+-    ax.set_title("Tile Plot")
++    # "Tile Plot" only when both axes are genuinely discrete -- one cell
++    # per distinct value on each axis. On mixed data (one axis binned),
++    # this is really a joint histogram with one binned axis, so it takes
++    # that title instead of claiming to tile discrete cells on both sides.
++    ax.set_title("Tile Plot" if discrete_x and discrete_y else "Joint Histogram")
+     # On mixed data (exactly one discrete axis), draw separator lines on
+     # the discrete axis' cell boundaries -- every integer position between
+     # the axis's own extent endpoints, which are always half a cell-width
+@@ -2310,18 +2329,39 @@ def _mosaic_spans(weights, gap, total=1.0):
+     -------
+     tuple of numpy.ndarray
+         ``(starts, widths)``. Segment ``i`` spans ``[starts[i],
+-        starts[i] + widths[i]]``; consecutive segments are separated by
+-        exactly ``gap``, and the whole row spans exactly ``[0, total]``.
+-        A segment with weight 0 gets width 0 (invisible), but still
+-        occupies its slot -- and its gap -- in the layout.
++        starts[i] + widths[i]]``; consecutive *nonzero-weight* segments
++        are separated by exactly ``gap``, and the drawn (nonzero-weight)
++        segments together span exactly ``[0, total]`` -- the last one
++        always ends at ``total``, regardless of how many zero-weight
++        segments follow it. A segment with weight 0 gets width 0
++        (invisible) and consumes no space of its own: it is placed at
++        whichever position it would otherwise have started at, with no
++        gap reserved before or after it, so it never leaves a visible
++        empty sliver where a real segment should be.
+     """
+     weights = np.asarray(weights, dtype=float)
+     n = len(weights)
+-    total_gap = gap * max(n - 1, 0)
++    nonzero = weights > 0
++    n_nonzero = int(nonzero.sum())
++    # The gap budget is sized to the segments that actually draw
++    # something, not to every slot -- a zero-weight segment is invisible
++    # either way, but reserving it a trailing gap (as if it were about to
++    # draw something) left a visible sliver of empty space between the
++    # last real segment and the far edge whenever a zero-weight segment
++    # happened to be the last one in the row (e.g. a y-category that
++    # never occurred with this particular x-value). That's what made a
++    # mosaic column's segments sometimes fall short of the top instead of
++    # always summing to `total`.
++    total_gap = gap * max(n_nonzero - 1, 0)
+     available = max(total - total_gap, 0.0)
+     total_weight = weights.sum()
+     widths = weights / total_weight * available if total_weight > 0 else weights
+-    starts = np.concatenate([[0.0], np.cumsum(widths + gap)[:-1]])
++    starts = np.zeros(n)
++    pos = 0.0
++    for i in range(n):
++        starts[i] = pos
++        if weights[i] > 0:
++            pos += widths[i] + gap
+     return starts, widths
+ 
+ 
+@@ -2350,11 +2390,11 @@ def make_mosaic(
+     y,
+     ax,
+     normalize=True,
+-    annotate=True,
++    annotate=False,
+     legend=True,
+     x_label="Variable 1",
+     y_label="Variable 2",
+-    marginal_column=True,
++    marginal_column=False,
+     equal_width=False,
+     **kwargs,
+ ):
+@@ -2417,10 +2457,11 @@ def make_mosaic(
+     input should go through ``hist2d`` / ``density2d`` instead.
+ 
+     A mosaic plot fills the entire axes, so a second call on the same
+-    axes cannot overlay naturally -- this is the "readability warning"
+-    category of the overlay policy (the same category as ``tile`` and
+-    ``hist2d``): the plot still draws, covering the first one, and
+-    prints a warning rather than erroring.
++    axes cannot overlay naturally -- this is a hard error, the same
++    category as a pairs matrix or a theoretical two-variable plot:
++    drawing over an existing plot would just cover it up rather than
++    combine with it, so nothing is drawn and a ``ValueError`` explains
++    why.
+ 
+     The caller is responsible for getting the axes (``plt.gca()``, so
+     overlays keep working). This mirrors how the other 2D plot helpers
+@@ -2445,34 +2486,37 @@ def make_mosaic(
+         segment's height encodes, so the printed number always matches
+         what's drawn. If False, labels show the raw joint count
+         instead.
+-    annotate : bool, default True
++    annotate : bool, default False
+         If True, print each cell's conditional proportion or joint
+         count (see ``normalize``) inside the cell, but only when the
+         cell is large enough to hold it legibly (see
+         ``MOSAIC_MIN_LABEL_HEIGHT`` / ``MOSAIC_MIN_LABEL_WIDTH``). If
+-        False, no in-cell labels.
++        False (the default), no in-cell labels -- the segment heights
++        and the shared legend already carry that information, and
++        dense mosaics with many categories got crowded and hard to
++        read with a number stamped in every cell.
+     legend : bool, default True
+         If True, label each ``y`` category's color. With
+-        ``marginal_column=True`` (the default), these labels are
+-        printed directly beside that column's segments, so the
+-        marginal column doubles as the legend. With
+-        ``marginal_column=False``, there's no column to hang labels
+-        off of, so a standard legend is placed outside the right edge
+-        of the axes instead.
++        ``marginal_column=True``, these labels are printed directly
++        beside that column's segments, so the marginal column doubles
++        as the legend. With ``marginal_column=False`` (the default),
++        there's no column to hang labels off of, so a standard legend
++        is placed outside the right edge of the axes instead.
+     x_label : str, default "X"
+         Label for the x-axis.
+     y_label : str, default "Y"
+-        With ``marginal_column=True`` (the default), the x-tick label
+-        for the marginal reference column. With
+-        ``marginal_column=False``, the title of the standard legend
+-        instead (there's no marginal column to label). Either way, the
+-        y-axis itself always shows the same 0-to-1 cumulative-share
+-        scale, independent of ``y_label``.
+-    marginal_column : bool, default True
+-        If True, add an extra column (labeled "Marginal" on the x-axis)
+-        showing ``y``'s overall distribution with ``x`` ignored, so it
+-        can be compared by eye against each real column's conditional
+-        distribution. If False, only the real ``x`` columns are drawn.
++        With ``marginal_column=True``, the x-tick label for the
++        marginal reference column. With ``marginal_column=False`` (the
++        default), the title of the standard legend instead (there's no
++        marginal column to label). Either way, the y-axis itself always
++        shows the same 0-to-1 cumulative-share scale, independent of
++        ``y_label``.
++    marginal_column : bool, default False
++        If True, add an extra column (labeled ``y_label`` on the
++        x-axis) showing ``y``'s overall distribution with ``x``
++        ignored, so it can be compared by eye against each real
++        column's conditional distribution. If False (the default),
++        only the real ``x`` columns are drawn.
+     equal_width : bool, default False
+         If False (default), column widths are proportional to each
+         ``x`` value's marginal count, the standard mosaic-plot
+@@ -2522,6 +2566,16 @@ def make_mosaic(
+         )
+     n = len(x)
+ 
++    # A mosaic/stackedbar plot re-partitions the entire axes for its own
++    # data (like a pairs matrix or a theoretical two-variable plot), so it
++    # cannot share axes with anything already drawn there -- this used to
++    # be a readability warning (the second call still drew, covering the
++    # first), which let a genuinely unreadable overlay through silently.
++    # Checked before any layout work, so a rejected call leaves the axes
++    # untouched.
++    if ax.has_data():
++        raise ValueError(MOSAIC_OVERLAY_ERROR)
++
+     # One cell per distinct (x, y) pair, no binning -- the same
+     # dense-joint-count approach make_tile uses for two discrete axes.
+     x_labels = np.unique(x)
+@@ -2610,12 +2664,6 @@ def make_mosaic(
+             stacklevel=2,
+         )
+ 
+-    # Count the mosaic plots drawn on these axes, stored on the axes
+-    # object itself (the same pattern get_next_color uses for the color
+-    # cycle), to trigger the overlay readability warning.
+-    n_prior = getattr(ax, "_mosaic_count", 0)
+-    ax._mosaic_count = n_prior + 1
+-
+     bars = {}
+     text_colors = []
+     for j, y_label_value in enumerate(y_labels):
+@@ -2682,7 +2730,7 @@ def make_mosaic(
+     ax.yaxis.set_visible(True)
+     ax.set_yticks(MOSAIC_YAXIS_TICKS)
+     ax.set_yticklabels([f"{t:.2f}" for t in MOSAIC_YAXIS_TICKS])
+-    ax.set_title("Stacked Plot" if equal_width else "Mosaic Plot")
++    ax.set_title("Stacked Bar Chart" if equal_width else "Mosaic Plot")
+     # A filled plot covers the whole axes, so the reference grid has
+     # nothing to sit on -- turn it off rather than let fragments show
+     # at the edges (the same reasoning make_tile / make_hist2d use).
+@@ -2713,8 +2761,37 @@ def make_mosaic(
+                 title=y_label,
+             )
+ 
+-    if ax._mosaic_count > 1:
+-        print(MOSAIC_OVERLAY_WARNING)
++    # Steer between mosaic and stackedbar based on how many categories are
++    # actually being compared: a mosaic's proportional column widths are
++    # hard to compare once there are more than a handful of categories on
++    # either axis (a narrow column's segments are hard to read), while a
++    # stackedbar's equal-width columns throw away the marginal-frequency
++    # information mosaic's widths convey -- worth showing when there are
++    # only a few categories to compare.
++    many_categories = (
++        len(x_labels) > MOSAIC_MANY_CATEGORIES_THRESHOLD
++        or len(y_labels) > MOSAIC_MANY_CATEGORIES_THRESHOLD
++    )
++    if not equal_width and many_categories:
++        warnings.warn(
++            f"This mosaic plot has {len(x_labels)} x categories and "
++            f"{len(y_labels)} y categories. Proportional column widths get "
++            "hard to compare once there are more than a few categories on "
++            "an axis -- consider type='stackedbar' for equal-width "
++            "columns instead.",
++            UserWarning,
++            stacklevel=2,
++        )
++    elif equal_width and not many_categories:
++        warnings.warn(
++            f"This stackedbar plot has only {len(x_labels)} x categories "
++            f"and {len(y_labels)} y categories. With this few categories, "
++            "type='mosaic' can show the same conditional distributions "
++            "plus each x value's marginal frequency through its column "
++            "width, at little cost to readability.",
++            UserWarning,
++            stacklevel=2,
++        )
+ 
+     return bars
+ 
+@@ -3080,9 +3157,7 @@ def make_impulse(
+             ax.set_yticks(range(len(categories)))
+             ax.set_yticklabels([str(c) for c in categories])
+ 
+-    ax.set_title(
+-        "Relative Frequency Impulse Plot" if normalize else "Count Impulse Plot"
+-    )
++    ax.set_title("Impulse Plot")
+     _refresh_legend(ax)
+     return xs, freqs
+ 
+@@ -3200,7 +3275,7 @@ def make_hist(
+     else:
+         ax.set_ylabel(value_label)
+         ax.set_xlabel(freq_label)
+-    ax.set_title("Density Histogram" if normalize else "Count Histogram")
++    ax.set_title("Histogram")
+     # A legend only helps once there is more than one histogram to
+     # tell apart; a lone histogram stays legend-free.
+     if ax._hist_count > 1:
+@@ -3423,16 +3498,19 @@ def make_bar(values, ax, color, normalize=True, alpha=None, label=None, **kwargs
+     return state["series"][-1]["container"]
+ 
+ 
+-def make_boxplot(values, ax, color, alpha=None, label=None, outliers=True, **kwargs):
++def make_boxplot(values, ax, color, alpha=None, label=None, outliers=False, **kwargs):
+     """Draw a box plot of simulated values on the given axes.
+ 
+     A single box: edges at the first and third quartiles, a black
+-    median line, whiskers to the most extreme value within 1.5 times
+-    the interquartile range, and individual points beyond that drawn
+-    as outliers. Pass ``outliers=False`` to instead extend the
+-    whiskers all the way to the minimum and maximum values, with no
+-    individual outlier points. Non-finite values (e.g. NaN) are
+-    dropped before plotting.
++    median line, and whiskers. By default (``outliers=False``) the
++    whiskers extend all the way to the minimum and maximum values, so
++    every simulated point falls inside them and none is singled out as
++    an outlier -- appropriate for a simulation, where every point is a
++    genuine draw from the model rather than a suspect data-entry error.
++    Pass ``outliers=True`` for the traditional convention instead:
++    whiskers stop at the most extreme value within 1.5 times the
++    interquartile range, with individual points beyond that drawn as
++    outliers. Non-finite values (e.g. NaN) are dropped before plotting.
+ 
+     Box plots overlay naturally: a second call on the same axes adds
+     another box at the next position, and both boxes' x-ticks are
+@@ -3461,13 +3539,13 @@ def make_boxplot(values, ax, color, alpha=None, label=None, outliers=True, **kwa
+         Name for this box, shown as its x-tick label. Defaults to
+         "Variable k", where k counts the boxes drawn on these axes so
+         far.
+-    outliers : bool, optional
+-        If True (default), the whiskers stop at the most extreme
+-        value within 1.5 times the interquartile range, and any
+-        points beyond that are drawn individually as outliers. If
+-        False, the whiskers extend to the minimum and maximum
+-        values, so every point falls inside the whiskers and no
+-        individual outlier points are drawn.
++    outliers : bool, default False
++        If False (the default), the whiskers extend to the minimum and
++        maximum values, so every point falls inside the whiskers and no
++        individual outlier points are drawn. If True, the whiskers stop
++        at the most extreme value within 1.5 times the interquartile
++        range, and any points beyond that are drawn individually as
++        outliers.
+     **kwargs
+         Additional keyword arguments passed to
+         ``matplotlib.axes.Axes.boxplot``.
+@@ -3554,7 +3632,7 @@ def make_boxplot(values, ax, color, alpha=None, label=None, outliers=True, **kwa
+     return box
+ 
+ 
+-def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
++def make_violinplot(values, ax, color, alpha=None, label=None, outliers=False, **kwargs):
+     """Draw a single violin plot of 1D simulated values on the given axes.
+ 
+     One violin: a mirrored kernel density of the values, with a narrow
+@@ -3565,6 +3643,14 @@ def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
+     is the single-box counterpart of ``make_grouped_boxplot``. Non-finite
+     values (e.g. NaN) are dropped before plotting.
+ 
++    The density shape itself always reflects every simulated value -- a
++    KDE has no notion of "outliers" to exclude. ``outliers`` only affects
++    the narrow inner box plot's whiskers, exactly as it does for
++    ``make_boxplot``: by default (``outliers=False``) they extend to the
++    minimum and maximum values; ``outliers=True`` switches to the 1.5x-IQR
++    convention, drawing anything beyond the whiskers as an individual
++    outlier point on top of the density.
++
+     Violin plots overlay side by side: a second call on the same axes adds
+     another violin at the next position, and both violins' x-ticks are
+     labeled automatically -- "Variable 1", "Variable 2", ... in call order,
+@@ -3593,6 +3679,13 @@ def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
+         Name for this violin, shown as its x-tick label. Defaults to
+         "Variable k", where k counts the violins drawn on these axes so
+         far.
++    outliers : bool, default False
++        If False (the default), the inner box plot's whiskers extend to
++        the minimum and maximum values, so no individual outlier points
++        are drawn. If True, the whiskers stop at the most extreme value
++        within 1.5 times the interquartile range, and any points beyond
++        that are drawn individually as outliers, matching
++        ``make_boxplot``'s ``outliers=True`` styling.
+     **kwargs
+         Additional keyword arguments passed to
+         ``matplotlib.axes.Axes.violinplot``.
+@@ -3650,13 +3743,19 @@ def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
+     # The inner box plot marks the median and IQR on top of the density
+     # shape. manage_ticks=False so it doesn't clobber the tick labels set
+     # below (the same approach make_violin uses for its inner boxes).
++    # outliers=False (the default) stretches the whiskers to the 0th and
++    # 100th percentiles (the data's min and max), leaving nothing beyond
++    # them to draw as an individual outlier point -- the same convention
++    # make_boxplot uses, and for the same reason: every simulated value is
++    # a genuine draw from the model, not a suspect data-entry error.
+     box_width = VIOLIN_WIDTH * VIOLIN_BOX_WIDTH_RATIO
+     boxplot = ax.boxplot(
+         values,
+         positions=[position],
+         widths=box_width,
+         patch_artist=True,
+-        showfliers=False,
++        showfliers=outliers,
++        whis=(0, 100) if not outliers else 1.5,
+         manage_ticks=False,
+         boxprops=dict(
+             facecolor=VIOLIN_BOX_FACECOLOR,
+@@ -3666,6 +3765,13 @@ def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
+         medianprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
+         whiskerprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
+         capprops=dict(color=VIOLIN_EDGECOLOR, linewidth=VIOLIN_EDGEWIDTH),
++        flierprops=dict(
++            marker=BOXPLOT_FLIER_MARKER,
++            markersize=BOXPLOT_FLIER_SIZE,
++            markerfacecolor=color,
++            markeredgecolor=VIOLIN_EDGECOLOR,
++            alpha=alpha,
++        ),
+     )
+     for artists in boxplot.values():
+         for artist in artists:
+@@ -3812,7 +3918,7 @@ def make_density(
+         ax.set_ylabel("Value")
+         ax.set_xlabel("Density")
+         ax.set_xlim(left=0)
+-    ax.set_title("Density Curve")
++    ax.set_title("Density (Estimated)")
+     # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
+     # y), but the approved density prototype shows both horizontal and
+     # vertical reference lines, so this overrides it for this plot type
+@@ -4762,7 +4868,7 @@ def make_segmented_density(
+         ax.set_xlim(lo, hi)
+     ax.set_xlabel("Variable 1")
+     ax.set_ylabel("Variable 2")
+-    ax.set_title("Segmented Density Plot")
++    ax.set_title("Conditional Density (Estimated)")
+     # A light reference grid along the continuous axis only, for reading
+     # values off the curves. The discrete axis needs no grid line: each
+     # level's baseline (the full-width grey line drawn on top above)
+@@ -5099,7 +5205,7 @@ def make_segmented_hist(
+         ax.set_xlim(lo, hi)
+     ax.set_xlabel("Variable 1")
+     ax.set_ylabel("Variable 2")
+-    ax.set_title("Segmented Histogram")
++    ax.set_title("Conditional Histogram")
+     # A light reference grid along the continuous axis only, for reading
+     # values off the bars. The discrete axis needs no grid line: each
+     # level's baseline (the full-width grey line drawn on top above)
+@@ -5125,7 +5231,7 @@ def make_grouped_boxplot(
+     alpha=None,
+     discrete_x=None,
+     discrete_y=None,
+-    outliers=True,
++    outliers=False,
+     **kwargs,
+ ):
+     """Draw a box plot for mixed discrete/continuous data.
+@@ -5133,10 +5239,12 @@ def make_grouped_boxplot(
+     One box per distinct value of whichever variable is discrete, using
+     the other (continuous) variable as the value axis -- the box-plot
+     counterpart of ``make_violin`` for this same data configuration.
+-    Each box's whiskers stop at the most extreme value within 1.5
+-    times the interquartile range, with more extreme points drawn
+-    individually as outliers; pass ``outliers=False`` to instead
+-    extend the whiskers to each group's minimum and maximum values.
++    By default (``outliers=False``) each box's whiskers extend to that
++    group's minimum and maximum values, so every point falls inside the
++    whiskers and none is singled out as an outlier. Pass
++    ``outliers=True`` for the traditional convention instead: whiskers
++    stop at the most extreme value within 1.5 times the interquartile
++    range, with more extreme points drawn individually as outliers.
+ 
+     The orientation follows which variable is discrete, mirroring
+     ``make_segmented_rug`` and the mixed tile plot so the different
+@@ -5177,13 +5285,13 @@ def make_grouped_boxplot(
+         discrete.
+     discrete_y : bool, optional
+         Same as ``discrete_x`` for the y-axis.
+-    outliers : bool, optional
+-        If True (default), each box's whiskers stop at the most
+-        extreme value within 1.5 times the interquartile range, and
+-        any points beyond that are drawn individually as outliers.
+-        If False, the whiskers extend to each group's minimum and
+-        maximum values, so every point falls inside the whiskers and
+-        no individual outlier points are drawn.
++    outliers : bool, default False
++        If False (the default), the whiskers extend to each group's
++        minimum and maximum values, so every point falls inside the
++        whiskers and no individual outlier points are drawn. If True,
++        each box's whiskers stop at the most extreme value within 1.5
++        times the interquartile range, and any points beyond that are
++        drawn individually as outliers.
+     **kwargs
+         Additional keyword arguments passed to
+         ``matplotlib.axes.Axes.boxplot``.
+@@ -6245,7 +6353,7 @@ def make_hist2d(
+     ax.grid(False)
+     ax.set_xlabel("Variable 1")
+     ax.set_ylabel("Variable 2")
+-    ax.set_title("Hexbin Plot" if hex else "2-D Histogram")
++    ax.set_title("Hexbin Plot" if hex else "Joint Histogram")
+     if colorbar:
+         # Colorbar on the right, sized relative to the axes so it
+         # tracks figure resizing (the approved replacement for the old
+@@ -6457,7 +6565,7 @@ def make_density2D(x, y, ax, contour=True, levels=None, colorbar=True, **kwargs)
+     ax.set_ylim(ymin, ymax)
+     ax.set_xlabel("Variable 1")
+     ax.set_ylabel("Variable 2")
+-    ax.set_title("Contour Plot" if contour else "2D Density Plot")
++    ax.set_title("Joint Density (Estimated)")
+     # symbulate.mplstyle's global grid is horizontal-only
+     # (axes.grid.axis: y); the approved prototypes call for both
+     # horizontal and vertical reference lines, so this overrides it for
+@@ -6692,7 +6800,7 @@ def make_joint_pdf(
+     ax.set_xlabel(xlabel)
+     ax.set_ylabel(ylabel)
+     if title:
+-        ax.set_title("Joint Contour Plot" if contour else "Joint PDF Plot")
++        ax.set_title("Joint Probability Density Function")
+     # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
+     # y); like the 1-D and 2-D density plots, this one reads better with
+     # both directions, so override it for this plot type.
+@@ -6822,7 +6930,7 @@ def make_joint_pmf(
+     ax.set_xlabel(xlabel)
+     ax.set_ylabel(ylabel)
+     if title:
+-        ax.set_title("Joint PMF Plot")
++        ax.set_title("Joint Probability Mass Function")
+     # Counts are whole numbers, so only whole-number ticks make sense; cap
+     # how many appear so the labels can't crowd into each other.
+     ax.xaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+diff --git a/symbulate/results.py b/symbulate/results.py
+index ffb73dd..c614d48 100644
+--- a/symbulate/results.py
++++ b/symbulate/results.py
+@@ -1920,10 +1920,21 @@ class RVResults(Results):
+             Plot type or types to display. Valid values are
+             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
+             ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
+-            ``"tile"``, ``"mosaic"``, ``"violin"``, and ``"box"``
+-            (alias ``"boxplot"``).
+-            ``"mosaic"`` is only meaningful for two discrete-ish
+-            variables -- the same configuration ``"tile"`` targets.
++            ``"tile"``, ``"mosaic"``, ``"stackedbar"``, ``"violin"``,
++            and ``"box"`` (alias ``"boxplot"``).
++            ``"mosaic"`` and ``"stackedbar"`` are only meaningful for
++            two discrete-ish variables -- the same configuration
++            ``"tile"`` targets. ``"mosaic"`` draws column widths
++            proportional to each ``x`` value's marginal frequency (the
++            standard mosaic-plot convention); ``"stackedbar"`` draws
++            every column the same width instead -- a 100%-stacked bar
++            chart per ``x`` value. Both otherwise look the same
++            (segment heights are each column's conditional distribution
++            of ``y`` either way). With more than a handful of
++            categories on either axis, a note suggests trying the other
++            one, since proportional widths get hard to compare across
++            many categories while equal widths lose the marginal-count
++            information mosaic's widths convey.
+             If None, a default is chosen from the data: whether each
+             variable looks discrete (``classify_values``) and whether
+             the sample is small select an entry from the
+@@ -1989,18 +2000,22 @@ class RVResults(Results):
+             ``gaussian_kde``), ``ridge=True`` (fill under each
+             segmented density curve for the classic ridgeline look),
+             ``contour`` and ``levels`` (2D density), ``hex=True``
+-            (hexagonal bins for a 2D histogram), ``outliers`` (box
+-            plots: ``True``, the default, stops the whiskers at 1.5
+-            times the interquartile range and draws more extreme
+-            points individually as outliers; ``False`` extends the
+-            whiskers to the minimum and maximum values instead),
+-            ``label`` (legend name for hist, impulse, dot, scatter,
+-            segmented density, and segmented histogram plots), and
+-            ``equal_width`` (mosaic plots: ``True`` draws every column
+-            the same width instead of proportional to its marginal
+-            frequency -- a 100%-stacked bar chart per ``x`` value;
+-            default ``False`` keeps mosaic's standard proportional
+-            widths).
++            (hexagonal bins for a 2D histogram), ``outliers`` (box and
++            violin plots: ``False``, the default, extends the whiskers
++            (box) or the density (violin) to the minimum and maximum
++            values; ``True`` stops the box's whiskers at 1.5 times the
++            interquartile range and draws more extreme points
++            individually as outliers -- violin plots draw the same
++            outlier points over the density, but the density shape
++            itself is unaffected since a KDE has no whiskers to
++            shorten), ``label`` (legend name for hist, impulse, dot,
++            scatter, segmented density, and segmented histogram plots),
++            and ``marginal_column`` (mosaic and stackedbar plots:
++            ``True`` adds an extra column showing ``y``'s overall
++            (marginal) distribution next to the real ``x`` columns, for
++            comparison; default ``False``). ``equal_width`` is no
++            longer accepted -- use ``type="stackedbar"`` instead of
++            ``type="mosaic", equal_width=True``.
+ 
+         Returns
+         -------
+@@ -2095,7 +2110,7 @@ class RVResults(Results):
+                     f"Unrecognized plot type {type!r}. "
+                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
+                     "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'mosaic', "
+-                    "'violin', 'box' (alias 'boxplot') (and, "
++                    "'stackedbar', 'violin', 'box' (alias 'boxplot') (and, "
+                     "for 2D data, 'hist2d', 'density2d', 'segmented_rug', "
+                     "'segmented_density', 'segmented_hist')."
+                 )
+@@ -2351,11 +2366,6 @@ class RVResults(Results):
+                 _2d_token = {}
+             else:
+                 _2d_token = {"hist": "hist2d", "density": "density2d"}
+-            # equal_width draws mosaic's title as "Stacked Plot" instead of
+-            # "Mosaic Plot" (see make_mosaic) -- remap the suggestion note's
+-            # display name to match, the same way hist/density remap above.
+-            if "mosaic" in type and kwargs.get("equal_width"):
+-                _2d_token["mosaic"] = "mosaic_equal_width"
+             _suggestion = (_2d_token.get(type[0], type[0]), default, alternatives)
+             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
+             # make_scatter, and the mesh types (hist/density/tile) encode
+@@ -2364,14 +2374,24 @@ class RVResults(Results):
+             # has no per-type constant yet.
+             legacy_alpha = 0.5 if alpha is None else alpha
+ 
+-            if marginal and "mosaic" in type:
++            if marginal and ("mosaic" in type or "stackedbar" in type):
+                 raise ValueError(
+-                    "marginal=True isn't supported with type='mosaic' -- a "
+-                    "mosaic plot already shows x's marginal distribution "
+-                    "through its column widths and y's marginal "
+-                    "distribution through its own marginal column. Use "
+-                    "type='mosaic', marginal_column=True (the default) "
+-                    "instead of marginal=True."
++                    "marginal=True isn't supported with type='mosaic' or "
++                    "type='stackedbar' -- both already show x's marginal "
++                    "distribution through their column widths (mosaic) or "
++                    "counts (stackedbar), and can show y's marginal "
++                    "distribution through their own marginal column. Pass "
++                    "marginal_column=True instead of marginal=True, e.g. "
++                    ".plot(type='mosaic', marginal_column=True)."
++                )
++            if "equal_width" in kwargs:
++                raise ValueError(
++                    "equal_width= is no longer how a mosaic plot is drawn "
++                    "as a stacked bar chart -- use type='stackedbar' "
++                    "instead of type='mosaic', equal_width=True. "
++                    "type='mosaic' now always draws proportional-width "
++                    "columns (the standard mosaic-plot convention), and "
++                    "type='stackedbar' always draws equal-width columns."
+                 )
+             # Peeked (not popped) before the main-panel dispatch below,
+             # since some branches (segmented density) pop "bandwidth" out
+@@ -2564,9 +2584,18 @@ class RVResults(Results):
+                     if discrete_y and tile_y_ticks is None:
+                         _resolved_main_type_y = None
+                     _marginal_hist_edges = (tile_x_edges, tile_y_edges)
+-            elif "mosaic" in type:
+-                make_mosaic(x, y, ax, normalize=normalize, **kwargs)
+-                _resolved_main_type_x = _resolved_main_type_y = "mosaic"
++            elif "mosaic" in type or "stackedbar" in type:
++                make_mosaic(
++                    x,
++                    y,
++                    ax,
++                    normalize=normalize,
++                    equal_width=("stackedbar" in type),
++                    **kwargs,
++                )
++                _resolved_main_type_x = _resolved_main_type_y = (
++                    "stackedbar" if "stackedbar" in type else "mosaic"
++                )
+             elif "violin" in type:
+                 if discrete_x and not discrete_y:
+                     positions = sorted(list(x_count.keys()))
+diff --git a/symbulate/tests/test_plot.py b/symbulate/tests/test_plot.py
+index 1eb8005..b9287bd 100644
+--- a/symbulate/tests/test_plot.py
++++ b/symbulate/tests/test_plot.py
+@@ -736,7 +736,7 @@ class TestMarginalLayoutIsOptIn(PlotTestCase):
+         Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+         Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
+         cases = [
+-            ((X & Y).sim(500), None, "2-D Histogram"),
++            ((X & Y).sim(500), None, "Joint Histogram"),
+             ((X & Y).sim(500), "scatter", "2D Scatter Plot"),
+             ((X & Y).sim(40), None, "2D Scatter Plot"),
+             ((Xd & Yd).sim(500), None, "Tile Plot"),
+@@ -1076,11 +1076,13 @@ class TestPlot1DHistStyling(PlotTestCase):
+         self.sims.plot()
+         ax = plt.gca()
+         self.assertEqual(ax.get_xlabel(), "Value")
+-        self.assertEqual(ax.get_title(), "Density Histogram")
++        self.assertEqual(ax.get_title(), "Histogram")
+ 
+     def test_hist_count_title_when_not_normalized(self):
++        """normalize= no longer changes the title -- "Histogram" either
++        way, matching the collapsed density/count naming used elsewhere."""
+         self.sims.plot(normalize=False)
+-        self.assertEqual(plt.gca().get_title(), "Count Histogram")
++        self.assertEqual(plt.gca().get_title(), "Histogram")
+ 
+     def test_hist_user_edgecolor_does_not_raise(self):
+         """edgecolor= used to flow straight into ax.hist; it still must."""
+@@ -1313,7 +1315,7 @@ class TestPlot1DDensityFeatures(PlotTestCase):
+     def test_density_title_and_xlabel(self):
+         self.sims.plot(type="density")
+         ax = plt.gca()
+-        self.assertEqual(ax.get_title(), "Density Curve")
++        self.assertEqual(ax.get_title(), "Density (Estimated)")
+         self.assertEqual(ax.get_xlabel(), "Value")
+ 
+     def test_density_default_alpha_opaque(self):
+@@ -1629,22 +1631,22 @@ class TestPlot1DBoxStyling(PlotTestCase):
+             make_boxplot(np.array([np.nan, np.nan]), ax, get_next_color(ax))
+         self.assertIn("no values", str(cm.exception))
+ 
+-    def test_box_outliers_default_draws_outlier_points(self):
+-        """With outliers=True (default), extreme points become fliers."""
++    def test_box_outliers_true_draws_outlier_points(self):
++        """With outliers=True, extreme points become fliers."""
+         from symbulate.plot import make_boxplot, get_next_color
+ 
+         values = np.append(np.random.normal(0, 1, 50), 25.0)
+         ax = plt.gca()
+-        box = make_boxplot(values, ax, get_next_color(ax))
++        box = make_boxplot(values, ax, get_next_color(ax), outliers=True)
+         self.assertIn(25.0, box["fliers"][0].get_ydata())
+ 
+-    def test_box_outliers_false_extends_whiskers_to_extremes(self):
+-        """outliers=False stretches the whiskers to min/max, no fliers."""
++    def test_box_outliers_default_extends_whiskers_to_extremes(self):
++        """outliers=False (the default) stretches whiskers to min/max, no fliers."""
+         from symbulate.plot import make_boxplot, get_next_color
+ 
+         values = np.append(np.random.normal(0, 1, 50), 25.0)
+         ax = plt.gca()
+-        box = make_boxplot(values, ax, get_next_color(ax), outliers=False)
++        box = make_boxplot(values, ax, get_next_color(ax))
+         self.assertEqual(len(box["fliers"][0].get_ydata()), 0)
+         whisker_ends = [w.get_ydata()[1] for w in box["whiskers"]]
+         self.assertAlmostEqual(max(whisker_ends), 25.0)
+@@ -1660,17 +1662,17 @@ class TestPlot1DBoxStyling(PlotTestCase):
+                 if line.get_linestyle() == "None"
+             )
+ 
+-        # A planted extreme value is always a flier under the default
+-        # 1.5-IQR rule, so the assertion does not depend on a random draw
++        # A planted extreme value is always a flier under the 1.5-IQR
++        # rule, so the assertion does not depend on a random draw
+         # happening to contain an outlier (Normal(0, 1) sometimes has
+         # none). self.sims uses the package RNG, which np.random.seed does
+         # not control, so plotting it directly made this test flaky.
+         planted = RVResults(np.append(np.random.normal(0, 1, 200), 25.0))
+         planted.plot(type="box")
+-        self.assertGreater(n_flier_points(), 0)
+-        plt.close("all")
+-        planted.plot(type="box", outliers=False)
+         self.assertEqual(n_flier_points(), 0)
++        plt.close("all")
++        planted.plot(type="box", outliers=True)
++        self.assertGreater(n_flier_points(), 0)
+ 
+     def test_box_returns_wrapper(self):
+         p = self.sims.plot(type="box")
+@@ -1797,23 +1799,26 @@ class TestPlot2DMeshFeatures(PlotTestCase):
+ 
+     def test_hist2d_title(self):
+         self.sims.plot(type="hist")
+-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
++        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
+ 
+     def test_density2d_draws_contour_surface(self):
+-        """Banded by default now, so it titles itself a contour plot."""
++        """Banded by default now, and titled "Joint Density (Estimated)"
++        regardless of contour mode -- contour= only changes the shading,
++        not what is being shown."""
+         self.sims.plot(type="density")
+         ax = plt.gca()
+         self.assertGreater(len(ax.collections + ax.images), 0)
+-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
++        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
+ 
+     def test_density2d_smooth_surface_with_contour_off(self):
+-        """contour=False is how the smooth gradient is asked for now."""
++        """contour=False is how the smooth gradient is asked for now; the
++        title is unaffected."""
+         self.sims.plot(type="density", contour=False)
+-        self.assertEqual(plt.gca().get_title(), "2D Density Plot")
++        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
+ 
+     def test_density2d_contour_mode(self):
+         self.sims.plot(type="density", contour=True)
+-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
++        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
+ 
+     def test_density2d_levels_without_contour_warns(self):
+         """levels only bands a contour plot, so it warns with contour=False."""
+@@ -2002,10 +2007,10 @@ class TestPlot2DMosaic(PlotTestCase):
+         labels = [t.get_text() for t in ax.get_yticklabels()]
+         self.assertEqual(labels, ["0.00", "0.25", "0.50", "0.75", "1.00"])
+ 
+-    def test_mosaic_legend_uses_marginal_column_labels_by_default(self):
+-        """With marginal_column=True (the default), category names are
+-        printed beside the marginal column instead of a floating legend."""
+-        self.discrete_sims.plot(type="mosaic")
++    def test_mosaic_legend_uses_marginal_column_labels_when_requested(self):
++        """With marginal_column=True, category names are printed beside
++        the marginal column instead of a floating legend."""
++        self.discrete_sims.plot(type="mosaic", marginal_column=True)
+         ax = plt.gca()
+         self.assertIsNone(ax.get_legend())
+         arr = np.asarray(self.discrete_sims.results)
+@@ -2013,16 +2018,17 @@ class TestPlot2DMosaic(PlotTestCase):
+         label_texts = sorted(t.get_text() for t in ax.texts if t.get_text() in y_labels)
+         self.assertEqual(label_texts, y_labels)
+ 
+-    def test_mosaic_legend_falls_back_without_marginal_column(self):
+-        """With marginal_column=False, there's no column to hang labels
+-        off of, so a standard floating legend appears instead."""
+-        self.discrete_sims.plot(type="mosaic", marginal_column=False)
++    def test_mosaic_legend_falls_back_by_default(self):
++        """marginal_column defaults to False, so there's no column to
++        hang labels off of -- a standard floating legend appears
++        instead."""
++        self.discrete_sims.plot(type="mosaic")
+         legend = plt.gca().get_legend()
+         self.assertIsNotNone(legend)
+         self.assertEqual(legend.get_title().get_text(), "Variable 2")
+ 
+     def test_mosaic_legend_false_shows_no_category_labels(self):
+-        p = self.discrete_sims.plot(type="mosaic", legend=False, annotate=False)
++        p = self.discrete_sims.plot(type="mosaic", legend=False)
+         self.assertEqual(len(p.ax.texts), 0)
+ 
+     def test_mosaic_columns_sum_to_full_width(self):
+@@ -2033,46 +2039,44 @@ class TestPlot2DMosaic(PlotTestCase):
+ 
+     def test_mosaic_normalize_false_labels_are_whole_numbers(self):
+         """normalize=False switches in-cell labels from decimal
+-        proportions to whole-number counts."""
+-        p = self.discrete_sims.plot(type="mosaic", normalize=False)
++        proportions to whole-number counts (with annotate=True -- the
++        labels themselves default off, see test_mosaic_annotate_*)."""
++        p = self.discrete_sims.plot(type="mosaic", normalize=False, annotate=True)
+         texts = [t.get_text() for t in p.ax.texts]
+         self.assertGreater(len(texts), 0)
+         for text in texts:
+             self.assertNotIn(".", text)
+ 
+     def test_mosaic_normalize_true_labels_are_decimals(self):
+-        p = self.discrete_sims.plot(type="mosaic")
++        p = self.discrete_sims.plot(type="mosaic", annotate=True)
+         texts = [t.get_text() for t in p.ax.texts]
+         self.assertGreater(len(texts), 0)
+         self.assertTrue(any("." in text for text in texts))
+ 
+-    def test_mosaic_annotate_false_has_no_labels(self):
+-        """annotate=False alone: no in-cell labels, but the marginal
+-        column's legend labels (controlled separately by legend=) still
+-        draw as ax.text(), so isolate with legend=False too."""
+-        p = self.discrete_sims.plot(type="mosaic", annotate=False, legend=False)
++    def test_mosaic_annotate_defaults_to_no_labels(self):
++        """annotate defaults to False: no in-cell labels by default (a
++        dense mosaic with many categories got crowded and hard to read
++        with a number stamped in every cell)."""
++        p = self.discrete_sims.plot(type="mosaic", legend=False)
+         self.assertEqual(len(p.ax.texts), 0)
+ 
+-    def test_mosaic_annotate_false_still_shows_legend_labels(self):
+-        """With annotate=False, only the marginal column's category-name
+-        legend labels remain -- no in-cell proportion/count labels."""
+-        p = self.discrete_sims.plot(type="mosaic", annotate=False)
+-        arr = np.asarray(self.discrete_sims.results)
+-        y_labels = sorted(str(v) for v in np.unique(arr[:, 1]))
+-        texts = sorted(t.get_text() for t in p.ax.texts)
+-        self.assertEqual(texts, y_labels)
++    def test_mosaic_annotate_true_shows_in_cell_labels(self):
++        """annotate=True restores the in-cell proportion/count labels."""
++        p = self.discrete_sims.plot(type="mosaic", annotate=True, legend=False)
++        self.assertGreater(len(p.ax.texts), 0)
+ 
+-    def test_mosaic_overlay_prints_warning(self):
+-        """A second mosaic call on the same axes prints (not warns) a
+-        readability warning -- the same overlay category as tile/hist2d."""
++    def test_mosaic_overlay_raises_hard_error(self):
++        """A second mosaic call on the same axes is a hard error, not a
++        readability warning -- a mosaic re-partitions the whole axes, so
++        a second call would just cover up the first rather than combine
++        with it."""
+         ax = plt.gca()
+         arr = np.asarray(self.discrete_sims.results)
+         x, y = arr[:, 0], arr[:, 1]
+         make_mosaic(x, y, ax)
+-        buf = io.StringIO()
+-        with contextlib.redirect_stdout(buf):
++        with self.assertRaises(ValueError) as cm:
+             make_mosaic(x, y, ax)
+-        self.assertIn("second mosaic plot", buf.getvalue())
++        self.assertIn("already has a plot", str(cm.exception))
+ 
+     def test_mosaic_length_mismatch_raises_friendly_error(self):
+         with self.assertRaises(ValueError) as cm:
+@@ -2110,35 +2114,36 @@ class TestPlot2DMosaic(PlotTestCase):
+         self.assertAlmostEqual(widths.sum(), 0.5)
+         self.assertAlmostEqual(starts[0], 0.0)
+ 
+-    def test_mosaic_marginal_column_present_by_default(self):
+-        """marginal_column defaults to True: an extra column, labeled
+-        with y_label (default "Variable 2"), appears after the real x
+-        categories."""
+-        p = self.discrete_sims.plot(type="mosaic")
++    def test_mosaic_marginal_column_true_adds_it(self):
++        """marginal_column=True adds an extra column, labeled with
++        y_label (default "Variable 2"), after the real x categories."""
++        p = self.discrete_sims.plot(type="mosaic", marginal_column=True)
+         labels = [t.get_text() for t in p.ax.get_xticklabels()]
+         self.assertEqual(labels[-1], "Variable 2")
+ 
+     def test_mosaic_marginal_column_uses_custom_y_label(self):
+-        p = self.discrete_sims.plot(type="mosaic", y_label="Outcome")
++        p = self.discrete_sims.plot(
++            type="mosaic", marginal_column=True, y_label="Outcome"
++        )
+         labels = [t.get_text() for t in p.ax.get_xticklabels()]
+         self.assertEqual(labels[-1], "Outcome")
+ 
+-    def test_mosaic_marginal_column_false_omits_it(self):
+-        """With marginal_column=False, there's no extra column -- exactly
+-        one x-tick per real x category."""
++    def test_mosaic_marginal_column_absent_by_default(self):
++        """marginal_column defaults to False: exactly one x-tick per real
++        x category, no extra reference column."""
+         arr = np.asarray(self.discrete_sims.results)
+         n_x = len(np.unique(arr[:, 0]))
+-        p = self.discrete_sims.plot(type="mosaic", marginal_column=False)
++        p = self.discrete_sims.plot(type="mosaic")
+         labels = [t.get_text() for t in p.ax.get_xticklabels()]
+         self.assertEqual(len(labels), n_x)
+ 
+     def test_mosaic_marginal_column_extends_every_bar_container(self):
+         """Every category's BarContainer gets one extra bar (the marginal
+-        column) on top of one per real x category."""
++        column) on top of one per real x category, when requested."""
+         arr = np.asarray(self.discrete_sims.results)
+         x, y = arr[:, 0], arr[:, 1]
+         n_x = len(np.unique(x))
+-        bars = make_mosaic(x, y, plt.gca())
++        bars = make_mosaic(x, y, plt.gca(), marginal_column=True)
+         for container in bars.values():
+             self.assertEqual(len(container.patches), n_x + 1)
+ 
+@@ -2149,7 +2154,7 @@ class TestPlot2DMosaic(PlotTestCase):
+         value is rare)."""
+         arr = np.asarray(self.discrete_sims.results)
+         x, y = arr[:, 0], arr[:, 1]
+-        bars = make_mosaic(x, y, plt.gca())
++        bars = make_mosaic(x, y, plt.gca(), marginal_column=True)
+         any_container = next(iter(bars.values()))
+         real_widths = [p.get_width() for p in any_container.patches[:-1]]
+         marginal_width = any_container.patches[-1].get_width()
+@@ -2157,15 +2162,19 @@ class TestPlot2DMosaic(PlotTestCase):
+ 
+     def test_mosaic_marginal_column_has_no_in_cell_labels(self):
+         """The marginal column is a color reference only -- it never gets
+-        count/percentage labels, even with annotate=True (the default).
+-        legend=False on both sides isolates in-cell labels from the
+-        marginal column's separate legend-label text."""
++        count/percentage labels, even with annotate=True. legend=False on
++        both sides isolates in-cell labels from the marginal column's
++        separate legend-label text."""
+         arr = np.asarray(self.discrete_sims.results)
+         x, y = arr[:, 0], arr[:, 1]
+-        p = self.discrete_sims.plot(type="mosaic", legend=False)
++        p = self.discrete_sims.plot(
++            type="mosaic", annotate=True, marginal_column=True, legend=False
++        )
+         n_labels_with_marginal = len(p.ax.texts)
+         plt.close("all")
+-        p2 = self.discrete_sims.plot(type="mosaic", marginal_column=False, legend=False)
++        p2 = self.discrete_sims.plot(
++            type="mosaic", annotate=True, marginal_column=False, legend=False
++        )
+         n_labels_without_marginal = len(p2.ax.texts)
+         self.assertEqual(n_labels_with_marginal, n_labels_without_marginal)
+ 
+@@ -2175,7 +2184,7 @@ class TestPlot2DMosaic(PlotTestCase):
+         joint frequency over the whole dataset."""
+         x = np.array([0] * 80 + [1] * 20)
+         y = np.array([0] * 60 + [1] * 20 + [0] * 5 + [1] * 15)
+-        make_mosaic(x, y, plt.gca(), marginal_column=False)
++        make_mosaic(x, y, plt.gca(), annotate=True)
+         texts = sorted(t.get_text() for t in plt.gca().texts)
+         self.assertEqual(texts, ["0.25", "0.25", "0.75", "0.75"])
+ 
+@@ -2184,7 +2193,7 @@ class TestPlot2DMosaic(PlotTestCase):
+         frequency (summed over every x value), not any one column's."""
+         arr = np.asarray(self.discrete_sims.results)
+         x, y = arr[:, 0], arr[:, 1]
+-        bars = make_mosaic(x, y, plt.gca())
++        bars = make_mosaic(x, y, plt.gca(), marginal_column=True)
+         y_labels = np.unique(y)
+         counts = np.array([(y == val).sum() for val in y_labels], dtype=float)
+         expected_fracs = counts / counts.sum()
+@@ -2230,71 +2239,67 @@ class TestPlot2DMosaic(PlotTestCase):
+         rng = np.random.default_rng(1)
+         x = rng.integers(0, 3, 3000)
+         y = rng.integers(0, 7, 3000)  # covers every Okabe-Ito color
+-        make_mosaic(x, y, plt.gca())
++        make_mosaic(x, y, plt.gca(), annotate=True)
+         label_colors = {t.get_color() for t in plt.gca().texts}
+         self.assertIn("black", label_colors)
+         self.assertIn("white", label_colors)
+ 
+     # -----------------------------------------------------------------
+-    # equal_width: 100%-stacked bar chart (equal-width columns)
++    # type="stackedbar": 100%-stacked bar chart (equal-width columns)
+     # -----------------------------------------------------------------
+ 
+     def setup_unequal_marginal_sims(self, seed=7):
+         """x has a heavily skewed marginal (Bernoulli(0.9)), so the two
+         real columns' default proportional widths are visibly unequal --
+-        the case the prompt asks equal_width to be tested against."""
++        the case stackedbar's uniform widths are tested against."""
+         np.random.seed(seed)
+         Xd, Yd = RV(Bernoulli(p=0.9) * Bernoulli(p=0.5))
+         return (Xd & Yd).sim(500)
+ 
+     def test_mosaic_default_widths_vary_with_unequal_marginal_counts(self):
+-        """Without equal_width, visibly-unequal marginal counts must
+-        produce columns of visibly different widths -- the standard
+-        mosaic behavior, confirmed here so the next test's uniformity
+-        can be attributed to equal_width and not incidental equal counts
+-        in this data."""
++        """type='mosaic' (proportional widths): visibly-unequal marginal
++        counts must produce columns of visibly different widths -- the
++        standard mosaic behavior, confirmed here so the next test's
++        uniformity can be attributed to type='stackedbar' and not
++        incidental equal counts in this data."""
+         sims = self.setup_unequal_marginal_sims()
+-        p = sims.plot(type="mosaic", marginal_column=False, suggest=False)
++        p = sims.plot(type="mosaic", suggest=False)
+         widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
+         self.assertGreater(len(widths), 1)
+ 
+-    def test_mosaic_equal_width_produces_uniform_column_widths(self):
+-        """equal_width=True must give every real column the same width,
++    def test_stackedbar_produces_uniform_column_widths(self):
++        """type='stackedbar' must give every real column the same width,
+         even though the same data's marginal counts are visibly unequal
+         (see the previous test)."""
+         sims = self.setup_unequal_marginal_sims()
+-        p = sims.plot(
+-            type="mosaic", equal_width=True, marginal_column=False, suggest=False
+-        )
++        p = sims.plot(type="stackedbar", suggest=False)
+         widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
+         self.assertEqual(len(widths), 1)
+ 
+-    def test_mosaic_equal_width_does_not_change_segment_heights(self):
+-        """equal_width changes column width only -- each column's segment
+-        heights (conditional frequencies) must match the default
+-        proportional-width mode exactly."""
++    def test_stackedbar_does_not_change_segment_heights(self):
++        """type='stackedbar' changes column width only -- each column's
++        segment heights (conditional frequencies) must match
++        type='mosaic' exactly."""
+         sims = self.setup_unequal_marginal_sims()
+-        p_default = sims.plot(type="mosaic", marginal_column=False, suggest=False)
++        p_default = sims.plot(type="mosaic", suggest=False)
+         heights_default = sorted(
+             round(patch.get_height(), 6) for patch in p_default.ax.patches
+         )
+         plt.close("all")
+-        p_equal = sims.plot(
+-            type="mosaic", equal_width=True, marginal_column=False, suggest=False
+-        )
++        p_equal = sims.plot(type="stackedbar", suggest=False)
+         heights_equal = sorted(
+             round(patch.get_height(), 6) for patch in p_equal.ax.patches
+         )
+         self.assertEqual(heights_default, heights_equal)
+ 
+-    def test_mosaic_equal_width_labels_show_true_conditional_proportion(self):
++    def test_stackedbar_labels_show_true_conditional_proportion(self):
+         """In-cell labels must still report the true conditional
+         proportion (division by the real per-column count), not something
+         distorted by equal-width columns."""
+         sims = self.setup_unequal_marginal_sims()
+         arr = np.asarray(sims.results)
+         x, y = arr[:, 0], arr[:, 1]
+-        p = sims.plot(type="mosaic", equal_width=True, marginal_column=False)
++        p = sims.plot(type="stackedbar", annotate=True)
+         x_labels = np.unique(x)
+         y_labels = np.unique(y)
+         # Every printed decimal label, across every column, must be a valid
+@@ -2312,41 +2317,72 @@ class TestPlot2DMosaic(PlotTestCase):
+         printed = {round(float(t.get_text()), 2) for t in p.ax.texts}
+         self.assertTrue(printed.issubset(all_possible))
+ 
+-    def test_mosaic_equal_width_still_respects_marginal_column(self):
+-        """equal_width and marginal_column are independent switches --
+-        equal_width=True must still draw the marginal reference column
++    def test_stackedbar_still_respects_marginal_column(self):
++        """type= and marginal_column= are independent switches --
++        type='stackedbar' must still draw the marginal reference column
+         (skinnier than the equal-width real columns) when
+-        marginal_column=True (the default)."""
++        marginal_column=True."""
+         sims = self.setup_unequal_marginal_sims()
+-        p = sims.plot(type="mosaic", equal_width=True, suggest=False)
++        p = sims.plot(type="stackedbar", marginal_column=True, suggest=False)
+         widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
+         # Exactly two distinct widths: the (uniform) real columns, and the
+         # narrower marginal column.
+         self.assertEqual(len(widths), 2)
+ 
+-    def test_mosaic_equal_width_title_is_stacked_plot(self):
+-        """equal_width=True changes the title to "Stacked Plot" -- a clear
+-        visual signal that column widths are equal, not proportional."""
++    def test_stackedbar_title_is_stacked_bar_chart(self):
++        """type='stackedbar' titles the axes "Stacked Bar Chart" -- a
++        clear visual signal that column widths are equal, not
++        proportional."""
+         sims = self.setup_unequal_marginal_sims()
+-        p = sims.plot(type="mosaic", equal_width=True, suggest=False)
+-        self.assertEqual(p.ax.get_title(), "Stacked Plot")
++        p = sims.plot(type="stackedbar", suggest=False)
++        self.assertEqual(p.ax.get_title(), "Stacked Bar Chart")
+ 
+     def test_mosaic_default_title_is_unaffected(self):
+-        """Without equal_width, the title stays "Mosaic Plot"."""
++        """type='mosaic' keeps the title "Mosaic Plot"."""
+         sims = self.setup_unequal_marginal_sims()
+         p = sims.plot(type="mosaic", suggest=False)
+         self.assertEqual(p.ax.get_title(), "Mosaic Plot")
+ 
+-    def test_mosaic_equal_width_display_name(self):
+-        self.assertEqual(PLOT_DISPLAY_NAME["mosaic_equal_width"], "Stacked Plot")
++    def test_stackedbar_display_name(self):
++        self.assertEqual(PLOT_DISPLAY_NAME["stackedbar"], "Stacked Bar Chart")
+ 
+-    def test_mosaic_equal_width_is_opt_in_only(self):
+-        """equal_width must not become a new automatic default for 2D
+-        discrete data -- mosaic (in either mode) stays explicit-opt-in-only."""
++    def test_mosaic_and_stackedbar_are_opt_in_only(self):
++        """Neither mosaic nor stackedbar become a new automatic default
++        for 2D discrete data -- both stay explicit-opt-in-only."""
+         for small_n in (True, False):
+             _, alternatives = default_plot_type("2D_dd", small_n)
+-            self.assertNotIn("mosaic_equal_width", alternatives)
+-            self.assertNotIn("stacked_bar", alternatives)
++            self.assertNotIn("stackedbar", alternatives)
++
++    def test_equal_width_kwarg_raises_helpful_error(self):
++        """The old equal_width= kwarg is retired in favor of type=
++        'stackedbar', with a message pointing to the replacement rather
++        than reaching make_mosaic and silently doing nothing (or, worse,
++        erroring inside matplotlib with no context)."""
++        sims = self.setup_unequal_marginal_sims()
++        with self.assertRaises(ValueError) as cm:
++            sims.plot(type="mosaic", equal_width=True)
++        self.assertIn("stackedbar", str(cm.exception))
++
++    def test_mosaic_many_categories_suggests_stackedbar(self):
++        """type='mosaic' with more than a few categories on an axis
++        suggests type='stackedbar' instead."""
++        rng = np.random.default_rng(2)
++        x = rng.integers(0, 6, 2000)
++        y = rng.integers(0, 2, 2000)
++        with self.assertWarns(UserWarning) as cm:
++            make_mosaic(x, y, plt.gca())
++        self.assertIn("stackedbar", str(cm.warning))
++
++    def test_stackedbar_few_categories_suggests_mosaic(self):
++        """type='stackedbar' with only a few categories on both axes
++        suggests type='mosaic' instead, since mosaic shows the same
++        information plus each column's marginal frequency."""
++        rng = np.random.default_rng(3)
++        x = rng.integers(0, 2, 2000)
++        y = rng.integers(0, 2, 2000)
++        with self.assertWarns(UserWarning) as cm:
++            make_mosaic(x, y, plt.gca(), equal_width=True)
++        self.assertIn("mosaic", str(cm.warning))
+ 
+ 
+ class TestPlot2DBox(PlotTestCase):
+@@ -2388,19 +2424,29 @@ class TestPlot2DBox(PlotTestCase):
+             (X & Y).sim(200).plot(type="box")
+         self.assertIn("scatter", str(cm.exception))
+ 
+-    def test_box_outliers_false_extends_whiskers_to_extremes(self):
+-        """outliers=False stretches each group's whiskers to min/max."""
++    def test_box_outliers_default_extends_whiskers_to_extremes(self):
++        """outliers=False (the default) stretches each group's whiskers to min/max."""
+         from symbulate.plot import make_grouped_boxplot, get_next_color
+ 
+         x = np.repeat([0, 1], 50)
+         y = np.append(np.random.normal(0, 1, 99), 30.0)
+         ax = plt.gca()
+-        boxes = make_grouped_boxplot(x, y, ax, get_next_color(ax), outliers=False)
++        boxes = make_grouped_boxplot(x, y, ax, get_next_color(ax))
+         for flier in boxes["fliers"]:
+             self.assertEqual(len(flier.get_ydata()), 0)
+         whisker_ends = [w.get_ydata()[1] for w in boxes["whiskers"]]
+         self.assertAlmostEqual(max(whisker_ends), 30.0)
+ 
++    def test_box_outliers_true_draws_outlier_points(self):
++        """outliers=True switches each group's whiskers to the 1.5-IQR rule."""
++        from symbulate.plot import make_grouped_boxplot, get_next_color
++
++        x = np.repeat([0, 1], 50)
++        y = np.append(np.random.normal(0, 1, 99), 30.0)
++        ax = plt.gca()
++        boxes = make_grouped_boxplot(x, y, ax, get_next_color(ax), outliers=True)
++        self.assertIn(30.0, boxes["fliers"][1].get_ydata())
++
+     def test_box_outliers_kwarg_flows_through_plot(self):
+         """outliers= passed to .plot() reaches the grouped box helper."""
+ 
+@@ -2414,10 +2460,10 @@ class TestPlot2DBox(PlotTestCase):
+         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+         sims = (X & Y).sim(500)
+         sims.plot(type="box")
+-        self.assertGreater(n_flier_points(), 0)
+-        plt.close("all")
+-        sims.plot(type="box", outliers=False)
+         self.assertEqual(n_flier_points(), 0)
++        plt.close("all")
++        sims.plot(type="box", outliers=True)
++        self.assertGreater(n_flier_points(), 0)
+ 
+ 
+ class TestPlot2DCombinedTypes(PlotTestCase):
+@@ -2490,9 +2536,9 @@ class TestPlot2DCombinedTypes(PlotTestCase):
+ 
+     def test_an_overlay_type_alone_is_still_the_whole_plot(self):
+         for type, title in [
+-            ("density", "Segmented Density Plot"),
++            ("density", "Conditional Density (Estimated)"),
+             ("rug", "Segmented Rug Plot"),
+-            ("segmented_density", "Segmented Density Plot"),
++            ("segmented_density", "Conditional Density (Estimated)"),
+         ]:
+             with self.subTest(type=type):
+                 plt.figure()
+@@ -2535,7 +2581,7 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
+         sims = (X & Y).sim(500)
+         sims.plot(type="segmented_density")
+         ax = plt.gca()
+-        self.assertEqual(plt.gca().get_title(), "Segmented Density Plot")
++        self.assertEqual(plt.gca().get_title(), "Conditional Density (Estimated)")
+         # One unfilled Line2D curve per observed level of X, and no
+         # fills by default (ridge=False)
+         n_levels = len(np.unique(sims.array[:, 0]))
+@@ -2641,20 +2687,20 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
+         self.assertIn("density", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"])
+         self.assertIn("density", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"])
+         self.assertEqual(
+-            PLOT_DISPLAY_NAME["segmented_density"], "Segmented Density Plot"
++            PLOT_DISPLAY_NAME["segmented_density"], "Conditional Density (Estimated)"
+         )
+ 
+     def test_density_short_name_is_segmented_on_mixed(self):
+         """On mixed data, type='density' produces the segmented density."""
+         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="density", suggest=False)
+-        self.assertEqual(plt.gca().get_title(), "Segmented Density Plot")
++        self.assertEqual(plt.gca().get_title(), "Conditional Density (Estimated)")
+ 
+     def test_density2d_still_forces_surface_on_mixed(self):
+         """type='density2d' forces the 2D surface even on mixed data."""
+         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(
+             type="density2d", suggest=False
+         )
+-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
++        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
+ 
+ 
+ class TestPlot2DSegmentedHist(PlotTestCase):
+@@ -2668,7 +2714,7 @@ class TestPlot2DSegmentedHist(PlotTestCase):
+         sims = (X & Y).sim(500)
+         sims.plot(type="segmented_hist")
+         ax = plt.gca()
+-        self.assertEqual(plt.gca().get_title(), "Segmented Histogram")
++        self.assertEqual(plt.gca().get_title(), "Conditional Histogram")
+         self.assertGreater(len(ax.patches), 0)
+         # Discrete x -> flipped orientation: baselines on the x-axis
+         n_levels = len(np.unique(sims.array[:, 0]))
+@@ -2774,22 +2820,22 @@ class TestPlot2DSegmentedHist(PlotTestCase):
+         # the segmented histogram (the "segmented_hist" alias also works).
+         self.assertIn("hist", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"])
+         self.assertIn("hist", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"])
+-        self.assertEqual(PLOT_DISPLAY_NAME["segmented_hist"], "Segmented Histogram")
++        self.assertEqual(PLOT_DISPLAY_NAME["segmented_hist"], "Conditional Histogram")
+ 
+     def test_hist_short_name_is_segmented_on_mixed(self):
+         """On mixed data, type='hist' produces the segmented histogram."""
+         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="hist", suggest=False)
+-        self.assertEqual(plt.gca().get_title(), "Segmented Histogram")
++        self.assertEqual(plt.gca().get_title(), "Conditional Histogram")
+ 
+     def test_hist2d_still_forces_mesh_on_mixed(self):
+         """type='hist2d' forces the 2D mesh even on mixed data."""
+         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="hist2d", suggest=False)
+-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
++        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
+ 
+     def test_hist_short_name_stays_2d_on_continuous(self):
+         """On two continuous variables, type='hist' is still the 2D mesh."""
+         RV(Normal(0, 1) * Normal(0, 1)).sim(500).plot(type="hist", suggest=False)
+-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
++        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
+ 
+ 
+ # ===========================================================================
+@@ -3362,9 +3408,13 @@ class TestDefaultLookupDispatch(PlotTestCase):
+         self.assertGreater(len(plt.gca().patches), 0)
+ 
+     def test_2d_mixed_large_defaults_to_tile(self):
++        """The dispatched type= is still "tile" for mixed data (one axis
++        binned), but since only one axis is genuinely discrete, the title
++        reads "Joint Histogram" rather than claiming to tile discrete
++        cells on both sides (see make_tile)."""
+         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+         (X & Y).sim(500).plot()
+-        self.assertEqual(plt.gca().get_title(), "Tile Plot")
++        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
+ 
+     def test_2d_both_axes_under_K_2D_is_tile(self):
+         """Two discrete axes both within the per-axis cap -> tile."""
+@@ -3374,12 +3424,14 @@ class TestDefaultLookupDispatch(PlotTestCase):
+         self.assertEqual(plt.gca().get_title(), "Tile Plot")
+ 
+     def test_2d_one_axis_over_K_2D_stays_tile(self):
+-        """One axis over the per-axis cap bins only that axis -> still a
+-        (mixed) tile, not yet a 2-D histogram: per-axis independence."""
++        """One axis over the per-axis cap bins only that axis -> still the
++        same "tile" dispatch (a mixed tile, not yet a 2-D histogram: per-axis
++        independence), but titled "Joint Histogram" since that axis is no
++        longer treated as discrete."""
+         RV(BoxModel(list(range(5))) * BoxModel(list(range(40)))).sim(3000).plot(
+             suggest=False
+         )
+-        self.assertEqual(plt.gca().get_title(), "Tile Plot")
++        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
+ 
+     def test_2d_both_axes_over_K_2D_is_hist2d(self):
+         """Both axes over the per-axis cap now bin to a 2-D histogram -- the
+@@ -3388,7 +3440,7 @@ class TestDefaultLookupDispatch(PlotTestCase):
+         RV(BoxModel(list(range(40))) * BoxModel(list(range(40)))).sim(3000).plot(
+             suggest=False
+         )
+-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
++        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
+ 
+     def test_2d_mixed_small_defaults_to_segmented_rug(self):
+         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
+@@ -3410,10 +3462,10 @@ class TestDefaultLookupDispatch(PlotTestCase):
+         X, Y = RV(Normal(0, 1) ** 2)
+         sims = (X & Y).sim(200)
+         sims.plot(type="hist2d")
+-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
++        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
+         plt.close("all")
+         sims.plot(type="density2d")
+-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
++        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
+         plt.close("all")
+         Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
+         (Xm & Ym).sim(200).plot(type="segmented_rug")
+@@ -3488,7 +3540,7 @@ class TestSuggestionNote(PlotTestCase):
+ 
+     def test_explicit_type_marks_the_default_alternative(self):
+         out = self._plot_output(type="density", suggest=True)
+-        self.assertIn("Currently Showing: Density Plot", out)
++        self.assertIn("Currently Showing: Density (Estimated)", out)
+         self.assertIn("Histogram (Default)", out)
+ 
+     def test_suggest_none_shows_once_per_session(self):
+@@ -3511,21 +3563,21 @@ class TestSuggestionNote(PlotTestCase):
+         buf = io.StringIO()
+         with contextlib.redirect_stdout(buf):
+             (X & Y).sim(500).plot(type="hist", suggest=True)
+-        self.assertIn("Currently Showing: 2D Histogram (Default)", buf.getvalue())
++        self.assertIn("Currently Showing: Joint Histogram (Default)", buf.getvalue())
+ 
+-    def test_mosaic_equal_width_note_says_stacked_plot(self):
+-        """equal_width=True's suggestion note must match its axes title
+-        ("Stacked Plot"), not still read "Mosaic Plot"."""
++    def test_stackedbar_note_says_stacked_bar_chart(self):
++        """type='stackedbar's suggestion note must match its axes title
++        ("Stacked Bar Chart"), not still read "Mosaic Plot"."""
+         import io
+         import contextlib
+ 
+         X, Y = RV(Binomial(5, 0.4) ** 2)
+         buf = io.StringIO()
+         with contextlib.redirect_stdout(buf):
+-            (X & Y).sim(500).plot(type="mosaic", equal_width=True, suggest=True)
+-        self.assertIn("Currently Showing: Stacked Plot", buf.getvalue())
++            (X & Y).sim(500).plot(type="stackedbar", suggest=True)
++        self.assertIn("Currently Showing: Stacked Bar Chart", buf.getvalue())
+ 
+-    def test_mosaic_without_equal_width_note_still_says_mosaic_plot(self):
++    def test_mosaic_note_still_says_mosaic_plot(self):
+         import io
+         import contextlib
+ 
+@@ -3712,12 +3764,12 @@ class TestDistributionPlotDiscrete(PlotTestCase):
+     def test_multivariate_normal_plots_joint_density(self):
+         """MultivariateNormal.plot() draws the joint density of two variables."""
+         MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
+-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
++        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
+ 
+     def test_multinomial_plots_joint_pmf(self):
+         """Multinomial.plot() draws a probability per pair of counts."""
+         Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot()
+-        self.assertEqual(plt.gcf().get_suptitle(), "Joint PMF Plot")
++        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Mass Function")
+ 
+ 
+ # ===========================================================================
+@@ -4337,7 +4389,7 @@ class TestSuggestionMessage(unittest.TestCase):
+     def test_non_default_alternatives_use_type_syntax(self):
+         msg = suggestion_message("impulse", "impulse", ["hist", "density"])
+         self.assertIn('Histogram (type = "hist")', msg)
+-        self.assertIn('Density Plot (type = "density")', msg)
++        self.assertIn('Density (Estimated) (type = "density")', msg)
+ 
+     def test_mixed_suggestion_uses_short_type_names(self):
+         """On mixed data the lookup table and suggestion note use the short
+@@ -4346,7 +4398,7 @@ class TestSuggestionMessage(unittest.TestCase):
+         msg = suggestion_message(default, default, alts)
+         self.assertNotIn("segmented_", msg)
+         self.assertIn('Histogram (type = "hist")', msg)
+-        self.assertIn('Density Plot (type = "density")', msg)
++        self.assertIn('Density (Estimated) (type = "density")', msg)
+ 
+ 
+ # ===========================================================================
+@@ -4406,9 +4458,9 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
+         for dist, title in [
+             (
+                 MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]),
+-                "Joint Contour Plot",
++                "Joint Probability Density Function",
+             ),
+-            (Multinomial(n=10, p=[0.2, 0.3, 0.5]), "Joint PMF Plot"),
++            (Multinomial(n=10, p=[0.2, 0.3, 0.5]), "Joint Probability Mass Function"),
+         ]:
+             with self.subTest(dist=type(dist).__name__):
+                 plt.close("all")
+@@ -4468,7 +4520,7 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
+         MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot(ax=ax)
+         self.assertEqual(len(self._panels()), 1)
+         # Its own title stays on it, since nothing sits above it.
+-        self.assertEqual(ax.get_title(), "Joint Contour Plot")
++        self.assertEqual(ax.get_title(), "Joint Probability Density Function")
+         self.assertEqual(fig.get_suptitle(), "")
+ 
+     def test_a_pairs_matrix_is_unaffected(self):
+@@ -4496,13 +4548,13 @@ class TestJointTheoreticalPlots(PlotTestCase):
+         self.assertEqual(seen["n"], JOINT_PDF_GRID_POINTS**2)
+         self.assertEqual(ax.get_xlim(), (-3, 3))
+         self.assertEqual(ax.get_ylim(), (-3, 3))
+-        self.assertEqual(ax.get_title(), "Joint Contour Plot")
++        self.assertEqual(ax.get_title(), "Joint Probability Density Function")
+ 
+     def test_make_joint_pdf_contour_titles_and_bands(self):
+         pdf = lambda x, y: np.exp(-(x**2 + y**2) / 2)
+         ax = plt.gca()
+         make_joint_pdf(pdf, (-3, 3), (-3, 3), ax, contour=True)
+-        self.assertEqual(ax.get_title(), "Joint Contour Plot")
++        self.assertEqual(ax.get_title(), "Joint Probability Density Function")
+ 
+     def test_make_joint_pdf_survives_an_unbounded_density(self):
+         # A density that runs to infinity at the edge of its support is
+@@ -4545,7 +4597,7 @@ class TestJointTheoreticalPlots(PlotTestCase):
+         self.assertEqual(mesh.get_array().shape, (4, 4))
+         self.assertEqual(ax.get_xlim(), (-0.5, 3.5))
+         self.assertEqual(ax.get_ylim(), (-0.5, 3.5))
+-        self.assertEqual(ax.get_title(), "Joint PMF Plot")
++        self.assertEqual(ax.get_title(), "Joint Probability Mass Function")
+ 
+     def test_second_joint_plot_warns_and_keeps_one_colorbar(self):
+         # The "warn but still draw" tier of the overlay policy, the same one
+-- 
+2.43.0
+

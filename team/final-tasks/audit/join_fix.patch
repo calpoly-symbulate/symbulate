@@ -1,0 +1,94 @@
+diff --git a/symbulate/result.py b/symbulate/result.py
+index 200ee8c..59f1513 100644
+--- a/symbulate/result.py
++++ b/symbulate/result.py
+@@ -1776,8 +1776,8 @@ def join(result1, result2):
+     >>> join(t1, t2)
+     (1, 2, 3, 4)
+     """
+-    a = tuple(result1.values) if isinstance(result1, Tuple) else (result1,)
+-    b = tuple(result2.values) if isinstance(result2, Tuple) else (result2,)
++    a = tuple(result1.values) if type(result1) == Tuple else (result1,)
++    b = tuple(result2.values) if type(result2) == Tuple else (result2,)
+ 
+     return Tuple(a + b)
+ 
+diff --git a/symbulate/tests/test_random_variables.py b/symbulate/tests/test_random_variables.py
+index 17d7bd3..a213b5e 100644
+--- a/symbulate/tests/test_random_variables.py
++++ b/symbulate/tests/test_random_variables.py
+@@ -401,6 +401,23 @@ class TestRVJoint(unittest.TestCase):
+         val = Z.draw()
+         self.assertEqual(len(val), 2)
+ 
++    def test_and_vector_valued_rv_stays_nested(self):
++        # Regression test for the reported issue: joining an RV whose own
++        # draw is itself a Vector (from **) with other RVs must keep that
++        # Vector as one nested component, not flatten it into the outer
++        # tuple. E.g. (RV(P) & X & Y).sim(n) should give ((s1, s2), sum, max),
++        # not (s1, s2, sum, max).
++        seed()
++        P = DiscreteUniform(a=1, b=4) ** 2
++        X = RV(P, sum)
++        Y = RV(P, max)
++        Z = RV(P) & X & Y
++        val = Z.draw()
++        self.assertEqual(len(val), 3)
++        self.assertEqual(len(val[0]), 2)
++        self.assertEqual(val[1], sum(val[0]))
++        self.assertEqual(val[2], max(val[0]))
++
+     def test_and_rv_scalar_draw_length(self):
+         seed()
+         X = RV(Normal(mean=0, sd=1))
+diff --git a/symbulate/tests/test_result.py b/symbulate/tests/test_result.py
+index 77c5965..722e405 100644
+--- a/symbulate/tests/test_result.py
++++ b/symbulate/tests/test_result.py
+@@ -554,6 +554,46 @@ class TestJoin(unittest.TestCase):
+         result = join(Tuple([1, 2]), Scalar(3))
+         self.assertEqual(tuple(result), (1, 2, 3))
+ 
++    def test_join_vector_and_scalar_stays_nested(self):
++        # Regression test: Vector is a Tuple subclass, but join() must not
++        # unpack it -- only an exact Tuple should be flattened. A Vector
++        # result (e.g. from ** or a multivariate distribution draw) should
++        # stay as a single nested component.
++        v = Vector([1, 2])
++        result = join(v, Scalar(3))
++        self.assertEqual(len(result), 2)
++        self.assertIsInstance(result[0], Vector)
++        self.assertEqual(tuple(result[0]), (1, 2))
++        self.assertEqual(result[1], 3)
++
++    def test_join_scalar_and_vector_stays_nested(self):
++        v = Vector([1, 2])
++        result = join(Scalar(0), v)
++        self.assertEqual(len(result), 2)
++        self.assertEqual(result[0], 0)
++        self.assertIsInstance(result[1], Vector)
++        self.assertEqual(tuple(result[1]), (1, 2))
++
++    def test_join_vector_and_vector_stays_nested(self):
++        v1 = Vector([1, 2])
++        v2 = Vector([3, 4])
++        result = join(v1, v2)
++        self.assertEqual(len(result), 2)
++        self.assertIsInstance(result[0], Vector)
++        self.assertIsInstance(result[1], Vector)
++        self.assertEqual(tuple(result[0]), (1, 2))
++        self.assertEqual(tuple(result[1]), (3, 4))
++
++    def test_join_distinguishes_exact_tuple_from_vector_subclass(self):
++        # The core distinction the fix depends on: an exact Tuple flattens,
++        # but a Tuple *subclass* (Vector) does not. If join() is ever
++        # changed to use isinstance(x, Tuple) instead of type(x) == Tuple,
++        # this test will fail, since Vector would then also flatten.
++        flattened = join(Tuple([1, 2]), Scalar(3))
++        nested = join(Vector([1, 2]), Scalar(3))
++        self.assertEqual(len(flattened), 3)
++        self.assertEqual(len(nested), 2)
++
+ 
+ # ---------------------------------------------------------------------------
+ # concat

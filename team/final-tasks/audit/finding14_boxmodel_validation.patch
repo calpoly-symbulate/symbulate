@@ -1,0 +1,78 @@
+diff --git a/symbulate/probability_space.py b/symbulate/probability_space.py
+index 24cb755..4c7c781 100644
+--- a/symbulate/probability_space.py
++++ b/symbulate/probability_space.py
+@@ -1,4 +1,5 @@
+ from collections import Counter
++import numbers
+ 
+ import numpy as np
+ 
+@@ -410,6 +411,10 @@ class BoxModel(ProbabilitySpace):
+         ------
+         TypeError
+             If the ``box`` is not specified as either a list or a dict.
++        ValueError
++            If ``box`` is empty.
++        ValueError
++            If ``size`` is negative.
+         ValueError
+             If ``probs`` is provided but its length does not match the number
+             of tickets in the box.
+@@ -427,6 +432,27 @@ class BoxModel(ProbabilitySpace):
+             self.probs = None
+         else:
+             raise TypeError("Box must be specified either as a list or a dict.")
++        if len(self.box) == 0:
++            raise ValueError(
++                "box is empty -- there is nothing to draw from. Give "
++                "BoxModel a non-empty list of tickets, e.g. "
++                "BoxModel([1, 2, 3])."
++            )
++        # size=None means "draw 1 ticket"; float('inf') is a legitimate,
++        # deliberately unbounded lazy sequence. Only an actual negative
++        # number is invalid -- this used to pass silently and only fail
++        # later, inside .draw(), with a raw NumPy message ("negative
++        # dimensions are not allowed") that never mentions size.
++        if (
++            size is not None
++            and isinstance(size, numbers.Real)
++            and size != float("inf")
++            and size < 0
++        ):
++            raise ValueError(
++                f"size must be a non-negative number of tickets to draw, "
++                f"got size={size!r}."
++            )
+         if probs is not None and len(probs) != len(self.box):
+             raise ValueError(
+                 f"probs must have the same length as box, "
+diff --git a/symbulate/tests/test_probability_space.py b/symbulate/tests/test_probability_space.py
+index 1172335..87a6d6b 100644
+--- a/symbulate/tests/test_probability_space.py
++++ b/symbulate/tests/test_probability_space.py
+@@ -181,6 +181,24 @@ class TestBoxModel(unittest.TestCase):
+         self.assertEqual(len(bm.box), 4)
+         self.assertEqual(bm.box.count("a"), 3)
+ 
++    def test_empty_box_raises_at_construction(self):
++        # Regression test: an empty box used to pass construction silently
++        # and only fail later, inside .draw(), with a raw NumPy message
++        # ("a must be a positive integer unless no samples are taken").
++        with self.assertRaisesRegex(ValueError, "empty"):
++            BoxModel([])
++
++    def test_negative_size_raises_at_construction(self):
++        # Regression test: a negative size used to pass construction
++        # silently and only fail later, inside .draw(), with a raw NumPy
++        # message ("negative dimensions are not allowed").
++        with self.assertRaisesRegex(ValueError, "size"):
++            BoxModel([1, 2, 3], size=-2)
++
++    def test_infinite_size_still_allowed(self):
++        bm = BoxModel([1, 2, 3], size=float("inf"))
++        self.assertEqual(bm.size, float("inf"))
++
+     def test_size_none_returns_scalar(self):
+         seed()
+         bm = BoxModel(["x", "y", "z"], size=None)

@@ -1,0 +1,84 @@
+diff --git a/symbulate/results.py b/symbulate/results.py
+index 219701a..593e518 100644
+--- a/symbulate/results.py
++++ b/symbulate/results.py
+@@ -2125,6 +2125,22 @@ class RVResults(Results):
+                 "realization against its index, use type='path'.)"
+             )
+ 
++        # This has to run before the self.dim > 2 branch below, not after
++        # it: that branch can return early (the "pairs" case), building a
++        # GridSpec, resizing the figure, and adding a subplot before this
++        # check would otherwise ever run for that path -- so a call like
++        # (X**3).sim(50).plot(dims=[0, 1]) used to raise only after a
++        # figure was already half-built, from a re-entrant inner call
++        # rather than this intended check.
++        if "dims" in kwargs:
++            raise ValueError(
++                "dims= is not a plotting argument for simulated results: "
++                "choose the variables when you simulate them instead, by "
++                "indexing the random variable -- X[[0, 2]].sim(1000).plot() "
++                "for the 1st and 3rd. (A distribution's own .plot() does take "
++                "variables=, since there is nothing to simulate.)"
++            )
++
+         # Three or more variables have no single joint plot, so the default is
+         # the matrix of every pair. type="path" asks for the old behavior: each
+         # realization drawn against its index. Gated on a known dimension, so
+@@ -2158,14 +2174,6 @@ class RVResults(Results):
+                 )
+             # Fall through to the path branch, with the note it should print.
+             _suggestion = (type[0], default, alternatives)
+-        if "dims" in kwargs:
+-            raise ValueError(
+-                "dims= is not a plotting argument for simulated results: "
+-                "choose the variables when you simulate them instead, by "
+-                "indexing the random variable -- X[[0, 2]].sim(1000).plot() "
+-                "for the 1st and 3rd. (A distribution's own .plot() does take "
+-                "variables=, since there is nothing to simulate.)"
+-            )
+ 
+         if self.dim == 1:
+             # make sure self.array, a Numpy array, has been set
+diff --git a/symbulate/tests/test_results.py b/symbulate/tests/test_results.py
+index 4d065e6..52d755f 100644
+--- a/symbulate/tests/test_results.py
++++ b/symbulate/tests/test_results.py
+@@ -19,6 +19,10 @@ import sys
+ import unittest
+ 
+ import numpy as np
++import matplotlib
++
++matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
++import matplotlib.pyplot as plt
+ 
+ from symbulate.result import Scalar, Vector
+ from symbulate.results import (
+@@ -573,6 +577,26 @@ class TestRVResultsPlot(unittest.TestCase):
+         with self.assertRaises(Exception):
+             rvr.plot(type=42)
+ 
++    def test_dims_kwarg_on_3plus_variables_raises_before_drawing(self):
++        # Regression test: dims= on 3+ variables used to be validated
++        # *after* the "pairs" branch had already built a GridSpec, resized
++        # the figure, and added a subplot -- so the figure was left
++        # half-built even though the call correctly raised in the end.
++        # Confirm the check now runs before any of that drawing happens.
++        rvr = RVResults(
++            [
++                Vector([1.0, 2.0, 3.0]),
++                Vector([4.0, 5.0, 6.0]),
++                Vector([7.0, 8.0, 9.0]),
++            ]
++        )
++        plt.close("all")
++        with self.assertRaisesRegex(ValueError, "dims="):
++            rvr.plot(dims=[0, 1])
++        # No figure should have been created/modified by the failed call.
++        self.assertEqual(plt.gcf().get_axes(), [])
++        plt.close("all")
++
+ 
+ # ---------------------------------------------------------------------------
+ # RVResults.__init__

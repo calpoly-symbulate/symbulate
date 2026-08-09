@@ -1,0 +1,227 @@
+From 727acc4d85473efd32230018e561b043f4374a97 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 02:57:56 +0000
+Subject: [PATCH 2/4] feature: add InverseGaussian (Wald) distribution
+
+Adds InverseGaussian(mean=1.0, shape=1.0), a direct wrap of
+scipy.stats.invgauss, parameterized by the textbook (mean, shape)
+convention rather than scipy's own standardized shape parameter (the
+translation is mu=mean/shape, scale=shape). Exported from
+symbulate/__init__.py; tests added covering mean/variance formulas,
+pdf agreement with scipy, the Normal limit as shape grows, error
+handling, and plotting.
+---
+ symbulate/__init__.py                 |  1 +
+ symbulate/distributions.py            | 97 ++++++++++++++++++++++++++-
+ symbulate/tests/test_distributions.py | 72 ++++++++++++++++++++
+ 3 files changed, 167 insertions(+), 3 deletions(-)
+
+diff --git a/symbulate/__init__.py b/symbulate/__init__.py
+index 999d921..8b4e5a9 100644
+--- a/symbulate/__init__.py
++++ b/symbulate/__init__.py
+@@ -46,6 +46,7 @@ from .distributions import (
+     InverseGamma,
+     ScaledInverseChiSquare,
+     LogGamma,
++    InverseGaussian,
+     Beta,
+     PERT,
+     Triangular,
+diff --git a/symbulate/distributions.py b/symbulate/distributions.py
+index b4969e8..d0754c6 100644
+--- a/symbulate/distributions.py
++++ b/symbulate/distributions.py
+@@ -2973,12 +2973,103 @@ class LogGamma(Distribution):
+         super().__init__(params, stats.loggamma, False)
+ 
+ 
++class InverseGaussian(Distribution):
++    """Probability space for an inverse Gaussian (Wald) distribution.
++
++    A continuous distribution on ``(0, infinity)`` that arises as the
++    distribution of the first time a Brownian motion with positive drift
++    reaches a fixed level -- a first-passage-time distribution. Despite the
++    name, it is unrelated to the reciprocal of a normal random variable;
++    the name instead comes from an inverse relationship between the
++    cumulant generating functions of the inverse Gaussian and normal
++    distributions.
++
++    Parameterized here directly by its mean and shape, the convention most
++    textbooks use (often written IG(mu, lambda)), rather than scipy's own
++    standardized shape parameter -- so ``InverseGaussian(mean=2,
++    shape=3).mean()`` really is 2.
++
++    Parameters
++    ----------
++    mean : float
++        Mean of the distribution. Must be positive.
++    shape : float
++        Shape parameter (often written lambda). Must be positive. Larger
++        values concentrate the distribution more tightly around its mean
++        and make it look more like a normal distribution; smaller values
++        give it a heavier right tail.
++
++    Attributes
++    ----------
++    mean_param : float
++        Mean of the distribution, as supplied.
++    shape : float
++        Shape parameter, as supplied.
++
++    Notes
++    -----
++    The variance is ``mean ** 3 / shape``. Wraps ``scipy.stats.invgauss``,
++    which takes a single standardized shape parameter ``mu`` plus a
++    ``scale``; the translation used here is ``mu = mean / shape`` and
++    ``scale = shape``, which is what makes ``scale * invgauss(mu)`` land on
++    the requested mean and shape (``scale * mu = mean`` and
++    ``scale ** 2 * mu ** 3 = mean ** 3 / shape``).
++
++    As ``shape -> infinity`` with ``mean`` fixed, the distribution
++    approaches a ``Normal(mean, mean ** 3 / shape)`` -- its variance shrinks
++    to 0 around the same mean, the same limiting relationship the normal
++    distribution has to many other distributions in this package.
++
++    Examples
++    --------
++    >>> from symbulate import *
++    >>> X = InverseGaussian(mean=2, shape=3)
++    >>> float(X.mean())
++    2.0
++    >>> round(float(X.var()), 4)
++    2.6667
++    >>> X.draw()  # doctest: +SKIP
++    1.42
++    """
++
++    def __init__(self, mean=1.0, shape=1.0):
++        """Initialize an inverse Gaussian distribution.
++
++        Raises
++        ------
++        Exception
++            If ``mean`` or ``shape`` is not a positive number.
++        """
++        _validate(
++            (
++                not isinstance(mean, numbers.Real) or mean <= 0,
++                "mean must be a positive number",
++            ),
++            (
++                not isinstance(shape, numbers.Real) or shape <= 0,
++                "shape must be a positive number",
++            ),
++        )
++        # Stored under `mean_param` (not `mean`) because `mean` is already
++        # the name of the inherited callable that returns the distribution's
++        # expected value -- the same reason `scale` on this class is spelled
++        # out below rather than reusing a name already claimed.
++        self.mean_param = mean
++        self.shape = shape
++
++        # scipy's invgauss is standardized: `mu` is a dimensionless shape
++        # parameter and `scale` stretches it. Translating from the (mean,
++        # shape) convention: mu = mean / shape, scale = shape.
++        params = {"mu": mean / shape, "scale": shape}
++        super().__init__(params, stats.invgauss, False)
++
++
+ class Beta(Distribution):
+     """Probability space for a beta distribution.
+ 
+-    A continuous distribution defined on [0, 1], often used to model
+-    probabilities or proportions. The shape changes with parameters
+-    ``shape1`` and ``shape2``.
++    A continuous distribution defined on ``[xmin, xmax]`` (``[0, 1]`` by
++    default), often used to model probabilities or proportions. The shape
++    changes with parameters ``shape1`` and ``shape2``.
+ 
+     Parameters
+     ----------
+diff --git a/symbulate/tests/test_distributions.py b/symbulate/tests/test_distributions.py
+index 911ebcf..b5ae16e 100644
+--- a/symbulate/tests/test_distributions.py
++++ b/symbulate/tests/test_distributions.py
+@@ -2409,6 +2409,78 @@ class TestLogGamma(unittest.TestCase):
+         plt.close("all")
+ 
+ 
++class TestInverseGaussian(unittest.TestCase):
++
++    def test_InverseGaussian_distributional(self):
++        distributions.rng = np.random.default_rng(42)
++        mean, shape = 2.0, 3.0
++        X = RV(InverseGaussian(mean=mean, shape=shape))
++        sims = X.sim(Nsim)
++        cdf = stats.invgauss(mu=mean / shape, scale=shape).cdf
++        pval = stats.kstest(sims, cdf).pvalue
++        self.assertTrue(pval > 0.01)
++
++    def test_InverseGaussian_mean_matches_parameter(self):
++        for mean, shape in [(1, 1), (2, 3), (5, 0.5)]:
++            X = InverseGaussian(mean=mean, shape=shape)
++            self.assertAlmostEqual(float(X.mean()), mean, places=8)
++
++    def test_InverseGaussian_variance_is_mean_cubed_over_shape(self):
++        for mean, shape in [(1, 1), (2, 3), (5, 0.5)]:
++            X = InverseGaussian(mean=mean, shape=shape)
++            self.assertAlmostEqual(float(X.var()), mean**3 / shape, places=8)
++
++    def test_InverseGaussian_pdf_matches_scipy(self):
++        mean, shape = 2.0, 3.0
++        X = InverseGaussian(mean=mean, shape=shape)
++        th = stats.invgauss(mu=mean / shape, scale=shape)
++        for x in [0.5, 1.0, 2.0, 5.0]:
++            self.assertAlmostEqual(float(X.pdf(x)), float(th.pdf(x)), places=10)
++
++    def test_InverseGaussian_default_parameters(self):
++        X = InverseGaussian()
++        self.assertEqual(X.mean_param, 1.0)
++        self.assertEqual(X.shape, 1.0)
++        self.assertAlmostEqual(float(X.mean()), 1.0, places=8)
++
++    def test_InverseGaussian_support_is_positive(self):
++        X = InverseGaussian(mean=2, shape=3)
++        low, high = X._support()
++        self.assertEqual(low, 0.0)
++        self.assertTrue(float(X.pdf(-1)) == 0.0 or math.isnan(float(X.pdf(-1))))
++
++    def test_InverseGaussian_approaches_normal_as_shape_grows(self):
++        # As shape -> infinity with mean fixed, variance = mean**3 / shape
++        # shrinks toward 0 around the same mean.
++        mean = 4.0
++        shapes = [1, 10, 1_000, 1_000_000]
++        variances = [InverseGaussian(mean=mean, shape=s).var() for s in shapes]
++        self.assertEqual(list(variances), sorted(variances, reverse=True))
++        self.assertAlmostEqual(float(variances[-1]), 0.0, places=3)
++
++    def test_InverseGaussian_draw_is_scalar_in_support(self):
++        distributions.rng = np.random.default_rng(0)
++        value = InverseGaussian(mean=2, shape=3).draw()
++        self.assertIsInstance(value, Scalar)
++        self.assertGreater(float(value), 0.0)
++
++    def test_InverseGaussian_invalid_mean_raises(self):
++        for bad in [-1, 0, "a"]:
++            self.assertRaises(Exception, lambda b=bad: InverseGaussian(mean=b))
++
++    def test_InverseGaussian_invalid_shape_raises(self):
++        for bad in [-1, 0, "a"]:
++            self.assertRaises(Exception, lambda b=bad: InverseGaussian(shape=b))
++
++    def test_InverseGaussian_plots_without_error(self):
++        # draw / RV / sim / plot all wired through the base class.
++        InverseGaussian(mean=2, shape=3).draw()
++        RV(InverseGaussian(mean=2, shape=3)).sim(100).plot()
++        InverseGaussian(mean=2, shape=3).plot()
++        InverseGaussian(mean=2, shape=3).plot(cdf=True)
++        plt.close("all")
++
++
+ class TestBeta(unittest.TestCase):
+ 
+     def test_Beta_error_shape1(self):
+-- 
+2.43.0
+

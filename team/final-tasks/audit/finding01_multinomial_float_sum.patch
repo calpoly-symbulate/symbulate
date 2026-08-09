@@ -1,0 +1,43 @@
+diff --git a/symbulate/distributions.py b/symbulate/distributions.py
+index 1472b34..cacf842 100644
+--- a/symbulate/distributions.py
++++ b/symbulate/distributions.py
+@@ -6869,7 +6869,11 @@ class Multinomial(MultivariateDistribution):
+         # ``p`` reports the helpful message instead of a cryptic error and can
+         # be stacked alongside an invalid ``n``.
+         try:
+-            bad_p = not (sum(p) == 1 and min(p) >= 0)
++            # Exact equality would reject the most common case in practice:
++            # probabilities that are mathematically meant to sum to 1 (e.g.
++            # a fair die, [1/6]*6, or [0.4, 0.3, 0.2, 0.1]) routinely land a
++            # few ULPs away from 1.0 once summed in floating point.
++            bad_p = not (math.isclose(sum(p), 1, abs_tol=1e-9) and min(p) >= 0)
+         except (TypeError, ValueError):
+             bad_p = True
+ 
+@@ -7333,12 +7337,24 @@ class NegativeMultinomial(MultivariateDistribution):
+         # low-level error, and can be reported alongside an invalid ``r``.
+         try:
+             p_arr = np.asarray(p, dtype=float)
++            p_sum = p_arr.sum()
++            # p0 = 1 - sum(p) has to be strictly positive (there has to be
++            # some leftover probability for the stopping category), so a
++            # sum that is 1 or more is always invalid. But exact-equality
++            # slop cuts both ways here: a sum that is mathematically meant
++            # to be safely below 1 can land a few ULPs *above* it in
++            # floating point, and a sum meant to land exactly at the
++            # invalid boundary of 1 can land a few ULPs *below* it -- so
++            # treat anything within abs_tol of 1 as the boundary case
++            # (invalid), the same tolerance Multinomial uses for its own
++            # sum-to-1 check above.
+             bad_p = (
+                 p_arr.ndim != 1
+                 or len(p_arr) < 1
+                 or not np.all(np.isfinite(p_arr))
+                 or np.any(p_arr < 0)
+-                or p_arr.sum() >= 1
++                or p_sum > 1
++                or math.isclose(p_sum, 1, abs_tol=1e-9)
+             )
+         except (TypeError, ValueError):
+             bad_p = True

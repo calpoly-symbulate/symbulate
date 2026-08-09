@@ -1,0 +1,810 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 9 Aug 2026 02:20:06 +0000
+Subject: [PATCH] feat: histogram/impulse plots of a jump process's visited
+ states
+
+X.apply(states).sim(1) (or path.states directly) gives the sequence of
+states visited along one sample path, indexed by jump number rather
+than clock time. Until now, .plot() could only draw that as a sample
+path against its jump index; there was no way to ask "what did the
+embedded jump chain look like" or "what fraction of time was spent in
+each state" without pulling the values out by hand.
+
+- InfiniteVector.plot() gains type="hist"/type="impulse": drawn from
+  self[tmin:tmax] via the existing make_hist/make_impulse renderers,
+  reusing the same tmin/tmax bounds the sample-path plot already uses.
+  An unsupported type raises a clear ValueError rather than silently
+  falling back to a path plot.
+- A new weights= parameter (on InfiniteVector.plot, and on make_hist/
+  make_impulse themselves) answers the more useful of two different
+  questions: an unweighted plot counts how often each state was jumped
+  into (the embedded chain's distribution), while weighting each state
+  by its holding time -- e.g. path.interarrival_times -- gives the
+  fraction of time actually spent in each state, since holding times
+  are generally random and state-dependent. make_impulse's counting is
+  now backed by a new weighted_count_var() helper alongside the
+  existing count_var().
+- DiscreteValued gains num_jumps_by(t), converting an elapsed clock
+  time into a jump count (by walking get_arrival_times() forward, the
+  same way ContinuousTimeMarkovChainResult evaluates itself at a given
+  time), so a states plot can be bounded by "everything that happened
+  by time T" instead of a fixed number of jumps:
+  path.states.plot(tmax=path.num_jumps_by(T), type="impulse").
+- RVResults.plot(type=...) now forwards type="hist"/"impulse" to each
+  realization's own .plot() for path-shaped (dim is None) results, so
+  X.apply(states).sim(n).plot(type="impulse") works directly. Every
+  other type value (including "path", which already relies on falling
+  through to this same branch untouched) is left unforwarded exactly
+  as before, so ordinary path plots are unaffected.
+- Tuple.plot(), DiscreteTimeFunction.plot(), and
+  ContinuousTimeFunction.plot() gain an explicit type= parameter purely
+  to reject anything other than None with a clear, actionable error --
+  only a jump process's states (InfiniteVector) support hist/impulse,
+  and without this check a stray type= would silently fall through
+  **kwargs all the way to matplotlib and surface as an opaque
+  "Line2D.set() got an unexpected keyword argument" error far from the
+  actual mistake.
+
+Regression tests added in test_result.py (type= dispatch and its
+error cases, weights=, num_jumps_by) and test_plot.py (weighted
+make_impulse/make_hist directly).
+---
+ symbulate/plot.py              |  67 ++++++++++-
+ symbulate/result.py            | 195 ++++++++++++++++++++++++++++++---
+ symbulate/results.py           |  21 ++++
+ symbulate/tests/test_plot.py   |  92 ++++++++++++++++
+ symbulate/tests/test_result.py | 130 ++++++++++++++++++++++
+ 5 files changed, 487 insertions(+), 18 deletions(-)
+
+diff --git a/symbulate/plot.py b/symbulate/plot.py
+index 19fc274..25dac3d 100644
+--- a/symbulate/plot.py
++++ b/symbulate/plot.py
+@@ -1426,6 +1426,37 @@ def count_var(x):
+     return counts
+ 
+ 
++def weighted_count_var(x, weights):
++    """Like ``count_var``, but sum ``weights`` instead of counting by 1.
++
++    Used for a states impulse plot weighted by how long each state was
++    held (``interarrival_times``): the count for a value becomes the
++    total time spent there instead of the number of jumps into it, so
++    the plot answers "what fraction of time was spent in each state"
++    rather than "how often was each state jumped into."
++
++    Parameters
++    ----------
++    x : iterable
++        The values (or category codes) to group by.
++    weights : iterable
++        A weight for each entry of ``x``, same length.
++
++    Returns
++    -------
++    dict
++        Maps each distinct value in ``x`` to the sum of the weights of
++        its occurrences.
++    """
++    sums = {}
++    for val, weight in zip(x, weights):
++        if val in sums:
++            sums[val] += weight
++        else:
++            sums[val] = weight
++    return sums
++
++
+ def compute_density(values):
+     density = gaussian_kde(values)
+     density.covariance_factor = lambda: 0.25
+@@ -3013,6 +3044,7 @@ def make_impulse(
+     alpha=None,
+     label=None,
+     orientation="vertical",
++    weights=None,
+     **kwargs,
+ ):
+     """Draw a 1D impulse (stem) plot of simulated discrete values.
+@@ -3059,6 +3091,16 @@ def make_impulse(
+         behavior. "horizontal" draws stems extending from the y-axis
+         instead, values on the y-axis, frequency/count on the x-axis --
+         for drawing sideways in a 2D plot's y-marginal panel.
++    weights : array-like, optional
++        A weight for each entry of ``values``, same length. If given,
++        each stem's height is the *sum* of the weights of the values
++        that fall on it, instead of a plain count -- e.g. weighting a
++        jump process's visited states by how long each one was held
++        (``interarrival_times``) turns "how often was each state
++        jumped into" into "what fraction of time was spent in each
++        state," which is a different question with a different
++        answer. ``normalize`` then divides by the total weight instead
++        of the number of values.
+     **kwargs
+         Additional keyword arguments passed to the stems
+         (``matplotlib.axes.Axes.vlines`` / ``hlines``).
+@@ -3086,13 +3128,25 @@ def make_impulse(
+     # values keep their real positions (categories is None).
+     codes, categories = _encode_categories(values)
+     n = len(codes)
+-    counts = count_var(codes)
++    if weights is None:
++        counts = count_var(codes)
++        total = n
++    else:
++        weights = list(weights)
++        if len(weights) != n:
++            raise ValueError(
++                f"weights has {len(weights)} entries but values has {n}. "
++                "weights must give exactly one weight per value, in the "
++                "same order."
++            )
++        counts = weighted_count_var(codes, weights)
++        total = sum(weights)
+     # Sort the code positions when categorical so the stems line up with
+     # the sorted tick labels; keep first-seen order for numeric data.
+     xs = sorted(counts.keys()) if categories is not None else list(counts.keys())
+     freqs = [counts[x] for x in xs]
+     if normalize:
+-        freqs = [freq / n for freq in freqs]
++        freqs = [freq / total for freq in freqs]
+ 
+     # Track the impulse series drawn on these axes, stored on the axes
+     # object itself (the same pattern get_next_color uses for the
+@@ -3192,6 +3246,7 @@ def make_hist(
+     alpha=None,
+     label=None,
+     orientation="vertical",
++    weights=None,
+     **kwargs,
+ ):
+     """Draw a 1D histogram of simulated values on the given axes.
+@@ -3243,6 +3298,13 @@ def make_hist(
+         on the x-axis -- today's behavior. "horizontal" draws bars
+         extending from the y-axis instead, values on the y-axis -- for
+         drawing sideways in a 2D plot's y-marginal panel.
++    weights : array-like, optional
++        A weight for each entry of ``values``, same length, passed
++        straight through to ``matplotlib.axes.Axes.hist``. Weighting a
++        jump process's visited states by how long each one was held
++        (``interarrival_times``) turns each bar into "what fraction of
++        time was the value in this range" instead of "how often did a
++        jump land in this range."
+     **kwargs
+         Additional keyword arguments passed to
+         ``matplotlib.axes.Axes.hist``.
+@@ -3287,6 +3349,7 @@ def make_hist(
+         alpha=alpha,
+         label=label,
+         orientation=orientation,
++        weights=weights,
+         **kwargs,
+     )
+     value_label, freq_label = "Value", "Density" if normalize else "Count"
+diff --git a/symbulate/result.py b/symbulate/result.py
+index e6c498e..8773a5f 100644
+--- a/symbulate/result.py
++++ b/symbulate/result.py
+@@ -5,7 +5,29 @@ import matplotlib.pyplot as plt
+ import symbulate
+ from .base import Arithmetic, Transformable, Statistical, Filterable, _build_mv_filter
+ from .index_sets import DiscreteTimeSequence, Reals, Naturals, TimeInterval
+-from .plot import SymbulatePlot, get_next_color, make_sample_path
++from .plot import SymbulatePlot, get_next_color, make_hist, make_impulse, make_sample_path
++
++
++def _reject_path_plot_type(type, plot_description):
++    """Raise a clear error for an unsupported ``type=`` on a path plot.
++
++    Only ``InfiniteVector.plot()`` (typically reached via a jump
++    process's ``.states``, e.g. ``X.apply(states)``) currently supports
++    ``type="hist"``/``type="impulse"``. Every other path-shaped
++    ``.plot()`` always draws a sample path, so a stray ``type=`` -- most
++    likely forwarded here from ``RVResults.plot(type=...)`` on an
++    ensemble of these -- would otherwise fall through **kwargs all the
++    way to ``matplotlib.axes.Axes.plot``, surfacing as an opaque
++    "unexpected keyword argument" error far from the actual mistake.
++    """
++    if type is not None:
++        raise ValueError(
++            f"type={type!r} is not supported here -- {plot_description} "
++            "always draws a sample path. type=\"hist\" and "
++            'type="impulse" are only available on a jump process\'s '
++            'visited states, e.g. X.apply(states).plot(type="impulse") '
++            "-- see InfiniteVector.plot."
++        )
+ 
+ 
+ class Scalar(numbers.Number):
+@@ -461,7 +483,7 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
+         """
+         return type(self)(np.cumsum(self.values))
+ 
+-    def plot(self, **kwargs):
++    def plot(self, type=None, **kwargs):
+         """
+         Plot the values of the tuple as a sample path.
+ 
+@@ -500,6 +522,7 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
+         >>> t.plot()  # doctest: +SKIP
+         >>> plt.show()  # doctest: +SKIP
+         """
++        _reject_path_plot_type(type, "Tuple.plot()")
+         ax = plt.gca()
+         color = kwargs.pop("color", None)
+         if color is None:
+@@ -899,28 +922,54 @@ class InfiniteVector(InfiniteTuple):
+ 
+         return InfiniteVector(_func)
+ 
+-    def plot(self, tmin=0, tmax=10, **kwargs):
++    def plot(self, tmin=0, tmax=10, type=None, weights=None, **kwargs):
+         """
+         Plot values from the vector over a specified index range.
+ 
+-        The values are drawn over their index as a marker at each
+-        index joined by a dashed line (``make_sample_path``, ``style=
+-        "dots"``), colored by the package color cycle -- there is
+-        nothing "between" one index and the next, so this avoids
++        By default, the values are drawn over their index as a marker
++        at each index joined by a dashed line (``make_sample_path``,
++        ``style="dots"``), colored by the package color cycle -- there
++        is nothing "between" one index and the next, so this avoids
+         implying values exist there. Overlaid paths -- a second
+         ``.plot()`` call on the same axes -- get distinct colors and
+         an automatic "Path 1", "Path 2", ... legend.
+ 
++        Passing ``type="hist"`` or ``type="impulse"`` instead treats
++        ``self[tmin], ..., self[tmax - 1]`` as a batch of values and
++        draws a histogram or impulse plot of them, rather than a path.
++        This is for a jump process's *visited states* -- e.g.
++        ``X.apply(states)`` (see ``states()`` in ``math.py``) returns
++        exactly this kind of ``InfiniteVector``, one entry per jump
++        rather than per unit of time -- and answers "what did the
++        embedded jump chain look like," counting each visited state
++        once no matter how long the process stayed there. To instead
++        weight each state by how long it was held (answering "what
++        fraction of time was spent in each state"), pass ``weights=``
++        another same-shape sequence, e.g. the same path's
++        ``interarrival_times``: these are two different questions with
++        different answers, since a state's holding time is generally
++        random and state-dependent.
++
+         Parameters
+         ----------
+         tmin : int, optional
+             Starting index, by default 0.
+         tmax : int, optional
+             Ending index (exclusive), by default 10.
++        type : {"hist", "impulse"}, optional
++            If given, draw a histogram (continuous-valued states) or
++            impulse plot (discrete-valued states) of the values
++            instead of a sample path. Left unset (the default) for the
++            ordinary path plot.
++        weights : array-like, optional
++            Only used with ``type=``. A weight for each index from
++            ``tmin`` to ``tmax`` (e.g. ``interarrival_times``), summed
++            per value instead of counting occurrences -- see above.
+         **kwargs
+-            Additional keyword arguments passed to
+-            ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
+-            and from there to ``matplotlib.axes.Axes.plot``.
++            Additional keyword arguments passed to ``make_sample_path``
++            (e.g. ``label``, ``alpha``, ``style``) when ``type`` is
++            unset, or to ``make_hist`` / ``make_impulse`` when it is
++            given.
+ 
+         Returns
+         -------
+@@ -929,6 +978,11 @@ class InfiniteVector(InfiniteTuple):
+             on. Its printed representation is empty, so Jupyter shows
+             only the plot.
+ 
++        Raises
++        ------
++        ValueError
++            If ``type`` is given but is not ``"hist"`` or ``"impulse"``.
++
+         See Also
+         --------
+         DiscreteTimeFunction.plot : Plot a discrete-time function.
+@@ -941,6 +995,24 @@ class InfiniteVector(InfiniteTuple):
+         >>> iv = InfiniteVector(lambda n: n ** 2)
+         >>> iv.plot(tmin=0, tmax=5)  # doctest: +SKIP
+         >>> plt.show()  # doctest: +SKIP
++
++        The states visited by a jump process, as an impulse plot of
++        the first 100 jumps:
++
++        >>> from symbulate import *
++        >>> path = ContinuousTimeMarkovChain(
++        ...     [[-1, 1], [2, -2]], [1.0, 0.0]
++        ... ).draw()
++        >>> path.states.plot(tmin=0, tmax=100, type="impulse")  # doctest: +SKIP
++
++        The same states weighted by how long each was held, i.e. the
++        fraction of time spent in each state rather than how often the
++        chain jumped into it:
++
++        >>> path.states.plot(
++        ...     tmin=0, tmax=100, type="impulse",
++        ...     weights=path.interarrival_times,
++        ... )  # doctest: +SKIP
+         """
+         xs = range(tmin, tmax)
+         ys = [self[t] for t in range(tmin, tmax)]
+@@ -948,9 +1020,24 @@ class InfiniteVector(InfiniteTuple):
+         color = kwargs.pop("color", None)
+         if color is None:
+             color = get_next_color(ax)
+-        kwargs.setdefault("xlabel", "Index")
+-        kwargs.setdefault("style", "dots")
+-        make_sample_path(xs, ys, ax, color, **kwargs)
++
++        if type is not None and type not in ("hist", "impulse"):
++            raise ValueError(
++                f"type={type!r} is not supported here. Use type=\"hist\" "
++                'or type="impulse" to plot a histogram or impulse plot of '
++                "the values from tmin to tmax, or leave type unset for the "
++                "default sample-path plot."
++            )
++        if type in ("hist", "impulse"):
++            w = None if weights is None else [weights[t] for t in range(tmin, tmax)]
++            if type == "hist":
++                make_hist(ys, ax, color, weights=w, **kwargs)
++            else:
++                make_impulse(ys, ax, color, weights=w, **kwargs)
++        else:
++            kwargs.setdefault("xlabel", "Index")
++            kwargs.setdefault("style", "dots")
++            make_sample_path(xs, ys, ax, color, **kwargs)
+         return SymbulatePlot(ax)
+ 
+ 
+@@ -1284,7 +1371,7 @@ class DiscreteTimeFunction(TimeFunction):
+         """
+         return self.__str__()
+ 
+-    def plot(self, tmin=0, tmax=10, **kwargs):
++    def plot(self, tmin=0, tmax=10, type=None, **kwargs):
+         """
+         Plot values over a specified time range.
+ 
+@@ -1302,6 +1389,10 @@ class DiscreteTimeFunction(TimeFunction):
+             Starting time, by default 0.
+         tmax : int or float, optional
+             Ending time, by default 10.
++        type : None, optional
++            Not supported here -- always draws a sample path. Passing
++            anything other than ``None`` raises; see the states-based
++            histogram/impulse plots on ``InfiniteVector.plot``.
+         **kwargs
+             Additional keyword arguments passed to
+             ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
+@@ -1314,6 +1405,11 @@ class DiscreteTimeFunction(TimeFunction):
+             on. Its printed representation is empty, so Jupyter shows
+             only the plot.
+ 
++        Raises
++        ------
++        ValueError
++            If ``type`` is given (not ``None``).
++
+         See Also
+         --------
+         ContinuousTimeFunction.plot : Plot a continuous-time function.
+@@ -1327,6 +1423,7 @@ class DiscreteTimeFunction(TimeFunction):
+         >>> f.plot(tmin=0, tmax=5)  # doctest: +SKIP
+         >>> plt.show()  # doctest: +SKIP
+         """
++        _reject_path_plot_type(type, "DiscreteTimeFunction.plot()")
+         nmin = int(np.floor(tmin * self.index_set.fs))
+         nmax = int(np.ceil(tmax * self.index_set.fs))
+         ts = [self.index_set[n] for n in range(nmin, nmax)]
+@@ -1603,7 +1700,7 @@ class ContinuousTimeFunction(TimeFunction):
+         """
+         return self.__str__()
+ 
+-    def plot(self, tmin=0, tmax=10, **kwargs):
++    def plot(self, tmin=0, tmax=10, type=None, **kwargs):
+         """
+         Plot values over a specified time range.
+ 
+@@ -1623,12 +1720,25 @@ class ContinuousTimeFunction(TimeFunction):
+         a second ``.plot()`` call on the same axes -- get distinct colors
+         and an automatic "Path 1", "Path 2", ... legend.
+ 
++        This always draws a sample path over time -- ``type=`` is not
++        supported here even for a jump process, since sampling a step
++        function on a time grid only approximates a states histogram at
++        best (see ``InfiniteVector.plot`` for the exact version). For a
++        histogram or impulse plot of the *states visited*, use
++        ``.states`` (or ``X.apply(states)``) directly, optionally
++        combined with ``num_jumps_by(t)`` (on ``DiscreteValued``) to
++        convert an elapsed time into how many jumps that covers, e.g.
++        ``path.states.plot(tmax=path.num_jumps_by(T), type="impulse")``.
++
+         Parameters
+         ----------
+         tmin : float, optional
+             Starting time, by default 0.
+         tmax : float, optional
+             Ending time, by default 10.
++        type : None, optional
++            Not supported here -- see above. Passing anything other
++            than ``None`` raises.
+         **kwargs
+             Additional keyword arguments passed to
+             ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
+@@ -1641,10 +1751,16 @@ class ContinuousTimeFunction(TimeFunction):
+             on. Its printed representation is empty, so Jupyter shows
+             only the plot.
+ 
++        Raises
++        ------
++        ValueError
++            If ``type`` is given (not ``None``).
++
+         See Also
+         --------
+         DiscreteTimeFunction.plot : Plot a discrete-time function.
+-        InfiniteVector.plot : Plot values from an infinite vector.
++        InfiniteVector.plot : Plot values from an infinite vector, with
++            type="hist"/"impulse" support for a jump process's states.
+         Tuple.plot : Plot a finite Tuple.
+ 
+         Examples
+@@ -1655,6 +1771,7 @@ class ContinuousTimeFunction(TimeFunction):
+         >>> f.plot(tmin=0, tmax=2 * np.pi)  # doctest: +SKIP
+         >>> plt.show()  # doctest: +SKIP
+         """
++        _reject_path_plot_type(type, "ContinuousTimeFunction.plot()")
+         ts = ys = None
+         if isinstance(self, DiscreteValued):
+             try:
+@@ -1829,6 +1946,52 @@ class DiscreteValued:
+             raise AttributeError("Interarrival times not defined for this function.")
+         return self.interarrival_times.cumsum()
+ 
++    def num_jumps_by(self, t):
++        """
++        Return how many jumps of this path occurred by time ``t``.
++
++        Converts a clock-time bound into a jump-count bound, for
++        plotting a states histogram or impulse plot over an elapsed
++        stretch of time rather than a fixed number of jumps -- e.g.
++        ``path.states.plot(tmax=path.num_jumps_by(T), type="impulse")``
++        plots every state visited by time ``T``, no matter how many
++        jumps that took (see ``InfiniteVector.plot``). Walks
++        ``get_arrival_times()`` forward one jump at a time, the same
++        way ``ContinuousTimeMarkovChainResult`` evaluates itself at a
++        given time.
++
++        Parameters
++        ----------
++        t : float
++            An elapsed amount of time, measured from 0.
++
++        Returns
++        -------
++        int
++            The number of jumps with an arrival time at or before ``t``.
++
++        Raises
++        ------
++        AttributeError
++            If interarrival times are not defined for this function.
++
++        See Also
++        --------
++        DiscreteValued.get_arrival_times : Return the arrival (jump) times.
++
++        Examples
++        --------
++        >>> from symbulate import *
++        >>> path = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0]).draw()
++        >>> path.num_jumps_by(0.0)
++        0
++        """
++        arrival_times = self.get_arrival_times()
++        n = 0
++        while arrival_times[n] <= t:
++            n += 1
++        return n
++
+ 
+ def join(result1, result2):
+     """
+diff --git a/symbulate/results.py b/symbulate/results.py
+index c614d48..7d68a01 100644
+--- a/symbulate/results.py
++++ b/symbulate/results.py
+@@ -1951,6 +1951,14 @@ class RVResults(Results):
+             ``"hist2d"``, ``"density2d"``, ``"segmented_rug"``,
+             ``"segmented_density"``, and ``"segmented_hist"`` are also
+             accepted if you want to force a particular one.
++            For a path-shaped result -- e.g. ``X.apply(states).sim(1)``,
++            the jump-by-jump states of a process with jumps -- ``type``
++            is passed through to that result's own ``.plot()``.
++            ``"hist"`` and ``"impulse"`` are the only ones supported
++            there today (see ``InfiniteVector.plot``); anything else
++            (or a plain ``Tuple``/``DiscreteTimeFunction``/
++            ``ContinuousTimeFunction`` result, which only ever draws a
++            sample path) raises rather than being silently ignored.
+         alpha : float, optional
+             Transparency of plotted elements, between 0 and 1. Each
+             plot type has its own default: histograms (1D, 2D, and
+@@ -2801,6 +2809,19 @@ class RVResults(Results):
+             # would be meaningless here -- suppress them (matplotlib
+             # skips labels that start with an underscore).
+             kwargs.setdefault("label", "_nolegend_")
++            # type="hist"/"impulse" is the only thing meaningful here (an
++            # InfiniteVector's states dispatch -- see InfiniteVector.plot),
++            # so only those two values are forwarded. Anything else --
++            # None, or "path" arriving via the dim > 2 fallthrough above,
++            # which asks for this same per-realization plot and was never
++            # meant to reach the individual results -- is left out of the
++            # call below entirely, exactly as before this branch supported
++            # type= at all. Forwarding it unconditionally would break the
++            # ordinary path plot: most results here (Tuple,
++            # DiscreteTimeFunction, ContinuousTimeFunction) don't support
++            # type= and raise if it's anything other than None.
++            if type is not None and type[0] in ("hist", "impulse"):
++                kwargs["type"] = type[0]
+             for result in self.results:
+                 result.plot(alpha=alpha, color=color, **kwargs)
+             # No x-label set here: each result already named its own axis when
+diff --git a/symbulate/tests/test_plot.py b/symbulate/tests/test_plot.py
+index b24ce10..d4121bb 100644
+--- a/symbulate/tests/test_plot.py
++++ b/symbulate/tests/test_plot.py
+@@ -75,6 +75,7 @@ from symbulate.plot import (
+     make_bar,
+     BAR_ALPHA,
+     make_dotplot,
++    make_hist,
+     make_impulse,
+     make_violin,
+     make_violinplot,
+@@ -1341,6 +1342,97 @@ class TestPlotCategorical(PlotTestCase):
+         self.assertEqual(labels, ["a", "b", "c"])
+ 
+ 
++class TestMakeImpulseWeights(PlotTestCase):
++    """make_impulse(weights=...): sum weights per value instead of counting.
++
++    This is what turns "how often was each state jumped into" into "what
++    fraction of time was spent in each state" for a states impulse plot.
++    """
++
++    def test_weights_sum_instead_of_count(self):
++        ax = plt.gca()
++        xs, freqs = make_impulse(
++            [0, 1, 0, 1, 0],
++            ax,
++            get_next_color(ax),
++            weights=[1.0, 2.0, 3.0, 4.0, 5.0],
++            normalize=False,
++        )
++        self.assertEqual(dict(zip(xs, freqs)), {0: 9.0, 1: 6.0})
++
++    def test_normalize_divides_by_total_weight_not_count(self):
++        ax = plt.gca()
++        xs, freqs = make_impulse(
++            [0, 1],
++            ax,
++            get_next_color(ax),
++            weights=[3.0, 1.0],
++            normalize=True,
++        )
++        self.assertEqual(dict(zip(xs, freqs)), {0: 0.75, 1: 0.25})
++
++    def test_weights_work_with_categorical_values(self):
++        ax = plt.gca()
++        xs, freqs = make_impulse(
++            np.array(["a", "b", "a"]),
++            ax,
++            get_next_color(ax),
++            weights=[1.0, 5.0, 2.0],
++            normalize=False,
++        )
++        labels = [t.get_text() for t in ax.get_xticklabels()]
++        self.assertEqual(labels, ["a", "b"])
++        self.assertEqual(list(freqs), [3.0, 5.0])
++
++    def test_mismatched_weights_length_raises(self):
++        ax = plt.gca()
++        with self.assertRaises(ValueError) as cm:
++            make_impulse([0, 1, 2], ax, get_next_color(ax), weights=[1.0, 2.0])
++        message = str(cm.exception)
++        self.assertIn("3", message)
++        self.assertIn("2", message)
++
++    def test_no_weights_matches_plain_counting(self):
++        ax1 = plt.gca()
++        xs1, freqs1 = make_impulse([0, 1, 0], ax1, get_next_color(ax1), normalize=False)
++        plt.figure()
++        ax2 = plt.gca()
++        xs2, freqs2 = make_impulse(
++            [0, 1, 0], ax2, get_next_color(ax2), weights=[1, 1, 1], normalize=False
++        )
++        self.assertEqual(list(xs1), list(xs2))
++        self.assertEqual(list(freqs1), list(freqs2))
++
++
++class TestMakeHistWeights(PlotTestCase):
++    """make_hist(weights=...) passes weights through to ax.hist."""
++
++    def test_weighted_counts_sum_to_total_weight(self):
++        ax = plt.gca()
++        values = [1, 1, 1, 5, 5]
++        weights = [1.0, 1.0, 1.0, 10.0, 10.0]
++        counts, edges, patches = make_hist(
++            values, ax, get_next_color(ax), normalize=False, weights=weights, bins=2
++        )
++        self.assertAlmostEqual(sum(counts), sum(weights))
++
++    def test_unweighted_matches_plain_histogram(self):
++        ax1 = plt.gca()
++        values = [1, 2, 2, 3]
++        counts1, _, _ = make_hist(values, ax1, get_next_color(ax1), normalize=False, bins=3)
++        plt.figure()
++        ax2 = plt.gca()
++        counts2, _, _ = make_hist(
++            values,
++            ax2,
++            get_next_color(ax2),
++            normalize=False,
++            weights=[1, 1, 1, 1],
++            bins=3,
++        )
++        np.testing.assert_allclose(counts1, counts2)
++
++
+ class TestPlot1DDensityFeatures(PlotTestCase):
+     """The integrated make_density: styling, bandwidth, discrete pmf."""
+ 
+diff --git a/symbulate/tests/test_result.py b/symbulate/tests/test_result.py
+index 4b9abbc..c5e3544 100644
+--- a/symbulate/tests/test_result.py
++++ b/symbulate/tests/test_result.py
+@@ -1013,5 +1013,135 @@ class TestContinuousTimeFunctionStepPlots(unittest.TestCase):
+         self.assertEqual(len(line.get_xdata()), 200)
+ 
+ 
++# ---------------------------------------------------------------------------
++# InfiniteVector.plot(type="hist" / "impulse"): a states histogram/impulse
++# plot for a jump process, instead of a path plot.
++# ---------------------------------------------------------------------------
++
++
++class TestInfiniteVectorPlotType(unittest.TestCase):
++
++    def tearDown(self):
++        plt.close("all")
++
++    def test_default_type_draws_a_path(self):
++        InfiniteVector(lambda n: n % 2).plot(tmin=0, tmax=10)
++        ax = plt.gca()
++        self.assertEqual(ax.get_title(), "Sample Path")
++
++    def test_type_impulse_draws_an_impulse_plot(self):
++        InfiniteVector(lambda n: n % 2).plot(tmin=0, tmax=10, type="impulse")
++        ax = plt.gca()
++        self.assertEqual(ax.get_title(), "Impulse Plot")
++
++    def test_type_hist_draws_a_histogram(self):
++        InfiniteVector(lambda n: n).plot(tmin=0, tmax=10, type="hist")
++        ax = plt.gca()
++        self.assertEqual(ax.get_title(), "Histogram")
++
++    def test_type_uses_only_values_in_tmin_tmax(self):
++        InfiniteVector(lambda n: n).plot(tmin=0, tmax=5, type="impulse")
++        ax = plt.gca()
++        xs = sorted(seg[1][0] for seg in ax.collections[0].get_segments())
++        self.assertEqual(xs, [0, 1, 2, 3, 4])
++
++    def test_weights_reweight_the_impulse_heights(self):
++        # states 0, 1, 0, 1, 0 held for 1, 2, 3, 4, 5 units: state 0
++        # totals 1 + 3 + 5 = 9, state 1 totals 2 + 4 = 6.
++        states = InfiniteVector(lambda n: n % 2)
++        holding_times = InfiniteVector(lambda n: n + 1.0)
++        states.plot(
++            tmin=0, tmax=5, type="impulse", weights=holding_times, normalize=False
++        )
++        ax = plt.gca()
++        heights = {
++            seg[1][0]: seg[1][1] for seg in ax.collections[0].get_segments()
++        }
++        self.assertEqual(heights, {0: 9.0, 1: 6.0})
++
++    def test_invalid_type_raises_helpful_error(self):
++        with self.assertRaises(ValueError) as cm:
++            InfiniteVector(lambda n: n).plot(tmin=0, tmax=5, type="bogus")
++        message = str(cm.exception)
++        self.assertIn("bogus", message)
++        self.assertIn("hist", message)
++        self.assertIn("impulse", message)
++
++
++class TestPathPlotTypeIsUnsupportedElsewhere(unittest.TestCase):
++    """Only InfiniteVector.plot() understands type=; every other
++    path-shaped .plot() raises a clear error instead of silently letting
++    an unsupported type= leak through to matplotlib."""
++
++    def tearDown(self):
++        plt.close("all")
++
++    def test_tuple_plot_rejects_type(self):
++        with self.assertRaises(ValueError) as cm:
++            Tuple([1, 2, 3]).plot(type="hist")
++        self.assertIn("Tuple.plot()", str(cm.exception))
++
++    def test_discrete_time_function_plot_rejects_type(self):
++        with self.assertRaises(ValueError) as cm:
++            DiscreteTimeFunction(lambda n: n, fs=1).plot(tmin=0, tmax=5, type="impulse")
++        self.assertIn("DiscreteTimeFunction.plot()", str(cm.exception))
++
++    def test_continuous_time_function_plot_rejects_type(self):
++        with self.assertRaises(ValueError) as cm:
++            ContinuousTimeFunction(lambda t: t).plot(tmin=0, tmax=5, type="hist")
++        self.assertIn("ContinuousTimeFunction.plot()", str(cm.exception))
++
++    def test_none_is_still_accepted_everywhere(self):
++        # The ordinary, overwhelmingly common case must keep working.
++        Tuple([1, 2, 3]).plot(type=None)
++        DiscreteTimeFunction(lambda n: n, fs=1).plot(tmin=0, tmax=5, type=None)
++        ContinuousTimeFunction(lambda t: t).plot(tmin=0, tmax=5, type=None)
++
++
++# ---------------------------------------------------------------------------
++# DiscreteValued.num_jumps_by
++# ---------------------------------------------------------------------------
++
++
++class TestNumJumpsBy(unittest.TestCase):
++
++    def _make_path(self, step=1.0):
++        obj = DiscreteValued()
++        obj.states = InfiniteVector(lambda n: n)
++        obj.interarrival_times = InfiniteVector(lambda n: step)
++        return obj
++
++    def test_zero_jumps_before_the_first_arrival(self):
++        path = self._make_path(step=1.0)
++        self.assertEqual(path.num_jumps_by(0.5), 0)
++
++    def test_counts_jumps_up_to_and_including_t(self):
++        path = self._make_path(step=1.0)
++        self.assertEqual(path.num_jumps_by(1.0), 1)
++        self.assertEqual(path.num_jumps_by(2.5), 2)
++
++    def test_matches_arrival_times_directly(self):
++        path = self._make_path(step=1.0)
++        arrivals = path.get_arrival_times()
++        for t in [0.0, 0.99, 1.0, 1.01, 4.5]:
++            n = path.num_jumps_by(t)
++            self.assertLessEqual(arrivals[n - 1] if n > 0 else -1, t)
++            self.assertGreater(arrivals[n], t)
++
++    def test_raises_if_interarrival_times_missing(self):
++        obj = DiscreteValued()
++        with self.assertRaises(AttributeError):
++            obj.num_jumps_by(1.0)
++
++    def test_combines_with_infinite_vector_plot_type(self):
++        path = self._make_path(step=1.0)
++        n = path.num_jumps_by(3.5)
++        path.states.plot(tmax=n, type="impulse")
++        ax = plt.gca()
++        xs = sorted(seg[1][0] for seg in ax.collections[0].get_segments())
++        self.assertEqual(xs, list(range(n)))
++        plt.close("all")
++
++
+ if __name__ == "__main__":
+     unittest.main()
+-- 
+2.43.0
+

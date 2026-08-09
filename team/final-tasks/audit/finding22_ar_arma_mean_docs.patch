@@ -1,0 +1,115 @@
+diff --git a/symbulate/tests/test_time_series.py b/symbulate/tests/test_time_series.py
+index 0720761..e706bd0 100644
+--- a/symbulate/tests/test_time_series.py
++++ b/symbulate/tests/test_time_series.py
+@@ -256,6 +256,18 @@ class TestMATheory(unittest.TestCase):
+         late = np.corrcoef(paths[:, 20], paths[:, 21])[0, 1]
+         self.assertAlmostEqual(early, late, delta=0.04)
+ 
++    def test_nonzero_mean_noise_shifts_mean_by_documented_formula(self):
++        # Regression/documentation test: mean= is only exactly the
++        # process's mean when noise_dist has mean 0 (the default). With a
++        # nonzero-mean noise_dist, the true mean is
++        # mean + noise_dist.mean() * (1 + sum(coefs)) instead of mean
++        # itself, matching the corrected docstring.
++        seed()
++        coefs, noise_mean = [0.5, 0.3], 2.0
++        X = MA(coefs=coefs, noise_dist=Normal(mean=noise_mean, sd=1), mean=1)
++        expected = 1 + noise_mean * (1 + sum(coefs))
++        self.assertAlmostEqual(float(X[10].sim(5000).mean()), expected, delta=0.3)
++
+ 
+ class TestMAErrors(unittest.TestCase):
+ 
+@@ -414,6 +426,38 @@ class TestARMATheory(unittest.TestCase):
+         X = AR(coefs=[0.6], mean=20, initial=20)
+         self.assertAlmostEqual(float(X[40].sim(Nsim).mean()), 20.0, delta=0.3)
+ 
++    def test_nonzero_mean_noise_shifts_ar_mean_by_documented_formula(self):
++        # Regression/documentation test: mean= is only exactly the
++        # process's mean when noise_dist has mean 0 (the default). With a
++        # nonzero-mean noise_dist, the true mean is
++        # mean + noise_dist.mean() * (1 + sum(ma_coefs)) / (1 - sum(ar_coefs))
++        # -- confirmed here for the pure-AR case (ma_coefs=[]), matching
++        # the corrected AR/ARMA docstrings.
++        seed()
++        phi, noise_mean = 0.5, 2.0
++        X = AR(coefs=[phi], noise_dist=Normal(mean=noise_mean, sd=1), mean=0)
++        expected = 0 + noise_mean * (1 + 0) / (1 - phi)
++        measured = float(X[30].sim(5000).mean())
++        self.assertAlmostEqual(measured, expected, delta=0.3)
++        # ...and confirm it's well away from the (incorrect) old claim
++        # that mean=0 alone would be the process's actual mean.
++        self.assertGreater(abs(measured), 1.0)
++
++    def test_nonzero_mean_noise_shifts_arma_mean_by_documented_formula(self):
++        # Same formula, general ARMA case with a nonzero ma_coefs term.
++        seed()
++        ar_coef, ma_coef, noise_mean = 0.3, 0.4, 1.0
++        X = ARMA(
++            ar_coefs=[ar_coef],
++            ma_coefs=[ma_coef],
++            noise_dist=Normal(mean=noise_mean, sd=1),
++            mean=5,
++        )
++        expected = 5 + noise_mean * (1 + ma_coef) / (1 - ar_coef)
++        self.assertAlmostEqual(
++            float(X[30].sim(5000).mean()), expected, delta=0.3
++        )
++
+     def test_unit_coefficient_is_a_random_walk(self):
+         # phi = 1 removes the pull home, so the variance grows with n.
+         seed()
+diff --git a/symbulate/time_series.py b/symbulate/time_series.py
+index 047281d..d16a751 100644
+--- a/symbulate/time_series.py
++++ b/symbulate/time_series.py
+@@ -218,8 +218,13 @@ class MA(RV):
+     noise_dist : Distribution or RV, optional
+         The distribution of one shock. Default is ``Normal(0, 1)``.
+     mean : float, optional
+-        The level the process varies around. Default is 0. Because the
+-        shocks average out, this really is the mean of every value.
++        The level the process varies around. Default is 0. This really is
++        the mean of every value *only* when ``noise_dist`` has mean 0 (the
++        default, ``Normal(0, 1)``) -- the shocks then average out exactly.
++        A ``noise_dist`` with nonzero mean does not average out, so it
++        shifts the process's actual mean to
++        ``mean + noise_dist.mean() * (1 + sum(coefs))`` instead of
++        ``mean`` itself.
+ 
+     Attributes
+     ----------
+@@ -672,8 +677,15 @@ class ARMA(RV):
+     noise_dist : Distribution or RV, optional
+         The distribution of one shock. Default is ``Normal(0, 1)``.
+     mean : float, optional
+-        The level the process varies around. Default is 0. For a stationary
+-        process this really is the mean of every value.
++        The level the process varies around. Default is 0. For a
++        stationary process this really is the mean of every value *only*
++        when ``noise_dist`` has mean 0 (the default, ``Normal(0, 1)``).
++        A ``noise_dist`` with nonzero mean shifts the process's actual
++        mean to
++        ``mean + noise_dist.mean() * (1 + sum(ma_coefs)) / (1 - sum(ar_coefs))``
++        instead of ``mean`` itself, since each shock's drift echoes
++        forward through the autoregressive part exactly like a deviation
++        from ``mean`` does.
+     initial : float, sequence, Distribution, or str, optional
+         Where the ``p`` values before time 0 come from. Default is 0. See
+         Notes.
+@@ -799,9 +811,11 @@ class AR(ARMA):
+     Notes
+     -----
+     For a stationary AR(1) with coefficient ``phi`` and shock standard
+-    deviation ``s``, every value has mean ``mean`` and variance
+-    ``s ** 2 / (1 - phi ** 2)``, and the correlation between values ``k``
+-    steps apart is ``phi ** k`` -- decaying, but never reaching zero.
++    deviation ``s``, every value has mean ``mean`` (when ``noise_dist``
++    has mean 0 -- see :class:`ARMA`'s ``mean`` parameter for the
++    correction when it does not) and variance ``s ** 2 / (1 - phi ** 2)``,
++    and the correlation between values ``k`` steps apart is ``phi ** k``
++    -- decaying, but never reaching zero.
+ 
+     Examples
+     --------
