@@ -13,7 +13,10 @@ from .random_variables import RV
 from .random_processes import RandomProcess, _resolve_initial
 
 MACHINE_EPS = 1e-12
-rng = np.random.default_rng()
+# The shared generator, owned by probability_space.py -- this module used to
+# create its own, which made seed() unable to reach it. Do not reintroduce a
+# local `rng = np.random.default_rng()` here.
+from .probability_space import rng
 
 
 def get_gaussian_process_result(mean_func, cov_func, index_set=Reals()):

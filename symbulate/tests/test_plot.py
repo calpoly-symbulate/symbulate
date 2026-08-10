@@ -53,6 +53,7 @@ from symbulate import (
     cos,
     pi,
 )
+from symbulate import seed
 from symbulate import plot as symbulate_plot
 from symbulate.plot import (
     SymbulatePlot,

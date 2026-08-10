@@ -1,6 +1,7 @@
 import inspect
 import math
 import re
+import time
 import unittest
 import numpy as np
 import scipy.stats as stats
@@ -26,19 +27,26 @@ from symbulate.plot import THEORETICAL_CDF_PDF_OVERLAY_ERROR
 # public-API addition -- so it too is imported straight from its module.
 from symbulate.distributions import InverseGaussian
 
+# The sentinel RV.sim() compares `func` against to decide whether anything has
+# been composed on top of the distribution (see TestFastSim). Private, so it
+# comes from its module rather than the public API.
+from symbulate.random_variables import _IDENTITY
+from symbulate.result import Scalar
+from symbulate.results import RVResults
+
 Nsim = 10000
 
 
 class TestBernoulli(unittest.TestCase):
 
     def test_p_one(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Bernoulli(p=1))
         sims = X.sim(Nsim)
         self.assertTrue(all(sim == 1 for sim in sims))
 
     def test_sum(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X = RV(Bernoulli(p=0.4) ** 5)
         sims = X.apply(sum).sim(Nsim)
@@ -54,7 +62,7 @@ class TestBernoulli(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Bernoulli_Binomial_n_1(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X = RV(Bernoulli(p=0.4))
         sims = X.sim(Nsim)
@@ -76,7 +84,7 @@ class TestBernoulli(unittest.TestCase):
         self.assertRaises(Exception, lambda: Bernoulli(p=1.5))
 
     def test_Bernoulli_p_zero(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Bernoulli(p=0))
         sims = X.sim(Nsim)
         self.assertTrue(all(sim == 0 for sim in sims))
@@ -95,7 +103,7 @@ class TestBernoulli(unittest.TestCase):
 class TestBinomial(unittest.TestCase):
 
     def test_Binomial_p_1(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         for nsample in range(1, 1000, 100):
             X = RV(Binomial(n=nsample, p=1.0))
             sims = X.sim(Nsim)
@@ -105,7 +113,7 @@ class TestBinomial(unittest.TestCase):
         self.assertRaises(Exception, lambda: Binomial(n=-10, p=0.4))
 
     def test_Binomial_additive(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X, Y = RV(Binomial(n=8, p=0.6) * Binomial(n=5, p=0.6))
         sims = (X & Y).sim(Nsim).apply(sum)
@@ -139,7 +147,7 @@ class TestBinomial(unittest.TestCase):
 class TestBetaBinomial(unittest.TestCase):
 
     def test_BetaBinomial_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X = RV(BetaBinomial(n=10, shape1=2, shape2=3))
         sims = X.sim(Nsim)
@@ -193,7 +201,7 @@ class TestBetaBinomial(unittest.TestCase):
             self.assertAlmostEqual(float(X.pmf(k)), float(binom.pmf(k)), places=2)
 
     def test_BetaBinomial_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = BetaBinomial(n=10, shape1=2, shape2=3).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -231,7 +239,7 @@ class TestBetaBinomial(unittest.TestCase):
 class TestBetaNegativeBinomial(unittest.TestCase):
 
     def test_BetaNegativeBinomial_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(BetaNegativeBinomial(r=5, shape1=4, shape2=3))
         sims = X.sim(Nsim)
         simulated = sims.tabulate()
@@ -270,7 +278,7 @@ class TestBetaNegativeBinomial(unittest.TestCase):
             self.assertAlmostEqual(float(X.pmf(k)), float(pascal.pmf(k)), places=2)
 
     def test_BetaNegativeBinomial_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = BetaNegativeBinomial(r=5, shape1=3, shape2=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -307,13 +315,13 @@ class TestBetaNegativeBinomial(unittest.TestCase):
 class TestHypergeometric(unittest.TestCase):
 
     def test_Hypergeometric_no_failures(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Hypergeometric(n=10, N0=0, N1=1000))
         sims = X.sim(Nsim)
         self.assertTrue(all(sim == 10 for sim in sims))
 
     def test_Hypergeometric_Binomial_converge(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X = RV(Hypergeometric(n=8, N0=200, N1=800))
         sims = X.sim(Nsim)
@@ -352,7 +360,7 @@ class TestHypergeometric(unittest.TestCase):
 class TestNegativeHypergeometric(unittest.TestCase):
 
     def test_NegativeHypergeometric_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(NegativeHypergeometric(r=3, N0=7, N1=5))
         sims = X.sim(Nsim)
         expected = stats.nhypergeom(M=12, n=5, r=3)
@@ -418,7 +426,7 @@ class TestNegativeHypergeometric(unittest.TestCase):
         self.assertAlmostEqual(float(X.pmf(0)), 1.0, places=10)
 
     def test_NegativeHypergeometric_draws_within_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         sims = RV(NegativeHypergeometric(r=3, N0=7, N1=5)).sim(1000)
         self.assertTrue(all(0 <= int(v) <= 5 for v in sims))
 
@@ -481,7 +489,7 @@ class TestGeometric(unittest.TestCase):
         self.assertAlmostEqual(float(X.pmf(2)), 0.25)
 
     def test_Geometric_to_NBinom(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X = Geometric(p=0.8)
         sims = X.sim(Nsim)
@@ -503,13 +511,13 @@ class TestNegativeBinomial(unittest.TestCase):
         self.assertRaises(Exception, lambda: NegativeBinomial(r=-10, p=0.6))
 
     def test_NBinom_p_1(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = NegativeBinomial(r=10, p=1)
         sims = X.sim(Nsim)
         self.assertTrue(all(sim == 10 for sim in sims))
 
     def test_NBinom_Pascal_additive(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X, Y = RV(Pascal(r=4, p=0.6) * Pascal(r=6, p=0.6))
         sims = (X + Y).sim(Nsim)
@@ -525,7 +533,7 @@ class TestNegativeBinomial(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_NBinom_to_Geometric(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X = NegativeBinomial(r=1, p=0.8)
         sims = X.sim(Nsim)
@@ -560,7 +568,7 @@ class TestPascal(unittest.TestCase):
         self.assertRaises(Exception, lambda: Pascal(r=0, p=0.3))
 
     def test_Pascal_p_1(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Pascal(r=10, p=1.0)
         sims = X.sim(Nsim)
         self.assertTrue(all(sim == 0 for sim in sims))
@@ -590,7 +598,7 @@ class TestPoisson(unittest.TestCase):
             self.assertEqual(value, 0)
 
     def test_Poisson_additive(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X, Y = RV(Poisson(lam=4) * Poisson(lam=7))
         sims = (X + Y).sim(Nsim)
@@ -606,7 +614,7 @@ class TestPoisson(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_conditional_Poisson_add(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         obs_list, exp_list = [], []
         X, Y = RV(Poisson(lam=6) * Poisson(lam=7))
         sims = (X | (X + Y == 12)).sim(Nsim)
@@ -671,7 +679,7 @@ class TestDiscreteUniform(unittest.TestCase):
             self.assertAlmostEqual(float(X.pmf(k)), 1 / 6)
 
     def test_DiscreteUniform_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X = RV(DiscreteUniform(a=1, b=6))
         sims = X.sim(Nsim)
@@ -683,7 +691,7 @@ class TestDiscreteUniform(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_DiscreteUniform_sim_bounds(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(DiscreteUniform(a=3, b=7))
         sims = X.sim(Nsim)
         self.assertTrue(all(3 <= sim <= 7 for sim in sims))
@@ -815,7 +823,7 @@ class TestZipf(unittest.TestCase):
     # --- sampling ---
 
     def test_Zipf_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         exp_list, obs_list = [], []
         X = RV(Zipf(shape=1.2, n=10))
         sims = X.sim(Nsim)
@@ -831,12 +839,12 @@ class TestZipf(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Zipf_sim_stays_in_support(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = RV(Zipf(shape=0.7, n=12)).sim(Nsim)
         self.assertTrue(all(1 <= sim <= 12 for sim in sims))
 
     def test_Zipf_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Zipf(shape=1.2, n=10).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 1.0)
@@ -845,16 +853,16 @@ class TestZipf(unittest.TestCase):
     # --- reproducibility ---
 
     def test_Zipf_same_seed_gives_same_sims(self):
-        distributions.rng = np.random.default_rng(2024)
+        seed(2024)
         first = list(RV(Zipf(shape=1.2, n=10)).sim(500))
-        distributions.rng = np.random.default_rng(2024)
+        seed(2024)
         second = list(RV(Zipf(shape=1.2, n=10)).sim(500))
         self.assertEqual(first, second)
 
     def test_Zipf_different_seed_gives_different_sims(self):
-        distributions.rng = np.random.default_rng(1)
+        seed(1)
         first = list(RV(Zipf(shape=1.2, n=10)).sim(500))
-        distributions.rng = np.random.default_rng(2)
+        seed(2)
         second = list(RV(Zipf(shape=1.2, n=10)).sim(500))
         self.assertNotEqual(first, second)
 
@@ -940,7 +948,7 @@ class TestZeta(unittest.TestCase):
             self.assertAlmostEqual(float(X.pmf(k)), float(th.pmf(k)), places=12)
 
     def test_Zeta_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Zeta(shape=2.5))
         sims = X.sim(Nsim)
         # Compare the head of the distribution, lumping the tail into one bin
@@ -1014,14 +1022,14 @@ class TestZeta(unittest.TestCase):
             self.assertEqual(Zeta(shape=shape).xlim, (1, 20))
 
     def test_Zeta_draws_are_positive_integers(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         sims = RV(Zeta(shape=2.5)).sim(500)
         values = [float(v) for v in sims]
         self.assertTrue(all(v >= 1 for v in values))
         self.assertTrue(all(v == int(v) for v in values))
 
     def test_Zeta_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(Zeta(shape=2.5).draw(), Scalar)
 
     def test_Zeta_invalid_shape_raises(self):
@@ -1101,11 +1109,11 @@ class TestBenford(unittest.TestCase):
         self.assertAlmostEqual(float(X.pmf(1)), 1.0, places=12)
         self.assertAlmostEqual(float(X.mean()), 1.0, places=12)
         self.assertAlmostEqual(float(X.var()), 0.0, places=12)
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertTrue(all(v == 1 for v in RV(X).sim(200)))
 
     def test_Benford_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = RV(Benford()).sim(Nsim)
         values = np.array(list(sims), dtype=float)
         observed = [int((values == d).sum()) for d in range(1, 10)]
@@ -1114,13 +1122,13 @@ class TestBenford(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Benford_draws_are_digits(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         values = [float(v) for v in RV(Benford()).sim(500)]
         self.assertTrue(all(1 <= v <= 9 for v in values))
         self.assertTrue(all(v == int(v) for v in values))
 
     def test_Benford_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(Benford().draw(), Scalar)
 
     def test_Benford_whole_valued_float_base_accepted(self):
@@ -1155,7 +1163,7 @@ class TestUniform(unittest.TestCase):
         self.assertRaises(Exception, lambda: Uniform(a=6, b=-1))
 
     def test_conditional_exp_uniform(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Exponential(rate=3) ** 2)
         sims = (X | (X < 3) & (X + Y > 3)).sim(1000)
         cdf = stats.uniform(loc=0, scale=3).cdf
@@ -1163,7 +1171,7 @@ class TestUniform(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Uniform_to_ChiSquare(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Uniform(a=0, b=1))
         sims = (-2 * log(X)).sim(Nsim)
         cdf = stats.chi2(df=2).cdf
@@ -1171,7 +1179,7 @@ class TestUniform(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Uniform_to_Exponential(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Uniform(a=0, b=1))
         Y = -1 / 5 * log(X)
         sims = Y.sim(Nsim)
@@ -1180,7 +1188,7 @@ class TestUniform(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Uniform_to_Beta(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Uniform(a=0, b=1))
         sims = (X**15).sim(Nsim)
         cdf = stats.beta(a=1 / 15, b=1).cdf
@@ -1188,7 +1196,7 @@ class TestUniform(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Uniform_to_Cauchy(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Uniform(a=0, b=1))
         sims = (pi * (X - 1 / 2)).apply(tan).sim(Nsim)
         cdf = stats.cauchy(loc=0, scale=1).cdf
@@ -1196,7 +1204,7 @@ class TestUniform(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Uniform_to_Pareto(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Uniform(a=0, b=1))
         sims = (2 * X ** (-1 / 0.1)).sim(10000)
         cdf = stats.pareto(b=0.1, loc=0, scale=2).cdf
@@ -1218,7 +1226,7 @@ class TestUniform(unittest.TestCase):
 class TestIrwinHall(unittest.TestCase):
 
     def test_IrwinHall_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(IrwinHall(n=5))
         sims = X.sim(Nsim)
         cdf = stats.irwinhall(5).cdf
@@ -1227,7 +1235,7 @@ class TestIrwinHall(unittest.TestCase):
 
     def test_IrwinHall_general_bounds_distributional(self):
         # Sum of n uniforms on [a, b], not just on [0, 1].
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(IrwinHall(n=4, a=10, b=20))
         sims = X.sim(Nsim)
         cdf = stats.irwinhall(4, loc=4 * 10, scale=20 - 10).cdf
@@ -1237,7 +1245,7 @@ class TestIrwinHall(unittest.TestCase):
     def test_IrwinHall_matches_sum_of_uniforms(self):
         # The defining property: adding n independent uniforms gives this
         # distribution.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         U1, U2, U3 = RV(Uniform(0, 1) ** 3)
         sims = (U1 + U2 + U3).sim(Nsim)
         pval = stats.kstest(sims, IrwinHall(n=3).cdf).pvalue
@@ -1324,12 +1332,12 @@ class TestIrwinHall(unittest.TestCase):
         self.assertLess(errors[-1], 0.005)
 
     def test_IrwinHall_draws_within_bounds(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         sims = RV(IrwinHall(n=4, a=10, b=20)).sim(1000)
         self.assertTrue(all(40 <= float(v) <= 80 for v in sims))
 
     def test_IrwinHall_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(IrwinHall(n=5).draw(), Scalar)
 
     def test_IrwinHall_xlim_is_full_support(self):
@@ -1361,7 +1369,7 @@ class TestIrwinHall(unittest.TestCase):
 class TestBates(unittest.TestCase):
 
     def test_Bates_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Bates(n=5, a=2, b=8))
         sims = X.sim(Nsim)
         cdf = stats.irwinhall(5, loc=2, scale=(8 - 2) / 5).cdf
@@ -1400,7 +1408,7 @@ class TestBates(unittest.TestCase):
 
     def test_Bates_is_mean_of_uniforms(self):
         # Bates(n) is the distribution of the average of n Uniform(0, 1).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         n = 5
         U = RV(Uniform(0, 1) ** n)
         sims = U.apply(lambda u: sum(u) / n).sim(Nsim)
@@ -1409,7 +1417,7 @@ class TestBates(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Bates_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Bates(n=5, a=0, b=1).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -1436,7 +1444,7 @@ class TestBates(unittest.TestCase):
 class TestLogUniform(unittest.TestCase):
 
     def test_LogUniform_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(LogUniform(a=1, b=100))
         sims = X.sim(Nsim)
         cdf = stats.loguniform(1, 100).cdf
@@ -1466,7 +1474,7 @@ class TestLogUniform(unittest.TestCase):
 
     def test_LogUniform_log_is_uniform(self):
         # If X ~ LogUniform(a, b), then log(X) ~ Uniform(log a, log b).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(LogUniform(a=1, b=100))
         sims = log(X).sim(Nsim)
         cdf = stats.uniform(0, np.log(100)).cdf
@@ -1475,7 +1483,7 @@ class TestLogUniform(unittest.TestCase):
 
     def test_LogUniform_exp_of_uniform(self):
         # exp(Uniform(log a, log b)) has a LogUniform(a, b) distribution.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         U = RV(Uniform(np.log(1), np.log(100)))
         sims = exp(U).sim(Nsim)
         cdf = stats.loguniform(1, 100).cdf
@@ -1483,7 +1491,7 @@ class TestLogUniform(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_LogUniform_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = LogUniform(a=1, b=100).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 1.0)
@@ -1532,7 +1540,7 @@ class TestNormal(unittest.TestCase):
         self.assertRaises(Exception, lambda: Normal(mean=0, var=-10))
 
     def test_sum(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(mean=-1, sd=2) ** 3)
         sims = X.apply(sum).sim(Nsim)
         cdf = stats.norm(loc=-3, scale=np.sqrt(12)).cdf
@@ -1540,7 +1548,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_sum_Standard_Normal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Normal(mean=0, var=1) ** 2)
         sims = (X + Y).sim(Nsim)
         cdf = stats.norm(loc=0, scale=sqrt(2)).cdf
@@ -1548,7 +1556,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_subtract_Standard_Normal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Normal(mean=0, var=1) ** 2)
         sims = (X - Y).sim(Nsim)
         cdf = stats.norm(loc=0, scale=sqrt(2)).cdf
@@ -1556,7 +1564,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Normal_standardize(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(mean=8, var=4))
         X_stand = (X - 8) / 2
         sims = X_stand.sim(Nsim)
@@ -1565,7 +1573,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_standardize_to_Normal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         Z = RV(Normal(mean=0, sd=1))
         X = 10 + 5 * Z
         sims = X.sim(Nsim)
@@ -1574,7 +1582,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Normal_to_Gamma(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(mean=0, var=1))
         X = X**2
         sims = X.sim(Nsim)
@@ -1583,7 +1591,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Normal_to_ChiSquare(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(mean=0, var=1))
         X = X**2
         sims = X.sim(Nsim)
@@ -1594,7 +1602,7 @@ class TestNormal(unittest.TestCase):
     def test_Normal_to_Cauchy(self):
         # Seed 42 is pathological for this heavy-tailed Cauchy KS test
         # (lands in the ~1% false-rejection region); use a robust seed.
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         X, Y = RV(Normal(mean=0, var=1) ** 2)
         sims = (X / Y).sim(Nsim)
         cdf = stats.cauchy(loc=0, scale=1).cdf
@@ -1602,7 +1610,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Normal_to_F(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         A, B, C, V, W, X, Y, Z = RV(Normal(mean=0, var=1) ** 8)
         sims = (
             (((A**2) + (B**2) + (C**2)) / 3)
@@ -1613,7 +1621,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_sum_Normal_to_ChiSquare(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y, Z, A, B = RV(Normal(mean=0, var=1) ** 5)
         sims = ((X**2) + (Y**2) + (Z**2) + (A**2) + (B**2)).sim(Nsim)
         cdf = stats.chi2(df=5).cdf
@@ -1621,7 +1629,7 @@ class TestNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Normal_var_param(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(mean=0, var=4))
         sims = X.sim(Nsim)
         cdf = stats.norm(loc=0, scale=2).cdf
@@ -1683,7 +1691,7 @@ class TestTruncatedNormal(unittest.TestCase):
         )
 
     def test_TruncatedNormal_distribution(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(TruncatedNormal(mean=1, sd=2, a=-1, b=4))
         sims = X.sim(Nsim)
         a_std, b_std = (-1 - 1) / 2, (4 - 1) / 2
@@ -1711,7 +1719,7 @@ class TestTruncatedNormal(unittest.TestCase):
         self.assertAlmostEqual(float(X.var()), float(th.var()))
 
     def test_TruncatedNormal_draws_within_bounds(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = TruncatedNormal(mean=0, sd=3, a=-1, b=2)
         for _ in range(500):
             self.assertTrue(-1 <= X.draw() <= 2)
@@ -1725,7 +1733,7 @@ class TestTruncatedNormal(unittest.TestCase):
 
     def test_TruncatedNormal_lower_truncation_is_halfnormal(self):
         # A standard normal truncated below at its mean is a half-normal.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(TruncatedNormal(mean=0, sd=1, a=0))
         sims = X.sim(Nsim)
         cdf = stats.halfnorm(loc=0, scale=1).cdf
@@ -1763,7 +1771,7 @@ class TestSkewNormal(unittest.TestCase):
         return shape / math.sqrt(1 + shape**2)
 
     def test_SkewNormal_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(SkewNormal(loc=0, scale=1, shape=4))
         sims = X.sim(Nsim)
         cdf = stats.skewnorm(a=4, loc=0, scale=1).cdf
@@ -1771,7 +1779,7 @@ class TestSkewNormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_SkewNormal_general_params_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(SkewNormal(loc=70, scale=12, shape=-3))
         sims = X.sim(Nsim)
         cdf = stats.skewnorm(a=-3, loc=70, scale=12).cdf
@@ -1846,7 +1854,7 @@ class TestSkewNormal(unittest.TestCase):
     def test_SkewNormal_matches_stochastic_representation(self):
         # The mixture the density is built from: a one-sided half-normal piece
         # weighted by delta, plus an ordinary normal piece.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         shape = 4
         d = self.delta(shape)
         Z, W = RV(HalfNormal(scale=1) * Normal(mean=0, sd=1))
@@ -1892,7 +1900,7 @@ class TestSkewNormal(unittest.TestCase):
             self.assertAlmostEqual(float(X.cdf(X.quantile(q))), q, places=6)
 
     def test_SkewNormal_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(SkewNormal().draw(), Scalar)
 
     def test_SkewNormal_default_is_standard_normal(self):
@@ -1942,7 +1950,7 @@ class TestExponential(unittest.TestCase):
         self.assertRaises(Exception, lambda: Exponential(rate=-5))
 
     def test_Exponential_to_Gamma(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Exponential(rate=0.9))
         sims = X.sim(Nsim)
         cdf = stats.gamma(scale=1 / 0.9, a=1).cdf
@@ -1950,7 +1958,7 @@ class TestExponential(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Exponential_sum_Gamma(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y, Z, A = RV(Exponential(rate=0.9) ** 4)
         sims = (X + Y + Z + A).sim(Nsim)
         cdf = stats.gamma(scale=1 / 0.9, a=4).cdf
@@ -1958,7 +1966,7 @@ class TestExponential(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Exponential_to_ChiSquare(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Exponential(rate=1 / 2))
         sims = X.sim(Nsim)
         cdf = stats.chi2(df=2).cdf
@@ -1966,7 +1974,7 @@ class TestExponential(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Exponential_to_Pareto(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Exponential(rate=2))
         sims = (3 * exp(X)).sim(Nsim)
         cdf = stats.pareto(b=2, loc=0, scale=3).cdf
@@ -1974,7 +1982,7 @@ class TestExponential(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Exponential_to_Weibull(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Exponential(rate=5))
         sims = X.sim(Nsim)
         cdf = stats.weibull_min(scale=1 / 5, c=1).cdf
@@ -1982,7 +1990,7 @@ class TestExponential(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Exponential_to_Rayleigh(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Exponential(rate=5))
         sims = sqrt(X).sim(Nsim)
         cdf = stats.rayleigh(scale=1 / sqrt(2 * 5)).cdf
@@ -1990,7 +1998,7 @@ class TestExponential(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Poisson_Exponential_to_Geometric(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
 
         def poisson_exp():
             x = Exponential(rate=1 / lam).draw()
@@ -2013,7 +2021,7 @@ class TestExponential(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Exponential_scale_param(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Exponential(scale=2))
         sims = X.sim(Nsim)
         cdf = stats.expon(scale=2).cdf
@@ -2032,7 +2040,7 @@ class TestExponential(unittest.TestCase):
 class TestExponentiallyModifiedGaussian(unittest.TestCase):
 
     def test_EMG_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(ExponentiallyModifiedGaussian(mean=0, sd=1, rate=1))
         sims = X.sim(Nsim)
         cdf = stats.exponnorm(K=1 / (1 * 1), loc=0, scale=1).cdf
@@ -2040,7 +2048,7 @@ class TestExponentiallyModifiedGaussian(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_EMG_general_params_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(ExponentiallyModifiedGaussian(mean=500, sd=50, rate=0.01))
         sims = X.sim(Nsim)
         cdf = stats.exponnorm(K=1 / (0.01 * 50), loc=500, scale=50).cdf
@@ -2050,7 +2058,7 @@ class TestExponentiallyModifiedGaussian(unittest.TestCase):
     def test_EMG_matches_normal_plus_exponential(self):
         # The defining property: adding an independent normal value and an
         # exponential value gives this distribution.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         Z, W = RV(Normal(mean=2, sd=3) * Exponential(rate=0.5))
         sims = (Z + W).sim(Nsim)
         cdf = ExponentiallyModifiedGaussian(mean=2, sd=3, rate=0.5).cdf
@@ -2140,7 +2148,7 @@ class TestExponentiallyModifiedGaussian(unittest.TestCase):
             self.assertAlmostEqual(float(X.cdf(X.quantile(q))), q, places=6)
 
     def test_EMG_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(ExponentiallyModifiedGaussian().draw(), Scalar)
 
     def test_EMG_xlim_is_equal_tailed_default(self):
@@ -2191,7 +2199,7 @@ class TestGamma(unittest.TestCase):
         self.assertRaises(Exception, lambda: Gamma(shape=4, rate=-10))
 
     def test_Gamma_to_Exponential(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Gamma(shape=1, rate=1 / 0.9)
         sims = X.sim(Nsim)
         cdf = stats.expon(scale=0.9).cdf
@@ -2199,7 +2207,7 @@ class TestGamma(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Gamma_reshape(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Gamma(shape=9, scale=4))
         sims = (X * 8).sim(Nsim)
         cdf = stats.gamma(scale=4 * 8, a=9).cdf
@@ -2207,7 +2215,7 @@ class TestGamma(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Gamma_additive(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Gamma(shape=10, scale=0.5) * Gamma(shape=8, scale=0.5))
         sims = (X + Y).sim(Nsim)
         cdf = stats.gamma(scale=0.5, a=18).cdf
@@ -2215,7 +2223,7 @@ class TestGamma(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Gamma_to_Beta(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Gamma(shape=5, scale=8) * Gamma(shape=4, scale=8))
         sims = (X / (X + Y)).sim(Nsim)
         cdf = stats.beta(a=5, b=4).cdf
@@ -2223,7 +2231,7 @@ class TestGamma(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Gamma_to_F(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Gamma(shape=2, rate=5) * Gamma(shape=4, rate=7))
         sims = ((4 * 5 * X) / (2 * 7 * Y)).sim(Nsim)
         cdf = stats.f(dfn=2 * 2, dfd=2 * 4).cdf
@@ -2231,7 +2239,7 @@ class TestGamma(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Gamma_to_ChiSquare(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Gamma(shape=10 / 2, scale=2))
         sims = X.sim(Nsim)
         cdf = stats.chi2(df=10).cdf
@@ -2239,7 +2247,7 @@ class TestGamma(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Gamma_scale_param(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Gamma(shape=3, scale=2))
         sims = X.sim(Nsim)
         cdf = stats.gamma(a=3, scale=2).cdf
@@ -2257,7 +2265,7 @@ class TestGamma(unittest.TestCase):
 class TestInverseGamma(unittest.TestCase):
 
     def test_InverseGamma_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(InverseGamma(shape=3, scale=2))
         sims = X.sim(Nsim)
         cdf = stats.invgamma(3, scale=2).cdf
@@ -2280,7 +2288,7 @@ class TestInverseGamma(unittest.TestCase):
 
     def test_InverseGamma_is_reciprocal_of_gamma(self):
         # If X ~ Gamma(shape, rate=scale) then 1/X ~ InverseGamma(shape, scale).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Gamma(shape=3, rate=2))
         sims = (1 / X).sim(Nsim)
         cdf = stats.invgamma(3, scale=2).cdf
@@ -2288,7 +2296,7 @@ class TestInverseGamma(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_InverseGamma_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = InverseGamma(shape=3, scale=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreater(float(value), 0.0)
@@ -2315,7 +2323,7 @@ class TestInverseGamma(unittest.TestCase):
 class TestScaledInverseChiSquare(unittest.TestCase):
 
     def test_ScaledInverseChiSquare_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(ScaledInverseChiSquare(df=6, scale=2))
         sims = X.sim(Nsim)
         # equivalent inverse gamma: shape=df/2, scale=df*scale/2
@@ -2349,7 +2357,7 @@ class TestScaledInverseChiSquare(unittest.TestCase):
 
     def test_ScaledInverseChiSquare_chisquare_relationship(self):
         # If X ~ ScaledInvChiSq(df, scale), then df*scale/X ~ ChiSquare(df).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(ScaledInverseChiSquare(df=6, scale=2))
         sims = (6 * 2 / X).sim(Nsim)
         cdf = stats.chi2(df=6).cdf
@@ -2357,7 +2365,7 @@ class TestScaledInverseChiSquare(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_ScaledInverseChiSquare_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = ScaledInverseChiSquare(df=6, scale=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreater(float(value), 0.0)
@@ -2393,7 +2401,7 @@ class TestScaledInverseChiSquare(unittest.TestCase):
 class TestLogGamma(unittest.TestCase):
 
     def test_LogGamma_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(LogGamma(shape=2))
         sims = X.sim(Nsim)
         cdf = stats.loggamma(c=2).cdf
@@ -2404,7 +2412,7 @@ class TestLogGamma(unittest.TestCase):
         # The defining property: log(Gamma) has this distribution. Note the
         # direction -- this is the opposite of LogNormal, where the variable's
         # own log is normal.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         G = RV(Gamma(shape=2, scale=1))
         sims = G.apply(log).sim(Nsim)
         pval = stats.kstest(sims, stats.loggamma(c=2).cdf).pvalue
@@ -2412,7 +2420,7 @@ class TestLogGamma(unittest.TestCase):
 
     def test_LogGamma_exp_is_Gamma(self):
         # The same fact read the other way round: exponentiating gives a Gamma.
-        distributions.rng = np.random.default_rng(7)
+        seed(7)
         X = RV(LogGamma(shape=3))
         sims = X.apply(exp).sim(Nsim)
         pval = stats.kstest(sims, stats.gamma(a=3).cdf).pvalue
@@ -2452,7 +2460,7 @@ class TestLogGamma(unittest.TestCase):
             self.assertAlmostEqual(float(X.pdf(x)), float(G.pdf(-x)), places=8)
 
     def test_LogGamma_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(LogGamma(shape=2).draw(), Scalar)
 
     def test_LogGamma_defaults(self):
@@ -2488,7 +2496,7 @@ class TestInverseGaussian(unittest.TestCase):
     PAIRS = [(1.0, 1.0), (2.0, 3.0), (0.5, 4.0), (5.0, 0.5), (3.0, 10.0)]
 
     def test_InverseGaussian_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(InverseGaussian(mean=2, shape=3))
         sims = X.sim(Nsim)
         # scipy's own parameters, translated: mu = mean / shape, scale = shape.
@@ -2569,7 +2577,7 @@ class TestInverseGaussian(unittest.TestCase):
         self.assertAlmostEqual(high, float(X.quantile(0.999)), places=8)
 
     def test_InverseGaussian_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(InverseGaussian(mean=2, shape=3).draw(), Scalar)
 
     def test_InverseGaussian_invalid_mean_raises(self):
@@ -2600,7 +2608,7 @@ class TestBeta(unittest.TestCase):
         self.assertRaises(Exception, lambda: Beta(shape1=3, shape2=-10))
 
     def test_Beta_to_Uniform(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Beta(shape1=1, shape2=1)
         sims = X.sim(Nsim)
         cdf = stats.uniform(loc=0, scale=1).cdf
@@ -2608,7 +2616,7 @@ class TestBeta(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Beta_symmetry(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Beta(shape1=4, shape2=5))
         sims = (1 - X).sim(Nsim)
         cdf = stats.beta(a=5, b=4).cdf
@@ -2616,7 +2624,7 @@ class TestBeta(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Beta_to_Exponential(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Beta(shape1=0.7, shape2=1))
         sims = (-log(X)).sim(Nsim)
         cdf = stats.expon(scale=1 / 0.7).cdf
@@ -2624,7 +2632,7 @@ class TestBeta(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Beta_to_F(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Beta(shape1=10 / 2, shape2=12 / 2))
         sims = (12 * X / (10 * (1 - X))).sim(Nsim)
         cdf = stats.f(dfn=10, dfd=12).cdf
@@ -2660,7 +2668,7 @@ class TestBeta(unittest.TestCase):
         # distribution. Compared against a stretched RV, not against scipy, so
         # the test states the identity rather than restating the loc/scale call.
         xmin, xmax = 10, 20
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         stretched = (xmin + (xmax - xmin) * RV(Beta(shape1=2, shape2=5))).sim(Nsim)
         cdf = Beta(shape1=2, shape2=5, xmin=xmin, xmax=xmax).cdf
         pval = stats.kstest(stretched, cdf).pvalue
@@ -2725,7 +2733,7 @@ class TestBeta(unittest.TestCase):
         self.assertAlmostEqual(float(X.mean()), xmin + width * 2 / 7, places=12)
         self.assertFalse(math.isnan(float(X.var())))
         self.assertGreater(float(X.var()), 0.0)
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         sims = np.array(RV(X).sim(1000), dtype=float)
         self.assertFalse(np.isnan(sims).any())
         self.assertTrue(((sims >= xmin) & (sims <= xmin + width)).all())
@@ -2751,7 +2759,7 @@ class TestBeta(unittest.TestCase):
 class TestPERT(unittest.TestCase):
 
     def test_PERT_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = PERT(low=1, mode=2, high=10)
         sims = X.sim(Nsim)
         cdf = stats.beta(X.alpha, X.beta, loc=1, scale=9).cdf
@@ -2809,13 +2817,13 @@ class TestPERT(unittest.TestCase):
         self.assertEqual(sds, sorted(sds, reverse=True))
 
     def test_PERT_draws_within_bounds(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         sims = RV(PERT(low=1, mode=2, high=10)).sim(1000)
         values = [float(v) for v in sims]
         self.assertTrue(all(1 <= v <= 10 for v in values))
 
     def test_PERT_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(PERT(low=1, mode=2, high=10).draw(), Scalar)
 
     def test_PERT_xlim_is_full_support(self):
@@ -2856,7 +2864,7 @@ class TestPERT(unittest.TestCase):
 class TestTriangular(unittest.TestCase):
 
     def test_Triangular_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Triangular(low=1, mode=2, high=10)
         sims = X.sim(Nsim)
         cdf = stats.triang((2 - 1) / 9, loc=1, scale=9).cdf
@@ -2913,12 +2921,12 @@ class TestTriangular(unittest.TestCase):
         self.assertGreater(t, p)
 
     def test_Triangular_draws_within_bounds(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         sims = RV(Triangular(low=1, mode=2, high=10)).sim(1000)
         self.assertTrue(all(1 <= float(v) <= 10 for v in sims))
 
     def test_Triangular_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(Triangular(low=1, mode=2, high=10).draw(), Scalar)
 
     def test_Triangular_xlim_is_full_support(self):
@@ -3088,7 +3096,7 @@ class TestKumaraswamy(unittest.TestCase):
     def test_Kumaraswamy_power_shape1_is_Beta(self):
         # If X is Kumaraswamy(a, b), then X ** a is Beta(1, b): the general
         # link between the two families.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         a, b = 2.5, 3.0
         X = RV(Kumaraswamy(shape1=a, shape2=b))
         sims = (X**a).sim(Nsim)
@@ -3098,7 +3106,7 @@ class TestKumaraswamy(unittest.TestCase):
     def test_Kumaraswamy_from_Uniform_inverse_cdf(self):
         # If U is Uniform(0, 1), then (1 - (1 - U) ** (1 / b)) ** (1 / a) is
         # Kumaraswamy(a, b) -- the inverse-cdf construction.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         a, b = 2.0, 4.0
         U = RV(Uniform(0, 1))
         sims = ((1 - (1 - U) ** (1 / b)) ** (1 / a)).sim(Nsim)
@@ -3106,7 +3114,7 @@ class TestKumaraswamy(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Kumaraswamy_a_one_matches_Beta_sims(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = Kumaraswamy(shape1=1, shape2=3).sim(Nsim)
         pval = stats.kstest(sims, stats.beta(a=1, b=3).cdf).pvalue
         self.assertTrue(pval > 0.01)
@@ -3114,25 +3122,25 @@ class TestKumaraswamy(unittest.TestCase):
     # --- sampling ---
 
     def test_Kumaraswamy_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Kumaraswamy(shape1=2.5, shape2=3.0)
         pval = stats.kstest(X.sim(Nsim), X.cdf).pvalue
         self.assertTrue(pval > 0.01)
 
     def test_Kumaraswamy_sim_stays_in_support(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = RV(Kumaraswamy(shape1=0.5, shape2=0.5)).sim(Nsim)
         self.assertTrue(all(0 <= sim <= 1 for sim in sims))
 
     def test_Kumaraswamy_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Kumaraswamy(shape1=2, shape2=3).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
         self.assertLessEqual(float(value), 1.0)
 
     def test_Kumaraswamy_sample_mean_near_theoretical(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Kumaraswamy(shape1=2, shape2=3)
         sample_mean = RV(X).sim(Nsim).mean()
         self.assertAlmostEqual(float(sample_mean), float(X.mean()), places=2)
@@ -3140,16 +3148,16 @@ class TestKumaraswamy(unittest.TestCase):
     # --- reproducibility ---
 
     def test_Kumaraswamy_same_seed_gives_same_sims(self):
-        distributions.rng = np.random.default_rng(2024)
+        seed(2024)
         first = list(RV(Kumaraswamy(shape1=2, shape2=3)).sim(500))
-        distributions.rng = np.random.default_rng(2024)
+        seed(2024)
         second = list(RV(Kumaraswamy(shape1=2, shape2=3)).sim(500))
         self.assertEqual(first, second)
 
     def test_Kumaraswamy_different_seed_gives_different_sims(self):
-        distributions.rng = np.random.default_rng(1)
+        seed(1)
         first = list(RV(Kumaraswamy(shape1=2, shape2=3)).sim(500))
-        distributions.rng = np.random.default_rng(2)
+        seed(2)
         second = list(RV(Kumaraswamy(shape1=2, shape2=3)).sim(500))
         self.assertNotEqual(first, second)
 
@@ -3217,7 +3225,7 @@ class TestStudentT(unittest.TestCase):
         self.assertRaises(Exception, lambda: StudentT(df=0))
 
     def test_StudentT_to_Normal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = StudentT(df=Nsim)
         sims = X.sim(Nsim)
         cdf = stats.norm(loc=0, scale=1).cdf
@@ -3225,7 +3233,7 @@ class TestStudentT(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Normal_ChiSquare_to_StudentT(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Normal(mean=0, var=1) * ChiSquare(df=5))
         sims = (X / sqrt(Y / 5)).sim(Nsim)
         cdf = stats.t(df=5).cdf
@@ -3251,7 +3259,7 @@ class TestStudentT(unittest.TestCase):
         self.assertEqual(StudentT(df=10).noncentrality, 0)
 
     def test_StudentT_noncentral_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(StudentT(df=8, noncentrality=1.5))
         sims = X.sim(Nsim)
         cdf = stats.nct(df=8, nc=1.5).cdf
@@ -3300,7 +3308,7 @@ class TestSkewT(unittest.TestCase):
         self.assertRaises(Exception, lambda: SkewT(shape1=2, shape2=2, loc="a"))
 
     def test_SkewT_distribution(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(SkewT(shape1=5, shape2=2, loc=1, scale=2))
         sims = X.sim(Nsim)
         cdf = stats.jf_skew_t(5, 2, loc=1, scale=2).cdf
@@ -3351,7 +3359,7 @@ class TestChiSquare(unittest.TestCase):
         self.assertRaises(Exception, lambda: ChiSquare(df=0.5))
 
     def test_ChiSquare_to_Gamma(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(ChiSquare(df=10))
         sims = X.sim(Nsim)
         cdf = stats.gamma(a=5, scale=1 / 0.5).cdf
@@ -3359,7 +3367,7 @@ class TestChiSquare(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_ChiSquare_to_F(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(ChiSquare(df=3) * ChiSquare(df=5))
         sims = ((X / 3) / (Y / 5)).sim(Nsim)
         cdf = stats.f(dfn=3, dfd=5).cdf
@@ -3367,7 +3375,7 @@ class TestChiSquare(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_ChiSquare_to_Beta(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(ChiSquare(df=4) * ChiSquare(df=5))
         sims = (X / (X + Y)).sim(Nsim)
         cdf = stats.beta(a=4 / 2, b=5 / 2).cdf
@@ -3390,7 +3398,7 @@ class TestChiSquare(unittest.TestCase):
         self.assertEqual(ChiSquare(df=4).noncentrality, 0)
 
     def test_ChiSquare_noncentral_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(ChiSquare(df=4, noncentrality=3))
         sims = X.sim(Nsim)
         cdf = stats.ncx2(df=4, nc=3).cdf
@@ -3424,7 +3432,7 @@ class TestF(unittest.TestCase):
         self.assertRaises(Exception, lambda: F(dfN=0, dfD=5))
 
     def test_inverse_T(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(F(dfN=4, dfD=8))
         sims = (1 / X).sim(Nsim)
         cdf = stats.f(dfn=8, dfd=4).cdf
@@ -3432,7 +3440,7 @@ class TestF(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_StudentT_to_F(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(StudentT(df=15))
         sims = (X**2).sim(Nsim)
         cdf = stats.f(dfn=1, dfd=15).cdf
@@ -3440,7 +3448,7 @@ class TestF(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_F_to_Beta(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(F(dfN=5, dfD=8))
         sims = ((5 * X / 8) / (1 + (5 * X / 8))).sim(Nsim)
         cdf = stats.beta(a=5 / 2, b=8 / 2).cdf
@@ -3463,7 +3471,7 @@ class TestF(unittest.TestCase):
         self.assertEqual(F(dfN=5, dfD=10).noncentrality, 0)
 
     def test_F_noncentral_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(F(dfN=5, dfD=10, noncentrality=4))
         sims = X.sim(Nsim)
         cdf = stats.ncf(dfn=5, dfd=10, nc=4).cdf
@@ -3545,7 +3553,7 @@ class TestHotelling(unittest.TestCase):
 
     def test_Hotelling_dim_one_is_studentt_squared(self):
         # With dim = 1 the multiplier is 1 and T^2 = F(1, df) = StudentT(df)^2.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(StudentT(df=9))
         sims = (X**2).sim(Nsim)
         pval = stats.kstest(sims, Hotelling(dim=1, df=9).cdf).pvalue
@@ -3570,7 +3578,7 @@ class TestCauchy(unittest.TestCase):
     def test_Cauchy_to_T(self):
         # Seed 42 is pathological for this heavy-tailed Cauchy KS test
         # (lands in the ~1% false-rejection region); use a robust seed.
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         X = RV(Cauchy())
         sims = X.sim(Nsim)
         cdf = stats.t(df=1).cdf
@@ -3580,7 +3588,7 @@ class TestCauchy(unittest.TestCase):
     def test_Cauchy_inverse(self):
         # Seed 42 is pathological for this heavy-tailed Cauchy KS test
         # (lands in the ~1% false-rejection region); use a robust seed.
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         X = RV(Cauchy())
         sims = (1 / X).sim(Nsim)
         cdf = stats.cauchy(loc=0, scale=1).cdf
@@ -3588,7 +3596,7 @@ class TestCauchy(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Cauchy_additive(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Cauchy() ** 2)
         sims = (X + Y).sim(Nsim)
         cdf = stats.cauchy(loc=0, scale=2).cdf
@@ -3613,7 +3621,7 @@ class TestLognormal(unittest.TestCase):
         self.assertRaises(Exception, lambda: LogNormal(mu=0, sigma=-5))
 
     def test_LogNormal_to_Normal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = LogNormal(mu=10, sigma=5)
         sims = X.sim(Nsim).apply(log)
         cdf = stats.norm(loc=10, scale=5).cdf
@@ -3621,7 +3629,7 @@ class TestLognormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Normal_to_LogNormal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(mean=10, sd=5))
         sims = X.apply(exp).sim(Nsim)
         cdf = stats.lognorm(s=5, scale=exp(10)).cdf
@@ -3629,7 +3637,7 @@ class TestLognormal(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_LogNormal_Product(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(LogNormal(mu=10, sigma=5) * LogNormal(mu=11, sigma=6))
         sims = (X * Y).sim(Nsim)
         cdf = stats.lognorm(s=sqrt(25 + 36), scale=exp(21)).cdf
@@ -3716,7 +3724,7 @@ class TestPareto(unittest.TestCase):
         math.isnan(x.mean())
 
     def test_Pareto_to_Exponential(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Pareto(shape=1.5, scale=0.1))
         sims = (log(X / 0.1)).sim(Nsim)
         cdf = stats.expon(scale=1 / 1.5).cdf
@@ -3733,13 +3741,13 @@ class TestPareto(unittest.TestCase):
         self.assertRaises(Exception, lambda: Pareto(shape=2, scale=0))
 
     def test_Pareto_draw_above_scale(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Pareto(shape=2, scale=3))
         sims = X.sim(Nsim)
         self.assertTrue(all(sim >= 3 for sim in sims))
 
     def test_Pareto_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Pareto(shape=2, scale=1))
         sims = X.sim(Nsim)
         cdf = stats.pareto(b=2, scale=1).cdf
@@ -3750,7 +3758,7 @@ class TestPareto(unittest.TestCase):
 class TestBurr(unittest.TestCase):
 
     def test_Burr_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Burr(shape1=3, shape2=2, scale=1))
         sims = X.sim(Nsim)
         cdf = stats.burr12(3, 2, scale=1).cdf
@@ -3782,7 +3790,7 @@ class TestBurr(unittest.TestCase):
     def test_Burr_shape1_one_shifted_is_pareto(self):
         # a = 1 is a Pareto (Type II / Lomax); shifting by the scale gives a
         # Pareto (Type I) with the same tail exponent.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Burr(shape1=1, shape2=2, scale=1))
         sims = (X + 1).sim(Nsim)
         cdf = stats.pareto(b=2, scale=1).cdf
@@ -3790,7 +3798,7 @@ class TestBurr(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Burr_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Burr(shape1=3, shape2=2, scale=1).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -3829,7 +3837,7 @@ class TestBurr(unittest.TestCase):
 class TestLomax(unittest.TestCase):
 
     def test_Lomax_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Lomax(shape=3, scale=1))
         sims = X.sim(Nsim)
         cdf = stats.lomax(3, scale=1).cdf
@@ -3862,7 +3870,7 @@ class TestLomax(unittest.TestCase):
     def test_Lomax_shifted_is_pareto(self):
         # Adding the scale to a Lomax gives a Pareto (Type I) with the same
         # tail exponent.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Lomax(shape=3, scale=1))
         sims = (X + 1).sim(Nsim)
         cdf = stats.pareto(b=3, scale=1).cdf
@@ -3870,7 +3878,7 @@ class TestLomax(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Lomax_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Lomax(shape=3, scale=1).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -3913,7 +3921,7 @@ class TestWeibull(unittest.TestCase):
 class TestRayleigh(unittest.TestCase):
 
     def test_Rayleigh_Normal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         A, B = RV(Normal(mean=0, var=1) * Normal(mean=0, var=1))
         sims = (A**2 + B**2).apply(sqrt).sim(Nsim)
         cdf = stats.rayleigh.cdf
@@ -3921,7 +3929,7 @@ class TestRayleigh(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_Rayleigh_to_Chi(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Rayleigh())
         sims = X.sim(Nsim)
         cdf = stats.chi(df=2).cdf
@@ -3933,7 +3941,7 @@ class TestRayleigh(unittest.TestCase):
         self.assertAlmostEqual(float(X.mean()), np.sqrt(np.pi / 2), places=5)
 
     def test_Rayleigh_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Rayleigh())
         sims = X.sim(Nsim)
         cdf = stats.rayleigh.cdf
@@ -3945,7 +3953,7 @@ class TestRayleigh(unittest.TestCase):
         self.assertEqual(X.scale, 1.0)
 
     def test_Rayleigh_distributional_nondefault_scale(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Rayleigh(scale=3))
         sims = X.sim(Nsim)
         cdf = stats.rayleigh(scale=3).cdf
@@ -3961,7 +3969,7 @@ class TestRayleigh(unittest.TestCase):
 
     def test_Rayleigh_stretch_identity(self):
         # scale * Rayleigh() ~ Rayleigh(scale)
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Rayleigh())
         sims = (3 * X).sim(Nsim)
         cdf = stats.rayleigh(scale=3).cdf
@@ -3985,7 +3993,7 @@ class TestRayleigh(unittest.TestCase):
 class TestHalfNormal(unittest.TestCase):
 
     def test_HalfNormal_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(HalfNormal(scale=2))
         sims = X.sim(Nsim)
         cdf = stats.halfnorm(scale=2).cdf
@@ -3994,7 +4002,7 @@ class TestHalfNormal(unittest.TestCase):
 
     def test_HalfNormal_is_abs_of_Normal(self):
         # |X| for X ~ Normal(0, scale) should match HalfNormal(scale).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(mean=0, sd=2))
         sims = X.apply(abs).sim(Nsim)
         cdf = stats.halfnorm(scale=2).cdf
@@ -4013,7 +4021,7 @@ class TestHalfNormal(unittest.TestCase):
         self.assertAlmostEqual(float(X.pdf(0)), np.sqrt(2 / np.pi), places=6)
 
     def test_HalfNormal_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = HalfNormal(scale=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -4040,7 +4048,7 @@ class TestHalfNormal(unittest.TestCase):
 class TestHalfCauchy(unittest.TestCase):
 
     def test_HalfCauchy_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(HalfCauchy(scale=2))
         sims = X.sim(Nsim)
         cdf = stats.halfcauchy(scale=2).cdf
@@ -4049,7 +4057,7 @@ class TestHalfCauchy(unittest.TestCase):
 
     def test_HalfCauchy_is_abs_of_Cauchy(self):
         # |X| for X ~ Cauchy(0, scale) should match HalfCauchy(scale).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Cauchy(loc=0, scale=2))
         sims = X.apply(abs).sim(Nsim)
         cdf = stats.halfcauchy(scale=2).cdf
@@ -4089,7 +4097,7 @@ class TestHalfCauchy(unittest.TestCase):
         self.assertAlmostEqual(float(X.cdf(high)) - float(X.cdf(low)), 0.999, places=4)
 
     def test_HalfCauchy_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = HalfCauchy(scale=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -4127,7 +4135,7 @@ class TestHalfCauchy(unittest.TestCase):
 class TestWeibull(unittest.TestCase):
 
     def test_Weibull_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Weibull(shape=1.5, scale=2))
         sims = X.sim(Nsim)
         cdf = stats.weibull_min(c=1.5, scale=2).cdf
@@ -4142,7 +4150,7 @@ class TestWeibull(unittest.TestCase):
         self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
 
     def test_Weibull_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Weibull(shape=1.5, scale=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -4178,7 +4186,7 @@ class TestWeibull(unittest.TestCase):
 class TestLogistic(unittest.TestCase):
 
     def test_Logistic_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Logistic(loc=2, scale=3))
         sims = X.sim(Nsim)
         cdf = stats.logistic(loc=2, scale=3).cdf
@@ -4205,7 +4213,7 @@ class TestLogistic(unittest.TestCase):
         self.assertAlmostEqual(float(Logistic(loc=5, scale=2).cdf(5)), 0.5)
 
     def test_Logistic_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Logistic(loc=0, scale=1).draw()
         self.assertIsInstance(value, Scalar)
 
@@ -4236,7 +4244,7 @@ class TestLogistic(unittest.TestCase):
 class TestGompertz(unittest.TestCase):
 
     def test_Gompertz_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Gompertz(shape=1.5, scale=2))
         sims = X.sim(Nsim)
         cdf = stats.gompertz(c=1.5, scale=2).cdf
@@ -4251,7 +4259,7 @@ class TestGompertz(unittest.TestCase):
         self.assertAlmostEqual(float(X.sd()), float(th.std()), places=6)
 
     def test_Gompertz_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Gompertz(shape=1.5, scale=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -4290,7 +4298,7 @@ class TestGompertz(unittest.TestCase):
 class TestMakeham(unittest.TestCase):
 
     def test_Makeham_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Makeham(shape=1.5, makeham=0.3, scale=2)
         sims = RV(X).sim(Nsim)
         pval = stats.kstest(sims, X.cdf).pvalue
@@ -4341,7 +4349,7 @@ class TestMakeham(unittest.TestCase):
             self.assertAlmostEqual(float(X.pdf(0)), (makeham + shape) / scale, places=9)
 
     def test_Makeham_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Makeham(shape=1.5, makeham=0.3, scale=2).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -4378,7 +4386,7 @@ class TestMakeham(unittest.TestCase):
 class TestLaplace(unittest.TestCase):
 
     def test_Laplace_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Laplace(loc=2, scale=3))
         sims = X.sim(Nsim)
         cdf = stats.laplace(loc=2, scale=3).cdf
@@ -4403,7 +4411,7 @@ class TestLaplace(unittest.TestCase):
         self.assertAlmostEqual(float(Laplace(loc=5, scale=2).cdf(5)), 0.5)
 
     def test_Laplace_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = Laplace(loc=0, scale=1).draw()
         self.assertIsInstance(value, Scalar)
 
@@ -4434,7 +4442,7 @@ class TestLaplace(unittest.TestCase):
 class TestDeMoivre(unittest.TestCase):
 
     def test_DeMoivre_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(DeMoivre(omega=100))
         sims = X.sim(Nsim)
         cdf = stats.uniform(loc=0, scale=100).cdf
@@ -4456,7 +4464,7 @@ class TestDeMoivre(unittest.TestCase):
         self.assertAlmostEqual(float(X.cdf(20)), 20 / 80, places=9)
 
     def test_DeMoivre_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = DeMoivre(omega=100).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 0.0)
@@ -4481,7 +4489,7 @@ class TestGEV(unittest.TestCase):
 
     def test_GEV_distributional(self):
         # shape (xi) uses the standard EVT sign, so scipy's c is -shape.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(GEV(loc=2, scale=3, shape=0.2))
         sims = X.sim(Nsim)
         cdf = stats.genextreme(c=-0.2, loc=2, scale=3).cdf
@@ -4520,7 +4528,7 @@ class TestGEV(unittest.TestCase):
         self.assertEqual(float(gumbel.quantile(1.0)), np.inf)
 
     def test_GEV_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = GEV(loc=0, scale=1, shape=0.1).draw()
         self.assertIsInstance(value, Scalar)
 
@@ -4546,7 +4554,7 @@ class TestGEV(unittest.TestCase):
 class TestGumbel(unittest.TestCase):
 
     def test_Gumbel_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Gumbel(loc=2, scale=3))
         sims = X.sim(Nsim)
         cdf = stats.gumbel_r(loc=2, scale=3).cdf
@@ -4577,7 +4585,7 @@ class TestGumbel(unittest.TestCase):
 
     def test_Gumbel_neg_log_exponential(self):
         # -log(Exponential(1)) has a standard Gumbel(0, 1) distribution.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         E = RV(Exponential(rate=1))
         sims = (-log(E)).sim(Nsim)
         cdf = stats.gumbel_r(loc=0, scale=1).cdf
@@ -4612,7 +4620,7 @@ class TestGPD(unittest.TestCase):
 
     def test_GPD_distributional(self):
         # shape (xi) maps straight onto scipy's c (same sign, unlike GEV).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(GPD(loc=2, scale=3, shape=0.2))
         sims = X.sim(Nsim)
         cdf = stats.genpareto(c=0.2, loc=2, scale=3).cdf
@@ -4657,7 +4665,7 @@ class TestGPD(unittest.TestCase):
         self.assertAlmostEqual(float(bounded.quantile(1.0)), 4.0, places=6)
 
     def test_GPD_draw_is_scalar_in_support(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         value = GPD(loc=1, scale=1, shape=0.1).draw()
         self.assertIsInstance(value, Scalar)
         self.assertGreaterEqual(float(value), 1.0)  # never below loc
@@ -4717,13 +4725,13 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
         )
 
     def test_MultivariateNormal_draw_shape(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = MultivariateNormal(mean=[0, 0, 0], cov=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         draw = X.draw()
         self.assertEqual(len(draw), 3)
 
     def test_MultivariateNormal_marginal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, _ = RV(MultivariateNormal(mean=[3, 7], cov=[[4, 0], [0, 9]]))
         sims = X.sim(Nsim)
         cdf = stats.norm(loc=3, scale=2).cdf
@@ -4987,7 +4995,7 @@ class TestMultivariateT(MultivariatePlotTestCase):
             )
 
     def test_MultivariateT_draw_shape(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = MultivariateT(mean=[0, 0, 0], cov=[[1, 0, 0], [0, 1, 0], [0, 0, 1]], df=5)
         draw = X.draw()
         self.assertIsInstance(draw, Vector)
@@ -5002,7 +5010,7 @@ class TestMultivariateT(MultivariatePlotTestCase):
     def test_MultivariateT_marginal_is_student_t(self):
         # Each marginal of a multivariate t is a univariate t with the same
         # df: location mean_i and scale sqrt(cov_ii).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, _ = RV(MultivariateT(mean=[3, 7], cov=[[4, 0], [0, 9]], df=5))
         sims = X.sim(Nsim)
         cdf = stats.t(df=5, loc=3, scale=2).cdf
@@ -5091,7 +5099,7 @@ class TestMultivariateLogNormal(MultivariatePlotTestCase):
         )
 
     def test_MVLogNormal_draw_positive(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = MultivariateLogNormal(mean=[0, 0, 0], cov=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         draw = X.draw()
         self.assertIsInstance(draw, Vector)
@@ -5113,7 +5121,7 @@ class TestMultivariateLogNormal(MultivariatePlotTestCase):
         np.testing.assert_allclose(np.array(X.sd()), np.sqrt(np.diag(exp_cov)))
 
     def test_MVLogNormal_mean_matches_simulation(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         X = MultivariateLogNormal(mean=[0.0, 0.5], cov=[[0.4, 0.1], [0.1, 0.3]])
         sims = np.array([list(X.draw()) for _ in range(50000)])
         np.testing.assert_allclose(sims.mean(0), np.array(X.mean()), rtol=0.05)
@@ -5160,7 +5168,7 @@ class TestMultivariateLogNormal(MultivariatePlotTestCase):
     def test_MVLogNormal_marginal_is_lognormal(self):
         # Each component is a univariate LogNormal with the underlying
         # component's mean and sd.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         A, B = RV(MultivariateLogNormal(mean=[0.3, 1.0], cov=[[0.25, 0], [0, 0.5]]))
         sims = A.sim(Nsim)
         cdf = stats.lognorm(s=0.5, scale=np.exp(0.3)).cdf
@@ -5169,7 +5177,7 @@ class TestMultivariateLogNormal(MultivariatePlotTestCase):
 
     def test_MVLogNormal_log_is_normal(self):
         # Taking logs recovers the underlying multivariate normal marginals.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         A, B = RV(MultivariateLogNormal(mean=[2, -1], cov=[[1, 0], [0, 4]]))
         sims = A.apply(np.log).sim(Nsim)
         cdf = stats.norm(loc=2, scale=1).cdf
@@ -5257,7 +5265,7 @@ class TestWishart(unittest.TestCase):
             )
 
     def test_Wishart_draw_shape(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Wishart(df=5, scale=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         draw = X.draw()
         self.assertIsInstance(draw, Vector)
@@ -5265,7 +5273,7 @@ class TestWishart(unittest.TestCase):
         self.assertEqual(len(draw[0]), 3)
 
     def test_Wishart_draw_symmetric_pd(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         draw = Wishart(df=6, scale=[[2, 0.5], [0.5, 1]]).draw()
         m = np.array([list(row) for row in draw])
         self.assertTrue(np.allclose(m, m.T))
@@ -5279,7 +5287,7 @@ class TestWishart(unittest.TestCase):
 
     def test_Wishart_mean_matches_df_times_scale(self):
         # E[W] = df * scale; check the Monte Carlo mean of the (0, 0) entry.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         df, scale = 8, [[2, 0.5], [0.5, 1]]
         X = Wishart(df=df, scale=scale)
         sims = [X.draw()[0][0] for _ in range(Nsim)]
@@ -5295,7 +5303,7 @@ class TestWishart(unittest.TestCase):
         np.testing.assert_allclose(got, df * np.asarray(scale, dtype=float))
 
     def test_Wishart_mean_shape_matches_draw(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Wishart(df=6, scale=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         mean, draw = X.mean(), X.draw()
         self.assertIsInstance(mean, Vector)
@@ -5317,7 +5325,7 @@ class TestWishart(unittest.TestCase):
 
     def test_Wishart_diagonal_is_scaled_chisquare(self):
         # With an identity scale, each diagonal entry is chi-square(df).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Wishart(df=6, scale=[[1, 0], [0, 1]])
         sims = [X.draw()[0][0] for _ in range(Nsim)]
         pval = stats.kstest(sims, stats.chi2(df=6).cdf).pvalue
@@ -5347,7 +5355,7 @@ class TestInverseWishart(unittest.TestCase):
             )
 
     def test_InverseWishart_draw_shape(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = InverseWishart(df=5, scale=[[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         draw = X.draw()
         self.assertIsInstance(draw, Vector)
@@ -5355,7 +5363,7 @@ class TestInverseWishart(unittest.TestCase):
         self.assertEqual(len(draw[0]), 3)
 
     def test_InverseWishart_draw_symmetric_pd(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         draw = InverseWishart(df=6, scale=[[2, 0.5], [0.5, 1]]).draw()
         m = np.array([list(row) for row in draw])
         self.assertTrue(np.allclose(m, m.T))
@@ -5369,7 +5377,7 @@ class TestInverseWishart(unittest.TestCase):
 
     def test_InverseWishart_mean_matches_formula(self):
         # E[X] = scale / (df - p - 1), which requires df > p + 1.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         df, scale = 10, [[2, 0.5], [0.5, 1]]
         X = InverseWishart(df=df, scale=scale)
         sims = [X.draw()[0][0] for _ in range(Nsim)]
@@ -5392,7 +5400,7 @@ class TestInverseWishart(unittest.TestCase):
             X.mean()
         self.assertIn("df > p + 1", str(caught.exception))
         # ...and the distribution is still perfectly usable otherwise.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         self.assertEqual(len(X.draw()), 2)
 
     def test_InverseWishart_vector_summaries_raise_friendly(self):
@@ -5410,7 +5418,7 @@ class TestInverseWishart(unittest.TestCase):
         # If X ~ InverseWishart(df, scale), then inv(X) ~ Wishart(df, inv(scale)).
         # Check the (0, 0) entry of the inverse against chi-square with an
         # identity scale (whose inverse is also the identity).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = InverseWishart(df=6, scale=[[1, 0], [0, 1]])
         sims = []
         for _ in range(Nsim):
@@ -5438,7 +5446,7 @@ class TestBivariateNormal(MultivariatePlotTestCase):
         )
 
     def test_LinCom_BivNormal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(BivariateNormal(mean1=30, mean2=50, sd1=8, sd2=6, corr=-0.4))
         Z = 4 * X - 2 * Y
         Z_mean = 4 * 30 + (-2) * 50
@@ -5449,7 +5457,7 @@ class TestBivariateNormal(MultivariatePlotTestCase):
         self.assertTrue(pval > 0.01)
 
     def test_BivNormal_condDistr_r(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         for c in [-0.9, 0.9, 0.1]:
             X, Y = RV(BivariateNormal(mean1=20, mean2=10, sd1=3, sd2=5, corr=c))
             sims = (Y | (abs(X - 21) < 0.1)).sim(500)
@@ -5466,7 +5474,7 @@ class TestBivariateNormal(MultivariatePlotTestCase):
         )
 
     def test_BivariateNormal_marginal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, _ = RV(BivariateNormal(mean1=5, mean2=10, sd1=2, sd2=3, corr=0.6))
         sims = X.sim(Nsim)
         cdf = stats.norm(loc=5, scale=2).cdf
@@ -5515,7 +5523,7 @@ class TestMultinomial(MultivariatePlotTestCase):
         self.assertRaises(Exception, lambda: Multinomial(n=5, p=[0.5, 0.6]))
 
     def test_Multinomial_draw_sums_to_n(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Multinomial(n=20, p=[0.2, 0.5, 0.3])
         draw = X.draw()
         self.assertEqual(sum(draw), 20)
@@ -5535,7 +5543,7 @@ class TestMultinomial(MultivariatePlotTestCase):
         self.assertTrue(np.all(np.isnan(corr)))
 
     def test_Multinomial_marginals_match_Binomial(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         p = [0.3, 0.5, 0.2]
         n = 15
         X0, X1, X2 = RV(Multinomial(n=n, p=p))
@@ -5679,7 +5687,7 @@ class TestMultivariateHypergeometric(MultivariatePlotTestCase):
         )
 
     def test_MVHypergeom_draw_sums_to_n(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
         draw = X.draw()
         self.assertIsInstance(draw, Vector)
@@ -5709,7 +5717,7 @@ class TestMultivariateHypergeometric(MultivariatePlotTestCase):
         # Lumping all other types together, each count is a univariate
         # hypergeometric: type i vs. the rest. Here type 0 has 10 of 24,
         # drawing 6, so the first count is Hypergeometric(n=6, N0=14, N1=10).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         A, B, C = RV(MultivariateHypergeometric(m=[10, 8, 6], n=6))
         sims = A.sim(Nsim)
         expected = stats.hypergeom(
@@ -5835,7 +5843,7 @@ class TestDirichlet(MultivariatePlotTestCase):
         self.assertFalse(hasattr(X, "cdf"))
 
     def test_Dirichlet_draw_shape_and_sums_to_one(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Dirichlet(alpha=[2, 3, 5])
         draw = X.draw()
         self.assertEqual(len(draw), 3)
@@ -5843,7 +5851,7 @@ class TestDirichlet(MultivariatePlotTestCase):
         self.assertAlmostEqual(float(sum(draw)), 1.0)
 
     def test_Dirichlet_sim_shape_and_sums_to_one(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = Dirichlet(alpha=[2, 3, 5])
         sims = X.sim(100)
         arr = np.array(list(sims))
@@ -5852,7 +5860,7 @@ class TestDirichlet(MultivariatePlotTestCase):
 
     def test_Dirichlet_marginals_match_Beta(self):
         # Each proportion X_i is marginally Beta(alpha_i, alpha0 - alpha_i).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         alpha = [2, 3, 5]
         alpha0 = sum(alpha)
         components = RV(Dirichlet(alpha=alpha))
@@ -5946,7 +5954,7 @@ class TestDirichletMultinomial(MultivariatePlotTestCase):
         )
 
     def test_DirichletMultinomial_draw_sums_to_n(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
         draw = X.draw()
         self.assertIsInstance(draw, Vector)
@@ -5986,7 +5994,7 @@ class TestDirichletMultinomial(MultivariatePlotTestCase):
 
     def test_DirichletMultinomial_marginal_is_beta_binomial(self):
         # Each count is marginally BetaBinomial(n, alpha_i, alpha0 - alpha_i).
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         A, B, C = RV(DirichletMultinomial(n=10, alpha=[2, 3, 5]))
         sims = A.sim(Nsim)
         th = stats.betabinom(n=10, a=2, b=8)  # alpha0 - alpha_0 = 10 - 2 = 8
@@ -6110,7 +6118,7 @@ class TestNegativeMultinomial(MultivariatePlotTestCase):
         self.assertAlmostEqual(X.p0, 0.5)
 
     def test_NegativeMultinomial_draw_shape(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = NegativeMultinomial(r=3, p=[0.3, 0.2])
         draw = X.draw()
         self.assertIsInstance(draw, Vector)
@@ -6194,7 +6202,7 @@ class TestNegativeMultinomial(MultivariatePlotTestCase):
         # Ignoring every category but i and the stopping category, count i is
         # Pascal(r, p0 / (p0 + p_i)) -- this also checks draw() reproduces the
         # distribution the pmf describes.
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         r, p = 3, [0.3, 0.2]
         X = NegativeMultinomial(r=r, p=p)
         components = RV(X)
@@ -6211,7 +6219,7 @@ class TestNegativeMultinomial(MultivariatePlotTestCase):
             self.assertTrue(pval > 0.01)
 
     def test_NegativeMultinomial_sim_shape(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = NegativeMultinomial(r=3, p=[0.3, 0.2])
         arr = np.array(list(X.sim(100)))
         self.assertEqual(arr.shape, (100, 2))
@@ -6310,7 +6318,7 @@ class TestDrawReturnsScalar(unittest.TestCase):
     """
 
     def test_overridden_draws_return_scalar(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         for X in [
             NegativeBinomial(r=3, p=0.5),
             Cauchy(loc=0, scale=1),
@@ -6319,12 +6327,12 @@ class TestDrawReturnsScalar(unittest.TestCase):
             self.assertIsInstance(X.draw(), Scalar)
 
     def test_base_class_draws_return_scalar(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         for X in [Normal(0, 1), Poisson(3), Binomial(10, 0.5), Gamma(2)]:
             self.assertIsInstance(X.draw(), Scalar)
 
     def test_overridden_draws_still_behave_as_numbers(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         self.assertIsInstance(NegativeBinomial(r=3, p=0.5).draw(), int)
         self.assertIsInstance(Cauchy(loc=0, scale=1).draw(), float)
         self.assertIsInstance(Pareto(shape=2, scale=1).draw(), float)
@@ -6332,7 +6340,7 @@ class TestDrawReturnsScalar(unittest.TestCase):
         self.assertGreaterEqual(Pareto(shape=2, scale=3).draw() + 0, 3)
 
     def test_overridden_draws_respect_support(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         for _ in range(200):
             # NegativeBinomial counts total trials, so it starts at r.
             self.assertGreaterEqual(NegativeBinomial(r=3, p=0.5).draw(), 3)
@@ -8113,3 +8121,143 @@ class TestDistributionShade(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             Normal(0, 1).plot().shade(gt=5, lt=3)
         self.assertIn("less than", str(cm.exception))
+
+
+class TestFastSim(unittest.TestCase):
+    """The batched ``.sim(n)`` fast path.
+
+    ``NegativeHypergeometric`` and ``TruncatedNormal`` are backed by scipy
+    samplers with a large per-call setup cost that does not shrink when
+    fewer samples are asked for -- nhypergeom rebuilds a CDF table and an
+    inverse-CDF interpolator every call. Drawing n samples in one batched
+    call instead of n single ones is worth ~850x and ~80x respectively.
+    These tests pin the scope of that optimization: exactly two
+    distributions, only ``.sim()``, and only on an untransformed RV.
+    """
+
+    def test_only_two_distributions_override_the_hook(self):
+        # The whole design rests on _fast_sim being None everywhere else, so
+        # every other distribution keeps its existing one-draw-at-a-time
+        # loop. A new override should be a deliberate, reviewed addition.
+        overriders = sorted(
+            cls.__name__
+            for cls in distributions.Distribution.__subclasses__()
+            if cls._fast_sim is not distributions.Distribution._fast_sim
+        )
+        self.assertEqual(overriders, ["NegativeHypergeometric", "TruncatedNormal"])
+
+    def test_base_hook_returns_none(self):
+        for dist in [Normal(0, 1), Binomial(10, 0.5), Poisson(3), Uniform(a=0, b=1)]:
+            with self.subTest(dist=type(dist).__name__):
+                self.assertIsNone(dist._fast_sim(5))
+
+    def test_overrides_return_n_samples(self):
+        for dist in [
+            NegativeHypergeometric(r=3, N0=10, N1=8),
+            TruncatedNormal(mean=0, sd=1, a=-1, b=2),
+        ]:
+            with self.subTest(dist=type(dist).__name__):
+                batch = dist._fast_sim(17)
+                self.assertIsNotNone(batch)
+                self.assertEqual(len(batch), 17)
+
+    def test_batched_negative_hypergeometric_matches_the_theoretical_pmf(self):
+        # The point of the change is speed, not a different distribution, so
+        # check the batched output against the exact pmf with a chi-square.
+        seed(42)
+        r, N0, N1 = 3, 10, 8
+        X = NegativeHypergeometric(r=r, N0=N0, N1=N1)
+        values = np.array(list(RV(X).sim(Nsim)), dtype=int)
+        support = list(range(0, N1 + 1))
+        observed = [int((values == k).sum()) for k in support]
+        expected = [Nsim * float(X.pmf(k)) for k in support]
+        # Lump any sparse bins together so every expected count is big enough
+        # for a chi-square -- but only add the lumped bin if it is non-empty,
+        # since an all-zero bin makes the statistic nan.
+        keep = [i for i, e in enumerate(expected) if e >= 5]
+        drop = [i for i in range(len(expected)) if i not in keep]
+        obs = [observed[i] for i in keep]
+        exp = [expected[i] for i in keep]
+        if drop:
+            obs.append(sum(observed[i] for i in drop))
+            exp.append(sum(expected[i] for i in drop))
+        # Rescale so the two sum identically -- dropping nothing leaves them
+        # equal already, but lumping can leave a rounding gap.
+        exp = [e * sum(obs) / sum(exp) for e in exp]
+        pval = stats.chisquare(obs, exp).pvalue
+        self.assertTrue(pval > 0.01, f"chi-square p={pval}")
+
+    def test_batched_truncated_normal_matches_the_theoretical_cdf(self):
+        seed(42)
+        X = TruncatedNormal(mean=0, sd=1, a=-1, b=2)
+        values = list(RV(X).sim(Nsim))
+        pval = stats.kstest(values, lambda q: [float(X.cdf(v)) for v in q]).pvalue
+        self.assertTrue(pval > 0.01, f"KS p={pval}")
+        # And it really is inside the truncation bounds.
+        self.assertTrue(all(-1 <= v <= 2 for v in values))
+
+    def test_batched_and_looped_paths_agree_distributionally(self):
+        # Same distribution either way -- compared with a two-sample KS test,
+        # since the two paths draw different underlying bits (see the notes:
+        # scipy's batched rvs does not consume the stream in the same order).
+        seed(42)
+        X = TruncatedNormal(mean=0, sd=1, a=-1, b=2)
+        batched = list(RV(X).sim(4000))
+        looped = [X.draw() for _ in range(4000)]
+        pval = stats.ks_2samp(batched, looped).pvalue
+        self.assertTrue(pval > 0.01, f"two-sample KS p={pval}")
+
+    def test_apply_identity_still_takes_the_slow_path(self):
+        # A hand-written `lambda x: x` is a different object than the
+        # _IDENTITY sentinel, so `is` correctly fails and the ordinary
+        # per-draw loop runs. If this ever passed, .apply() transformations
+        # would be silently skipped.
+        X = RV(NegativeHypergeometric(r=3, N0=10, N1=8))
+        self.assertIs(X.func, _IDENTITY)
+        self.assertIsNot(X.apply(lambda x: x).func, _IDENTITY)
+        # A real transformation must still be applied to every value.
+        seed(42)
+        doubled = list(X.apply(lambda x: 2 * x).sim(200))
+        self.assertTrue(all(v % 2 == 0 for v in doubled))
+
+    def test_fast_path_does_not_change_pdf_cdf_or_mean(self):
+        # Only .sim() is affected; every other method must be untouched.
+        nh = NegativeHypergeometric(r=3, N0=10, N1=8)
+        ref = stats.nhypergeom(M=18, n=8, r=3)
+        self.assertAlmostEqual(float(nh.pmf(2)), float(ref.pmf(2)), places=12)
+        self.assertAlmostEqual(float(nh.cdf(4)), float(ref.cdf(4)), places=12)
+        self.assertAlmostEqual(float(nh.mean()), float(ref.mean()), places=12)
+        tn = TruncatedNormal(mean=0, sd=1, a=-1, b=2)
+        ref2 = stats.truncnorm(a=-1.0, b=2.0, loc=0, scale=1)
+        self.assertAlmostEqual(float(tn.pdf(0.5)), float(ref2.pdf(0.5)), places=12)
+        self.assertAlmostEqual(float(tn.cdf(0.5)), float(ref2.cdf(0.5)), places=12)
+        self.assertAlmostEqual(float(tn.mean()), float(ref2.mean()), places=12)
+
+    def test_sim_returns_the_usual_result_types(self):
+        # The fast path builds its own Results/RVResults, so check it did not
+        # quietly change what .sim() hands back.
+        X = NegativeHypergeometric(r=3, N0=10, N1=8)
+        space_sims = X.sim(50)
+        self.assertIsInstance(space_sims, Results)
+        self.assertEqual(len(space_sims), 50)
+        rv_sims = RV(X).sim(50)
+        self.assertIsInstance(rv_sims, RVResults)
+        self.assertEqual(len(rv_sims), 50)
+        self.assertTrue(all(isinstance(v, Scalar) for v in rv_sims))
+
+    def test_sim_still_validates_n(self):
+        X = NegativeHypergeometric(r=3, N0=10, N1=8)
+        for bad in [0, -1, 2.5]:
+            with self.subTest(n=bad):
+                self.assertRaises(ValueError, lambda b=bad: X.sim(b))
+                self.assertRaises(ValueError, lambda b=bad: RV(X).sim(b))
+
+    def test_timing_regression_generous_margin(self):
+        # Not a benchmark -- a tripwire. Before batching this took upwards of
+        # ten seconds; batched it is ~0.03s. A one-second ceiling catches a
+        # future change that reinstates the per-draw loop without being
+        # sensitive to how busy the machine is.
+        X = NegativeHypergeometric(r=3, N0=10, N1=8)
+        start = time.perf_counter()
+        RV(X).sim(10000)
+        self.assertLess(time.perf_counter() - start, 1.0)

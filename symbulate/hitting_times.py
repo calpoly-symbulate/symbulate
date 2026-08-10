@@ -101,7 +101,10 @@ MACHINE_EPS = 1e-12
 # appearing to hang.
 MAX_JUMPS = 1_000_000
 
-rng = np.random.default_rng()
+# The shared generator, owned by probability_space.py -- this module used to
+# create its own, which made seed() unable to reach it. Do not reintroduce a
+# local `rng = np.random.default_rng()` here.
+from .probability_space import rng
 
 
 def _local_variance_rate(cov_func, t0, t1):

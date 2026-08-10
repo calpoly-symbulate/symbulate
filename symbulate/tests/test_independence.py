@@ -34,7 +34,7 @@ from symbulate import (
     BoxModel,
     AssumeIndependent,
 )
-from symbulate import distributions
+from symbulate import seed
 
 Nsim = 10000
 
@@ -174,7 +174,7 @@ class TestAssumeIndependentMarginals(unittest.TestCase):
     """Each output RV has the same marginal distribution as the corresponding input."""
 
     def test_first_marginal_normal(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(3, 2))
         Y = RV(Exponential(1))
         X2, _ = AssumeIndependent(X, Y)
@@ -183,7 +183,7 @@ class TestAssumeIndependentMarginals(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_second_marginal_exponential(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(0, 1))
         Y = RV(Exponential(rate=2))
         _, Y2 = AssumeIndependent(X, Y)
@@ -192,7 +192,7 @@ class TestAssumeIndependentMarginals(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_discrete_marginal_mean_and_variance_preserved(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(0, 1))
         Y = RV(Binomial(n=10, p=0.4))
         _, Y2 = AssumeIndependent(X, Y)
@@ -204,7 +204,7 @@ class TestAssumeIndependentMarginals(unittest.TestCase):
         self.assertRaises(ValueError, lambda: AssumeIndependent())
 
     def test_third_marginal_in_three_rv_call(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(0, 1))
         Y = RV(Normal(5, 3))
         Z = RV(Exponential(rate=0.5))
@@ -228,7 +228,7 @@ class TestAssumeIndependentIndependence(unittest.TestCase):
 
     def test_two_normal_rvs_from_separate_spaces_are_independent(self):
         """Two separately-created N(0,1) RVs remain independent on the joint space."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(0, 1))
         Y = RV(Normal(0, 1))
         X2, Y2 = AssumeIndependent(X, Y)
@@ -238,7 +238,7 @@ class TestAssumeIndependentIndependence(unittest.TestCase):
 
     def test_mixed_distribution_rvs_are_independent(self):
         """Normal and Exponential RVs from separate spaces share no dependence."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(0, 1))
         Y = RV(Exponential(rate=1))
         X2, Y2 = AssumeIndependent(X, Y)
@@ -252,7 +252,7 @@ class TestAssumeIndependentIndependence(unittest.TestCase):
 
     def test_three_rvs_all_on_independent_joint_space(self):
         """Three separately-created RVs are all independent on the joint space."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(0, 1))
         Y = RV(Normal(0, 1))
         Z = RV(Normal(0, 1))
@@ -273,7 +273,7 @@ class TestAssumeIndependentCustomFunctions(unittest.TestCase):
 
     def test_custom_func_on_first_rv_preserved(self):
         """func=sum on the first RV keeps its effect: output values must be in {0..5}."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         P = BoxModel([0, 1], size=5)
         X = RV(P, sum)  # sum of 5 coin flips: support {0,1,2,3,4,5}
         Y = RV(Normal(0, 1))
@@ -286,7 +286,7 @@ class TestAssumeIndependentCustomFunctions(unittest.TestCase):
 
     def test_custom_func_on_second_rv_preserved(self):
         """func=sum on the second RV keeps its effect: output values must be in {0..5}."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(0, 1))
         P = BoxModel([0, 1], size=5)
         Y = RV(P, sum)  # sum of 5 coin flips: support {0,1,2,3,4,5}
@@ -299,7 +299,7 @@ class TestAssumeIndependentCustomFunctions(unittest.TestCase):
 
     def test_non_identity_func_distributional(self):
         """X = sum of 5 Bernoulli(0.4) trials after AssumeIndependent ~ Binomial(5, 0.4)."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         P = BoxModel([0, 1], size=5, probs=[0.6, 0.4])
         X = RV(P, sum)
         Y = RV(Normal(0, 1))
@@ -328,7 +328,7 @@ class TestAssumeIndependentCustomFunctions(unittest.TestCase):
         This test fails if the ``i=i`` default-argument binding in
         independence.py is broken.
         """
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(Normal(0, 1))
         Y = RV(Normal(10, 1))
         Z = RV(Normal(20, 1))

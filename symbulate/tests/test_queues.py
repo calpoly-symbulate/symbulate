@@ -67,11 +67,6 @@ TIME = 50.0
 CUSTOMER = 50
 
 
-def seed(value=42):
-    """Reseed the generator that distribution draws route through."""
-    distributions.rng = np.random.default_rng(value)
-
-
 def counts_at(queue, t=TIME, nsim=Nsim):
     """Simulate the number in the system at time ``t``, ``nsim`` times."""
     return [queue.draw()(t) for _ in range(nsim)]
@@ -94,7 +89,7 @@ class TestGG1ResultCount(unittest.TestCase):
         self.assertIsInstance(path, DiscreteValued)
 
     def test_starts_empty(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=2)).draw()
         self.assertEqual(path(0), 0)
 
@@ -113,7 +108,7 @@ class TestGG1ResultCount(unittest.TestCase):
         self.assertEqual([path(t) for t in [1.9, 2.5, 3.5, 4.5]], [0, 1, 0, 1])
 
     def test_counts_are_nonnegative_integers(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=1.2)).draw()
         for t in [0.5, 5.0, 20.0, 50.0]:
             value = path(t)
@@ -121,19 +116,19 @@ class TestGG1ResultCount(unittest.TestCase):
             self.assertGreaterEqual(value, 0)
 
     def test_getitem_matches_call(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=2)).draw()
         for t in [0.5, 5.0, 20.0]:
             self.assertEqual(path[t], path(t))
 
     def test_path_is_cached_and_stable(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=2)).draw()
         times = [1.0, 7.5, 20.0, 41.0]
         self.assertEqual([path(t) for t in times], [path(t) for t in times])
 
     def test_reading_far_ahead_keeps_earlier_values(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=2)).draw()
         early = [path(t) for t in [1.0, 3.0, 5.0]]
         path(200.0)
@@ -149,7 +144,7 @@ class TestGG1ResultCount(unittest.TestCase):
 
     def test_count_agrees_with_the_customer_times(self):
         # The count is exactly: arrived by t, minus departed by t.
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=1.2)).draw()
         for t in [2.0, 10.0, 30.0]:
             arrived = sum(1 for n in range(200) if path.customer_arrival_times[n] <= t)
@@ -168,7 +163,7 @@ class TestGG1ResultEvents(unittest.TestCase):
         self.assertEqual([path.states[n] for n in range(6)], [0, 1, 2, 1, 2, 3])
 
     def test_first_state_is_empty(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=2)).draw()
         self.assertEqual(path.states[0], 0)
 
@@ -186,7 +181,7 @@ class TestGG1ResultEvents(unittest.TestCase):
         )
 
     def test_event_times_are_nondecreasing(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=1.1)).draw()
         events = [path.get_arrival_times()[n] for n in range(40)]
         for earlier, later in zip(events, events[1:]):
@@ -195,7 +190,7 @@ class TestGG1ResultEvents(unittest.TestCase):
     def test_states_and_holding_times_describe_the_same_path(self):
         # Reading the path at a time just after the k-th event must give the
         # state the event-level view says it is in.
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=1.2)).draw()
         events = path.get_arrival_times()
         for k in range(1, 15):
@@ -204,14 +199,14 @@ class TestGG1ResultEvents(unittest.TestCase):
 
     def test_free_functions_work_on_a_queue_path(self):
         """states/interarrival_times/arrival_times, as for an MM1 path."""
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=2)).draw()
         self.assertEqual(states(path)[0], 0)
         self.assertGreaterEqual(interarrival_times(path)[0], 0)
         self.assertGreaterEqual(arrival_times(path)[0], 0)
 
     def test_getters_return_the_event_sequences(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=2)).draw()
         self.assertIs(path.get_states(), path.states)
         self.assertIs(path.get_interarrival_times(), path.interarrival_times)
@@ -229,7 +224,7 @@ class TestGG1ResultCustomers(unittest.TestCase):
         )
 
     def test_first_customer_never_waits(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=2)).draw()
         self.assertEqual(path.waiting_times[0], 0)
 
@@ -242,7 +237,7 @@ class TestGG1ResultCustomers(unittest.TestCase):
         )
 
     def test_waits_are_nonnegative(self):
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=1.2)).draw()
         for n in range(30):
             self.assertGreaterEqual(path.waiting_times[n], 0)
@@ -271,7 +266,7 @@ class TestGG1ResultCustomers(unittest.TestCase):
     def test_departures_are_in_order_for_a_single_server(self):
         # One server serving first come, first served cannot let a later
         # customer leave before an earlier one.
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Exponential(rate=1.1)).draw()
         departures = [path.customer_departure_times[n] for n in range(30)]
         for earlier, later in zip(departures, departures[1:]):
@@ -301,14 +296,14 @@ class TestGG1ProbabilitySpace(unittest.TestCase):
         self.assertIs(space.service_dist, service)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         space = GG1ProbabilitySpace(Exponential(rate=1), Exponential(rate=2))
         self.assertIsInstance(space.draw(), GG1Result)
 
     def test_successive_draws_are_independent(self):
         # The two i.i.d. sequences are built once and reused, so each draw
         # must still give a fresh path rather than repeating the first one.
-        seed()
+        seed(42)
         space = GG1ProbabilitySpace(Exponential(rate=1), Exponential(rate=1.2))
         first, second = space.draw(), space.draw()
         self.assertNotEqual(
@@ -364,7 +359,7 @@ class TestGG1(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_sim_gives_independent_paths(self):
-        seed()
+        seed(42)
         queue = GG1(Exponential(rate=1), Exponential(rate=1.2))
         paths = list(queue.sim(2))
         self.assertNotEqual(
@@ -372,14 +367,14 @@ class TestGG1(unittest.TestCase):
         )
 
     def test_waiting_time_via_apply(self):
-        seed()
+        seed(42)
         queue = GG1(Exponential(rate=1), Exponential(rate=2))
         wait = queue.apply(lambda path: path.waiting_times[10])
         self.assertIsInstance(wait, RV)
         self.assertGreaterEqual(wait.draw(), 0)
 
     def test_sojourn_time_via_apply(self):
-        seed()
+        seed(42)
         queue = GG1(Exponential(rate=1), Exponential(rate=2))
         sojourn = queue.apply(lambda path: path.sojourn_times[10])
         self.assertGreater(sojourn.draw(), 0)
@@ -488,13 +483,13 @@ class TestGGsResult(unittest.TestCase):
         self.assertEqual(path.get_number_waiting()(3.5), 1)
 
     def test_counts_are_nonnegative(self):
-        seed()
+        seed(42)
         path = GGs(Exponential(rate=2), Exponential(rate=1.2), servers=2).draw()
         for t in [1.0, 10.0, 40.0]:
             self.assertGreaterEqual(path(t), 0)
 
     def test_path_is_cached_and_stable(self):
-        seed()
+        seed(42)
         path = GGs(Exponential(rate=2), Exponential(rate=1), servers=2).draw()
         times = [1.0, 8.0, 25.0]
         self.assertEqual([path(t) for t in times], [path(t) for t in times])
@@ -540,13 +535,13 @@ class TestGGsProbabilitySpace(unittest.TestCase):
         self.assertEqual(space.servers, 3)
 
     def test_draw_returns_result_with_the_servers(self):
-        seed()
+        seed(42)
         path = GGsProbabilitySpace(Exponential(rate=2), Exponential(rate=1), 3).draw()
         self.assertIsInstance(path, GGsResult)
         self.assertEqual(path.servers, 3)
 
     def test_successive_draws_are_independent(self):
-        seed()
+        seed(42)
         space = GGsProbabilitySpace(Exponential(rate=2), Exponential(rate=1), 2)
         first, second = space.draw(), space.draw()
         self.assertNotEqual(
@@ -601,7 +596,7 @@ class TestGGs(unittest.TestCase):
         self.assertEqual(first, [queue.draw()(10.0) for _ in range(20)])
 
     def test_sim_gives_independent_paths(self):
-        seed()
+        seed(42)
         queue = GGs(Exponential(rate=2), Exponential(rate=1.1), servers=2)
         paths = list(queue.sim(2))
         self.assertNotEqual(
@@ -615,21 +610,21 @@ class TestQueueTheory(unittest.TestCase):
     def test_mm1_mean_number_in_system(self):
         # Both distributions exponential is the M/M/1 queue, whose long-run
         # mean number in the system is rho / (1 - rho).
-        seed()
+        seed(42)
         queue = GG1(Exponential(rate=1), Exponential(rate=2))
         rho = queue.utilization
         expected = rho / (1 - rho)
         self.assertAlmostEqual(np.mean(counts_at(queue)), expected, delta=0.15)
 
     def test_mm1_probability_the_system_is_empty(self):
-        seed()
+        seed(42)
         queue = GG1(Exponential(rate=1), Exponential(rate=2))
         empty = np.mean([count == 0 for count in counts_at(queue)])
         self.assertAlmostEqual(empty, 1 - queue.utilization, delta=0.06)
 
     def test_mm1_number_in_system_is_geometric(self):
         # P(N = k) = (1 - rho) * rho ** k.
-        seed()
+        seed(42)
         queue = GG1(Exponential(rate=1), Exponential(rate=2))
         rho = queue.utilization
         counts = counts_at(queue)
@@ -642,7 +637,7 @@ class TestQueueTheory(unittest.TestCase):
     def test_littles_law(self):
         # L = lambda * W: the mean number in the system is the arrival rate
         # times the mean time each customer spends in it.
-        seed()
+        seed(42)
         arrival_rate = 1
         queue = GG1(Exponential(rate=arrival_rate), Exponential(rate=2))
         number = np.mean(counts_at(queue))
@@ -651,7 +646,7 @@ class TestQueueTheory(unittest.TestCase):
 
     def test_mm1_mean_wait(self):
         # The wait behind that count: rho / (mu - lambda).
-        seed()
+        seed(42)
         arrival_rate, service_rate = 1, 2
         expected = (arrival_rate / service_rate) / (service_rate - arrival_rate)
         queue = GG1(Exponential(rate=arrival_rate), Exponential(rate=service_rate))
@@ -660,14 +655,14 @@ class TestQueueTheory(unittest.TestCase):
     def test_pollaczek_khinchine_with_erratic_service(self):
         # M/G/1: mean wait = lambda * E[S^2] / (2 * (1 - rho)). With
         # Exponential(rate=2) service, E[S^2] = 0.5 and rho = 0.5, so 0.5.
-        seed()
+        seed(42)
         queue = MG1(arrival_rate=1, service_dist=Exponential(rate=2))
         self.assertAlmostEqual(np.mean(waits_at(queue)), 0.5, delta=0.12)
 
     def test_pollaczek_khinchine_with_steady_service(self):
         # The same mean service time (0.5) but far less variable:
         # Gamma(shape=20, rate=40) has E[S^2] = 0.2625, so the wait is halved.
-        seed()
+        seed(42)
         service = Gamma(shape=20, rate=40)
         second_moment = service.var() + service.mean() ** 2
         expected = 1 * second_moment / (2 * (1 - 0.5))
@@ -676,7 +671,7 @@ class TestQueueTheory(unittest.TestCase):
 
     def test_steadier_service_holds_a_shorter_line(self):
         # The same lesson read off the count instead of the wait.
-        seed()
+        seed(42)
         steady = MG1(arrival_rate=1, service_dist=Gamma(shape=20, rate=40))
         erratic = MG1(arrival_rate=1, service_dist=Exponential(rate=2))
         self.assertAlmostEqual(steady.utilization, erratic.utilization)
@@ -686,7 +681,7 @@ class TestQueueTheory(unittest.TestCase):
         # G/M/1 against M/M/1 at identical utilization: Gamma(shape=8, rate=8)
         # arrivals are far more regular than Exponential(rate=1) ones, and
         # regularity is worth a shorter line.
-        seed()
+        seed(42)
         steady = GM1(interarrival_dist=Gamma(shape=8, rate=8), service_rate=2)
         erratic = GM1(interarrival_dist=Exponential(rate=1), service_rate=2)
         self.assertAlmostEqual(steady.utilization, erratic.utilization)
@@ -695,7 +690,7 @@ class TestQueueTheory(unittest.TestCase):
     def test_unstable_queue_grows_without_bound(self):
         # With rho > 1 the server cannot keep up, so the line keeps growing
         # instead of settling down.
-        seed()
+        seed(42)
         queue = GG1(Exponential(rate=2), Exponential(rate=1))
         self.assertGreater(queue.utilization, 1)
         path = queue.draw()
@@ -703,7 +698,7 @@ class TestQueueTheory(unittest.TestCase):
 
     def test_critically_loaded_queue_has_no_steady_state(self):
         # rho exactly 1 is also unstable, if more slowly.
-        seed()
+        seed(42)
         queue = GG1(Exponential(rate=1), Exponential(rate=1))
         self.assertEqual(queue.utilization, 1)
         early = np.mean([queue.draw()(10.0) for _ in range(100)])
@@ -715,7 +710,7 @@ class TestGGsTheory(unittest.TestCase):
     """The multi-server simulation against exact M/M/s results."""
 
     def test_erlang_c_probability_of_waiting_two_servers(self):
-        seed()
+        seed(42)
         queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
         waited = np.mean([wait > 0 for wait in waits_at(queue)])
         self.assertAlmostEqual(waited, erlang_c(2, 1, 1), delta=0.07)
@@ -723,7 +718,7 @@ class TestGGsTheory(unittest.TestCase):
     def test_erlang_c_mean_wait_two_servers(self):
         # M/M/2 with lambda = mu = 1: mean wait in line is
         # C / (s * mu - lambda) = (1/3) / 1 = 1/3.
-        seed()
+        seed(42)
         expected = erlang_c(2, 1, 1) / (2 * 1 - 1)
         queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
         self.assertAlmostEqual(np.mean(waits_at(queue)), expected, delta=0.12)
@@ -731,14 +726,14 @@ class TestGGsTheory(unittest.TestCase):
     def test_mms_mean_number_in_system(self):
         # M/M/2 with lambda = mu = 1: L = L_q + lambda / mu, where
         # L_q = C * rho / (1 - rho) = 1/3, so L = 4/3.
-        seed()
+        seed(42)
         queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
         number_waiting = erlang_c(2, 1, 1) * 0.5 / (1 - 0.5)
         expected = number_waiting + 1 / 1
         self.assertAlmostEqual(np.mean(counts_at(queue, t=60.0)), expected, delta=0.25)
 
     def test_mms_mean_number_waiting(self):
-        seed()
+        seed(42)
         queue = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
         expected = erlang_c(2, 1, 1) * 0.5 / (1 - 0.5)
         observed = np.mean(
@@ -748,7 +743,7 @@ class TestGGsTheory(unittest.TestCase):
 
     def test_erlang_c_mean_wait_three_servers(self):
         # M/M/3 with lambda = 2, mu = 1: rho = 2/3, mean wait 4/9.
-        seed()
+        seed(42)
         expected = erlang_c(3, 2, 1) / (3 * 1 - 2)
         queue = GGs(Exponential(rate=2), Exponential(rate=1), servers=3)
         self.assertAlmostEqual(np.mean(waits_at(queue)), expected, delta=0.12)
@@ -757,7 +752,7 @@ class TestGGsTheory(unittest.TestCase):
         # The classic comparison at equal utilization: two servers of rate 1
         # against one server of rate 2. Exact M/M/ values are 1/3 vs 1/2 for
         # the wait in line, and 4/3 vs 1 for the time in system.
-        seed()
+        seed(42)
         fast = GG1(Exponential(rate=1), Exponential(rate=2))
         pair = GGs(Exponential(rate=1), Exponential(rate=1), servers=2)
         self.assertAlmostEqual(fast.utilization, pair.utilization)
@@ -768,7 +763,7 @@ class TestGGsTheory(unittest.TestCase):
         self.assertGreater(pair_visit, fast_visit)
 
     def test_more_servers_never_lengthen_the_line(self):
-        seed()
+        seed(42)
         means = []
         for servers in [1, 2, 3]:
             queue = GGs(Exponential(rate=1), Exponential(rate=1.2), servers=servers)
@@ -777,7 +772,7 @@ class TestGGsTheory(unittest.TestCase):
         self.assertLessEqual(means[2], means[1])
 
     def test_unstable_multi_server_queue_grows_without_bound(self):
-        seed()
+        seed(42)
         queue = GGs(Exponential(rate=3), Exponential(rate=1), servers=2)
         self.assertGreater(queue.utilization, 1)
         path = queue.draw()
@@ -854,7 +849,7 @@ class TestQueueValidation(unittest.TestCase):
 
     def test_always_zero_service_is_accepted(self):
         """A server that finishes instantly is degenerate, not impossible."""
-        seed()
+        seed(42)
         path = GG1(Exponential(rate=1), Poisson(0)).draw()
         # Every customer leaves the instant they arrive, so nobody waits and
         # the system is empty except at the arrival instants themselves.
@@ -880,7 +875,7 @@ class TestQueueValidation(unittest.TestCase):
                 interarrival=type(interarrival).__name__,
                 service=type(service).__name__,
             ):
-                seed()
+                seed(42)
                 self.assertGreaterEqual(GG1(interarrival, service).draw()(5.0), 0)
 
     def test_bad_arrival_rate_raises(self):

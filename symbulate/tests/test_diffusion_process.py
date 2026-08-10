@@ -20,10 +20,6 @@ from symbulate import diffusion_process
 Nsim = 1000
 
 
-def seed(value=42):
-    diffusion_process.rng = np.random.default_rng(value)
-
-
 def brownian_like(scale=1.0, x0=0, tol=1e-2):
     """A diffusion with constant coefficients -- Brownian motion."""
     return DiffusionProcess(
@@ -45,7 +41,7 @@ class TestDiffusionProcessConstruction(unittest.TestCase):
         )
 
     def test_probability_space_draws_a_path(self):
-        seed()
+        seed(42)
         P = DiffusionProcessProbabilitySpace(
             drift=lambda x, t: 0, diffusion=lambda x, t: 1
         )
@@ -55,18 +51,18 @@ class TestDiffusionProcessConstruction(unittest.TestCase):
 class TestDiffusionProcessPaths(unittest.TestCase):
 
     def test_starts_at_x0(self):
-        seed()
+        seed(42)
         for x0 in [0, 100, -5.5]:
             path = brownian_like(x0=x0).draw()
             self.assertEqual(path(0), float(x0))
 
     def test_same_time_returns_cached_value(self):
-        seed()
+        seed(42)
         path = brownian_like().draw()
         self.assertEqual(path(1.0), path(1.0))
 
     def test_cached_value_unchanged_after_a_later_time(self):
-        seed()
+        seed(42)
         path = brownian_like().draw()
         before = path(1.0)
         path(5.0)
@@ -75,7 +71,7 @@ class TestDiffusionProcessPaths(unittest.TestCase):
     def test_cached_value_unchanged_after_zooming_in(self):
         # The point of the bridge sampling: filling in detail between two
         # known times must not rewrite either of them.
-        seed()
+        seed(42)
         path = brownian_like().draw()
         at_one, at_two = path(1.0), path(2.0)
         for t in [1.1, 1.5, 1.9, 1.25, 1.75]:
@@ -86,25 +82,25 @@ class TestDiffusionProcessPaths(unittest.TestCase):
     def test_zoomed_values_lie_between_their_neighbors_in_time(self):
         # Every bridge value is inserted in time order, so the cached times
         # stay sorted no matter what order they were asked for.
-        seed()
+        seed(42)
         path = brownian_like().draw()
         for t in [3.0, 0.5, 2.0, 1.0, 2.5]:
             path(t)
         self.assertEqual(path.times, sorted(path.times))
 
     def test_different_draws_produce_different_paths(self):
-        seed()
+        seed(42)
         X = brownian_like()
         self.assertGreater(len({float(X.draw()(1.0)) for _ in range(10)}), 1)
 
     def test_negative_time_raises_value_error(self):
-        seed()
+        seed(42)
         path = brownian_like().draw()
         with self.assertRaises(ValueError):
             path(-1.0)
 
     def test_negative_time_message_explains_the_start(self):
-        seed()
+        seed(42)
         path = brownian_like().draw()
         with self.assertRaisesRegex(ValueError, "only defined for t >= 0"):
             path(-1.0)
@@ -139,7 +135,7 @@ class TestDiffusionProcessSeeding(unittest.TestCase):
     def test_numpy_random_seed_does_not_control_the_path(self):
         # If this ever starts passing, the module has been switched back to
         # the legacy global generator.
-        seed()
+        seed(42)
         values = []
         for _ in range(3):
             np.random.seed(42)
@@ -152,7 +148,7 @@ class TestDiffusionProcessBrownianCase(unittest.TestCase):
 
     def test_variance_matches_brownian_motion(self):
         for scale in [1.0, 2.0]:
-            seed()
+            seed(42)
             X = brownian_like(scale=scale)
             for t in [1.0, 3.0]:
                 expected = scale**2 * t
@@ -161,12 +157,12 @@ class TestDiffusionProcessBrownianCase(unittest.TestCase):
                 )
 
     def test_mean_stays_at_x0_without_drift(self):
-        seed()
+        seed(42)
         X = brownian_like(x0=10)
         self.assertAlmostEqual(X[2.0].sim(Nsim).mean(), 10.0, delta=0.2)
 
     def test_constant_drift_shifts_the_mean(self):
-        seed()
+        seed(42)
         X = DiffusionProcess(
             drift=lambda x, t: 2.0, diffusion=lambda x, t: 1.0, x0=0, tol=1e-2
         )
@@ -174,7 +170,7 @@ class TestDiffusionProcessBrownianCase(unittest.TestCase):
 
     def test_zero_diffusion_is_deterministic(self):
         # With no randomness the path is the ODE solution x0 + drift * t.
-        seed()
+        seed(42)
         X = DiffusionProcess(
             drift=lambda x, t: 1.0, diffusion=lambda x, t: 0.0, x0=0, tol=1e-2
         )
@@ -187,7 +183,7 @@ class TestDiffusionProcessKnownModels(unittest.TestCase):
 
     def test_ornstein_uhlenbeck_long_run_variance(self):
         # A mean-reverting drift settles at variance scale**2 / (2 * rate).
-        seed()
+        seed(42)
         rate, scale = 1.5, 2.0
         X = DiffusionProcess(
             drift=lambda x, t: -rate * x,
@@ -199,7 +195,7 @@ class TestDiffusionProcessKnownModels(unittest.TestCase):
         self.assertAlmostEqual(X[8.0].sim(Nsim).var(), expected, delta=0.3)
 
     def test_ornstein_uhlenbeck_reverts_toward_its_mean(self):
-        seed()
+        seed(42)
         X = DiffusionProcess(
             drift=lambda x, t: -1.0 * (x - 5.0),
             diffusion=lambda x, t: 1.0,
@@ -211,7 +207,7 @@ class TestDiffusionProcessKnownModels(unittest.TestCase):
     def test_geometric_brownian_motion_stays_positive(self):
         # Both coefficients vanish at 0, so a path started above 0 cannot
         # cross it -- the standard reason GBM models prices.
-        seed()
+        seed(42)
         rate, vol = 0.05, 0.3
         X = DiffusionProcess(
             drift=lambda x, t: rate * x,
@@ -223,7 +219,7 @@ class TestDiffusionProcessKnownModels(unittest.TestCase):
         self.assertTrue(all(value > 0 for value in sims))
 
     def test_geometric_brownian_motion_mean_grows_exponentially(self):
-        seed()
+        seed(42)
         rate, vol, x0, t = 0.05, 0.3, 100.0, 2.0
         X = DiffusionProcess(
             drift=lambda x, t: rate * x,
