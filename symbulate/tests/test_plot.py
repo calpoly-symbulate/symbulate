@@ -80,6 +80,10 @@ from symbulate.plot import (
     make_violinplot,
     make_ecdf,
     make_mosaic,
+    make_stackedbar,
+    mosaic_type_suggestion,
+    MOSAIC_SUGGEST_MAX_CATEGORIES,
+    MOSAIC_YAXIS_TICKS,
     _mosaic_spans,
     _readable_text_color,
     make_sample_path,
@@ -103,7 +107,7 @@ from symbulate.plot import (
     TILE_DEFAULT_BINS,
     HIST_DEFAULT_BINS,
 )
-from symbulate.results import RVResults
+from symbulate.results import RVResults, _is_categorical_2d
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1345,6 +1349,96 @@ class TestPlot1DDensityFeatures(PlotTestCase):
         self.assertEqual(ax.get_ylabel(), "Relative Frequency")
 
 
+class TestPlotCategorical2D(PlotTestCase):
+    """Two dependent categorical (string) variables, routed through .plot().
+
+    A pair of strings is not a numeric vector, so these results have
+    dim=None. They used to fall through to the path-plot catch-all and
+    draw each pair as a meaningless two-point line titled "Sample Path".
+    """
+
+    def setUp(self):
+        np.random.seed(42)
+
+        def event_sim():
+            a = BoxModel(["a", "not a"], probs=[0.8, 0.2]).draw()
+            if a == "a":
+                b = BoxModel(["b", "not b"], probs=[0.7, 0.3]).draw()
+            else:
+                b = BoxModel(["b", "not b"], probs=[0.6, 0.4]).draw()
+            return a, b
+
+        X, Y = RV(ProbabilitySpace(event_sim))
+        self.sims = (X & Y).sim(500)
+
+    def test_is_categorical_2d_detects_string_pairs(self):
+        self.assertTrue(_is_categorical_2d(self.sims.results))
+
+    def test_is_categorical_2d_rejects_numeric_pairs(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        self.assertFalse(_is_categorical_2d((X & Y).sim(50).results))
+
+    def test_is_categorical_2d_rejects_one_dimensional_strings(self):
+        colors = RV(BoxModel(["red", "green"])).sim(50)
+        self.assertFalse(_is_categorical_2d(colors.results))
+
+    def test_default_is_mosaic_not_sample_path(self):
+        """The reported bug: this drew a "Sample Path" against index."""
+        self.sims.plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
+
+    def test_default_lookup_is_mosaic(self):
+        default, alternatives = default_plot_type("2D_categorical", False)
+        self.assertEqual(default, "mosaic")
+        self.assertEqual(alternatives, ["stackedbar", "tile"])
+
+    def test_stackedbar_is_available(self):
+        self.sims.plot(type="stackedbar", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Stacked Bar Plot")
+
+    def test_tile_is_available(self):
+        self.sims.plot(type="tile", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+
+    def test_unsupported_type_names_the_three_that_work(self):
+        with self.assertRaises(ValueError) as cm:
+            self.sims.plot(type="scatter", suggest=False)
+        message = str(cm.exception)
+        for token in ("'mosaic'", "'stackedbar'", "'tile'"):
+            self.assertIn(token, message)
+
+    def test_marginal_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            self.sims.plot(marginal=True, suggest=False)
+        self.assertIn("Drop marginal=True", str(cm.exception))
+
+    def test_column_widths_track_the_x_marginal(self):
+        """'a' has probability 0.8 and 'not a' 0.2, so the first column
+        should be roughly four times wider."""
+        self.sims.plot(suggest=False)
+        widths = sorted({round(b.get_width(), 4) for b in plt.gca().patches})
+        self.assertEqual(len(widths), 2)
+        self.assertGreater(widths[1] / widths[0], 2.0)
+
+    def test_suggestion_note_offers_the_alternatives(self):
+        import io
+        import contextlib
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.sims.plot(suggest=True)
+        note = buf.getvalue()
+        self.assertIn("Currently Showing: Mosaic Plot", note)
+        self.assertIn('type = "stackedbar"', note)
+
+    def test_one_dimensional_categorical_still_works(self):
+        """The 2D branch must not swallow the existing 1D categorical
+        case, which routes to bar / dotplot / impulse."""
+        colors = RV(BoxModel(["red", "green", "blue"])).sim(500)
+        colors.plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Bar Chart")
+
+
 class TestPlot1DEcdf(PlotTestCase):
     """The new type='ecdf' (empirical CDF step plot)."""
 
@@ -1973,7 +2067,7 @@ class TestPlot2DMeshFeatures(PlotTestCase):
 
 
 class TestPlot2DMosaic(PlotTestCase):
-    """The integrated mosaic plot (discrete x discrete, alternative to tile)."""
+    """The mosaic plot (discrete x discrete, alternative to tile)."""
 
     def setUp(self):
         np.random.seed(42)
@@ -1994,359 +2088,225 @@ class TestPlot2DMosaic(PlotTestCase):
 
     def test_mosaic_yaxis_shows_zero_to_one_ticks(self):
         """Every column's segments span 0 to 1 the same way, so a shared
-        0-to-1 proportion scale on the left is meaningful across every
-        column."""
+        proportion scale on the left is meaningful across every column."""
         self.discrete_sims.plot(type="mosaic")
-        ax = plt.gca()
-        self.assertTrue(ax.yaxis.get_visible())
-        labels = [t.get_text() for t in ax.get_yticklabels()]
-        self.assertEqual(labels, ["0.00", "0.25", "0.50", "0.75", "1.00"])
-
-    def test_mosaic_legend_uses_marginal_column_labels_by_default(self):
-        """With marginal_column=True (the default), category names are
-        printed beside the marginal column instead of a floating legend."""
-        self.discrete_sims.plot(type="mosaic")
-        ax = plt.gca()
-        self.assertIsNone(ax.get_legend())
-        arr = np.asarray(self.discrete_sims.results)
-        y_labels = sorted(str(v) for v in np.unique(arr[:, 1]))
-        label_texts = sorted(t.get_text() for t in ax.texts if t.get_text() in y_labels)
-        self.assertEqual(label_texts, y_labels)
-
-    def test_mosaic_legend_falls_back_without_marginal_column(self):
-        """With marginal_column=False, there's no column to hang labels
-        off of, so a standard floating legend appears instead."""
-        self.discrete_sims.plot(type="mosaic", marginal_column=False)
-        legend = plt.gca().get_legend()
-        self.assertIsNotNone(legend)
-        self.assertEqual(legend.get_title().get_text(), "Variable 2")
-
-    def test_mosaic_legend_false_shows_no_category_labels(self):
-        p = self.discrete_sims.plot(type="mosaic", legend=False, annotate=False)
-        self.assertEqual(len(p.ax.texts), 0)
+        ticks = list(plt.gca().get_yticks())
+        self.assertEqual(ticks, MOSAIC_YAXIS_TICKS)
 
     def test_mosaic_columns_sum_to_full_width(self):
-        """Column widths (plus gaps) must span the full [0, 1] x-axis."""
-        p = self.discrete_sims.plot(type="mosaic")
-        self.assertAlmostEqual(p.ax.get_xlim()[0], 0.0)
-        self.assertAlmostEqual(p.ax.get_xlim()[1], 1.0)
-
-    def test_mosaic_normalize_false_labels_are_whole_numbers(self):
-        """normalize=False switches in-cell labels from decimal
-        proportions to whole-number counts."""
-        p = self.discrete_sims.plot(type="mosaic", normalize=False)
-        texts = [t.get_text() for t in p.ax.texts]
-        self.assertGreater(len(texts), 0)
-        for text in texts:
-            self.assertNotIn(".", text)
-
-    def test_mosaic_normalize_true_labels_are_decimals(self):
-        p = self.discrete_sims.plot(type="mosaic")
-        texts = [t.get_text() for t in p.ax.texts]
-        self.assertGreater(len(texts), 0)
-        self.assertTrue(any("." in text for text in texts))
-
-    def test_mosaic_annotate_false_has_no_labels(self):
-        """annotate=False alone: no in-cell labels, but the marginal
-        column's legend labels (controlled separately by legend=) still
-        draw as ax.text(), so isolate with legend=False too."""
-        p = self.discrete_sims.plot(type="mosaic", annotate=False, legend=False)
-        self.assertEqual(len(p.ax.texts), 0)
-
-    def test_mosaic_annotate_false_still_shows_legend_labels(self):
-        """With annotate=False, only the marginal column's category-name
-        legend labels remain -- no in-cell proportion/count labels."""
-        p = self.discrete_sims.plot(type="mosaic", annotate=False)
-        arr = np.asarray(self.discrete_sims.results)
-        y_labels = sorted(str(v) for v in np.unique(arr[:, 1]))
-        texts = sorted(t.get_text() for t in p.ax.texts)
-        self.assertEqual(texts, y_labels)
-
-    def test_mosaic_overlay_prints_warning(self):
-        """A second mosaic call on the same axes prints (not warns) a
-        readability warning -- the same overlay category as tile/hist2d."""
-        ax = plt.gca()
-        arr = np.asarray(self.discrete_sims.results)
-        x, y = arr[:, 0], arr[:, 1]
-        make_mosaic(x, y, ax)
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            make_mosaic(x, y, ax)
-        self.assertIn("second mosaic plot", buf.getvalue())
+        self.discrete_sims.plot(type="mosaic")
+        bars = plt.gca().patches
+        n_x = len(set(round(b.get_x(), 6) for b in bars))
+        widths = sorted(set(round(b.get_x() + b.get_width(), 6) for b in bars))
+        self.assertGreater(n_x, 1)
+        self.assertAlmostEqual(widths[-1], 1.0, places=6)
 
     def test_mosaic_length_mismatch_raises_friendly_error(self):
         with self.assertRaises(ValueError) as cm:
-            make_mosaic(np.array([1, 2, 3]), np.array([1, 2]), plt.gca())
+            make_mosaic(["a", "b", "c"], ["x", "y"], plt.gca())
         self.assertIn("same length", str(cm.exception))
 
     def test_mosaic_many_categories_warns_and_hatches(self):
-        """More than 7 y-categories repeats a palette color; the repeat is
-        distinguished with a hatch pattern and a warning explains why."""
-        rng = np.random.default_rng(0)
-        x = rng.integers(0, 3, 2000)
-        y = rng.integers(0, 10, 2000)  # 10 distinct values > 7 palette colors
-        with self.assertWarns(UserWarning) as cm:
+        x = np.array(["a", "b"] * 20)
+        y = np.array([f"c{i}" for i in range(8)] * 5)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             bars = make_mosaic(x, y, plt.gca())
-        self.assertIn("more than the", str(cm.warning))
-        # category 0 and category 7 share a color; only 7's bars are hatched.
-        color_0 = bars[0].patches[0].get_facecolor()
-        color_7 = bars[7].patches[0].get_facecolor()
-        self.assertEqual(color_0, color_7)
-        self.assertEqual(bars[0].patches[0].get_hatch(), "")
-        self.assertIsNotNone(bars[7].patches[0].get_hatch())
+        self.assertTrue(any("repeat a color" in str(w.message) for w in caught))
+        hatches = {b.patches[0].get_hatch() for b in bars.values()}
+        self.assertIn("//", hatches)
 
     def test_mosaic_is_listed_as_2d_discrete_alternative(self):
-        for small_n in (True, False):
-            _, alternatives = default_plot_type("2D_dd", small_n)
-            self.assertIn("mosaic", alternatives)
+        _, alternatives = default_plot_type("2D_dd", False)
+        self.assertIn("mosaic", alternatives)
 
     def test_mosaic_display_name(self):
         self.assertEqual(PLOT_DISPLAY_NAME["mosaic"], "Mosaic Plot")
 
     def test_mosaic_spans_total_parameter_rescales_span(self):
-        """total= lets a row of segments fill less than the whole [0, 1]
-        axis -- used to reserve room for the marginal reference column."""
-        starts, widths = _mosaic_spans([1, 1], gap=0.0, total=0.5)
-        self.assertAlmostEqual(widths.sum(), 0.5)
+        starts, widths = _mosaic_spans(np.array([1.0, 1.0]), 0.0, total=0.5)
         self.assertAlmostEqual(starts[0], 0.0)
+        self.assertAlmostEqual(starts[-1] + widths[-1], 0.5)
 
-    def test_mosaic_marginal_column_present_by_default(self):
-        """marginal_column defaults to True: an extra column, labeled
-        with y_label (default "Variable 2"), appears after the real x
-        categories."""
-        p = self.discrete_sims.plot(type="mosaic")
-        labels = [t.get_text() for t in p.ax.get_xticklabels()]
-        self.assertEqual(labels[-1], "Variable 2")
+    # ---- no in-cell probability labels (requested change) ----
 
-    def test_mosaic_marginal_column_uses_custom_y_label(self):
-        p = self.discrete_sims.plot(type="mosaic", y_label="Outcome")
-        labels = [t.get_text() for t in p.ax.get_xticklabels()]
-        self.assertEqual(labels[-1], "Outcome")
+    def test_mosaic_has_no_in_cell_labels(self):
+        """In-cell proportion labels were removed: a number in every cell
+        crowded out the shapes the plot exists to show, and the segment
+        heights already encode the same quantity against the left scale."""
+        self.discrete_sims.plot(type="mosaic")
+        # The legend lives in its own artist, so the axes itself should
+        # carry no free-floating text at all.
+        self.assertEqual(len(plt.gca().texts), 0)
 
-    def test_mosaic_marginal_column_false_omits_it(self):
-        """With marginal_column=False, there's no extra column -- exactly
-        one x-tick per real x category."""
-        arr = np.asarray(self.discrete_sims.results)
-        n_x = len(np.unique(arr[:, 0]))
-        p = self.discrete_sims.plot(type="mosaic", marginal_column=False)
-        labels = [t.get_text() for t in p.ax.get_xticklabels()]
-        self.assertEqual(len(labels), n_x)
+    def test_stackedbar_has_no_in_cell_labels(self):
+        self.discrete_sims.plot(type="stackedbar")
+        self.assertEqual(len(plt.gca().texts), 0)
 
-    def test_mosaic_marginal_column_extends_every_bar_container(self):
-        """Every category's BarContainer gets one extra bar (the marginal
-        column) on top of one per real x category."""
-        arr = np.asarray(self.discrete_sims.results)
-        x, y = arr[:, 0], arr[:, 1]
-        n_x = len(np.unique(x))
-        bars = make_mosaic(x, y, plt.gca())
-        for container in bars.values():
-            self.assertEqual(len(container.patches), n_x + 1)
+    def test_mosaic_rejects_removed_annotate_argument(self):
+        """annotate= went away with the labels, so it must not be silently
+        accepted. It currently surfaces as matplotlib's own unknown-kwarg
+        error (an AttributeError from Rectangle.set); the friendlier
+        wrapper for that is a separate, package-wide task."""
+        with self.assertRaises((TypeError, AttributeError)):
+            make_mosaic(["a", "b"], ["x", "y"], plt.gca(), annotate=True)
 
-    def test_mosaic_marginal_column_is_skinnier_than_real_columns(self):
-        """The marginal column is a color reference, not real data -- it
-        should read as visibly narrower than a typical real x column
-        (individual real columns can still be narrower still, if that x
-        value is rare)."""
-        arr = np.asarray(self.discrete_sims.results)
-        x, y = arr[:, 0], arr[:, 1]
-        bars = make_mosaic(x, y, plt.gca())
-        any_container = next(iter(bars.values()))
-        real_widths = [p.get_width() for p in any_container.patches[:-1]]
-        marginal_width = any_container.patches[-1].get_width()
-        self.assertLess(marginal_width, np.mean(real_widths))
+    # ---- bars span the full 0 to 1 (requested fix) ----
 
-    def test_mosaic_marginal_column_has_no_in_cell_labels(self):
-        """The marginal column is a color reference only -- it never gets
-        count/percentage labels, even with annotate=True (the default).
-        legend=False on both sides isolates in-cell labels from the
-        marginal column's separate legend-label text."""
-        arr = np.asarray(self.discrete_sims.results)
-        x, y = arr[:, 0], arr[:, 1]
-        p = self.discrete_sims.plot(type="mosaic", legend=False)
-        n_labels_with_marginal = len(p.ax.texts)
-        plt.close("all")
-        p2 = self.discrete_sims.plot(type="mosaic", marginal_column=False, legend=False)
-        n_labels_without_marginal = len(p2.ax.texts)
-        self.assertEqual(n_labels_with_marginal, n_labels_without_marginal)
+    def test_mosaic_spans_reserve_no_gap_for_zero_weight_segments(self):
+        """A category absent from a column used to leave its gap behind as
+        a sliver of empty space, so the column stopped short of 0 or 1."""
+        for weights in ([3.0, 4.0, 0.0], [0.0, 4.0, 5.0], [0.0, 4.0, 0.0]):
+            starts, widths = _mosaic_spans(np.array(weights), 0.002)
+            visible = [(s, s + w) for s, w in zip(starts, widths) if w > 0]
+            self.assertAlmostEqual(visible[0][0], 0.0, places=9, msg=str(weights))
+            self.assertAlmostEqual(visible[-1][1], 1.0, places=9, msg=str(weights))
 
-    def test_mosaic_label_decimal_is_conditional_not_joint(self):
-        """In-cell decimal labels show the frequency conditional on each
-        column's own x value (matching the segment's height), not the
-        joint frequency over the whole dataset."""
-        x = np.array([0] * 80 + [1] * 20)
-        y = np.array([0] * 60 + [1] * 20 + [0] * 5 + [1] * 15)
-        make_mosaic(x, y, plt.gca(), marginal_column=False)
-        texts = sorted(t.get_text() for t in plt.gca().texts)
-        self.assertEqual(texts, ["0.25", "0.25", "0.75", "0.75"])
+    def test_mosaic_spans_keep_gaps_between_visible_segments(self):
+        starts, widths = _mosaic_spans(np.array([3.0, 4.0, 5.0]), 0.002)
+        gaps = [round(starts[i + 1] - (starts[i] + widths[i]), 6) for i in range(2)]
+        self.assertEqual(gaps, [0.002, 0.002])
 
-    def test_mosaic_marginal_column_matches_y_marginal_frequency(self):
-        """The marginal column's segment heights track y's overall relative
-        frequency (summed over every x value), not any one column's."""
-        arr = np.asarray(self.discrete_sims.results)
-        x, y = arr[:, 0], arr[:, 1]
-        bars = make_mosaic(x, y, plt.gca())
-        y_labels = np.unique(y)
-        counts = np.array([(y == val).sum() for val in y_labels], dtype=float)
-        expected_fracs = counts / counts.sum()
-        marginal_heights = np.array(
-            [bars[val].patches[-1].get_height() for val in y_labels]
-        )
-        actual_fracs = marginal_heights / marginal_heights.sum()
-        for expected, actual in zip(expected_fracs, actual_fracs):
-            self.assertAlmostEqual(expected, actual, places=6)
-
-    def test_mosaic_column_heights_match_conditional_frequency(self):
-        """Each real column's segment heights track y's frequency
-        *conditional* on that column's own x value -- not the joint
-        frequency over the whole dataset, and not y's marginal shape."""
-        arr = np.asarray(self.discrete_sims.results)
-        x, y = arr[:, 0], arr[:, 1]
-        bars = make_mosaic(x, y, plt.gca())
-        x_labels = np.unique(x)
-        y_labels = np.unique(y)
-        for i, x_val in enumerate(x_labels):
-            mask = x == x_val
-            counts = np.array(
-                [(y[mask] == y_val).sum() for y_val in y_labels], dtype=float
-            )
-            expected_fracs = counts / counts.sum()
-            heights = np.array(
-                [bars[y_val].patches[i].get_height() for y_val in y_labels]
-            )
-            actual_fracs = heights / heights.sum()
-            for expected, actual in zip(expected_fracs, actual_fracs):
-                self.assertAlmostEqual(expected, actual, places=6)
-
-    def test_readable_text_color_black_on_light_background(self):
-        self.assertEqual(_readable_text_color("#F0E442"), "black")
-
-    def test_readable_text_color_white_on_dark_background(self):
-        self.assertEqual(_readable_text_color("#0072B2"), "white")
-
-    def test_mosaic_labels_use_contrasting_colors(self):
-        """Labels drawn on a dark-palette category use white text; labels on
-        a light-palette category use black text -- not one hardcoded color
-        for every cell regardless of its background."""
-        rng = np.random.default_rng(1)
-        x = rng.integers(0, 3, 3000)
-        y = rng.integers(0, 7, 3000)  # covers every Okabe-Ito color
+    def test_mosaic_column_missing_a_category_still_fills_axis(self):
+        """End-to-end version of the span fix: y='q' never occurs with
+        x='b', so that column has a zero-height segment."""
+        x = np.array(["a"] * 10 + ["b"] * 10)
+        y = np.array(["p", "q"] * 5 + ["p"] * 10)
         make_mosaic(x, y, plt.gca())
-        label_colors = {t.get_color() for t in plt.gca().texts}
-        self.assertIn("black", label_colors)
-        self.assertIn("white", label_colors)
+        for col_x in sorted(set(round(b.get_x(), 6) for b in plt.gca().patches)):
+            col = [
+                b
+                for b in plt.gca().patches
+                if round(b.get_x(), 6) == col_x and b.get_height() > 0
+            ]
+            bottom = min(b.get_y() for b in col)
+            top = max(b.get_y() + b.get_height() for b in col)
+            self.assertAlmostEqual(bottom, 0.0, places=6)
+            self.assertAlmostEqual(top, 1.0, places=6)
 
-    # -----------------------------------------------------------------
-    # equal_width: 100%-stacked bar chart (equal-width columns)
-    # -----------------------------------------------------------------
+    # ---- overlay is a hard error (requested change) ----
 
-    def setup_unequal_marginal_sims(self, seed=7):
-        """x has a heavily skewed marginal (Bernoulli(0.9)), so the two
-        real columns' default proportional widths are visibly unequal --
-        the case the prompt asks equal_width to be tested against."""
-        np.random.seed(seed)
-        Xd, Yd = RV(Bernoulli(p=0.9) * Bernoulli(p=0.5))
-        return (Xd & Yd).sim(500)
+    def test_mosaic_overlay_raises(self):
+        self.discrete_sims.plot(type="mosaic")
+        with self.assertRaises(ValueError) as cm:
+            self.discrete_sims.plot(type="mosaic")
+        self.assertIn("second mosaic or stacked bar plot", str(cm.exception))
 
-    def test_mosaic_default_widths_vary_with_unequal_marginal_counts(self):
-        """Without equal_width, visibly-unequal marginal counts must
-        produce columns of visibly different widths -- the standard
-        mosaic behavior, confirmed here so the next test's uniformity
-        can be attributed to equal_width and not incidental equal counts
-        in this data."""
-        sims = self.setup_unequal_marginal_sims()
-        p = sims.plot(type="mosaic", marginal_column=False, suggest=False)
-        widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
-        self.assertGreater(len(widths), 1)
+    def test_stackedbar_over_mosaic_raises(self):
+        """The two share one axes counter -- mixing them is still an
+        overlay of two full-canvas plots."""
+        self.discrete_sims.plot(type="mosaic")
+        with self.assertRaises(ValueError):
+            self.discrete_sims.plot(type="stackedbar")
 
-    def test_mosaic_equal_width_produces_uniform_column_widths(self):
-        """equal_width=True must give every real column the same width,
-        even though the same data's marginal counts are visibly unequal
-        (see the previous test)."""
-        sims = self.setup_unequal_marginal_sims()
-        p = sims.plot(
-            type="mosaic", equal_width=True, marginal_column=False, suggest=False
-        )
-        widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
+    def test_mosaic_overlay_refused_before_drawing_anything(self):
+        """The refused second plot must leave the first one untouched."""
+        self.discrete_sims.plot(type="mosaic")
+        n_before = len(plt.gca().patches)
+        with self.assertRaises(ValueError):
+            self.discrete_sims.plot(type="mosaic")
+        self.assertEqual(len(plt.gca().patches), n_before)
+
+    # ---- mosaic vs stackedbar as two plot types (requested change) ----
+
+    def test_stackedbar_title(self):
+        self.discrete_sims.plot(type="stackedbar")
+        self.assertEqual(plt.gca().get_title(), "Stacked Bar Plot")
+
+    def test_stackedbar_display_name(self):
+        self.assertEqual(PLOT_DISPLAY_NAME["stackedbar"], "Stacked Bar Plot")
+
+    def test_stackedbar_produces_uniform_column_widths(self):
+        self.discrete_sims.plot(type="stackedbar")
+        widths = {round(b.get_width(), 6) for b in plt.gca().patches}
         self.assertEqual(len(widths), 1)
 
-    def test_mosaic_equal_width_does_not_change_segment_heights(self):
-        """equal_width changes column width only -- each column's segment
-        heights (conditional frequencies) must match the default
-        proportional-width mode exactly."""
-        sims = self.setup_unequal_marginal_sims()
-        p_default = sims.plot(type="mosaic", marginal_column=False, suggest=False)
-        heights_default = sorted(
-            round(patch.get_height(), 6) for patch in p_default.ax.patches
-        )
-        plt.close("all")
-        p_equal = sims.plot(
-            type="mosaic", equal_width=True, marginal_column=False, suggest=False
-        )
-        heights_equal = sorted(
-            round(patch.get_height(), 6) for patch in p_equal.ax.patches
-        )
-        self.assertEqual(heights_default, heights_equal)
-
-    def test_mosaic_equal_width_labels_show_true_conditional_proportion(self):
-        """In-cell labels must still report the true conditional
-        proportion (division by the real per-column count), not something
-        distorted by equal-width columns."""
-        sims = self.setup_unequal_marginal_sims()
-        arr = np.asarray(sims.results)
-        x, y = arr[:, 0], arr[:, 1]
-        p = sims.plot(type="mosaic", equal_width=True, marginal_column=False)
-        x_labels = np.unique(x)
-        y_labels = np.unique(y)
-        # Every printed decimal label, across every column, must be a valid
-        # conditional proportion somewhere in the joint table -- a loose but
-        # simple correctness check that doesn't depend on matching each
-        # label back to its exact cell position.
-        all_possible = set()
-        for x_val in x_labels:
-            mask = x == x_val
-            counts = np.array(
-                [(y[mask] == y_val).sum() for y_val in y_labels], dtype=float
-            )
-            for frac in counts / counts.sum():
-                all_possible.add(round(frac, 2))
-        printed = {round(float(t.get_text()), 2) for t in p.ax.texts}
-        self.assertTrue(printed.issubset(all_possible))
-
-    def test_mosaic_equal_width_still_respects_marginal_column(self):
-        """equal_width and marginal_column are independent switches --
-        equal_width=True must still draw the marginal reference column
-        (skinnier than the equal-width real columns) when
-        marginal_column=True (the default)."""
-        sims = self.setup_unequal_marginal_sims()
-        p = sims.plot(type="mosaic", equal_width=True, suggest=False)
-        widths = sorted({round(patch.get_width(), 6) for patch in p.ax.patches})
-        # Exactly two distinct widths: the (uniform) real columns, and the
-        # narrower marginal column.
+    def test_mosaic_widths_vary_with_unequal_marginal_counts(self):
+        x = np.array(["a"] * 30 + ["b"] * 10)
+        y = np.array(["p", "q"] * 20)
+        make_mosaic(x, y, plt.gca())
+        widths = sorted({round(b.get_width(), 6) for b in plt.gca().patches})
         self.assertEqual(len(widths), 2)
+        self.assertAlmostEqual(widths[1] / widths[0], 3.0, places=1)
 
-    def test_mosaic_equal_width_title_is_stacked_plot(self):
-        """equal_width=True changes the title to "Stacked Plot" -- a clear
-        visual signal that column widths are equal, not proportional."""
-        sims = self.setup_unequal_marginal_sims()
-        p = sims.plot(type="mosaic", equal_width=True, suggest=False)
-        self.assertEqual(p.ax.get_title(), "Stacked Plot")
+    def test_stackedbar_does_not_change_segment_heights(self):
+        """Only the widths differ between the two types; the conditional
+        distributions they show are identical."""
+        x = np.array(["a"] * 30 + ["b"] * 10)
+        y = np.array(["p", "q"] * 20)
+        make_mosaic(x, y, plt.gca())
+        mosaic_heights = sorted(round(b.get_height(), 6) for b in plt.gca().patches)
+        plt.close("all")
+        make_stackedbar(x, y, plt.gca())
+        stacked_heights = sorted(round(b.get_height(), 6) for b in plt.gca().patches)
+        self.assertEqual(mosaic_heights, stacked_heights)
 
-    def test_mosaic_default_title_is_unaffected(self):
-        """Without equal_width, the title stays "Mosaic Plot"."""
-        sims = self.setup_unequal_marginal_sims()
-        p = sims.plot(type="mosaic", suggest=False)
-        self.assertEqual(p.ax.get_title(), "Mosaic Plot")
+    def test_equal_width_keyword_raises_pointing_at_stackedbar(self):
+        with self.assertRaises(ValueError) as cm:
+            self.discrete_sims.plot(type="mosaic", equal_width=True)
+        self.assertIn("type='stackedbar'", str(cm.exception))
 
-    def test_mosaic_equal_width_display_name(self):
-        self.assertEqual(PLOT_DISPLAY_NAME["mosaic_equal_width"], "Stacked Plot")
+    def test_marginal_column_keyword_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            self.discrete_sims.plot(type="mosaic", marginal_column=True)
+        self.assertIn("marginal_column=", str(cm.exception))
 
-    def test_mosaic_equal_width_is_opt_in_only(self):
-        """equal_width must not become a new automatic default for 2D
-        discrete data -- mosaic (in either mode) stays explicit-opt-in-only."""
-        for small_n in (True, False):
-            _, alternatives = default_plot_type("2D_dd", small_n)
-            self.assertNotIn("mosaic_equal_width", alternatives)
-            self.assertNotIn("stacked_bar", alternatives)
+    def test_mosaic_legend_names_the_y_categories(self):
+        """With no marginal column to hang labels off, a standard legend
+        outside the axes names each y category."""
+        self.discrete_sims.plot(type="mosaic")
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        self.assertEqual(legend.get_title().get_text(), "Variable 2")
+
+    def test_mosaic_legend_false_shows_no_legend(self):
+        make_mosaic(["a", "b"], ["x", "y"], plt.gca(), legend=False)
+        self.assertIsNone(plt.gca().get_legend())
+
+    # ---- the 4x4 suggestion nudge (requested change) ----
+
+    def test_suggestion_none_when_type_suits_category_count(self):
+        """A small table suits a mosaic, so a mosaic gets no nudge -- but a
+        stacked bar on the same data does (see the companion test)."""
+        x = ["a", "b"] * 10
+        y = ["p", "q"] * 10
+        self.assertIsNone(mosaic_type_suggestion(x, y, "mosaic"))
+
+        big_x = [f"x{i}" for i in range(6)] * 5
+        big_y = ["p", "q"] * 15
+        self.assertIsNone(mosaic_type_suggestion(big_x, big_y, "stackedbar"))
+
+    def test_crowded_mosaic_suggests_stackedbar(self):
+        x = [f"x{i}" for i in range(6)] * 5
+        y = ["p", "q"] * 15
+        note = mosaic_type_suggestion(x, y, "mosaic")
+        self.assertIsNotNone(note)
+        self.assertIn("type='stackedbar'", note)
+
+    def test_small_stackedbar_suggests_mosaic(self):
+        x = ["a", "b"] * 10
+        y = ["p", "q"] * 10
+        note = mosaic_type_suggestion(x, y, "stackedbar")
+        self.assertIsNotNone(note)
+        self.assertIn("type='mosaic'", note)
+
+    def test_suggestion_triggers_on_either_axis(self):
+        """More than MOSAIC_SUGGEST_MAX_CATEGORIES on y alone is enough."""
+        x = ["a", "b"] * 15
+        y = [f"y{i}" for i in range(6)] * 5
+        self.assertIsNotNone(mosaic_type_suggestion(x, y, "mosaic"))
+
+    def test_suggestion_boundary_is_max_categories(self):
+        n = MOSAIC_SUGGEST_MAX_CATEGORIES
+        at = [f"x{i}" for i in range(n)] * 4
+        over = [f"x{i}" for i in range(n + 1)] * 4
+        y_at = ["p", "q"] * (len(at) // 2)
+        y_over = ["p", "q"] * (len(over) // 2)
+        self.assertIsNone(mosaic_type_suggestion(at, y_at, "mosaic"))
+        self.assertIsNotNone(mosaic_type_suggestion(over, y_over, "mosaic"))
+
+    def test_suggestion_ignores_other_plot_types(self):
+        self.assertIsNone(mosaic_type_suggestion(["a"], ["b"], "tile"))
 
 
 class TestPlot2DBox(PlotTestCase):
@@ -2881,11 +2841,19 @@ class TestMarginalPanelRebuild(PlotTestCase):
         p = (X & Y).sim(2000).plot(marginal=True, type="box", suggest=False)
         self._assert_aligned_and_populated(p)
 
-    def test_mosaic_marginal_raises_and_points_to_marginal_column(self):
+    def test_mosaic_marginal_raises_and_says_to_drop_it(self):
+        """A mosaic already shows both marginals itself, so the side
+        strips would draw the same thing twice."""
         X, Y = RV(Binomial(5, 0.4) ** 2)
         with self.assertRaises(ValueError) as cm:
             (X & Y).sim(500).plot(type="mosaic", marginal=True)
-        self.assertIn("marginal_column", str(cm.exception))
+        self.assertIn("Drop marginal=True", str(cm.exception))
+
+    def test_stackedbar_marginal_raises_too(self):
+        X, Y = RV(Binomial(5, 0.4) ** 2)
+        with self.assertRaises(ValueError) as cm:
+            (X & Y).sim(500).plot(type="stackedbar", marginal=True)
+        self.assertIn("stackedbar", str(cm.exception))
 
     def test_small_n_discrete_marginal_is_dotplot(self):
         """A small-n discrete axis's marginal should be a dot plot,
@@ -3517,17 +3485,17 @@ class TestSuggestionNote(PlotTestCase):
             (X & Y).sim(500).plot(type="hist", suggest=True)
         self.assertIn("Currently Showing: Joint Histogram (Default)", buf.getvalue())
 
-    def test_mosaic_equal_width_note_says_stacked_plot(self):
-        """equal_width=True's suggestion note must match its axes title
-        ("Stacked Plot"), not still read "Mosaic Plot"."""
+    def test_stackedbar_note_says_stacked_bar_plot(self):
+        """type='stackedbar' replaced equal_width=True, so its suggestion
+        note must match its axes title ("Stacked Bar Plot")."""
         import io
         import contextlib
 
         X, Y = RV(Binomial(5, 0.4) ** 2)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            (X & Y).sim(500).plot(type="mosaic", equal_width=True, suggest=True)
-        self.assertIn("Currently Showing: Stacked Plot", buf.getvalue())
+            (X & Y).sim(500).plot(type="stackedbar", suggest=True)
+        self.assertIn("Currently Showing: Stacked Bar Plot", buf.getvalue())
 
     def test_mosaic_without_equal_width_note_still_says_mosaic_plot(self):
         import io
