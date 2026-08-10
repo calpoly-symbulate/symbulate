@@ -50,6 +50,7 @@ from symbulate import (
     BoxModel,
     ProbabilitySpace,
 )
+from symbulate import seed
 from symbulate import distributions
 from symbulate.probability_space import Event
 
@@ -134,7 +135,7 @@ class TestArithmetic(unittest.TestCase):
 
     def test_add_two_rvs_same_space(self):
         """(X + Y) where X, Y on the same N(0,1)^2 space has mean ≈ 0."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(Normal(0, 1) ** 2)
         self.assertAlmostEqual(float((X + Y).sim(Nsim).mean()), 0.0, delta=0.1)
 
@@ -201,10 +202,10 @@ class TestStatistical(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         cls.sims = RV(Normal(0, 1)).sim(Nsim)
         # Bivariate sims for cov / corr tests (corr = 0.7, sd1=sd2=1)
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X, Y = RV(BivariateNormal(mean1=0, mean2=0, sd1=1, sd2=1, corr=0.7))
         cls.biv_sims = (X & Y).sim(Nsim)
 
@@ -388,7 +389,7 @@ class TestLogical(unittest.TestCase):
 
     def test_results_and_is_intersection(self):
         """(sims > 0.5) & (sims < -0.5) is always False (mutually exclusive)."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = RV(Normal(0, 1)).sim(Nsim)
         high = sims > 0.5
         low = sims < -0.5
@@ -397,7 +398,7 @@ class TestLogical(unittest.TestCase):
 
     def test_results_or_is_union(self):
         """(sims > 0.5) | (sims < -0.5) count == count_gt(0.5) + count_lt(-0.5)."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = RV(Normal(0, 1)).sim(Nsim)
         high = sims > 0.5
         low = sims < -0.5
@@ -407,7 +408,7 @@ class TestLogical(unittest.TestCase):
 
     def test_results_invert_complement(self):
         """~high and high together cover all N outcomes."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = RV(Normal(0, 1)).sim(Nsim)
         high = sims > 0.5
         not_high = ~high
@@ -415,14 +416,14 @@ class TestLogical(unittest.TestCase):
 
     def test_results_and_non_boolean_raises_value_error(self):
         """Logical ops on non-boolean Results raise ValueError."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = RV(Normal(0, 1)).sim(Nsim)
         # sims contains floats, not booleans
         self.assertRaises(ValueError, lambda: sims & sims)
 
     def test_results_and_non_results_raises_type_error(self):
         """Logical AND with a non-Results raises TypeError."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         sims = RV(Normal(0, 1)).sim(Nsim)
         high = sims > 0.5
         self.assertRaises(TypeError, lambda: high & True)
@@ -524,14 +525,14 @@ class TestFilterable(unittest.TestCase):
 
     def test_filter_eq_content_validity(self):
         """Every element returned by filter_eq(3) is exactly 3."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         disc_sims = RV(BoxModel([1, 2, 3, 4, 5])).sim(200)
         filtered = disc_sims.filter_eq(3)
         self.assertTrue(all(x == 3 for x in filtered))
 
     def test_count_eq_matches_len_filter_eq(self):
         """count_eq(3) == len(filter_eq(3))."""
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         disc_sims = RV(BoxModel([1, 2, 3, 4, 5])).sim(200)
         self.assertEqual(disc_sims.count_eq(3), len(disc_sims.filter_eq(3)))
 
@@ -558,7 +559,7 @@ class TestMultivariateFilterCount(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         X, Y = RV(Normal(0, 1) ** 2)
         cls.sims = (X & Y).sim(cls.N)
 

@@ -63,12 +63,6 @@ def tearDownModule():
     distributions.rng = _saved_rng["dist"]
 
 
-def seed(value=42):
-    """Reseed both generators the Markov chains draw through."""
-    mc.rng = np.random.default_rng(value)
-    distributions.rng = np.random.default_rng(value)
-
-
 # Deterministic 2-state matrices for assertions that don't need a seed.
 STAY = [[1.0, 0.0], [0.0, 1.0]]  # identity: never leaves its start state
 SWAP = [[0.0, 1.0], [1.0, 0.0]]  # always flips state each step
@@ -177,14 +171,14 @@ class TestMarkovChain(unittest.TestCase):
         self.assertRaises(Exception, chain.draw)
 
     def test_indexing_returns_state_over_sims(self):
-        seed()
+        seed(42)
         chain = MarkovChain(SWAP, [1.0, 0.0])
         # Deterministic: always 0 at even steps, 1 at odd steps.
         self.assertTrue(all(v == 1 for v in chain[1].sim(100)))
         self.assertTrue(all(v == 0 for v in chain[2].sim(100)))
 
     def test_initial_distribution_goodness_of_fit(self):
-        seed()
+        seed(42)
         chain = MarkovChain([[0.5, 0.5], [0.5, 0.5]], [0.3, 0.7])
         tab = chain[0].sim(Nsim).tabulate()
         obs = [tab[0], tab[1]]
@@ -193,7 +187,7 @@ class TestMarkovChain(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_transition_goodness_of_fit(self):
-        seed()
+        seed(42)
         # Always start in state 0; step-1 state follows row 0 = [0.2, 0.8].
         chain = MarkovChain([[0.2, 0.8], [0.5, 0.5]], [1.0, 0.0])
         tab = chain[1].sim(Nsim).tabulate()
@@ -292,7 +286,7 @@ class TestContinuousTimeMarkovChainProbabilitySpace(unittest.TestCase):
         np.testing.assert_allclose(space.transition_matrix, expected)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         space = ContinuousTimeMarkovChainProbabilitySpace(Q2, [1.0, 0.0])
         self.assertIsInstance(space.draw(), ContinuousTimeMarkovChainResult)
 
@@ -303,25 +297,25 @@ class TestContinuousTimeMarkovChain(unittest.TestCase):
         self.assertIsInstance(ContinuousTimeMarkovChain(Q2, [1.0, 0.0]), RV)
 
     def test_draw_returns_continuous_time_function(self):
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0]).draw()
         self.assertIsInstance(path, ContinuousTimeFunction)
         self.assertIsInstance(path, DiscreteValued)
 
     def test_path_starts_in_initial_state(self):
-        seed()
+        seed(42)
         # initial_dist [1, 0] -> chain starts in state 0 -> label 'A'.
         path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0], state_labels=["A", "B"]).draw()
         self.assertEqual(path(0), "A")
 
     def test_path_values_are_valid_labels(self):
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0], state_labels=["A", "B"]).draw()
         for t in [0.0, 0.5, 1.0, 2.0, 5.0]:
             self.assertIn(path(t), ["A", "B"])
 
     def test_interarrival_times_are_positive(self):
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0]).draw()
         for n in range(5):
             self.assertGreater(path.interarrival_times[n], 0)
@@ -344,7 +338,7 @@ class TestContinuousTimeMarkovChainArrivals(unittest.TestCase):
     """
 
     def test_helpers_accept_a_path(self):
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0]).draw()
         self.assertIsInstance(states(path), InfiniteVector)
         self.assertIsInstance(interarrival_times(path), InfiniteVector)
@@ -354,27 +348,27 @@ class TestContinuousTimeMarkovChainArrivals(unittest.TestCase):
         # Regression: get_states() used to return the embedded chain's raw
         # state indices (0, 1, ...), which disagreed with what evaluating
         # the path returns. The states must be the labels.
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0], state_labels=["A", "B"]).draw()
         for n in range(6):
             self.assertIn(states(path)[n], ["A", "B"])
 
     def test_first_state_matches_path_at_time_zero(self):
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0], state_labels=["A", "B"]).draw()
         self.assertEqual(states(path)[0], path(0))
 
     def test_states_agree_with_path_just_after_each_jump(self):
         # The n-th state is the one the chain is in immediately after the
         # (n-1)-th jump, so the two descriptions of the path must line up.
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q3, [1.0, 0.0, 0.0]).draw()
         jumps = arrival_times(path)
         for n in range(5):
             self.assertEqual(path(jumps[n] + 1e-9), states(path)[n + 1])
 
     def test_arrival_times_are_the_running_total_of_interarrivals(self):
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q2, [1.0, 0.0]).draw()
         waits = interarrival_times(path)
         jumps = arrival_times(path)
@@ -382,7 +376,7 @@ class TestContinuousTimeMarkovChainArrivals(unittest.TestCase):
             self.assertAlmostEqual(jumps[n], sum(waits[i] for i in range(n + 1)))
 
     def test_arrival_times_are_increasing(self):
-        seed()
+        seed(42)
         path = ContinuousTimeMarkovChain(Q3, [1.0, 0.0, 0.0]).draw()
         jumps = arrival_times(path)
         for earlier, later in zip(
@@ -393,7 +387,7 @@ class TestContinuousTimeMarkovChainArrivals(unittest.TestCase):
     def test_holding_time_is_exponential_with_the_states_rate(self):
         # Q2 leaves state 0 at rate 1, so the first holding time is
         # Exponential(1): mean 1 and variance 1.
-        seed()
+        seed(42)
         chain = ContinuousTimeMarkovChain(Q2, [1.0, 0.0])
         wait = chain.apply(interarrival_times)[0].sim(Nsim)
         self.assertAlmostEqual(wait.mean(), 1.0, delta=0.05)
@@ -401,7 +395,7 @@ class TestContinuousTimeMarkovChainArrivals(unittest.TestCase):
 
     def test_holding_time_scales_with_the_rate_of_leaving(self):
         # Started in state 1, which Q2 leaves at rate 2: mean 1 / 2.
-        seed()
+        seed(42)
         chain = ContinuousTimeMarkovChain(Q2, [0.0, 1.0])
         wait = chain.apply(interarrival_times)[0].sim(Nsim)
         self.assertAlmostEqual(wait.mean(), 0.5, delta=0.03)
@@ -410,7 +404,7 @@ class TestContinuousTimeMarkovChainArrivals(unittest.TestCase):
         # The time of the second jump out of state 0 is the sum of two
         # independent Exponential(1) waits (0 -> 1 -> 0), so it has mean
         # 1 + 1 / 2 = 1.5 given Q2's rates of 1 and 2.
-        seed()
+        seed(42)
         chain = ContinuousTimeMarkovChain(Q2, [1.0, 0.0])
         second_jump = chain.apply(arrival_times)[1].sim(Nsim)
         self.assertAlmostEqual(second_jump.mean(), 1.5, delta=0.06)
@@ -509,12 +503,12 @@ class TestBirthDeathProcess(unittest.TestCase):
         )
 
     def test_path_starts_at_initial(self):
-        seed()
+        seed(42)
         X = BirthDeathProcess(birth_rates=1, death_rates=2, num_states=10, initial=3)
         self.assertEqual(X.draw()(0), 3)
 
     def test_path_values_are_valid_states(self):
-        seed()
+        seed(42)
         X = BirthDeathProcess(birth_rates=1, death_rates=1.5, num_states=20)
         path = X.draw()
         for t in [0.0, 1.0, 5.0, 10.0]:
@@ -525,7 +519,7 @@ class TestBirthDeathProcess(unittest.TestCase):
         # An M/M/1 queue (lambda=1, mu=2, rho=0.5) has stationary distribution
         # P(N=n) = (1-rho) rho^n. Simulate the queue length at a large time,
         # started empty, and check it against that geometric.
-        seed()
+        seed(42)
         lam, mu, rho = 1.0, 2.0, 0.5
         X = BirthDeathProcess(birth_rates=lam, death_rates=mu, num_states=40)
         sims = [X.draw()(60.0) for _ in range(4000)]
@@ -551,14 +545,14 @@ class TestBirthDeathProcessArrivals(unittest.TestCase):
     """A birth-death path read event by event, inherited from the CTMC."""
 
     def test_helpers_accept_a_path(self):
-        seed()
+        seed(42)
         path = BirthDeathProcess(birth_rates=1, death_rates=1.5, num_states=20).draw()
         self.assertIsInstance(states(path), InfiniteVector)
         self.assertIsInstance(interarrival_times(path), InfiniteVector)
         self.assertIsInstance(arrival_times(path), InfiniteVector)
 
     def test_states_are_counts_and_start_at_initial(self):
-        seed()
+        seed(42)
         X = BirthDeathProcess(birth_rates=1, death_rates=2, num_states=10, initial=3)
         path = X.draw()
         self.assertEqual(states(path)[0], 3)
@@ -566,7 +560,7 @@ class TestBirthDeathProcessArrivals(unittest.TestCase):
 
     def test_states_step_by_one(self):
         # Only a birth or a death can happen, so consecutive counts differ by 1.
-        seed()
+        seed(42)
         path = BirthDeathProcess(
             birth_rates=2, death_rates=2, num_states=30, initial=10
         ).draw()
@@ -577,7 +571,7 @@ class TestBirthDeathProcessArrivals(unittest.TestCase):
     def test_states_honor_custom_labels(self):
         # Regression: with custom state_labels the states used to come back
         # as bare indices instead of the labels the path itself returns.
-        seed()
+        seed(42)
         labels = ["empty", "low", "medium", "high"]
         path = BirthDeathProcess(
             birth_rates=1, death_rates=1.5, num_states=4, state_labels=labels
@@ -589,7 +583,7 @@ class TestBirthDeathProcessArrivals(unittest.TestCase):
     def test_holding_time_uses_the_combined_birth_and_death_rate(self):
         # From count 4 (interior), a birth at rate 2 or a death at rate 3 ends
         # the stay, so the wait is Exponential(5): mean 1 / 5.
-        seed()
+        seed(42)
         X = BirthDeathProcess(birth_rates=2, death_rates=3, num_states=20, initial=4)
         wait = X.apply(interarrival_times)[0].sim(Nsim)
         self.assertAlmostEqual(wait.mean(), 1 / 5, delta=0.01)
@@ -597,13 +591,13 @@ class TestBirthDeathProcessArrivals(unittest.TestCase):
     def test_empty_queue_waits_only_for_an_arrival(self):
         # At count 0 nothing can die, so the wait is Exponential(birth rate)
         # alone: mean 1 / 2 for an arrival rate of 2.
-        seed()
+        seed(42)
         X = BirthDeathProcess(birth_rates=2, death_rates=3, num_states=20, initial=0)
         wait = X.apply(interarrival_times)[0].sim(Nsim)
         self.assertAlmostEqual(wait.mean(), 0.5, delta=0.02)
 
     def test_arrival_times_are_the_running_total_of_interarrivals(self):
-        seed()
+        seed(42)
         path = BirthDeathProcess(
             birth_rates=1, death_rates=1.5, num_states=20, initial=5
         ).draw()
@@ -614,7 +608,7 @@ class TestBirthDeathProcessArrivals(unittest.TestCase):
 
     def test_mm1_queue_inherits_the_accessors(self):
         # The M/M/... wrappers are birth-death processes, so they get this too.
-        seed()
+        seed(42)
         path = MM1(arrival_rate=1, service_rate=2, num_states=30).draw()
         self.assertEqual(states(path)[0], 0)
         self.assertGreater(interarrival_times(path)[0], 0)
@@ -687,7 +681,7 @@ class TestMMQueues(unittest.TestCase):
 
     def test_mm1_stationary_is_geometric(self):
         # M/M/1 (lambda=1, mu=2, rho=0.5): P(N=n) = (1-rho) rho^n.
-        seed()
+        seed(42)
         rho = 0.5
         X = MM1(1, 2, num_states=40)
         sims = [X.draw()(40.0) for _ in range(1500)]
@@ -702,7 +696,7 @@ class TestMMQueues(unittest.TestCase):
 
     def test_mmss_blocking_matches_erlang_b(self):
         # Erlang loss: long-run P(all servers busy) is the Erlang B formula.
-        seed()
+        seed(42)
         from math import factorial
 
         lam, mu, s = 3.0, 1.0, 3
@@ -718,7 +712,7 @@ class TestMMQueues(unittest.TestCase):
     def test_mminfinity_stationary_is_poisson(self):
         # M/M/infinity: long-run number in system is Poisson(lambda/mu).
         # Use a chi-square goodness-of-fit (the counts are discrete).
-        seed()
+        seed(42)
         lam, mu = 3.0, 1.0
         X = MMInfinity(lam, mu, num_states=30)
         sims = [X.draw()(30.0) for _ in range(1500)]
@@ -739,25 +733,25 @@ class TestYuleProcess(unittest.TestCase):
         self.assertIsInstance(YuleProcess(birth_rate=0.5), RV)
 
     def test_draw_returns_continuous_time_function(self):
-        seed()
+        seed(42)
         path = YuleProcess(birth_rate=0.5).draw()
         self.assertIsInstance(path, ContinuousTimeFunction)
         self.assertIsInstance(path, DiscreteValued)
 
     def test_path_starts_at_initial(self):
-        seed()
+        seed(42)
         self.assertEqual(YuleProcess(birth_rate=0.5).draw()(0), 1)
         self.assertEqual(YuleProcess(birth_rate=0.5, initial=3).draw()(0), 3)
 
     def test_path_is_nondecreasing(self):
         # A pure-birth process only ever grows.
-        seed()
+        seed(42)
         path = YuleProcess(birth_rate=0.5).draw()
         values = [path(t) for t in [0, 1, 2, 4, 6, 8]]
         self.assertEqual(values, sorted(values))
 
     def test_interarrival_times_are_positive(self):
-        seed()
+        seed(42)
         path = YuleProcess(birth_rate=0.5).draw()
         for k in range(5):
             self.assertGreater(path.interarrival_times[k], 0)
@@ -765,7 +759,7 @@ class TestYuleProcess(unittest.TestCase):
     def test_states_climb_one_at_a_time_from_initial(self):
         # Regression: a Yule path had interarrival and arrival times but no
         # states, so states() raised instead of returning the populations.
-        seed()
+        seed(42)
         path = YuleProcess(birth_rate=0.5, initial=2).draw()
         self.assertEqual([states(path)[k] for k in range(5)], [2, 3, 4, 5, 6])
         self.assertEqual(states(path)[0], path(0))
@@ -774,7 +768,7 @@ class TestYuleProcess(unittest.TestCase):
         # With n individuals the next birth arrives at rate n * birth_rate, so
         # the wait from population 1 averages 1 / 0.5 = 2 and the next one,
         # from population 2, averages 1 / 1.0 = 1.
-        seed()
+        seed(42)
         X = YuleProcess(birth_rate=0.5)
         first = X.apply(interarrival_times)[0].sim(Nsim)
         second = X.apply(interarrival_times)[1].sim(Nsim)
@@ -782,7 +776,7 @@ class TestYuleProcess(unittest.TestCase):
         self.assertAlmostEqual(second.mean(), 1.0, delta=0.05)
 
     def test_arrival_times_are_the_running_total_of_interarrivals(self):
-        seed()
+        seed(42)
         path = YuleProcess(birth_rate=0.5).draw()
         waits = interarrival_times(path)
         jumps = arrival_times(path)
@@ -799,7 +793,7 @@ class TestYuleProcess(unittest.TestCase):
 
     def test_marginal_is_geometric(self):
         # Started from 1, N(t) is Geometric with parameter exp(-birth_rate * t).
-        seed()
+        seed(42)
         lam, t = 0.5, 2.0
         p = np.exp(-lam * t)
         X = YuleProcess(birth_rate=lam)
@@ -816,7 +810,7 @@ class TestYuleProcess(unittest.TestCase):
 
     def test_mean_grows_exponentially(self):
         # E[N(t)] = initial * exp(birth_rate * t).
-        seed()
+        seed(42)
         lam, t, initial = 0.5, 3.0, 2
         X = YuleProcess(birth_rate=lam, initial=initial)
         sims = [X.draw()(t) for _ in range(3000)]
@@ -837,41 +831,41 @@ class TestSIR(unittest.TestCase):
         self.assertIsInstance(SIR(100, 0.3, 0.1), RV)
 
     def test_draw_returns_continuous_time_function(self):
-        seed()
+        seed(42)
         path = SIR(100, 0.3, 0.1).draw()
         self.assertIsInstance(path, ContinuousTimeFunction)
 
     def test_path_starts_at_initial_state(self):
-        seed()
+        seed(42)
         path = SIR(100, 0.3, 0.1, initial_infected=5, initial_recovered=2).draw()
         self.assertEqual(list(path(0)), [93, 5, 2])
 
     def test_population_is_conserved(self):
-        seed()
+        seed(42)
         path = SIR(500, 0.3, 0.1, initial_infected=5).draw()
         for t in [0, 1, 5, 20, 100]:
             self.assertEqual(sum(path(t)), 500)
 
     def test_S_nonincreasing_R_nondecreasing(self):
-        seed()
+        seed(42)
         path = SIR(500, 0.3, 0.1, initial_infected=5).draw()
         arr = np.array(path.states)
         self.assertTrue(np.all(np.diff(arr[:, 0]) <= 0))  # S only falls
         self.assertTrue(np.all(np.diff(arr[:, 2]) >= 0))  # R only rises
 
     def test_epidemic_terminates_with_no_infectives(self):
-        seed()
+        seed(42)
         path = SIR(500, 0.3, 0.1, initial_infected=5).draw()
         self.assertEqual(path.states[-1][1], 0)  # final I is 0
 
     def test_compartments_exposed_as_time_functions(self):
-        seed()
+        seed(42)
         path = SIR(100, 0.3, 0.1).draw()
         for c in ["S", "I", "R"]:
             self.assertIsInstance(getattr(path, c), ContinuousTimeFunction)
 
     def test_compartment_plot_defaults_to_epidemic_end(self):
-        seed()
+        seed(42)
         path = SIR(1000, 0.3, 0.1, initial_infected=5).draw()
         plt.figure()
         path.I.plot()
@@ -881,7 +875,7 @@ class TestSIR(unittest.TestCase):
         plt.close("all")
 
     def test_compartment_plot_explicit_tmax_overrides(self):
-        seed()
+        seed(42)
         path = SIR(1000, 0.3, 0.1, initial_infected=5).draw()
         plt.figure()
         path.I.plot(tmax=30)
@@ -891,7 +885,7 @@ class TestSIR(unittest.TestCase):
     def test_plot_draws_every_compartment(self):
         # path.plot() overlays all three compartments, each labeled, over the
         # outbreak's time axis -- shorthand for plotting S, I, R individually.
-        seed()
+        seed(42)
         path = SIR(1000, 0.3, 0.1, initial_infected=5).draw()
         plt.figure()
         path.plot()
@@ -907,7 +901,7 @@ class TestSIR(unittest.TestCase):
     def test_sim_one_plots_like_draw(self):
         # .sim(1).plot() routes through RVResults' ensemble plotter but should
         # still draw the three labeled compartments, like .draw().plot().
-        seed()
+        seed(42)
         plt.figure()
         SIR(1000, 0.3, 0.1, initial_infected=5).sim(1).plot()
         lines = plt.gca().lines
@@ -921,7 +915,7 @@ class TestSIR(unittest.TestCase):
     def test_sim_many_shares_one_legend_and_color_per_compartment(self):
         # Overlaying k outbreaks draws 3*k lines but adds each compartment to
         # the legend only once, and holds each compartment to a single color.
-        seed()
+        seed(42)
         plt.figure()
         SIR(1000, 0.3, 0.1, initial_infected=5).sim(5).plot()
         lines = plt.gca().lines
@@ -938,7 +932,7 @@ class TestSIR(unittest.TestCase):
         # R0 = infection_rate / recovery_rate. Above 1 a large outbreak is
         # likely; below 1 the epidemic dies out quickly. Checks the rates are
         # wired correctly (infection vs recovery).
-        seed()
+        seed(42)
         big = np.mean(
             [
                 SIR(1000, 0.3, 0.1, initial_infected=5).draw().states[-1][2]
@@ -979,31 +973,31 @@ class TestSEIR(unittest.TestCase):
         self.assertIsInstance(SEIR(100, 0.4, 0.2, 0.1), RV)
 
     def test_path_starts_at_initial_state(self):
-        seed()
+        seed(42)
         path = SEIR(100, 0.4, 0.2, 0.1, initial_infected=5, initial_exposed=3).draw()
         self.assertEqual(list(path(0)), [92, 3, 5, 0])  # order S, E, I, R
 
     def test_population_is_conserved(self):
-        seed()
+        seed(42)
         path = SEIR(500, 0.4, 0.2, 0.1, initial_infected=5).draw()
         for t in [0, 1, 5, 20, 100]:
             self.assertEqual(sum(path(t)), 500)
 
     def test_epidemic_terminates_with_no_exposed_or_infectives(self):
-        seed()
+        seed(42)
         final = SEIR(500, 0.4, 0.2, 0.1, initial_infected=5).draw().states[-1]
         self.assertEqual(final[1], 0)  # E
         self.assertEqual(final[2], 0)  # I
 
     def test_compartments_exposed_as_time_functions(self):
-        seed()
+        seed(42)
         path = SEIR(100, 0.4, 0.2, 0.1).draw()
         for c in ["S", "E", "I", "R"]:
             self.assertIsInstance(getattr(path, c), ContinuousTimeFunction)
 
     def test_plot_draws_every_compartment(self):
         # path.plot() overlays all four compartments (E included), each labeled.
-        seed()
+        seed(42)
         path = SEIR(1000, 0.5, 0.2, 0.1, initial_infected=5).draw()
         plt.figure()
         path.plot()

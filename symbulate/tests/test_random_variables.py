@@ -22,16 +22,10 @@ import numpy as np
 import scipy.stats as stats
 
 from symbulate import *
-from symbulate import distributions
 from symbulate.random_variables import RVConditional
 from symbulate.results import RVResults
 
 Nsim = 10000
-
-
-def seed(value=42):
-    """Reseed the generator that distribution draws route through."""
-    distributions.rng = np.random.default_rng(value)
 
 
 class TestRVInit(unittest.TestCase):
@@ -42,13 +36,13 @@ class TestRVInit(unittest.TestCase):
         self.assertIs(X.prob_space, P)
 
     def test_default_func_is_identity(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=5, sd=1))
         val = X.draw()
         self.assertIsInstance(val, float)
 
     def test_custom_func_applied_sum(self):
-        seed()
+        seed(42)
         X = RV(BoxModel([0, 1], size=5), sum)
         val = X.draw()
         self.assertIn(val, range(6))
@@ -66,25 +60,25 @@ class TestRVInit(unittest.TestCase):
 class TestRVDraw(unittest.TestCase):
 
     def test_draw_returns_numeric_from_normal(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         val = X.draw()
         self.assertIsInstance(val, float)
 
     def test_draw_in_support_bernoulli(self):
-        seed()
+        seed(42)
         X = RV(Bernoulli(p=0.5))
         for _ in range(200):
             self.assertIn(X.draw(), (0, 1))
 
     def test_draw_constant_p1(self):
-        seed()
+        seed(42)
         X = RV(Bernoulli(p=1))
         for _ in range(50):
             self.assertEqual(X.draw(), 1)
 
     def test_draw_uses_custom_func(self):
-        seed()
+        seed(42)
         X = RV(BoxModel([1, 2, 3, 4, 5], size=5), sum)
         val = X.draw()
         self.assertIn(val, range(5, 26))
@@ -93,25 +87,25 @@ class TestRVDraw(unittest.TestCase):
 class TestRVSim(unittest.TestCase):
 
     def test_sim_correct_length(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         sims = X.sim(200)
         self.assertEqual(len(sims), 200)
 
     def test_sim_returns_rv_results(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         sims = X.sim(100)
         self.assertIsInstance(sims, RVResults)
 
     def test_sim_values_in_support_bernoulli(self):
-        seed()
+        seed(42)
         X = RV(Bernoulli(p=0.5))
         sims = X.sim(Nsim)
         self.assertTrue(all(v in (0, 1) for v in sims))
 
     def test_sim_distribution_normal(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=3, sd=2))
         sims = X.sim(Nsim)
         cdf = stats.norm(loc=3, scale=2).cdf
@@ -119,7 +113,7 @@ class TestRVSim(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_sim_distribution_exponential(self):
-        seed()
+        seed(42)
         X = RV(Exponential(rate=2))
         sims = X.sim(Nsim)
         cdf = stats.expon(scale=0.5).cdf
@@ -171,13 +165,13 @@ class TestRVApply(unittest.TestCase):
         self.assertIsInstance(Y, RV)
 
     def test_apply_abs_non_negative(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         sims = X.apply(abs).sim(Nsim)
         self.assertTrue(all(v >= 0 for v in sims))
 
     def test_apply_square_gives_chi2(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, var=1))
         sims = X.apply(lambda x: x**2).sim(Nsim)
         cdf = stats.chi2(df=1).cdf
@@ -185,7 +179,7 @@ class TestRVApply(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_apply_log_uniform_gives_exponential(self):
-        seed()
+        seed(42)
         X = RV(Uniform(a=0, b=1))
         sims = X.apply(lambda x: -log(x)).sim(Nsim)
         cdf = stats.expon(scale=1).cdf
@@ -226,7 +220,7 @@ class TestRVIter(unittest.TestCase):
         self.assertNotEqual(s1, s2)
 
     def test_unpacked_components_correct_marginals(self):
-        seed()
+        seed(42)
         X, Y = RV(Uniform(a=0, b=1) ** 2)
         sims_x = X.sim(Nsim)
         cdf = stats.uniform(loc=0, scale=1).cdf
@@ -241,19 +235,19 @@ class TestRVGetItem(unittest.TestCase):
         self.assertIsInstance(X[0], RV)
 
     def test_int_index_value_in_support(self):
-        seed()
+        seed(42)
         X = RV(BoxModel([10, 20, 30], size=3))
         sims = X[0].sim(200)
         self.assertTrue(all(v in (10, 20, 30) for v in sims))
 
     def test_list_index_returns_vector_length(self):
-        seed()
+        seed(42)
         X = RV(BoxModel([1, 2, 3, 4, 5], size=5))
         sub = X[[0, 2]].draw()
         self.assertEqual(len(sub), 2)
 
     def test_slice_index_returns_vector_length(self):
-        seed()
+        seed(42)
         X = RV(BoxModel([1, 2, 3, 4, 5], size=5))
         sub = X[0:3].draw()
         self.assertEqual(len(sub), 3)
@@ -266,7 +260,7 @@ class TestRVGetItem(unittest.TestCase):
         self.assertIsInstance(result, RV)
 
     def test_getitem_vector_component(self):
-        seed()
+        seed(42)
         Z = RV(Bernoulli(p=1) ** 2)
         sims = Z[0].sim(100)
         self.assertTrue(all(v == 1 for v in sims))
@@ -276,7 +270,7 @@ class TestRVGetItem(unittest.TestCase):
         # "TypeError: 'NoneType' object cannot be interpreted as an
         # integer" because __getitem__ rebuilt a range() from the slice's
         # start/stop/step instead of slicing the realized value directly.
-        seed()
+        seed(42)
         X = RV(BoxModel([0, 1, 2, 3, 4], size=5))
         sub = X[1:].draw()
         self.assertEqual(len(sub), 4)
@@ -295,7 +289,7 @@ class TestRVGetItem(unittest.TestCase):
 class TestRVArithmetic(unittest.TestCase):
 
     def test_add_rv_rv_normal(self):
-        seed()
+        seed(42)
         X, Y = RV(Normal(mean=0, var=1) ** 2)
         sims = (X + Y).sim(Nsim)
         cdf = stats.norm(loc=0, scale=np.sqrt(2)).cdf
@@ -303,7 +297,7 @@ class TestRVArithmetic(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_add_rv_scalar_shift(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         sims = (X + 5).sim(Nsim)
         cdf = stats.norm(loc=5, scale=1).cdf
@@ -311,7 +305,7 @@ class TestRVArithmetic(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_sub_rv_rv_normal(self):
-        seed()
+        seed(42)
         X, Y = RV(Normal(mean=0, var=1) ** 2)
         sims = (X - Y).sim(Nsim)
         cdf = stats.norm(loc=0, scale=np.sqrt(2)).cdf
@@ -319,7 +313,7 @@ class TestRVArithmetic(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_mul_scalar_rv(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         sims = (3 * X).sim(Nsim)
         cdf = stats.norm(loc=0, scale=3).cdf
@@ -327,7 +321,7 @@ class TestRVArithmetic(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_div_rv_scalar(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=2))
         sims = (X / 2).sim(Nsim)
         cdf = stats.norm(loc=0, scale=1).cdf
@@ -335,7 +329,7 @@ class TestRVArithmetic(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_pow_rv_int_chi2(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, var=1))
         sims = (X**2).sim(Nsim)
         cdf = stats.chi2(df=1).cdf
@@ -343,7 +337,7 @@ class TestRVArithmetic(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_add_poisson_additive(self):
-        seed()
+        seed(42)
         X, Y = RV(Poisson(lam=3) * Poisson(lam=5))
         sims = (X + Y).sim(Nsim)
         simulated = sims.tabulate()
@@ -396,7 +390,7 @@ class TestRVComparison(unittest.TestCase):
         self.assertIsInstance(event, Event)
 
     def test_conditional_gt_all_positive(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         sims = (X | (X > 0)).sim(500)
         self.assertTrue(all(v > 0 for v in sims))
@@ -415,7 +409,7 @@ class TestRVJoint(unittest.TestCase):
         self.assertIsInstance(Z, RV)
 
     def test_and_rv_rv_draw_length(self):
-        seed()
+        seed(42)
         X, Y = RV(Normal(mean=0, var=1) ** 2)
         Z = X & Y
         val = Z.draw()
@@ -427,7 +421,7 @@ class TestRVJoint(unittest.TestCase):
         # Vector as one nested component, not flatten it into the outer
         # tuple. E.g. (RV(P) & X & Y).sim(n) should give ((s1, s2), sum, max),
         # not (s1, s2, sum, max).
-        seed()
+        seed(42)
         P = DiscreteUniform(a=1, b=4) ** 2
         X = RV(P, sum)
         Y = RV(P, max)
@@ -439,21 +433,21 @@ class TestRVJoint(unittest.TestCase):
         self.assertEqual(val[2], max(val[0]))
 
     def test_and_rv_scalar_draw_length(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         Z = X & 5
         val = Z.draw()
         self.assertEqual(len(val), 2)
 
     def test_rand_scalar_first_component_constant(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         Z = 3 & X
         sims = Z.sim(100)
         self.assertTrue(all(v[0] == 3 for v in sims))
 
     def test_rand_scalar_draw_length(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         Z = 3 & X
         val = Z.draw()
@@ -466,7 +460,7 @@ class TestRVJoint(unittest.TestCase):
         self.assertIsInstance(Z, RV)
 
     def test_and_rv_timefunc_draw_length(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         t = InfiniteVector(lambda n: n**2)
         Z = X & t
@@ -474,7 +468,7 @@ class TestRVJoint(unittest.TestCase):
         self.assertEqual(len(val), 2)
 
     def test_and_rv_timefunc_second_component_constant(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         t = InfiniteVector(lambda n: n**2)
         Z = X & t
@@ -482,7 +476,7 @@ class TestRVJoint(unittest.TestCase):
         self.assertTrue(all(v[1] is t for v in sims))
 
     def test_rand_timefunc_first_component_constant(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         t = InfiniteVector(lambda n: n**2)
         Z = t & X
@@ -490,7 +484,7 @@ class TestRVJoint(unittest.TestCase):
         self.assertTrue(all(v[0] is t for v in sims))
 
     def test_rand_timefunc_draw_length(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         t = InfiniteVector(lambda n: n**2)
         Z = t & X
@@ -540,21 +534,21 @@ class TestRVConditionalConstruction(unittest.TestCase):
 class TestRVConditionalDraw(unittest.TestCase):
 
     def test_draw_satisfies_gt_condition(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         cond = X | (X > 0)
         for _ in range(200):
             self.assertGreater(cond.draw(), 0)
 
     def test_draw_satisfies_lt_condition(self):
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         cond = X | (X < 0)
         for _ in range(200):
             self.assertLess(cond.draw(), 0)
 
     def test_sim_satisfies_condition(self):
-        seed()
+        seed(42)
         X = RV(Exponential(rate=1))
         sims = (X | (X > 1)).sim(500)
         self.assertTrue(all(v > 1 for v in sims))
@@ -564,7 +558,7 @@ class TestRVConditionalDistribution(unittest.TestCase):
 
     def test_uniform_given_positive_half(self):
         # U(0,1) | U > 0.5  ~  Uniform(0.5, 1)
-        seed()
+        seed(42)
         X = RV(Uniform(a=0, b=1))
         sims = (X | (X > 0.5)).sim(2000)
         cdf = stats.uniform(loc=0.5, scale=0.5).cdf
@@ -573,7 +567,7 @@ class TestRVConditionalDistribution(unittest.TestCase):
 
     def test_normal_truncated_mean(self):
         # Mean of N(0,1) | X > 0 is sqrt(2/pi) ≈ 0.798
-        seed()
+        seed(42)
         X = RV(Normal(mean=0, sd=1))
         sims = list((X | (X > 0)).sim(Nsim))
         self.assertAlmostEqual(np.mean(sims), np.sqrt(2 / np.pi), delta=0.05)
@@ -581,7 +575,7 @@ class TestRVConditionalDistribution(unittest.TestCase):
     def test_binomial_conditional_sum(self):
         # X~Bin(5,p), Y~Bin(5,p): X | (X+Y==5) ~ Hypergeometric(N=10, K=5, n=5)
         # (the p cancels; result is Hypergeometric, not Binomial)
-        seed()
+        seed(42)
         X, Y = RV(Binomial(n=5, p=0.4) * Binomial(n=5, p=0.4))
         sims = (X | (X + Y == 5)).sim(Nsim)
         simulated = sims.tabulate()
@@ -598,7 +592,7 @@ class TestRVConditionalDistribution(unittest.TestCase):
 
     def test_poisson_conditional_binomial(self):
         # X~Pois(6), Y~Pois(7): X | (X+Y==12) ~ Bin(12, 6/13)
-        seed()
+        seed(42)
         X, Y = RV(Poisson(lam=6) * Poisson(lam=7))
         sims = (X | (X + Y == 12)).sim(Nsim)
         simulated = sims.tabulate()
@@ -615,7 +609,7 @@ class TestRVConditionalDistribution(unittest.TestCase):
 
     def test_exponential_truncated_distribution(self):
         # Exp(1) | X > 1 ~ 1 + Exp(1)  (memoryless property)
-        seed()
+        seed(42)
         X = RV(Exponential(rate=1))
         sims = (X | (X > 1)).sim(Nsim)
         shifted = [v - 1 for v in sims]

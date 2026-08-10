@@ -29,7 +29,6 @@ import unittest
 import numpy as np
 
 from symbulate import *
-from symbulate import distributions, markov_chains
 
 # name -> (build a probability space, build the convenience process or None)
 PROCESSES = {
@@ -134,12 +133,6 @@ TIME_CHANGED = {
 }
 
 
-def seed(value=42):
-    """Reseed every generator a process here might draw through."""
-    distributions.rng = np.random.default_rng(value)
-    markov_chains.rng = np.random.default_rng(value)
-
-
 class TestProbabilitySpaceExists(unittest.TestCase):
 
     def test_every_process_has_an_exported_probability_space(self):
@@ -155,7 +148,7 @@ class TestProbabilitySpaceExists(unittest.TestCase):
     def test_every_space_draws_a_path(self):
         for name, (make_space, _) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 self.assertIsNotNone(make_space().draw())
 
 
@@ -165,7 +158,7 @@ class TestRVOfTheSpace(unittest.TestCase):
     def test_rv_of_the_space_is_the_process(self):
         for name, (make_space, _) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 X = RV(make_space())
                 self.assertIsInstance(X, RV)
                 # A value at a continuous time, whatever kind of value it is.
@@ -174,27 +167,27 @@ class TestRVOfTheSpace(unittest.TestCase):
     def test_interarrival_times(self):
         for name, (make_space, _) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 gap = RV(make_space(), interarrival_times)[0].draw()
                 self.assertGreaterEqual(gap, 0)
 
     def test_arrival_times(self):
         for name, (make_space, _) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 first_jump = RV(make_space(), arrival_times)[0].draw()
                 self.assertGreaterEqual(first_jump, 0)
 
     def test_states(self):
         for name, (make_space, _) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 self.assertIsNotNone(RV(make_space(), states)[0].draw())
 
     def test_arrival_times_are_the_running_total_of_the_gaps(self):
         for name, (make_space, _) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 P = make_space()
                 # One drawn path, read both ways.
                 path = P.draw()
@@ -207,7 +200,7 @@ class TestRVOfTheSpace(unittest.TestCase):
         """The three views are ordinary random variables."""
         for name, (make_space, _) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 P = make_space()
                 self.assertEqual(len(RV(P, interarrival_times)[0].sim(3)), 3)
 
@@ -218,16 +211,16 @@ class TestConvenienceClass(unittest.TestCase):
     def test_class_draws_the_same_kind_of_path(self):
         for name, (make_space, make_process) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 from_space = make_space().draw()
-                seed()
+                seed(42)
                 from_class = make_process().draw()
                 self.assertIs(type(from_space), type(from_class))
 
     def test_class_reaches_the_views_through_apply(self):
         for name, (_, make_process) in PROCESSES.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 X = make_process()
                 self.assertGreaterEqual(X.apply(interarrival_times)[0].draw(), 0)
                 self.assertGreaterEqual(X.apply(arrival_times)[0].draw(), 0)
@@ -253,20 +246,20 @@ class TestTimeChangedProcesses(unittest.TestCase):
     def test_rv_of_the_space_is_the_process(self):
         for name, (make_space, _) in TIME_CHANGED.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 self.assertIsNotNone(RV(make_space()).draw()(1.0))
 
     def test_states(self):
         for name, (make_space, _) in TIME_CHANGED.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 self.assertIsNotNone(RV(make_space(), states)[0].draw())
 
     def test_clock_time_jump_views_are_the_documented_gap(self):
         """Fails once they gain clock-time times -- move them up to PROCESSES."""
         for name, (make_space, _) in TIME_CHANGED.items():
             with self.subTest(process=name):
-                seed()
+                seed(42)
                 path = make_space().draw()
                 with self.assertRaises(AttributeError):
                     interarrival_times(path)
@@ -278,13 +271,13 @@ class TestEpidemicStatesAreVectors(unittest.TestCase):
     """SIR and SEIR are the one family whose state is a vector of counts."""
 
     def test_sir_state_is_the_compartment_counts(self):
-        seed()
+        seed(42)
         path = SIR(population=50, infection_rate=2, recovery_rate=1).draw()
         self.assertEqual(len(states(path)[0]), 3)
         self.assertEqual(sum(states(path)[0]), 50)
 
     def test_seir_state_has_four_compartments(self):
-        seed()
+        seed(42)
         path = SEIR(
             population=50, infection_rate=2, incubation_rate=1, recovery_rate=1
         ).draw()
@@ -292,12 +285,12 @@ class TestEpidemicStatesAreVectors(unittest.TestCase):
 
     def test_last_state_lasts_forever(self):
         """The outbreak ends, so the final state is never left."""
-        seed()
+        seed(42)
         path = SIR(population=50, infection_rate=2, recovery_rate=1).draw()
         self.assertEqual(interarrival_times(path)[-1], float("inf"))
 
     def test_holding_times_line_up_with_the_event_times(self):
-        seed()
+        seed(42)
         path = SIR(population=50, infection_rate=2, recovery_rate=1).draw()
         # An outbreak that fizzles out early has only a few events, so check
         # however many this one had (bar the last, which lasts forever).

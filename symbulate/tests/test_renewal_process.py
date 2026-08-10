@@ -41,11 +41,6 @@ from symbulate.result import ContinuousTimeFunction, DiscreteValued
 Nsim = 10000
 
 
-def seed(value=42):
-    """Reseed the generator that distribution draws route through."""
-    distributions.rng = np.random.default_rng(value)
-
-
 class TestRenewalProcessResult(unittest.TestCase):
 
     def test_is_continuous_time_function(self):
@@ -57,12 +52,12 @@ class TestRenewalProcessResult(unittest.TestCase):
         self.assertIsInstance(path, DiscreteValued)
 
     def test_starts_at_zero(self):
-        seed()
+        seed(42)
         path = RenewalProcess(Gamma(shape=2, rate=1)).draw()
         self.assertEqual(path(0), 0)
 
     def test_counts_are_nonnegative_integers(self):
-        seed()
+        seed(42)
         path = RenewalProcess(Uniform(a=0, b=2)).draw()
         for t in [0.5, 1.0, 2.0, 5.0]:
             value = path(t)
@@ -70,14 +65,14 @@ class TestRenewalProcessResult(unittest.TestCase):
             self.assertGreaterEqual(value, 0)
 
     def test_counts_are_nondecreasing(self):
-        seed()
+        seed(42)
         path = RenewalProcess(Gamma(shape=2, rate=1)).draw()
         values = [path(t) for t in range(0, 11)]
         for earlier, later in zip(values, values[1:]):
             self.assertLessEqual(earlier, later)
 
     def test_getitem_matches_call(self):
-        seed()
+        seed(42)
         path = RenewalProcess(Gamma(shape=2, rate=1)).draw()
         for t in [0.5, 1.0, 3.5]:
             self.assertEqual(path[t], path(t))
@@ -103,19 +98,19 @@ class TestRenewalProcessProbabilitySpace(unittest.TestCase):
         self.assertIs(space.interarrival_dist, dist)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         path = RenewalProcessProbabilitySpace(Gamma(shape=2, rate=1)).draw()
         self.assertIsInstance(path, RenewalProcessResult)
 
     def test_draw_path_starts_at_zero(self):
-        seed()
+        seed(42)
         path = RenewalProcessProbabilitySpace(Gamma(shape=2, rate=1)).draw()
         self.assertEqual(path(0), 0)
 
     def test_successive_draws_are_independent(self):
         # The interarrival-time space is built once and reused, so each draw
         # must still give a fresh path rather than repeating the first one.
-        seed()
+        seed(42)
         space = RenewalProcessProbabilitySpace(Exponential(rate=1))
         first, second = space.draw(), space.draw()
         self.assertNotEqual(
@@ -171,7 +166,7 @@ class TestMarginalDistribution(unittest.TestCase):
     def test_exponential_interarrivals_give_poisson_counts(self):
         # Exponential interarrival times make a renewal process a Poisson
         # process, so N(3) is Poisson(rate * t) = Poisson(3).
-        seed()
+        seed(42)
         N = RenewalProcess(Exponential(rate=1))
         simulated = N(3).sim(Nsim).tabulate()
         exp_list, obs_list = [], []
@@ -186,7 +181,7 @@ class TestMarginalDistribution(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_exponential_interarrival_mean_matches_rate_times_t(self):
-        seed()
+        seed(42)
         N = RenewalProcess(Exponential(rate=2))
         # E[N(4)] = rate * t = 8
         self.assertAlmostEqual(N(4).sim(Nsim).mean(), 8.0, delta=0.3)
@@ -195,7 +190,7 @@ class TestMarginalDistribution(unittest.TestCase):
         # For any renewal process, E[N(t)] = sum_k P(S_k <= t), where S_k is
         # the sum of the first k interarrival times. Gamma(shape=2, rate=1)
         # interarrivals make S_k a Gamma(shape=2k, rate=1).
-        seed()
+        seed(42)
         t = 10
         expected = sum(stats.gamma(a=2 * k, scale=1).cdf(t) for k in range(1, 60))
         N = RenewalProcess(Gamma(shape=2, rate=1))
@@ -204,7 +199,7 @@ class TestMarginalDistribution(unittest.TestCase):
     def test_uniform_interarrival_mean_matches_renewal_function(self):
         # Uniform(a=0, b=2) interarrivals: S_k is an Irwin-Hall sum, so use
         # the elementary renewal bound instead -- E[N(t)] ~ t / E[X] = t.
-        seed()
+        seed(42)
         N = RenewalProcess(Uniform(a=0, b=2))
         self.assertAlmostEqual(N(50).sim(1000).mean(), 50, delta=1.5)
 
@@ -294,19 +289,19 @@ class TestRenewalProcessValidation(unittest.TestCase):
             Beta(2, 3),
         ]:
             with self.subTest(dist=type(dist).__name__):
-                seed()
+                seed(42)
                 path = RenewalProcess(dist).draw()
                 self.assertGreaterEqual(path(1.0), 0)
 
     def test_nonnegative_discrete_distribution_accepted(self):
         """A discrete interarrival time is unusual but legitimate."""
-        seed()
+        seed(42)
         path = RenewalProcess(Poisson(2)).draw()
         self.assertGreaterEqual(path(5.0), 0)
 
     def test_point_mass_without_support_accepted(self):
         """LogNormal(mu, 0) has no scipy support to read; its quantile does."""
-        seed()
+        seed(42)
         # A point mass at exp(0) = 1, so the count at t=3.5 is exactly 3.
         path = RenewalProcess(LogNormal(0, 0)).draw()
         self.assertEqual(path(3.5), 3)
@@ -323,7 +318,7 @@ class TestCompoundPoissonProcessResult(unittest.TestCase):
         self.assertIsInstance(path, DiscreteValued)
 
     def test_starts_at_zero(self):
-        seed()
+        seed(42)
         path = CompoundPoissonProcess(1, Exponential(rate=1)).draw()
         self.assertEqual(path(0), 0)
 
@@ -347,7 +342,7 @@ class TestCompoundPoissonProcessResult(unittest.TestCase):
         self.assertEqual([path(t) for t in [0.5, 1.0, 2.0, 2.5]], [0, 5, 2, 2])
 
     def test_getitem_matches_call(self):
-        seed()
+        seed(42)
         path = CompoundPoissonProcess(1, Exponential(rate=1)).draw()
         for t in [0.5, 1.0, 3.5]:
             self.assertEqual(path[t], path(t))
@@ -388,19 +383,19 @@ class TestCompoundPoissonProcessProbabilitySpace(unittest.TestCase):
         self.assertIs(space.jump_dist, jumps)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         space = CompoundPoissonProcessProbabilitySpace(2, Exponential(rate=1))
         self.assertIsInstance(space.draw(), CompoundPoissonProcessResult)
 
     def test_draw_path_starts_at_zero(self):
-        seed()
+        seed(42)
         space = CompoundPoissonProcessProbabilitySpace(2, Exponential(rate=1))
         self.assertEqual(space.draw()(0), 0)
 
     def test_successive_draws_are_independent(self):
         # Both sequences are built once and reused, so each draw must still
         # give a fresh path rather than repeating the first one.
-        seed()
+        seed(42)
         space = CompoundPoissonProcessProbabilitySpace(1, Exponential(rate=1))
         first, second = space.draw(), space.draw()
         self.assertNotEqual(
@@ -450,7 +445,7 @@ class TestCompoundPoissonMoments(unittest.TestCase):
 
     def test_mean_is_rate_times_time_times_mean_jump(self):
         # E[X(t)] = rate * t * E[Y] = 2 * 4 * 1 = 8.
-        seed()
+        seed(42)
         X = CompoundPoissonProcess(2, Exponential(rate=1))
         self.assertAlmostEqual(X(4).sim(Nsim).mean(), 8.0, delta=0.3)
 
@@ -458,26 +453,26 @@ class TestCompoundPoissonMoments(unittest.TestCase):
         # Var[X(t)] = rate * t * E[Y^2]. For Exponential(rate=1) jumps,
         # E[Y^2] = 2, so Var[X(4)] = 2 * 4 * 2 = 16 -- not 8 * Var(Y) = 8,
         # since the number of jumps varies too.
-        seed()
+        seed(42)
         X = CompoundPoissonProcess(2, Exponential(rate=1))
         self.assertAlmostEqual(X(4).sim(Nsim).var(), 16.0, delta=1.0)
 
     def test_gamma_jumps_mean(self):
         # E[Y] = shape / rate = 2, so E[X(5)] = 3 * 5 * 2 = 30.
-        seed()
+        seed(42)
         X = CompoundPoissonProcess(3, Gamma(shape=2, rate=1))
         self.assertAlmostEqual(X(5).sim(Nsim).mean(), 30.0, delta=0.5)
 
     def test_negative_jumps_give_a_mean_of_zero(self):
         # Symmetric jumps: the total drifts nowhere on average.
-        seed()
+        seed(42)
         X = CompoundPoissonProcess(2, Normal(mean=0, sd=1))
         self.assertAlmostEqual(X(5).sim(Nsim).mean(), 0.0, delta=0.2)
 
     def test_unit_jumps_give_poisson_counts(self):
         # A jump of exactly 1 at every event makes the total the count
         # itself, so X(5) is Poisson(rate * t) = Poisson(10).
-        seed()
+        seed(42)
         X = CompoundPoissonProcess(2, Uniform(a=1, b=1))
         simulated = X(5).sim(Nsim).tabulate()
         exp_list, obs_list = [], []
@@ -553,14 +548,14 @@ class TestCompoundPoissonProcessValidation(unittest.TestCase):
 
     def test_negative_support_jump_dist_accepted(self):
         """Unlike an interarrival time, a jump may be negative."""
-        seed()
+        seed(42)
         path = CompoundPoissonProcess(2, Normal(mean=0, sd=1)).draw()
         # Symmetric jumps over 50 time units: the total goes below 0 at some
         # point, which a renewal count never could.
         self.assertLess(min(path(t) for t in range(1, 51)), 0)
 
     def test_discrete_jump_dist_accepted(self):
-        seed()
+        seed(42)
         path = CompoundPoissonProcess(2, Poisson(3)).draw()
         self.assertGreaterEqual(path(5.0), 0)
 

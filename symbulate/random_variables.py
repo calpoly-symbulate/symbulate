@@ -63,12 +63,25 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Examples
         --------
+        Use ``seed()`` to make a draw reproducible. ``np.random.seed()`` does
+        **not** work here -- Symbulate draws from a NumPy ``Generator``, which
+        the legacy global seed does not control.
+
         >>> from symbulate import *
-        >>> import numpy as np
-        >>> np.random.seed(0)
+        >>> seed(0)
         >>> X = RV(Normal(0, 1))
-        >>> X.draw()
-        1.764052345967664
+        >>> X.draw()  # doctest: +SKIP
+        0.1257302210933933
+
+        The exact value above depends on NumPy's and SciPy's internals, so it
+        is not asserted here; what is guaranteed is that reseeding with the
+        same value reproduces the same draw.
+
+        >>> seed(0)
+        >>> first = X.draw()
+        >>> seed(0)
+        >>> first == X.draw()
+        True
         """
         return self.func(self.prob_space.draw())
 
@@ -93,8 +106,7 @@ class RV(Arithmetic, Transformable, Comparable):
         Examples
         --------
         >>> from symbulate import *
-        >>> import numpy as np
-        >>> np.random.seed(0)
+        >>> seed(0)
         >>> X = RV(Normal(0, 1))
         >>> X.sim(3)  # doctest: +SKIP
         """

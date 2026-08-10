@@ -36,11 +36,6 @@ from symbulate.result import InfiniteVector
 Nsim = 10000
 
 
-def seed(value=42):
-    """Reseed the generator that distribution draws route through."""
-    distributions.rng = np.random.default_rng(value)
-
-
 def sample_paths(process, length, n_paths):
     """Return an (n_paths, length) array of simulated values."""
     return np.array(
@@ -64,29 +59,29 @@ def theoretical_correlation(coefs, lag):
 class TestMAResult(unittest.TestCase):
 
     def test_is_infinite_vector(self):
-        seed()
+        seed(42)
         self.assertIsInstance(MA(coefs=[0.5]).draw(), InfiniteVector)
 
     def test_value_is_weighted_sum_of_shocks(self):
         # With every shock equal to 1, X[n] is just 1 + sum(coefs).
-        seed()
+        seed(42)
         path = MA(coefs=[0.8, 0.5], noise_dist=Bernoulli(1)).draw()
         for n in range(6):
             self.assertAlmostEqual(float(path[n]), 1 + 0.8 + 0.5)
 
     def test_mean_shifts_every_value(self):
-        seed()
+        seed(42)
         path = MA(coefs=[0.5], noise_dist=Bernoulli(1), mean=10).draw()
         self.assertAlmostEqual(float(path[0]), 10 + 1 + 0.5)
 
     def test_path_is_cached_and_stable(self):
-        seed()
+        seed(42)
         path = MA(coefs=[0.8, 0.5]).draw()
         first = [float(path[n]) for n in range(12)]
         self.assertEqual(first, [float(path[n]) for n in range(12)])
 
     def test_reading_far_ahead_keeps_earlier_values(self):
-        seed()
+        seed(42)
         path = MA(coefs=[0.8, 0.5]).draw()
         early = [float(path[n]) for n in range(8)]
         path[400]
@@ -95,7 +90,7 @@ class TestMAResult(unittest.TestCase):
     def test_matches_hand_computed_formula(self):
         # X[n] = mean + shock[n] + coefs[0]*shock[n-1] + coefs[1]*shock[n-2],
         # where shocks[k] holds the shock at time k - q.
-        seed()
+        seed(42)
         coefs = [0.8, 0.5]
         q = len(coefs)
         path = MA(coefs=coefs, mean=3).draw()
@@ -127,7 +122,7 @@ class TestMAProbabilitySpace(unittest.TestCase):
         self.assertIsInstance(space.noise_dist, Normal)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         self.assertIsInstance(MAProbabilitySpace(coefs=[0.5]).draw(), MAResult)
 
 
@@ -154,7 +149,7 @@ class TestMA(unittest.TestCase):
         self.assertEqual(first, [float(v) for v in MA(coefs=[0.8, 0.5]).draw()[:15]])
 
     def test_accepts_an_rv_as_noise(self):
-        seed()
+        seed(42)
         path = MA(coefs=[0.5], noise_dist=RV(Bernoulli(0.5)) * 2 - 1).draw()
         # Shocks are +/-1, so each value is one of 1.5, 0.5, -0.5, -1.5.
         for n in range(10):
@@ -170,7 +165,7 @@ class TestMANoStartupTransient(unittest.TestCase):
     """
 
     def test_variance_is_the_same_at_time_zero_and_later(self):
-        seed()
+        seed(42)
         coefs = [0.8, 0.5]
         X = MA(coefs=coefs)
         expected = theoretical_variance(coefs)
@@ -185,14 +180,14 @@ class TestMANoStartupTransient(unittest.TestCase):
     def test_first_value_has_full_variance(self):
         # The sharpest form of the same check: X[0] must not be the
         # single-shock variance of 1.0 that a silent start would give.
-        seed()
+        seed(42)
         coefs = [0.8, 0.5]
         v = float(MA(coefs=coefs)[0].sim(Nsim).var())
         self.assertAlmostEqual(v, theoretical_variance(coefs), delta=0.15)
         self.assertGreater(v, 1.4)
 
     def test_mean_is_the_mean_parameter_everywhere(self):
-        seed()
+        seed(42)
         X = MA(coefs=[0.8, 0.5], mean=7)
         for n in [0, 30]:
             self.assertAlmostEqual(float(X[n].sim(Nsim).mean()), 7.0, delta=0.1)
@@ -202,13 +197,13 @@ class TestMATheory(unittest.TestCase):
     """The closed-form facts an MA(q) is taught with."""
 
     def test_variance_matches_closed_form(self):
-        seed()
+        seed(42)
         for coefs in [[], [0.5], [0.8, 0.5], [0.2, -0.4, 0.6]]:
             v = float(MA(coefs=coefs)[20].sim(Nsim).var())
             self.assertAlmostEqual(v, theoretical_variance(coefs), delta=0.15)
 
     def test_noise_scale_scales_the_variance(self):
-        seed()
+        seed(42)
         coefs = [0.5]
         v = float(MA(coefs=coefs, noise_dist=Normal(0, 3))[10].sim(Nsim).var())
         self.assertAlmostEqual(v, theoretical_variance(coefs, noise_sd=3), delta=1.5)
@@ -216,7 +211,7 @@ class TestMATheory(unittest.TestCase):
     def test_correlation_cuts_off_after_lag_q(self):
         # The signature of a moving-average process: correlation is real up
         # to lag q, then exactly zero.
-        seed()
+        seed(42)
         coefs = [0.8, 0.5]
         paths = sample_paths(MA(coefs=coefs), length=8, n_paths=20000)
         for lag in range(1, 6):
@@ -230,7 +225,7 @@ class TestMATheory(unittest.TestCase):
 
     def test_ma1_with_unit_coefficient_has_lag_one_correlation_one_half(self):
         # An exact, memorable case: theta = 1 gives 1 / (1 + 1) = 0.5.
-        seed()
+        seed(42)
         paths = sample_paths(MA(coefs=[1.0]), length=4, n_paths=20000)
         self.assertAlmostEqual(
             np.corrcoef(paths[:, 0], paths[:, 1])[0, 1], 0.5, delta=0.03
@@ -240,7 +235,7 @@ class TestMATheory(unittest.TestCase):
         )
 
     def test_no_coefficients_is_independent_noise(self):
-        seed()
+        seed(42)
         paths = sample_paths(MA(coefs=[]), length=4, n_paths=20000)
         self.assertAlmostEqual(paths[:, 0].var(), 1.0, delta=0.06)
         self.assertAlmostEqual(
@@ -250,7 +245,7 @@ class TestMATheory(unittest.TestCase):
     def test_correlation_does_not_depend_on_where_you_measure(self):
         # Stationarity again: the lag-1 correlation is the same starting from
         # time 0 as from time 20.
-        seed()
+        seed(42)
         paths = sample_paths(MA(coefs=[0.8, 0.5]), length=25, n_paths=20000)
         early = np.corrcoef(paths[:, 0], paths[:, 1])[0, 1]
         late = np.corrcoef(paths[:, 20], paths[:, 21])[0, 1]
@@ -282,26 +277,26 @@ class TestMAErrors(unittest.TestCase):
 class TestARMAResult(unittest.TestCase):
 
     def test_is_infinite_vector(self):
-        seed()
+        seed(42)
         self.assertIsInstance(AR(coefs=[0.5]).draw(), InfiniteVector)
 
     def test_recursion_matches_hand_computation(self):
         # Every shock is 1 and the process starts at 0, so
         # X[0] = 1, X[n] = 0.5 * X[n-1] + 1.
-        seed()
+        seed(42)
         path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=0).draw()
         expected = [1.0, 1.5, 1.75, 1.875, 1.9375, 1.96875]
         self.assertEqual([float(path[n]) for n in range(6)], expected)
 
     def test_presample_values_are_used(self):
         # Starting at 10 with unit shocks: X[0] = 0.5 * 10 + 1 = 6.
-        seed()
+        seed(42)
         path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=10).draw()
         self.assertAlmostEqual(float(path[0]), 6.0)
 
     def test_second_order_uses_both_previous_values(self):
         # X[0] = 0.5 * X[-1] + 0.25 * X[-2] + 1, with X[-2]=2, X[-1]=4.
-        seed()
+        seed(42)
         path = AR(coefs=[0.5, 0.25], noise_dist=Bernoulli(1), initial=[2, 4]).draw()
         self.assertAlmostEqual(float(path[0]), 0.5 * 4 + 0.25 * 2 + 1)
 
@@ -309,27 +304,27 @@ class TestARMAResult(unittest.TestCase):
         # Regression test: the internal list must not be called `values`,
         # which InfiniteTuple already uses for its own cache. When it was,
         # both appended to the same list and every value came out twice.
-        seed()
+        seed(42)
         path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=0).draw()
         first = [float(path[n]) for n in range(8)]
         self.assertEqual(len(set(first)), 8, "values are repeating")
         self.assertEqual(first, [float(path[n]) for n in range(8)])
 
     def test_path_is_cached_and_stable(self):
-        seed()
+        seed(42)
         path = ARMA(ar_coefs=[0.5], ma_coefs=[0.3]).draw()
         first = [float(path[n]) for n in range(12)]
         self.assertEqual(first, [float(path[n]) for n in range(12)])
 
     def test_reading_far_ahead_keeps_earlier_values(self):
-        seed()
+        seed(42)
         path = AR(coefs=[0.6]).draw()
         early = [float(path[n]) for n in range(8)]
         path[300]
         self.assertEqual([float(path[n]) for n in range(8)], early)
 
     def test_get_shocks_returns_the_shocks(self):
-        seed()
+        seed(42)
         self.assertIsInstance(AR(coefs=[0.5]).draw().get_shocks(), InfiniteVector)
 
 
@@ -345,7 +340,7 @@ class TestARMAProbabilitySpace(unittest.TestCase):
         self.assertIsInstance(ARMAProbabilitySpace(ar_coefs=[0.5]).noise_dist, Normal)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         self.assertIsInstance(ARMAProbabilitySpace(ar_coefs=[0.5]).draw(), ARMAResult)
 
 
@@ -382,7 +377,7 @@ class TestARMATheory(unittest.TestCase):
     def test_ar1_stationary_variance(self):
         # Var = s**2 / (1 - phi**2), the same at every time when started
         # from the stationary distribution.
-        seed()
+        seed(42)
         phi = 0.7
         expected = 1 / (1 - phi**2)
         X = AR(coefs=[phi], initial="stationary")
@@ -392,7 +387,7 @@ class TestARMATheory(unittest.TestCase):
     def test_ar1_autocorrelation_is_phi_to_the_k(self):
         # The AR fingerprint: correlation decays geometrically and never
         # reaches zero, unlike an MA's hard cutoff.
-        seed()
+        seed(42)
         phi = 0.7
         paths = sample_paths(AR(coefs=[phi], initial="stationary"), 6, 20000)
         for k in [1, 2, 3]:
@@ -402,7 +397,7 @@ class TestARMATheory(unittest.TestCase):
     def test_ar2_matches_yule_walker(self):
         # phi = [0.5, 0.3] gives stationary variance 2.2436 and lag-1
         # correlation phi1 / (1 - phi2) = 0.7143.
-        seed()
+        seed(42)
         paths = sample_paths(AR(coefs=[0.5, 0.3], initial="stationary"), 4, 20000)
         self.assertAlmostEqual(paths[:, 0].var(), 2.2436, delta=0.2)
         self.assertAlmostEqual(
@@ -410,13 +405,13 @@ class TestARMATheory(unittest.TestCase):
         )
 
     def test_mean_is_the_process_mean(self):
-        seed()
+        seed(42)
         X = AR(coefs=[0.6], mean=20, initial=20)
         self.assertAlmostEqual(float(X[40].sim(Nsim).mean()), 20.0, delta=0.3)
 
     def test_unit_coefficient_is_a_random_walk(self):
         # phi = 1 removes the pull home, so the variance grows with n.
-        seed()
+        seed(42)
         X = AR(coefs=[1.0], initial=0)
         for n in [10, 20, 40]:
             self.assertAlmostEqual(
@@ -425,7 +420,7 @@ class TestARMATheory(unittest.TestCase):
 
     def test_no_ar_terms_reproduces_ma(self):
         # ARMA with an empty AR part is exactly a moving-average process.
-        seed()
+        seed(42)
         coefs = [0.8, 0.5]
         arma = sample_paths(ARMA(ar_coefs=[], ma_coefs=coefs), 6, 20000)
         expected_var = 1 + sum(c * c for c in coefs)
@@ -436,7 +431,7 @@ class TestARMATheory(unittest.TestCase):
         )
 
     def test_noise_scale_scales_the_variance(self):
-        seed()
+        seed(42)
         phi, sd = 0.5, 3.0
         X = AR(coefs=[phi], noise_dist=Normal(0, sd), initial="stationary")
         self.assertAlmostEqual(
@@ -448,17 +443,17 @@ class TestARMAInitialConditions(unittest.TestCase):
     """The `initial` parameter's accepted forms."""
 
     def test_number_starts_every_path_there(self):
-        seed()
+        seed(42)
         path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=10).draw()
         self.assertAlmostEqual(float(path[0]), 6.0)
 
     def test_sequence_of_p_values(self):
-        seed()
+        seed(42)
         path = AR(coefs=[0.5, 0.25], noise_dist=Bernoulli(1), initial=[2, 4]).draw()
         self.assertAlmostEqual(float(path[0]), 0.5 * 4 + 0.25 * 2 + 1)
 
     def test_distribution_start_is_random_per_path(self):
-        seed()
+        seed(42)
         X = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=Normal(0, 5))
         starts = [float(X.draw()[0]) for _ in range(50)]
         self.assertGreater(len(set(starts)), 40)
@@ -466,14 +461,14 @@ class TestARMAInitialConditions(unittest.TestCase):
     def test_multivariate_start_is_drawn_jointly(self):
         # For p > 1 the starting values are correlated, which only a
         # multivariate distribution can express.
-        seed()
+        seed(42)
         cov = [[2.0, 1.5], [1.5, 2.0]]
         X = AR(coefs=[0.5, 0.3], initial=MultivariateNormal([0, 0], cov))
         self.assertEqual(len(X.draw().presample), 2)
 
     def test_stationary_has_no_transient(self):
         # The variance is already the long-run one at time 0.
-        seed()
+        seed(42)
         phi = 0.7
         X = AR(coefs=[phi], initial="stationary")
         expected = 1 / (1 - phi**2)
@@ -482,7 +477,7 @@ class TestARMAInitialConditions(unittest.TestCase):
     def test_fixed_start_does_have_a_transient(self):
         # The counterpart: starting at 0 gives noise variance at time 0,
         # growing toward the stationary variance.
-        seed()
+        seed(42)
         X = AR(coefs=[0.7], initial=0)
         early = float(X[0].sim(Nsim).var())
         late = float(X[30].sim(Nsim).var())
@@ -490,7 +485,7 @@ class TestARMAInitialConditions(unittest.TestCase):
         self.assertGreater(late, early + 0.5)
 
     def test_stationary_works_for_ar2(self):
-        seed()
+        seed(42)
         X = AR(coefs=[0.5, 0.3], initial="stationary")
         self.assertAlmostEqual(float(X[0].sim(Nsim).var()), 2.2436, delta=0.25)
 
@@ -551,7 +546,7 @@ class TestARMAErrors(unittest.TestCase):
 
     def test_explosive_process_still_simulates(self):
         # Explosive is allowed -- only "stationary" rejects it.
-        seed()
+        seed(42)
         path = AR(coefs=[1.5], noise_dist=Bernoulli(1), initial=1).draw()
         self.assertGreater(float(path[10]), float(path[5]))
 
@@ -559,13 +554,13 @@ class TestARMAErrors(unittest.TestCase):
 class TestGARCHResult(unittest.TestCase):
 
     def test_is_infinite_vector(self):
-        seed()
+        seed(42)
         self.assertIsInstance(GARCH(omega=0.2, arch_coefs=[0.1]).draw(), InfiniteVector)
 
     def test_recursion_matches_hand_computation(self):
         # Starting variance 4, every shock 1. The recursion reproduces 4
         # exactly: 0.2 + 0.1 * 4 + 0.85 * 4 = 4, so every value is sqrt(4).
-        seed()
+        seed(42)
         path = GARCH(
             omega=0.2,
             arch_coefs=[0.1],
@@ -579,7 +574,7 @@ class TestGARCHResult(unittest.TestCase):
     def test_variance_recursion_is_followed(self):
         # With a fixed starting variance and unit shocks the whole variance
         # path can be worked out by hand.
-        seed()
+        seed(42)
         omega, a, b, v0 = 0.5, 0.2, 0.3, 1.0
         path = GARCH(
             omega=omega,
@@ -599,20 +594,20 @@ class TestGARCHResult(unittest.TestCase):
             self.assertAlmostEqual(got, want)
 
     def test_does_not_clobber_the_infinite_vector_cache(self):
-        seed()
+        seed(42)
         path = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85]).draw()
         first = [float(path[n]) for n in range(8)]
         self.assertEqual(first, [float(path[n]) for n in range(8)])
 
     def test_reading_far_ahead_keeps_earlier_values(self):
-        seed()
+        seed(42)
         path = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85]).draw()
         early = [float(path[n]) for n in range(8)]
         path[200]
         self.assertEqual([float(path[n]) for n in range(8)], early)
 
     def test_variances_are_positive(self):
-        seed()
+        seed(42)
         path = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85]).draw()
         path[50]
         self.assertTrue(all(v > 0 for v in path.get_variances()))
@@ -630,7 +625,7 @@ class TestGARCHProbabilitySpace(unittest.TestCase):
         self.assertEqual(space.initial, 0.3)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         self.assertIsInstance(
             GARCHProbabilitySpace(omega=0.2, arch_coefs=[0.1]).draw(), GARCHResult
         )
@@ -668,7 +663,7 @@ class TestGARCHTheory(unittest.TestCase):
     def test_long_run_variance_matches_closed_form(self):
         # omega / (1 - sum of coefficients), and the default start means it
         # holds from time 0 with no warm-up.
-        seed()
+        seed(42)
         omega, a, b = 0.2, 0.1, 0.85
         X = GARCH(omega=omega, arch_coefs=[a], garch_coefs=[b])
         expected = omega / (1 - a - b)
@@ -676,7 +671,7 @@ class TestGARCHTheory(unittest.TestCase):
             self.assertAlmostEqual(float(X[n].sim(Nsim).var()), expected, delta=0.8)
 
     def test_values_are_centered_at_zero(self):
-        seed()
+        seed(42)
         X = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85])
         self.assertAlmostEqual(float(X[20].sim(Nsim).mean()), 0.0, delta=0.15)
 
@@ -684,7 +679,7 @@ class TestGARCHTheory(unittest.TestCase):
         # The signature of a GARCH: no correlation between the values
         # themselves, but positive correlation between their squares --
         # volatility clustering.
-        seed()
+        seed(42)
         paths = sample_paths(
             GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85]), 6, 20000
         )
@@ -694,21 +689,21 @@ class TestGARCHTheory(unittest.TestCase):
         self.assertGreater(squared, 0.03)
 
     def test_arch_long_run_variance(self):
-        seed()
+        seed(42)
         omega, a = 0.5, 0.5
         X = ARCH(omega=omega, coefs=[a])
         self.assertAlmostEqual(float(X[20].sim(Nsim).var()), omega / (1 - a), delta=0.3)
 
     def test_no_coefficients_is_plain_noise(self):
         # Variance is just omega, and there is nothing to cluster.
-        seed()
+        seed(42)
         X = GARCH(omega=2.0, arch_coefs=[])
         self.assertAlmostEqual(float(X[10].sim(Nsim).var()), 2.0, delta=0.2)
 
     def test_starting_low_shows_a_warm_up(self):
         # The counterpart to the default: start below the long-run variance
         # and it climbs toward it.
-        seed()
+        seed(42)
         X = GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85], initial=0.2)
         early = float(X[0].sim(Nsim).var())
         late = float(X[30].sim(Nsim).var())
@@ -717,7 +712,7 @@ class TestGARCHTheory(unittest.TestCase):
 
     def test_explosive_variance_grows(self):
         # Coefficients summing past 1 are allowed; the variance just grows.
-        seed()
+        seed(42)
         X = GARCH(omega=0.2, arch_coefs=[0.2], garch_coefs=[0.9])
         self.assertGreater(
             float(X[25].sim(3000).var()), float(X[5].sim(3000).var()) * 2

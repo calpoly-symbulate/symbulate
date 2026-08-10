@@ -19,7 +19,10 @@ from scipy.stats import gaussian_kde
 # "Decision: .mplstyle Standards".
 plt.style.use(os.path.join(os.path.dirname(__file__), "symbulate.mplstyle"))
 
-rng = np.random.default_rng()
+# The shared generator, owned by probability_space.py -- this module used to
+# create its own, which made seed() unable to reach it. Do not reintroduce a
+# local `rng = np.random.default_rng()` here.
+from .probability_space import rng
 
 # Discreteness budgets for the default plot lookup -- see classify_values()
 # and DECISIONS.md, "Decision: Data Classification Thresholds (Budget Model)".

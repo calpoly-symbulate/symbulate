@@ -43,7 +43,10 @@ from .plot import (
 )
 from .result import Scalar, Vector, InfiniteVector
 
-rng = np.random.default_rng()
+# The shared generator, owned by probability_space.py -- this module used to
+# create its own, which made seed() unable to reach it. Do not reintroduce a
+# local `rng = np.random.default_rng()` here.
+from .probability_space import rng
 
 
 def _validate(*checks):

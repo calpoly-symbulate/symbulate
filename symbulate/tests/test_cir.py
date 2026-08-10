@@ -26,10 +26,6 @@ from symbulate import diffusion_process
 Nsim = 2000
 
 
-def seed(value=42):
-    diffusion_process.rng = np.random.default_rng(value)
-
-
 def transition_mean(x, elapsed, rate, mean, scale):
     """Exact mean of the CIR value ``elapsed`` after being at ``x``."""
     decay = np.exp(-rate * elapsed)
@@ -86,19 +82,19 @@ class TestCIRConstruction(unittest.TestCase):
 class TestCIRPaths(unittest.TestCase):
 
     def test_starts_at_mean_by_default(self):
-        seed()
+        seed(42)
         X = CIR(reversion_rate=1, mean=0.05, scale=0.1)
         for _ in range(5):
             self.assertEqual(float(X.draw()(0)), 0.05)
 
     def test_starts_at_initial_when_given(self):
-        seed()
+        seed(42)
         X = CIR(reversion_rate=1, mean=0.05, scale=0.1, initial=0.02)
         for _ in range(5):
             self.assertEqual(float(X.draw()(0)), 0.02)
 
     def test_can_start_at_zero(self):
-        seed()
+        seed(42)
         X = CIR(reversion_rate=1, mean=0.05, scale=0.1, initial=0)
         path = X.draw()
         self.assertEqual(float(path(0)), 0.0)
@@ -106,19 +102,19 @@ class TestCIRPaths(unittest.TestCase):
         self.assertGreater(float(path(1.0)), 0.0)
 
     def test_same_time_returns_cached_value(self):
-        seed()
+        seed(42)
         path = CIR(mean=0.05, scale=0.1).draw()
         self.assertEqual(path(1.0), path(1.0))
 
     def test_cached_value_unchanged_after_a_later_time(self):
-        seed()
+        seed(42)
         path = CIR(mean=0.05, scale=0.1).draw()
         before = path(1.0)
         path(5.0)
         self.assertEqual(before, path(1.0))
 
     def test_cached_values_unchanged_after_filling_in_between(self):
-        seed()
+        seed(42)
         path = CIR(mean=0.05, scale=0.1).draw()
         at_one, at_two = path(1.0), path(2.0)
         for t in [1.25, 1.5, 1.75]:
@@ -127,19 +123,19 @@ class TestCIRPaths(unittest.TestCase):
         self.assertEqual(path(2.0), at_two)
 
     def test_times_stay_sorted(self):
-        seed()
+        seed(42)
         path = CIR(mean=0.05, scale=0.1).draw()
         for t in [3.0, 0.5, 2.0, 1.0]:
             path(t)
         self.assertEqual(path.times, sorted(path.times))
 
     def test_different_draws_differ(self):
-        seed()
+        seed(42)
         X = CIR(mean=0.05, scale=0.1)
         self.assertGreater(len({float(X.draw()(1.0)) for _ in range(10)}), 1)
 
     def test_negative_time_raises_value_error(self):
-        seed()
+        seed(42)
         path = CIR().draw()
         with self.assertRaisesRegex(ValueError, "only defined for t >= 0"):
             path(-1.0)
@@ -160,7 +156,7 @@ class TestCIRTransitionLaw(unittest.TestCase):
 
     def test_mean_matches_closed_form(self):
         for t in [0.2, 1.0, 5.0]:
-            seed()
+            seed(42)
             expected = transition_mean(self.start, t, self.rate, self.mean, self.scale)
             self.assertAlmostEqual(
                 self.X[t].sim(Nsim).mean(), expected, delta=0.06 * expected
@@ -168,22 +164,22 @@ class TestCIRTransitionLaw(unittest.TestCase):
 
     def test_variance_matches_closed_form(self):
         for t in [0.2, 1.0, 5.0]:
-            seed()
+            seed(42)
             expected = transition_var(self.start, t, self.rate, self.mean, self.scale)
             self.assertAlmostEqual(
                 self.X[t].sim(Nsim).var(), expected, delta=0.25 * expected
             )
 
     def test_climbs_toward_mean_from_below(self):
-        seed()
+        seed(42)
         early = self.X[0.2].sim(Nsim).mean()
-        seed()
+        seed(42)
         late = self.X[5.0].sim(Nsim).mean()
         self.assertLess(early, late)
         self.assertAlmostEqual(late, self.mean, delta=0.005)
 
     def test_falls_toward_mean_from_above(self):
-        seed()
+        seed(42)
         X = CIR(
             reversion_rate=self.rate,
             mean=self.mean,
@@ -197,7 +193,7 @@ class TestCIRExactness(unittest.TestCase):
     """Reaching a time in one jump equals reaching it in many."""
 
     def _value_after_steps(self, n_steps, rate, mean, scale, start, horizon, n):
-        seed()
+        seed(42)
         values = []
         for _ in range(n):
             path = CIR(
@@ -241,7 +237,7 @@ class TestCIRStationaryLaw(unittest.TestCase):
 
     def test_settles_into_a_gamma(self):
         rate, mean, scale = 1.5, 0.05, 0.1
-        seed()
+        seed(42)
         X = CIR(reversion_rate=rate, mean=mean, scale=scale)
         values = np.array(list(X[40.0].sim(Nsim)), dtype=float)
         shape = 2 * rate * mean / scale**2
@@ -252,19 +248,19 @@ class TestCIRStationaryLaw(unittest.TestCase):
         self.assertGreater(pvalue, 0.01)
 
     def test_long_run_mean_is_the_mean_parameter(self):
-        seed()
+        seed(42)
         X = CIR(reversion_rate=1.5, mean=0.05, scale=0.1)
         self.assertAlmostEqual(X[40.0].sim(Nsim).mean(), 0.05, delta=0.004)
 
     def test_long_run_variance_matches_closed_form(self):
         rate, mean, scale = 1.5, 0.05, 0.1
-        seed()
+        seed(42)
         X = CIR(reversion_rate=rate, mean=mean, scale=scale)
         expected = mean * scale**2 / (2 * rate)
         self.assertAlmostEqual(X[40.0].sim(Nsim).var(), expected, delta=0.25 * expected)
 
     def test_a_stronger_pull_holds_it_closer(self):
-        seed()
+        seed(42)
         loose = CIR(reversion_rate=0.5, mean=0.05, scale=0.1)
         tight = CIR(reversion_rate=5.0, mean=0.05, scale=0.1)
         self.assertGreater(loose[20.0].sim(Nsim).var(), tight[20.0].sim(Nsim).var())
@@ -274,7 +270,7 @@ class TestCIRPositivity(unittest.TestCase):
     """The whole point of CIR: it does not go negative."""
 
     def test_never_negative(self):
-        seed()
+        seed(42)
         X = CIR(reversion_rate=1.0, mean=0.05, scale=0.1)
         values = np.array(list(X[5.0].sim(Nsim)), dtype=float)
         self.assertTrue(np.all(values >= 0))
@@ -283,7 +279,7 @@ class TestCIRPositivity(unittest.TestCase):
         # 2 * rate * mean >= scale ** 2, so the path never reaches 0.
         rate, mean, scale = 1.0, 0.05, 0.1
         self.assertGreaterEqual(2 * rate * mean, scale**2)
-        seed()
+        seed(42)
         X = CIR(reversion_rate=rate, mean=mean, scale=scale)
         values = np.array(list(X[5.0].sim(Nsim)), dtype=float)
         self.assertTrue(np.all(values > 0))
@@ -293,7 +289,7 @@ class TestCIRPositivity(unittest.TestCase):
         # but never below it.
         rate, mean, scale = 1.0, 0.02, 0.4
         self.assertLess(2 * rate * mean, scale**2)
-        seed()
+        seed(42)
         X = CIR(reversion_rate=rate, mean=mean, scale=scale)
         values = np.array(list(X[3.0].sim(Nsim)), dtype=float)
         self.assertTrue(np.all(values >= 0))
@@ -307,7 +303,7 @@ class TestCIRPositivity(unittest.TestCase):
     def test_values_stay_non_negative_when_filling_in_between(self):
         # The bridge is the one approximate step; it must still respect the
         # process's floor at 0.
-        seed()
+        seed(42)
         path = CIR(reversion_rate=1.0, mean=0.02, scale=0.4).draw()
         path(0.0)
         path(2.0)
@@ -321,7 +317,7 @@ class TestCIRComparedToOrnsteinUhlenbeck(unittest.TestCase):
         # Both are pulled toward mean the same way, so the mean of each at a
         # given time follows the same exponential approach.
         rate, mean, start = 1.0, 0.05, 0.02
-        seed()
+        seed(42)
         cir = CIR(reversion_rate=rate, mean=mean, scale=0.1, initial=start)
         expected = transition_mean(start, 1.0, rate, mean, 0.1)
         self.assertAlmostEqual(
@@ -329,12 +325,12 @@ class TestCIRComparedToOrnsteinUhlenbeck(unittest.TestCase):
         )
 
     def test_ornstein_uhlenbeck_can_go_negative_but_cir_cannot(self):
-        seed()
+        seed(42)
         ou = OrnsteinUhlenbeck(reversion_rate=1.0, mean=0.05, scale=0.2, initial=0.05)
         ou_values = np.array(list(ou[3.0].sim(Nsim)), dtype=float)
         self.assertTrue(np.any(ou_values < 0))
 
-        seed()
+        seed(42)
         cir = CIR(reversion_rate=1.0, mean=0.05, scale=0.2)
         cir_values = np.array(list(cir[3.0].sim(Nsim)), dtype=float)
         self.assertTrue(np.all(cir_values >= 0))

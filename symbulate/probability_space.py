@@ -5,6 +5,55 @@ import numpy as np
 
 rng = np.random.default_rng()
 
+
+def seed(value=None):
+    """Reseed Symbulate's shared random generator for reproducible simulations.
+
+    Every distribution, random process, and plot that uses randomness draws
+    from the same underlying generator, so calling this once at the top of a
+    notebook makes the rest of it reproducible. Call it again with a
+    different value -- or with no value, for a fresh unpredictable seed -- to
+    start a new run.
+
+    Note that ``np.random.seed()`` does **not** work for this. Symbulate
+    draws from a NumPy ``Generator`` (``np.random.default_rng()``), which is
+    entirely separate from the legacy global state ``np.random.seed()``
+    controls. This function is the way to make a simulation reproducible.
+
+    Parameters
+    ----------
+    value : int, optional
+        The seed. Passing the same value again reproduces the same run.
+        ``None`` (the default) reseeds from fresh, unpredictable entropy,
+        which is also the state Symbulate starts in.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> seed(0)
+    >>> first = RV(Normal(0, 1)).sim(3)
+    >>> seed(0)
+    >>> second = RV(Normal(0, 1)).sim(3)
+    >>> list(first) == list(second)
+    True
+    """
+    # Mutate the existing generator's state in place -- do NOT rebind the
+    # name. Every other module does `from .probability_space import rng`,
+    # which binds their own name to this same object; `rng = <new generator>`
+    # here would leave all of them pointing at the old one and silently
+    # reseed nothing. Swapping the bit generator's state reaches every
+    # module, because they all hold a reference to this object.
+    rng.bit_generator.state = np.random.default_rng(value).bit_generator.state
+
+
+# `rng` and `seed` are deliberately defined ABOVE the relative imports
+# below, and must stay there. This module is the sole owner of the shared
+# generator, and `plot.py` imports it from here -- but this module also
+# imports (via .result and .results) from `plot.py`, so the two form an
+# import cycle. It resolves only because `rng` is already bound by the time
+# `plot.py` asks for it. Move these two definitions below the imports and
+# `import symbulate` fails outright with "cannot import name 'rng' from
+# partially initialized module".
 from .base import Logical
 from .result import Vector, InfiniteVector, join
 from .results import Results, _sim_with_progress
