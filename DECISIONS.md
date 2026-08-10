@@ -838,7 +838,19 @@ panel's own final limits rather than re-deriving any plot type's extent.
 
 ## Decision: Equal-Width Mosaic Columns (`equal_width=` on `make_mosaic`) — "100%-Stacked Bar Chart"
 
-**Status:** Implemented (`plot.py`'s `make_mosaic`; dispatched automatically via `RVResults.plot(type="mosaic", ...)`'s existing `**kwargs` passthrough — no `results.py` dispatch changes needed).
+**Status:** ~~Implemented~~ — **SUPERSEDED.** `equal_width=` was removed; the
+two column-width schemes are now two plot types, `type="mosaic"`
+(proportional) and `type="stackedbar"` (equal), drawn by `make_mosaic` /
+`make_stackedbar`. Passing `equal_width=` now raises a message naming the
+replacement. The in-cell labels and the `marginal_column` reference column
+described below were removed at the same time, so the parts of this entry
+about annotation math and the marginal column no longer describe the code.
+See CLAUDE.md, "Mosaic and Stacked Bar". Kept for the reasoning trail —
+note the "new `type=` name" alternative it rejected is exactly what was
+later adopted, on the grounds that two self-documenting type names beat one
+name plus a layout kwarg.
+
+**Original status:** Implemented (`plot.py`'s `make_mosaic`; dispatched automatically via `RVResults.plot(type="mosaic", ...)`'s existing `**kwargs` passthrough — no `results.py` dispatch changes needed).
 
 **Decision**
 > `make_mosaic` gains an `equal_width=False` (default) parameter. With the default, column widths stay proportional to each `x` value's marginal count (the standard mosaic convention). With `equal_width=True`, every real column is drawn the same width regardless of marginal frequency — a 100%-stacked bar chart per `x` value. Only the column-width computation and the plot's own title change: segment stacking (heights = conditional frequency of `y` within that column, still summing to 1), per-segment color/hatch, in-cell annotation (still divides by the *true* per-column count, `x_counts`, never the equal-width weights), the marginal reference column, and the legend behavior are all unchanged and shared with the proportional-width path. The axes title reads `"Stacked Plot"` when `equal_width=True`, instead of `"Mosaic Plot"` — a clear visual signal that the columns are equal-width, not proportional, since the two modes are otherwise visually similar. The printed suggestion note (`"Currently Showing: ..."`) is kept consistent with this: a new `PLOT_DISPLAY_NAME["mosaic_equal_width"] = "Stacked Plot"` entry, and `results.py`'s existing short-name-to-display-token remap (the same mechanism that turns `"hist"` into `"2D Histogram"` for 2D continuous data) maps `"mosaic"` to `"mosaic_equal_width"` specifically when `kwargs.get("equal_width")` is truthy.
@@ -852,6 +864,53 @@ panel's own final limits rather than re-deriving any plot type's extent.
 > - **New `type="stacked_bar"` value** — considered and asked about explicitly; rejected in favor of the kwarg route to avoid duplicating "which type name maps to which renderer" for the same underlying function, and because it would require touching `results.py`'s dispatch chain, `PLOT_DISPLAY_NAME`, and `DEFAULT_PLOT_TYPE` for no functional gain over a kwarg.
 > - **Both**: `equal_width=True` kwarg plus a `type="stacked_bar"` alias in the dispatch that's sugar for `type="mosaic", equal_width=True` — considered as a middle ground (friendlier name for students while keeping the mechanism lean); not chosen for this pass, but the kwarg-only implementation doesn't preclude adding the alias later if the team decides the bare kwarg isn't discoverable enough.
 > - **Real-valued/time-axis column positioning** (mentioned in `symbulate-graphics-revisions.md` as the motivating use case for a `RandomProcess`/`MarkovChain` time-step visualization with irregular spacing) — out of scope for this pass; `make_mosaic` still treats `x` purely as an ordered categorical label (equal slots among distinct values), not real numeric coordinates. Left as a follow-up if a literal numeric time axis is needed later.
+
+---
+
+## Decision: Box and Violin Whiskers Reach the Extremes by Default (`outliers=False`)
+
+**Status:** Implemented (`plot.py`'s `make_boxplot`, `make_grouped_boxplot`, `make_violinplot`, `make_violin`; `outliers=` reaches the 2-D grouped violin through `RVResults.plot()`, which pops it out of `**kwargs`).
+
+**Decision**
+> `outliers` defaults to **`False`** on every box and violin plot: the whiskers
+> extend all the way to the minimum and maximum simulated values, so every
+> value falls inside them and no individual outlier points are drawn.
+> `outliers=True` opts back into the classical convention — whiskers stop at
+> the most extreme value within 1.5 times the interquartile range, and points
+> beyond that are drawn individually.
+>
+> Violin plots gain the same `outliers=` argument, with the same default,
+> where it controls the **inner box plot's** whiskers. The violin body is a
+> kernel density of every value either way; only the inner box changes. Both
+> the 1-D (`make_violinplot`) and 2-D grouped (`make_violin`) violins take it,
+> matching `make_boxplot` / `make_grouped_boxplot`.
+
+**Rationale**
+> Requested directly. "The whiskers show you the smallest and largest value"
+> is a sentence a student understands immediately; "the whiskers show you the
+> most extreme value within 1.5 times the interquartile range, and the dots
+> are values beyond that" needs the IQR explained first, and quietly implies
+> those points are *wrong* rather than simply large. Symbulate plots
+> simulated data, where a long tail is usually the thing being studied, not
+> contamination to be flagged. The classical convention stays one keyword
+> away.
+>
+> Violin got the argument because it already draws an inner box plot, so it
+> already had whiskers making a 1.5-IQR claim — leaving box and violin on
+> different conventions would have meant two views of the same data
+> disagreeing about where the whiskers end.
+
+**Alternatives Considered**
+> - **Leave boxplot on `outliers=True` and only add the violin argument** —
+>   rejected; the default is the thing a student actually sees, and the
+>   keyword existing doesn't help someone who never types it.
+> - **Give violin no `outliers=` and always hide its fliers** (the old
+>   behavior) — rejected: the inner box's whiskers were still drawn at
+>   1.5 IQR, so the violin was making the classical claim while showing none
+>   of the evidence for it, and a box and a violin of the same data drew
+>   different whiskers.
+> - **Drop the inner box from violins entirely** — out of scope, and the box
+>   is what makes the median and IQR readable against the density shape.
 
 ---
 

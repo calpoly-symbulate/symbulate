@@ -14,6 +14,7 @@ from matplotlib.ticker import MaxNLocator
 
 from .plot import (
     get_next_color,
+    set_plot_title,
     THEORETICAL_CDF_PDF_OVERLAY_ERROR,
     DistributionPlot,
     JointDistributionPlot,
@@ -821,22 +822,24 @@ class Distribution(ProbabilitySpace):
         # Title the plot by what it shows: the cumulative distribution
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
-        # Only set it when the axes doesn't already have a title, matching
-        # the same "keep the first plot's framing" rule the labels below
-        # already followed -- title and label used to disagree (title always
-        # overwritten, label only filled if unset), which is exactly how a
-        # pdf-then-cdf overlay used to end up titled "Cumulative Distribution
-        # Function" while still y-labeled "Density". The overlay guard above
-        # blocks that specific combination outright now, but this keeps title
-        # and label in agreement for every other overlay too (e.g. a pdf curve
-        # added on top of a histogram keeps that histogram's title).
-        if not ax.get_title():
-            if cdf:
-                ax.set_title("Cumulative Distribution Function")
-            elif self.discrete:
-                ax.set_title("Probability Mass Function")
-            else:
-                ax.set_title("Probability Density Function")
+        # set_plot_title, not ax.set_title: only set it when the axes
+        # doesn't already have a title, matching the same "keep the first
+        # plot's framing" rule the labels below already followed -- title
+        # and label used to disagree (title always overwritten, label only
+        # filled if unset), which is exactly how a pdf-then-cdf overlay
+        # used to end up titled "Cumulative Distribution Function" while
+        # still y-labeled "Density". The overlay guard above blocks that
+        # specific combination outright now, but this keeps title and label
+        # in agreement for every other overlay too (e.g. a pdf curve added
+        # on top of a histogram keeps that histogram's title). The helper
+        # is the one shared definition of that rule -- every make_* title
+        # in plot.py goes through it too.
+        if cdf:
+            set_plot_title(ax, "Cumulative Distribution Function")
+        elif self.discrete:
+            set_plot_title(ax, "Probability Mass Function")
+        else:
+            set_plot_title(ax, "Probability Density Function")
 
         # Label the axes for context: the x-axis shows the possible values of
         # the variable, and the y-axis names what its height means for this
@@ -6555,8 +6558,9 @@ class MultivariateDistribution(Distribution):
         plt.setp(ax_marg_x.get_xticklabels(), visible=False)
         plt.setp(ax_marg_y.get_yticklabels(), visible=False)
         # There is no room for the joint panel's own title -- it would collide
-        # with the strip above it -- but what the plot is ("Joint Contour
-        # Plot", "Joint PMF Plot") is worth keeping, so it moves to the figure,
+        # with the strip above it -- but what the plot is ("Joint Probability
+        # Density Function", "Joint Probability Mass Function") is worth
+        # keeping, so it moves to the figure,
         # above all three panels. Read back from the panel rather than
         # re-derived, so it stays whatever the joint plot titled itself.
         fig.suptitle(ax.get_title())

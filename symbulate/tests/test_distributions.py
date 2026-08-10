@@ -4742,7 +4742,7 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
         # Two variables: one joint distribution, so no arguments needed.
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
         X.plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
         self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
         self.assertEqual(plt.gca().get_ylabel(), "Variable 2")
         plt.close("all")
@@ -4750,7 +4750,7 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
     def test_MultivariateNormal_plot_contour(self):
         X = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
         X.plot(contour=True)
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
         plt.close("all")
 
     def test_MultivariateNormal_plot_3d_defaults_to_the_matrix(self):
@@ -5029,7 +5029,7 @@ class TestMultivariateT(MultivariatePlotTestCase):
     def test_MultivariateT_plots_joint_density(self):
         X = MultivariateT(mean=[0, 0], cov=[[1, 0.3], [0.3, 2]], df=4)
         X.plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
         plt.close("all")
 
     def test_MultivariateT_plots_when_moments_are_undefined(self):
@@ -5567,7 +5567,7 @@ class TestMultinomial(MultivariatePlotTestCase):
         # whatever is left), so this is the single-joint-plot case.
         X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
         X.plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint PMF Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Mass Function")
         plt.close("all")
 
     def test_Multinomial_is_discrete(self):
@@ -5875,7 +5875,7 @@ class TestDirichlet(MultivariatePlotTestCase):
         # the single-joint-plot case, drawn over the simplex.
         Dirichlet(alpha=[2, 3, 5]).draw()
         Dirichlet(alpha=[2, 3, 5]).plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
         plt.close("all")
 
     def test_Dirichlet_plot_window_is_full_proportion_range(self):
