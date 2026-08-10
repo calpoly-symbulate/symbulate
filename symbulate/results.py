@@ -1829,7 +1829,7 @@ class RVResults(Results):
                         )
                     )
                 # Drop the title each panel drew for itself. On its own a plot
-                # is titled with its type ("Density Curve", "Tile Plot"), but
+                # is titled with its type ("Density (Estimated)", "Tile Plot"), but
                 # in a matrix that repeats the same two or three words down
                 # every panel and crowds them; the figure's own suptitle
                 # says what the layout is. The theoretical pairs plot clears
@@ -2441,8 +2441,8 @@ class RVResults(Results):
                 type = (default,)
             # On continuous x continuous data the short names hist/density
             # mean the 2D mesh variants, so map them to the explicit tokens
-            # for the suggestion note's display name ("2D Histogram" rather
-            # than "Histogram"). On mixed data the short names are already
+            # for the suggestion note's display name ("Joint Histogram"
+            # rather than "Histogram"). On mixed data the short names are already
             # what the table lists (they resolve to the segmented variants in
             # the dispatch), so no remap is needed there.
             if configuration == "2D_mixed":
