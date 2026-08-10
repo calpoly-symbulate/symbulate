@@ -785,12 +785,27 @@ pdf/pmf claim would be true of it. Note `PLOT_DISPLAY_NAME["pairs"]` in the
 suggestion note still reads "Pairs Plot", since that names the `type=` token
 rather than the figure (the same split as `density2d`).
 
-**Both matrices label the whole left column**, top-left panel included, so every
-row is named (`Variable 1`, `Variable 2`, `Variable 3` down the side — seaborn
-`PairGrid`'s convention). That panel's y-axis is really a density rather than the
-variable, so the label names the row it heads rather than the axis it sits on;
-leaving it blank (as the theoretical side used to) left the first row unnamed
-until the bottom of its column.
+**A diagonal panel's y-axis says which distribution it is showing**, in both
+matrices: `Marginal Density`, from the shared `pairs_marginal_label`. A matrix
+shows two kinds of distribution at once — a joint one off the diagonal, a
+marginal one on it — and `Density` alone doesn't say which a scale belongs to.
+The word adapts to what the panel actually drew (`Marginal Count`,
+`Marginal Relative Frequency`, `Marginal Probability`), because the quantity is
+**read off the panel's own y-label after it draws** rather than re-derived from
+the plot type — so a diagonal cannot disagree with itself.
+
+The rest of the left column names its row's variable (`Variable 2`,
+`Variable 3` down the side). The top-left panel is a diagonal, so it gives up
+its `Variable 1` label to the marginal one; its row is still named by the
+`Variable 1` x-label at the bottom of that same column. **The one fallback:** a
+small-n continuous diagonal is a rug plot, which has no frequency axis at all
+(`make_rug` hides that direction outright), so it reads as an empty quantity and
+the panel keeps the variable name instead.
+
+**A dot-plot diagonal is safe here, unlike its ticks and limits** —
+`_dotplot_decorate` (which sets the `Count` y-label) runs once from
+`make_dotplot`, not from `_dotplot_relayout`, so the resize handler does not
+overwrite the marginal label the way it would a plain `set_xlim`.
 
 **Colorbars go in the empty upper triangle — one per joint panel.** The matrix
 fills only its lower triangle, so the cell mirroring panel `(row, col)` across
@@ -802,10 +817,14 @@ drift apart. Consequences to respect:
   each colored over their own range), which is *why* every bar is titled with
   the pair it explains (`"Variable 1 & Variable 2"`) — a color only means something against its
   own bar.
-- `quantity_label` is `"Density"`/`"Count"` by `normalize` for simulated results
-  and `"Density"`/`"Probability"` by discreteness for a distribution. **A
-  `"Count"` bar's ticks carry no decimals** (a count is a whole number of
-  simulated values); density and probability keep `JOINT_CBAR_DECIMALS`.
+- `quantity_label` is `"Joint Density"`/`"Joint Count"` by `normalize` for
+  simulated results and `"Joint Density"`/`"Joint Probability"` by discreteness
+  for a distribution, built by the shared `pairs_joint_label` — the counterpart
+  of `pairs_marginal_label` on the diagonal, so a bar can't be read as the
+  marginal density of the panel it sits across from. **A count bar's ticks carry
+  no decimals** (a count is a whole number of simulated values); density and
+  probability keep `JOINT_CBAR_DECIMALS`. That check is
+  `quantity_label.endswith("Count")`, not equality — don't narrow it back.
 - The bars are placed **after `fig.tight_layout()`**, from
   `gs[col, row].get_position(fig)` — the cell rectangles are only final once the
   layout has settled. They use `fig.add_axes`, so they have no subplot spec,

@@ -4934,20 +4934,33 @@ class TestPairsLayout(PlotTestCase):
             sorted(l for l in x_labels if l),
             ["Variable 1", "Variable 2", "Variable 3"],
         )
-        # The left column names its row's variable, top-left panel included,
-        # so every row is identified.
+        # A diagonal panel's y-axis is that variable's own distribution rather
+        # than the variable, so it names what it measures; the rest of the
+        # left column names its row's variable.
         y_labels = [a.get_ylabel() for a in axes]
         self.assertEqual(
             sorted(l for l in y_labels if l),
-            ["Variable 1", "Variable 2", "Variable 3"],
+            [
+                "Marginal Density",
+                "Marginal Density",
+                "Marginal Density",
+                "Variable 2",
+                "Variable 3",
+            ],
         )
 
-    def test_top_left_panel_names_its_row(self):
-        """The first row holds one panel; without a label it goes unnamed."""
+    def test_diagonal_panels_name_the_marginal_they_show(self):
+        """The diagonal is not the joint distribution its neighbors are."""
         plt.figure()
         _continuous_sim(k=3).plot()
         # Panels are added row by row, so the first one is (0, 0).
-        self.assertEqual(_pairs_panels()[0].get_ylabel(), "Variable 1")
+        self.assertEqual(_pairs_panels()[0].get_ylabel(), "Marginal Density")
+
+    def test_diagonal_marginal_label_follows_the_quantity_shown(self):
+        """Counts aren't densities, so a count diagonal doesn't claim to be."""
+        plt.figure()
+        _continuous_sim(k=3).plot(normalize=False)
+        self.assertEqual(_pairs_panels()[0].get_ylabel(), "Marginal Count")
 
     def test_inner_x_tick_labels_are_hidden(self):
         """Every panel in a column shares the variable, so they'd repeat."""
@@ -4999,8 +5012,9 @@ class TestPairsLayout(PlotTestCase):
         """A bar's caption is lettered alike top and side.
 
         The pair label identifies the bar rather than titling a plot, so it
-        is the size of the bar's own "Density"/"Count" label, below a panel
-        title. Both matrices go through ``add_pairs_panel_colorbar``, so the
+        is the size of the bar's own "Joint Density"/"Joint Count" label,
+        below a panel title. Both matrices go through
+        ``add_pairs_panel_colorbar``, so the
         simulated and theoretical sides are checked together.
         """
         expected = (
@@ -5025,7 +5039,7 @@ class TestPairsLayout(PlotTestCase):
                 draw()
                 bars = _pairs_colorbars()
                 self.assertEqual({a.title.get_fontsize() for a in bars}, {expected})
-                # The "Density" label sits on the bar's y-axis.
+                # The "Joint Density" label sits on the bar's y-axis.
                 self.assertEqual(
                     {a.yaxis.label.get_fontsize() for a in bars}, {expected}
                 )
@@ -5045,7 +5059,9 @@ class TestPairsLayout(PlotTestCase):
                 )
 
     def test_density_by_default_counts_when_asked(self):
-        for normalize, expected in [(True, "Density"), (False, "Count")]:
+        # "Joint", so a bar can't be confused with the marginal density or
+        # count on the diagonal panel it sits across from.
+        for normalize, expected in [(True, "Joint Density"), (False, "Joint Count")]:
             with self.subTest(normalize=normalize):
                 plt.close("all")
                 plt.figure()
