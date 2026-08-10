@@ -1354,6 +1354,9 @@ class RVResults(Results):
         Exception
             If the results cannot be standardized (e.g. outcomes
             have non-numeric or inconsistent dimension).
+        Exception
+            If the results have no variability -- every simulated value
+            is the same, so the standard deviation divided by is 0.
 
         See Also
         --------
@@ -1373,7 +1376,19 @@ class RVResults(Results):
         """
         self._set_array()
         if self.dim is not None:
-            return (self - self.mean()) / self.std()
+            std = self.std()
+            # A constant RV (e.g. BoxModel([5])) or a single-draw
+            # simulation (.sim(1)) both have a standard deviation of
+            # exactly 0, which used to divide silently into a raw
+            # ZeroDivisionError instead of an explanatory message.
+            if np.any(np.asarray(std, dtype=float) == 0):
+                raise Exception(
+                    "Can't standardize data with no variability -- every "
+                    f"value is {self.mean()!r}. Standardizing divides by "
+                    "the standard deviation, which is 0 when every "
+                    "simulated value is the same."
+                )
+            return (self - self.mean()) / std
         else:
             raise Exception("Could not standardize the given results.")
 
