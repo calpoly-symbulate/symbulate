@@ -421,6 +421,23 @@ class TestRVJoint(unittest.TestCase):
         val = Z.draw()
         self.assertEqual(len(val), 2)
 
+    def test_and_vector_valued_rv_stays_nested(self):
+        # Regression test for the reported issue: joining an RV whose own
+        # draw is itself a Vector (from **) with other RVs must keep that
+        # Vector as one nested component, not flatten it into the outer
+        # tuple. E.g. (RV(P) & X & Y).sim(n) should give ((s1, s2), sum, max),
+        # not (s1, s2, sum, max).
+        seed()
+        P = DiscreteUniform(a=1, b=4) ** 2
+        X = RV(P, sum)
+        Y = RV(P, max)
+        Z = RV(P) & X & Y
+        val = Z.draw()
+        self.assertEqual(len(val), 3)
+        self.assertEqual(len(val[0]), 2)
+        self.assertEqual(val[1], sum(val[0]))
+        self.assertEqual(val[2], max(val[0]))
+
     def test_and_rv_scalar_draw_length(self):
         seed()
         X = RV(Normal(mean=0, sd=1))

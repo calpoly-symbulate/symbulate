@@ -1763,15 +1763,18 @@ def join(result1, result2):
     """
     Join two result objects into a single Tuple.
 
-    Combines the values of two result objects, unpacking any ``Tuple``
-    into its component values before joining.
+    Combines the values of two result objects, unpacking an exactly-``Tuple``
+    result into its component values before joining. A ``Tuple`` *subclass*
+    such as ``Vector`` is left alone and stays nested as one component --
+    see the comment on the type check below for why.
 
     Parameters
     ----------
     result1 : object
-        The first result. If a ``Tuple``, its values are unpacked.
+        The first result. If exactly a ``Tuple``, its values are unpacked;
+        a ``Vector`` (or any other ``Tuple`` subclass) is kept whole.
     result2 : object
-        The second result. If a ``Tuple``, its values are unpacked.
+        The second result. Treated the same way as ``result1``.
 
     Returns
     -------
@@ -1796,8 +1799,19 @@ def join(result1, result2):
     >>> join(t1, t2)
     (1, 2, 3, 4)
     """
-    a = tuple(result1.values) if isinstance(result1, Tuple) else (result1,)
-    b = tuple(result2.values) if isinstance(result2, Tuple) else (result2,)
+    # An exact type check, deliberately -- NOT isinstance. Vector subclasses
+    # Tuple, so isinstance(vector, Tuple) is True and would unpack a
+    # Vector-valued component, flattening its coordinates into the joined
+    # tuple: (RV(P) & X & Y) would give (s1, s2, sum, max) instead of the
+    # correct ((s1, s2), sum, max). Only a literal Tuple is a bag of
+    # components safe to unpack; every Tuple subclass (Vector today) is one
+    # opaque value that has to stay nested. This reads less idiomatic than
+    # isinstance on purpose -- it was "cleaned up" to isinstance once
+    # (478cf24, PR #68) and that silently changed behavior, so please leave
+    # it. test_join_distinguishes_exact_tuple_from_vector_subclass fails if
+    # isinstance comes back.
+    a = tuple(result1.values) if type(result1) == Tuple else (result1,)
+    b = tuple(result2.values) if type(result2) == Tuple else (result2,)
 
     return Tuple(a + b)
 
