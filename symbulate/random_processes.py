@@ -90,6 +90,8 @@ class RandomProcess(RV):
         ------
         KeyError
             If ``t`` is not in the index set of the random process.
+        TypeError
+            If ``value`` is neither an ``RV`` nor a scalar constant.
 
         Examples
         --------
@@ -110,6 +112,13 @@ class RandomProcess(RV):
         # If value is a scalar, create and store a constant random variable
         elif is_scalar(value):
             self.rvs[t] = RV(self.prob_space, lambda outcome: value)
+        else:
+            raise TypeError(
+                f"Cannot set X[{t!r}] to {value!r} (type {type(value).__name__}). "
+                "The value assigned to a random process at a given time must "
+                "be an RV (e.g. RV(P, lambda outcome: ...)) or a scalar "
+                "constant (e.g. an int or float)."
+            )
 
     def __getitem__(self, t):
         """Get the random variable representing the process at time ``t``.
