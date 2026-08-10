@@ -14,6 +14,7 @@ from matplotlib.ticker import MaxNLocator
 
 from .plot import (
     get_next_color,
+    THEORETICAL_CDF_PDF_OVERLAY_ERROR,
     DistributionPlot,
     JointDistributionPlot,
     make_joint_pdf,
@@ -486,7 +487,10 @@ class Distribution(ProbabilitySpace):
         The plot is titled by what it shows: "Cumulative Distribution
         Function" for ``cdf=True``, and for the default view "Probability
         Density Function" (continuous) or "Probability Mass Function"
-        (discrete).
+        (discrete) -- only when the axes doesn't already have a title, so
+        overlaying onto an existing plot keeps that plot's title. Overlaying
+        a pdf/pmf and a cdf on the same axes raises instead of drawing an
+        unreadable plot -- see ``ax=`` below for comparing both side by side.
 
         **The x-axis frames itself, and there is no window argument.** The
         distribution's own :attr:`xlim` is used, and it zooms in whenever the
@@ -570,6 +574,38 @@ class Distribution(ProbabilitySpace):
         # case that skips the discrete padding below (see `_xlim_padded`).
         xlim = self.xlim
 
+        # The window itself can come back non-finite, which is a different
+        # failure from the all-non-finite curve guarded below: here there is
+        # no range of values to evaluate at all. Two distinct causes, so two
+        # distinct messages -- an infinite bound means the 0.999 quantile
+        # never came back (Pareto(shape=1e-3) frames `(1.0, inf)`, which
+        # reaches matplotlib as a bare "Axis limits cannot be NaN or Inf"),
+        # while a nan bound means the quantiles themselves are undefined
+        # (Normal(sd=0), Uniform(a=5, b=5)). Checking here also keeps a nan
+        # bound away from the `int(xlim[0])` on the discrete branch below,
+        # which would raise its own uninformative conversion error.
+        if not all(np.isfinite(bound) for bound in xlim):
+            if any(np.isnan(bound) for bound in xlim):
+                cause = (
+                    "This usually means a parameter is at a degenerate edge "
+                    "-- zero variance, or bounds that collapse to a single "
+                    "point -- which leaves the distribution with no range of "
+                    "values to draw."
+                )
+            else:
+                cause = (
+                    "This usually means a tail so heavy that no window holds "
+                    "most of the probability -- a shape parameter very close "
+                    "to 0, say."
+                )
+            raise ValueError(
+                f"{type(self).__name__}'s parameters give the plotting window "
+                f"{tuple(xlim)}, which is not a finite range of values. "
+                f"{cause} This is rarely a bug in your code -- check the "
+                f"distribution's parameters, or choose the window yourself "
+                f"with X.xlim = (low, high) before plotting."
+            )
+
         # get the x and y values. The x-window is chosen the same way for
         # both plot types (it only picks x-values); `cdf` decides which
         # function is evaluated there.
@@ -587,18 +623,54 @@ class Distribution(ProbabilitySpace):
             xs = np.linspace(xlim[0], xlim[1], 200)
         ys = self.cdf(xs) if cdf else self.pdf(xs)
 
+        # A degenerate parameter (zero variance, a shape parameter at an
+        # extreme edge, bounds that collapse to a point, ...) can make every
+        # evaluated value non-finite, which would otherwise reach a bare
+        # NumPy "zero-size array" crash below with no context for a student.
+        # Name the likely cause and point at the fix instead.
+        finite = np.isfinite(ys)
+        if not np.any(finite):
+            quantity = "cdf" if cdf else "pmf" if self.discrete else "pdf"
+            raise ValueError(
+                f"{type(self).__name__}'s parameters make the {quantity} "
+                f"undefined or infinite everywhere in the plotting window "
+                f"{tuple(xlim)}. This usually means a parameter is at a "
+                f"degenerate edge -- zero variance, a shape parameter at 0, "
+                f"or bounds that collapse to a single point -- rather than a "
+                f"bug in your code. Check the distribution's parameters."
+            )
+
         # determine limits for y-axes based on y values. Anchor the baseline
         # at exactly 0 so the curve sits right on the x-axis: a pdf/pmf height
         # is never negative and only reads correctly against a zero baseline,
         # and a CDF likewise runs from 0 upward. Padding below 0 would float
         # the curve off the axis and misrepresent it.
-        ymax = ys[np.isfinite(ys)].max()
+        ymax = ys[finite].max()
         ylim = 0, 1.05 * ymax
 
         # get the current axis (creating one if the figure has none) unless
         # an axis was specified
         if ax is None:
             ax = plt.gca()
+
+        # A pdf/pmf and a cdf use different y-axis scales (one can exceed 1,
+        # the other runs from 0 to 1), so overlaying both on one axes -- e.g.
+        # Normal(0,1).plot(); Normal(0,1).plot(cdf=True) -- produces a plot
+        # that can't be read correctly no matter which curve's title/label
+        # wins. Tag the axes with which kind was drawn (the same pattern
+        # RVResults.plot() uses for _symbulate_marginal) and refuse a second,
+        # mismatched call rather than silently drawing an unreadable overlay.
+        # Different Axes objects (e.g. ax1, ax2 = ax1.twinx()) are unaffected,
+        # since each has its own tag -- that's the escape hatch for anyone who
+        # deliberately wants both curves side by side.
+        new_kind = "cdf" if cdf else "pdf/pmf"
+        existing_kind = getattr(ax, "_symbulate_theoretical_kind", None)
+        if existing_kind is not None and existing_kind != new_kind and ax.has_data():
+            raise ValueError(
+                THEORETICAL_CDF_PDF_OVERLAY_ERROR.format(
+                    existing=existing_kind, new=new_kind
+                )
+            )
 
         # If the axes already has a plot on it, widen the window to the union
         # of both, so overlaying a second curve doesn't crop the first. An
@@ -682,12 +754,22 @@ class Distribution(ProbabilitySpace):
         # Title the plot by what it shows: the cumulative distribution
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
-        if cdf:
-            ax.set_title("Cumulative Distribution Function")
-        elif self.discrete:
-            ax.set_title("Probability Mass Function")
-        else:
-            ax.set_title("Probability Density Function")
+        # Only set it when the axes doesn't already have a title, matching
+        # the same "keep the first plot's framing" rule the labels below
+        # already followed -- title and label used to disagree (title always
+        # overwritten, label only filled if unset), which is exactly how a
+        # pdf-then-cdf overlay used to end up titled "Cumulative Distribution
+        # Function" while still y-labeled "Density". The overlay guard above
+        # blocks that specific combination outright now, but this keeps title
+        # and label in agreement for every other overlay too (e.g. a pdf curve
+        # added on top of a histogram keeps that histogram's title).
+        if not ax.get_title():
+            if cdf:
+                ax.set_title("Cumulative Distribution Function")
+            elif self.discrete:
+                ax.set_title("Probability Mass Function")
+            else:
+                ax.set_title("Probability Density Function")
 
         # Label the axes for context: the x-axis shows the possible values of
         # the variable, and the y-axis names what its height means for this
@@ -718,6 +800,10 @@ class Distribution(ProbabilitySpace):
         # legend-free. "upper left" matches make_ecdf's own default, since a
         # rising CDF has more room there than "upper right".
         _refresh_legend(ax, loc="upper left" if cdf else "upper right")
+
+        # Record what this call drew, for the overlay guard above to check
+        # on the next call.
+        ax._symbulate_theoretical_kind = new_kind
 
         return DistributionPlot(ax, self, "cdf" if cdf else "pdf")
 

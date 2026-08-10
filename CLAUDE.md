@@ -142,13 +142,35 @@ the same axes. Three outcomes:
 - Natural overlay: draws on shared axes, no message. (Most plot types.)
 - Readability warning: draws on shared axes, prints warning below.
   Warning cases: two 2D tile plots, two 2D histograms on same axes.
-- Hard error: multi-panel GridSpec layout cannot be joined.
-  Error cases: a simulated plot drawn with `marginal=True`, **every**
-  theoretical two-variable plot (they always show the strips), and any pairs
-  matrix. Also `mosaic`/`stackedbar` — not a GridSpec problem, but each one
-  re-partitions the whole canvas, so a second would completely cover the
-  first (see "Mosaic and Stacked Bar" below).
+- Hard error: the plots cannot be joined, **or cannot be read correctly
+  under any labeling**. Error cases: a simulated plot drawn with
+  `marginal=True`, **every** theoretical two-variable plot (they always show
+  the strips), and any pairs matrix. Also `mosaic`/`stackedbar` — not a
+  GridSpec problem, but each one re-partitions the whole canvas, so a second
+  would completely cover the first (see "Mosaic and Stacked Bar" below). And
+  a theoretical **pdf/pmf overlaid with a cdf** — see below.
 See design document Section 5 for exact warning and error text.
+
+The tier line is **severity, not mechanism**: a warned overlay is hard to
+read but honest, a hard error is one the reader can't tell is wrong. Don't
+re-narrow the hard-error tier back to "layout cannot be joined" — that
+described the first case, not the rule (see `DECISIONS.md`, "Decision:
+Overlay Behavior").
+
+**A theoretical pdf/pmf and cdf can't share an axes.**
+`Distribution.plot()` tags the axes with `_symbulate_theoretical_kind`
+(`"pdf/pmf"` or `"cdf"`) and raises `THEORETICAL_CDF_PDF_OVERLAY_ERROR` when
+a later call's kind differs and the axes already has data — the scales are
+incompatible (a density can exceed 1, a cdf runs 0 to 1), so the combined
+plot has no correct reading. The check runs *before* anything is drawn, so a
+refused overlay leaves the first plot intact. The tag is per-**axes**, not
+per-figure, so separate axes (`plt.subplots()`, `ax.twinx()`) are the escape
+hatch, and a simulated plot never sets it — an ECDF with a theoretical cdf
+over it, and a histogram with a theoretical pdf over it, both still overlay.
+This tier was chosen **deliberately reversible**: downgrading to a warning is
+a recorded, supported path (`DECISIONS.md`, "Reverting this to a warning"),
+and it is more than a one-line change — the keep-first title rule means a
+warned overlay also needs a neutral title.
 
 A simulated 2-D plot overlays normally, because it is a single panel unless
 `marginal=True` is asked for — which is exactly why that keyword stayed
