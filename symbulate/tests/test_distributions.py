@@ -16,6 +16,11 @@ from matplotlib.collections import LineCollection, PolyCollection
 from symbulate import *
 from symbulate import distributions
 
+# Benford is deliberately not exported from symbulate/__init__.py yet -- the
+# public-API addition is awaiting team sign-off -- so it is imported from its
+# module directly rather than coming in through the star import above.
+from symbulate.distributions import Benford
+
 Nsim = 10000
 
 
@@ -1018,6 +1023,109 @@ class TestZeta(unittest.TestCase):
         Zeta(shape=2.5).plot()
         Zeta(shape=2.5).plot(cdf=True)
         Zeta(shape=1.5).plot()
+        plt.close("all")
+
+
+class TestBenford(unittest.TestCase):
+
+    def test_Benford_pmf_matches_formula(self):
+        # P(X = d) = log_base(1 + 1/d), computed here the long way round
+        # (a ratio of plain logs) so the test does not just repeat the
+        # log1p/change-of-base spelling the implementation uses.
+        for base in [10, 2, 8, 16]:
+            X = Benford(base=base)
+            for d in range(1, base):
+                expected = math.log(1 + 1 / d) / math.log(base)
+                self.assertAlmostEqual(float(X.pmf(d)), expected, places=12)
+
+    def test_Benford_total_probability_is_one(self):
+        # The support is finite, so this is an exact sum, not a head-plus-tail
+        # approximation the way Zeta's has to be.
+        for base in [2, 10, 16]:
+            total = sum(float(Benford(base=base).pmf(d)) for d in range(1, base))
+            self.assertAlmostEqual(total, 1.0, places=12)
+
+    def test_Benford_leading_one_is_about_thirty_percent(self):
+        # The fact the law is known for: a leading 1 turns up about 30.1% of
+        # the time, not the 1-in-9 (11.1%) a uniform guess would give.
+        self.assertAlmostEqual(float(Benford().pmf(1)), 0.30103, places=5)
+        self.assertGreater(float(Benford().pmf(1)), 2.5 * (1 / 9))
+
+    def test_Benford_pmf_is_decreasing(self):
+        # Every digit is likelier than the one after it -- 1 leads about six
+        # times as often as 9.
+        probs = [float(Benford().pmf(d)) for d in range(1, 10)]
+        self.assertEqual(probs, sorted(probs, reverse=True))
+        self.assertAlmostEqual(probs[0] / probs[-1], 6.579, places=3)
+
+    def test_Benford_support_bounds(self):
+        # Digits run 1 .. base - 1: there is no leading 0, and no digit as
+        # large as the base itself.
+        for base in [2, 10, 16]:
+            X = Benford(base=base)
+            self.assertEqual(float(X.pmf(0)), 0.0)
+            self.assertEqual(float(X.pmf(base)), 0.0)
+            self.assertAlmostEqual(float(X.cdf(base - 1)), 1.0, places=12)
+
+    def test_Benford_xlim_comes_from_the_automatic_mechanism(self):
+        # No custom xlim override on this class: the support is bounded at
+        # both ends, so the shared rule uses it in full.
+        self.assertEqual(Benford().xlim, (1, 9))
+        self.assertEqual(Benford(base=16).xlim, (1, 15))
+        self.assertEqual(Benford(base=2).xlim, (1, 1))
+
+    def test_Benford_mean(self):
+        # sum(d * log10(1 + 1/d)) over d = 1..9.
+        self.assertAlmostEqual(float(Benford().mean()), 3.440237, places=6)
+
+    def test_Benford_base_two_is_a_point_mass_at_one(self):
+        # Degenerate but legitimate: in binary every number leads with a 1.
+        X = Benford(base=2)
+        self.assertAlmostEqual(float(X.pmf(1)), 1.0, places=12)
+        self.assertAlmostEqual(float(X.mean()), 1.0, places=12)
+        self.assertAlmostEqual(float(X.var()), 0.0, places=12)
+        distributions.rng = np.random.default_rng(0)
+        self.assertTrue(all(v == 1 for v in RV(X).sim(200)))
+
+    def test_Benford_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        sims = RV(Benford()).sim(Nsim)
+        values = np.array(list(sims), dtype=float)
+        observed = [int((values == d).sum()) for d in range(1, 10)]
+        expected = [Nsim * float(Benford().pmf(d)) for d in range(1, 10)]
+        pval = stats.chisquare(observed, expected).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Benford_draws_are_digits(self):
+        distributions.rng = np.random.default_rng(0)
+        values = [float(v) for v in RV(Benford()).sim(500)]
+        self.assertTrue(all(1 <= v <= 9 for v in values))
+        self.assertTrue(all(v == int(v) for v in values))
+
+    def test_Benford_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(Benford().draw(), Scalar)
+
+    def test_Benford_whole_valued_float_base_accepted(self):
+        # 10.0 is a whole number, so it is accepted and stored as an int --
+        # the same leniency DiscreteUniform's bounds have.
+        X = Benford(base=10.0)
+        self.assertEqual(X.base, 10)
+        self.assertIsInstance(X.base, int)
+
+    def test_Benford_invalid_base_raises(self):
+        # base must be an integer of at least 2: base 1 has no digits to
+        # lead with, and a fractional base is not a base.
+        for bad in [1, 1.0, 0, -3, 10.5, "ten", None]:
+            self.assertRaises(Exception, lambda b=bad: Benford(base=b))
+
+    def test_Benford_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        Benford().draw()
+        RV(Benford()).sim(100).plot()
+        Benford().plot()
+        Benford().plot(cdf=True)
+        Benford(base=2).plot()
         plt.close("all")
 
 
