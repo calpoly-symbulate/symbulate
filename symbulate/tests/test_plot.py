@@ -3601,7 +3601,11 @@ class TestDistributionPlotContinuous(PlotTestCase):
         self.assertAlmostEqual(xlim[1], 1.0, places=5)
 
     def test_custom_xlim_is_respected(self):
-        Normal(0, 1).plot(xlim=(-1, 1))
+        # plot() takes no window argument -- a window chosen by hand is set on
+        # the distribution instead.
+        X = Normal(0, 1)
+        X.xlim = (-1, 1)
+        X.plot()
         xlim = plt.gca().get_xlim()
         self.assertAlmostEqual(xlim[0], -1.0, places=5)
         self.assertAlmostEqual(xlim[1], 1.0, places=5)
