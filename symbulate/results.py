@@ -2342,6 +2342,16 @@ class RVResults(Results):
             ``"hist2d"``, ``"density2d"``, ``"segmented_rug"``,
             ``"segmented_density"``, and ``"segmented_hist"`` are also
             accepted if you want to force a particular one.
+            For a path-shaped result -- e.g. ``X.apply(states).sim(1)``,
+            the jump-by-jump states of a process with jumps -- ``type``
+            is passed through to that result's own ``.plot()``.
+            ``"hist"`` and ``"impulse"`` are the only ones supported
+            there today (see ``InfiniteVector.plot``, which also
+            documents why a per-jump count and a holding-time-weighted
+            count answer different questions); anything else -- or a
+            plain ``Tuple`` / ``DiscreteTimeFunction`` /
+            ``ContinuousTimeFunction`` result, which only ever draws a
+            sample path -- raises rather than being silently ignored.
         alpha : float, optional
             Transparency of plotted elements, between 0 and 1. Each
             plot type has its own default: histograms (1D, 2D, and
@@ -3313,6 +3323,19 @@ class RVResults(Results):
             # would be meaningless here -- suppress them (matplotlib
             # skips labels that start with an underscore).
             kwargs.setdefault("label", "_nolegend_")
+            # type="hist"/"impulse" is the only thing meaningful here (an
+            # InfiniteVector's states dispatch -- see InfiniteVector.plot),
+            # so only those two values are forwarded. Anything else --
+            # None, or "path" arriving via the dim > 2 fallthrough above,
+            # which asks for this same per-realization plot and was never
+            # meant to reach the individual results -- is left out of the
+            # call below entirely, exactly as before this branch supported
+            # type= at all. Forwarding it unconditionally would break the
+            # ordinary path plot: most results here (Tuple,
+            # DiscreteTimeFunction, ContinuousTimeFunction) don't support
+            # type= and raise if it is anything other than None.
+            if type is not None and type[0] in ("hist", "impulse"):
+                kwargs["type"] = type[0]
             for result in self.results:
                 result.plot(alpha=alpha, color=color, **kwargs)
             # No x-label set here: each result already named its own axis when

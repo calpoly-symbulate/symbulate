@@ -77,7 +77,10 @@ from symbulate.plot import (
     make_bar,
     BAR_ALPHA,
     make_dotplot,
+    make_hist,
     make_impulse,
+    count_var,
+    weighted_count_var,
     make_violin,
     make_violinplot,
     make_ecdf,
@@ -1398,6 +1401,146 @@ class TestPlot1DDensityFeatures(PlotTestCase):
         ax = plt.gca()
         self.assertEqual(len(ax.lines), 1)
         self.assertEqual(ax.get_ylabel(), "Relative Frequency")
+
+
+class TestWeightedCountVar(unittest.TestCase):
+    """weighted_count_var sums weights per value instead of counting."""
+
+    def test_sums_weights_per_value(self):
+        self.assertEqual(
+            weighted_count_var([0, 1, 0], [1.0, 5.0, 2.0]), {0: 3.0, 1: 5.0}
+        )
+
+    def test_unit_weights_match_count_var(self):
+        values = [3, 1, 3, 3, 1]
+        self.assertEqual(
+            weighted_count_var(values, [1] * len(values)), count_var(values)
+        )
+
+    def test_empty_input_gives_empty_dict(self):
+        self.assertEqual(weighted_count_var([], []), {})
+
+
+class TestMakeImpulseWeights(PlotTestCase):
+    """make_impulse(weights=...): sum weights per value instead of counting.
+
+    This is what turns "how often was each state jumped into" into "what
+    fraction of time was spent in each state" for a states impulse plot.
+    """
+
+    def test_weights_sum_instead_of_count(self):
+        ax = plt.gca()
+        xs, freqs = make_impulse(
+            [0, 1, 0, 1, 0],
+            ax,
+            get_next_color(ax),
+            weights=[1.0, 2.0, 3.0, 4.0, 5.0],
+            normalize=False,
+        )
+        self.assertEqual(dict(zip(xs, freqs)), {0: 9.0, 1: 6.0})
+
+    def test_normalize_divides_by_total_weight_not_count(self):
+        ax = plt.gca()
+        xs, freqs = make_impulse(
+            [0, 1],
+            ax,
+            get_next_color(ax),
+            weights=[3.0, 1.0],
+            normalize=True,
+        )
+        self.assertEqual(dict(zip(xs, freqs)), {0: 0.75, 1: 0.25})
+
+    def test_weights_work_with_categorical_values(self):
+        ax = plt.gca()
+        xs, freqs = make_impulse(
+            np.array(["a", "b", "a"]),
+            ax,
+            get_next_color(ax),
+            weights=[1.0, 5.0, 2.0],
+            normalize=False,
+        )
+        labels = [t.get_text() for t in ax.get_xticklabels()]
+        self.assertEqual(labels, ["a", "b"])
+        self.assertEqual(list(freqs), [3.0, 5.0])
+
+    def test_weighting_can_reverse_which_value_is_tallest(self):
+        """The whole point: the rarely-visited value can dominate in time."""
+        values = [0, 0, 0, 1]
+        ax = plt.gca()
+        _, unweighted = make_impulse(values, ax, get_next_color(ax), normalize=False)
+        plt.figure()
+        ax2 = plt.gca()
+        _, weighted = make_impulse(
+            values,
+            ax2,
+            get_next_color(ax2),
+            weights=[1.0, 1.0, 1.0, 100.0],
+            normalize=False,
+        )
+        self.assertEqual(list(unweighted), [3, 1])
+        self.assertEqual(list(weighted), [3.0, 100.0])
+
+    def test_mismatched_weights_length_raises(self):
+        ax = plt.gca()
+        with self.assertRaises(ValueError) as cm:
+            make_impulse([0, 1, 2], ax, get_next_color(ax), weights=[1.0, 2.0])
+        message = str(cm.exception)
+        self.assertIn("3", message)
+        self.assertIn("2", message)
+
+    def test_no_weights_matches_plain_counting(self):
+        ax1 = plt.gca()
+        xs1, freqs1 = make_impulse([0, 1, 0], ax1, get_next_color(ax1), normalize=False)
+        plt.figure()
+        ax2 = plt.gca()
+        xs2, freqs2 = make_impulse(
+            [0, 1, 0], ax2, get_next_color(ax2), weights=[1, 1, 1], normalize=False
+        )
+        self.assertEqual(list(xs1), list(xs2))
+        self.assertEqual(list(freqs1), list(freqs2))
+
+
+class TestMakeHistWeights(PlotTestCase):
+    """make_hist(weights=...) passes weights straight through to ax.hist."""
+
+    def test_weighted_counts_sum_to_total_weight(self):
+        ax = plt.gca()
+        values = [1, 1, 1, 5, 5]
+        weights = [1.0, 1.0, 1.0, 10.0, 10.0]
+        counts, edges, patches = make_hist(
+            values, ax, get_next_color(ax), normalize=False, weights=weights, bins=2
+        )
+        self.assertAlmostEqual(sum(counts), sum(weights))
+
+    def test_weighted_bar_heights_are_the_summed_weights(self):
+        ax = plt.gca()
+        counts, _, _ = make_hist(
+            [1, 1, 1, 5, 5],
+            ax,
+            get_next_color(ax),
+            normalize=False,
+            weights=[1.0, 1.0, 1.0, 10.0, 10.0],
+            bins=2,
+        )
+        np.testing.assert_allclose(counts, [3.0, 20.0])
+
+    def test_unweighted_matches_plain_histogram(self):
+        ax1 = plt.gca()
+        values = [1, 2, 2, 3]
+        counts1, _, _ = make_hist(
+            values, ax1, get_next_color(ax1), normalize=False, bins=3
+        )
+        plt.figure()
+        ax2 = plt.gca()
+        counts2, _, _ = make_hist(
+            values,
+            ax2,
+            get_next_color(ax2),
+            normalize=False,
+            weights=[1, 1, 1, 1],
+            bins=3,
+        )
+        np.testing.assert_allclose(counts1, counts2)
 
 
 class TestPlotCategorical2D(PlotTestCase):

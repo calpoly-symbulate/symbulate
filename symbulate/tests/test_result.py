@@ -1135,5 +1135,238 @@ class TestContinuousTimeFunctionStepPlots(unittest.TestCase):
         self.assertEqual(len(line.get_xdata()), 200)
 
 
+# ---------------------------------------------------------------------------
+# InfiniteVector.plot(type="hist" / "impulse"): a states histogram/impulse
+# plot for a jump process, instead of a path plot
+# ---------------------------------------------------------------------------
+
+
+def _impulse_heights(ax):
+    """Map each stem's value position to its height, for one series."""
+    return {seg[1][0]: seg[1][1] for seg in ax.collections[0].get_segments()}
+
+
+class TestInfiniteVectorPlotType(unittest.TestCase):
+
+    def tearDown(self):
+        plt.close("all")
+
+    def test_default_type_draws_a_path(self):
+        InfiniteVector(lambda n: n % 2).plot(tmin=0, tmax=10)
+        self.assertEqual(plt.gca().get_title(), "Sample Path")
+
+    def test_type_none_draws_a_path(self):
+        InfiniteVector(lambda n: n % 2).plot(tmin=0, tmax=10, type=None)
+        self.assertEqual(plt.gca().get_title(), "Sample Path")
+
+    def test_type_impulse_draws_an_impulse_plot(self):
+        InfiniteVector(lambda n: n % 2).plot(tmin=0, tmax=10, type="impulse")
+        self.assertEqual(plt.gca().get_title(), "Impulse Plot")
+
+    def test_type_hist_draws_a_histogram(self):
+        InfiniteVector(lambda n: n).plot(tmin=0, tmax=10, type="hist")
+        self.assertEqual(plt.gca().get_title(), "Histogram")
+
+    def test_type_uses_only_values_in_tmin_tmax(self):
+        InfiniteVector(lambda n: n).plot(tmin=0, tmax=5, type="impulse")
+        xs = sorted(_impulse_heights(plt.gca()))
+        self.assertEqual(xs, [0, 1, 2, 3, 4])
+
+    def test_tmin_is_honored_too(self):
+        InfiniteVector(lambda n: n).plot(tmin=3, tmax=6, type="impulse")
+        xs = sorted(_impulse_heights(plt.gca()))
+        self.assertEqual(xs, [3, 4, 5])
+
+    def test_unweighted_counts_each_visit_once(self):
+        """The embedded jump chain: state 0 visited 3x, state 1 twice."""
+        InfiniteVector(lambda n: n % 2).plot(
+            tmin=0, tmax=5, type="impulse", normalize=False
+        )
+        self.assertEqual(_impulse_heights(plt.gca()), {0: 3.0, 1: 2.0})
+
+    def test_weights_reweight_the_impulse_heights(self):
+        # states 0, 1, 0, 1, 0 held for 1, 2, 3, 4, 5 units: state 0
+        # totals 1 + 3 + 5 = 9, state 1 totals 2 + 4 = 6.
+        states = InfiniteVector(lambda n: n % 2)
+        holding_times = InfiniteVector(lambda n: n + 1.0)
+        states.plot(
+            tmin=0, tmax=5, type="impulse", weights=holding_times, normalize=False
+        )
+        self.assertEqual(_impulse_heights(plt.gca()), {0: 9.0, 1: 6.0})
+
+    def test_weighting_can_flip_which_state_dominates(self):
+        """A rarely-visited but long-held state dominates in time but not
+        in jumps -- the distinction the weights= parameter exists for."""
+        states = InfiniteVector(lambda n: 0 if n < 3 else 1)
+        holding_times = InfiniteVector(lambda n: 1.0 if n < 3 else 100.0)
+        states.plot(tmin=0, tmax=4, type="impulse", normalize=False)
+        by_jumps = _impulse_heights(plt.gca())
+        plt.close("all")
+        states.plot(
+            tmin=0, tmax=4, type="impulse", weights=holding_times, normalize=False
+        )
+        by_time = _impulse_heights(plt.gca())
+        self.assertGreater(by_jumps[0], by_jumps[1])
+        self.assertLess(by_time[0], by_time[1])
+
+    def test_weights_are_windowed_the_same_way_as_values(self):
+        """weights is indexed like the vector itself, so tmin shifts both."""
+        states = InfiniteVector(lambda n: n % 2)
+        holding_times = InfiniteVector(lambda n: n + 1.0)
+        states.plot(
+            tmin=2, tmax=5, type="impulse", weights=holding_times, normalize=False
+        )
+        # indices 2, 3, 4 -> states 0, 1, 0 held for 3, 4, 5.
+        self.assertEqual(_impulse_heights(plt.gca()), {0: 8.0, 1: 4.0})
+
+    def test_weighted_hist_bar_heights_are_summed_weights(self):
+        values = InfiniteVector(lambda n: 0.0 if n < 2 else 1.0)
+        weights = InfiniteVector(lambda n: 1.0 if n < 2 else 10.0)
+        values.plot(
+            tmin=0, tmax=4, type="hist", weights=weights, normalize=False, bins=2
+        )
+        heights = sorted(patch.get_height() for patch in plt.gca().patches)
+        np.testing.assert_allclose(heights, [2.0, 20.0])
+
+    def test_invalid_type_raises_helpful_error(self):
+        with self.assertRaises(ValueError) as cm:
+            InfiniteVector(lambda n: n).plot(tmin=0, tmax=5, type="bogus")
+        message = str(cm.exception)
+        self.assertIn("bogus", message)
+        self.assertIn("hist", message)
+        self.assertIn("impulse", message)
+
+    def test_invalid_type_raises_before_drawing_anything(self):
+        with self.assertRaises(ValueError):
+            InfiniteVector(lambda n: n).plot(tmin=0, tmax=5, type="path")
+        ax = plt.gca()
+        self.assertEqual(len(ax.lines), 0)
+        self.assertEqual(len(ax.collections), 0)
+
+
+class TestPathPlotTypeIsUnsupportedElsewhere(unittest.TestCase):
+    """Only InfiniteVector.plot() understands type=; every other
+    path-shaped .plot() raises a clear error instead of silently letting
+    an unsupported type= leak through to matplotlib."""
+
+    def tearDown(self):
+        plt.close("all")
+
+    def test_tuple_plot_rejects_type(self):
+        with self.assertRaises(ValueError) as cm:
+            Tuple([1, 2, 3]).plot(type="hist")
+        self.assertIn("Tuple.plot()", str(cm.exception))
+
+    def test_discrete_time_function_plot_rejects_type(self):
+        with self.assertRaises(ValueError) as cm:
+            DiscreteTimeFunction(lambda n: n, fs=1).plot(tmin=0, tmax=5, type="impulse")
+        self.assertIn("DiscreteTimeFunction.plot()", str(cm.exception))
+
+    def test_continuous_time_function_plot_rejects_type(self):
+        with self.assertRaises(ValueError) as cm:
+            ContinuousTimeFunction(lambda t: t).plot(tmin=0, tmax=5, type="hist")
+        self.assertIn("ContinuousTimeFunction.plot()", str(cm.exception))
+
+    def test_error_points_at_the_supported_alternative(self):
+        with self.assertRaises(ValueError) as cm:
+            Tuple([1, 2, 3]).plot(type="impulse")
+        message = str(cm.exception)
+        self.assertIn("states", message)
+        self.assertIn("InfiniteVector.plot", message)
+
+    def test_rejection_happens_before_drawing_anything(self):
+        with self.assertRaises(ValueError):
+            Tuple([1, 2, 3]).plot(type="hist")
+        self.assertEqual(len(plt.gca().lines), 0)
+
+    def test_none_is_still_accepted_everywhere(self):
+        # The ordinary, overwhelmingly common case must keep working.
+        Tuple([1, 2, 3]).plot(type=None)
+        DiscreteTimeFunction(lambda n: n, fs=1).plot(tmin=0, tmax=5, type=None)
+        ContinuousTimeFunction(lambda t: t).plot(tmin=0, tmax=5, type=None)
+        self.assertEqual(plt.gca().get_title(), "Sample Path")
+
+
+# ---------------------------------------------------------------------------
+# DiscreteValued.num_jumps_by
+# ---------------------------------------------------------------------------
+
+
+class TestNumJumpsBy(unittest.TestCase):
+
+    def _make_path(self, step=1.0):
+        obj = DiscreteValued()
+        obj.states = InfiniteVector(lambda n: n)
+        obj.interarrival_times = InfiniteVector(lambda n: step)
+        return obj
+
+    def test_zero_jumps_before_the_first_arrival(self):
+        self.assertEqual(self._make_path(step=1.0).num_jumps_by(0.5), 0)
+
+    def test_no_jumps_by_time_zero(self):
+        self.assertEqual(self._make_path(step=1.0).num_jumps_by(0.0), 0)
+
+    def test_counts_jumps_up_to_and_including_t(self):
+        """A jump landing exactly at t counts -- by time t the path has
+        already moved into the next state."""
+        path = self._make_path(step=1.0)
+        self.assertEqual(path.num_jumps_by(0.999), 0)
+        self.assertEqual(path.num_jumps_by(1.0), 1)
+        self.assertEqual(path.num_jumps_by(1.001), 1)
+        self.assertEqual(path.num_jumps_by(2.0), 2)
+        self.assertEqual(path.num_jumps_by(2.5), 2)
+
+    def test_matches_arrival_times_directly(self):
+        path = self._make_path(step=1.0)
+        arrivals = path.get_arrival_times()
+        for t in [0.0, 0.99, 1.0, 1.01, 4.5]:
+            n = path.num_jumps_by(t)
+            self.assertLessEqual(arrivals[n - 1] if n > 0 else -1, t)
+            self.assertGreater(arrivals[n], t)
+
+    def test_uneven_holding_times(self):
+        path = DiscreteValued()
+        path.states = InfiniteVector(lambda n: n)
+        # holding times 0.5, 1, 2, 4, ... -> arrivals at 0.5, 1.5, 3.5, 7.5
+        path.interarrival_times = InfiniteVector(lambda n: 0.5 * 2**n)
+        self.assertEqual(path.num_jumps_by(0.4), 0)
+        self.assertEqual(path.num_jumps_by(0.5), 1)
+        self.assertEqual(path.num_jumps_by(1.4), 1)
+        self.assertEqual(path.num_jumps_by(1.5), 2)
+        self.assertEqual(path.num_jumps_by(3.4), 2)
+        self.assertEqual(path.num_jumps_by(7.5), 4)
+
+    def test_indexes_the_state_the_path_is_in_at_t(self):
+        """states[num_jumps_by(t)] is the state held at time t -- the
+        same convention the step-path walk uses. With unit holding times
+        and states[n] == n, that state is floor(t)."""
+        path = self._make_path(step=1.0)
+        for t in [0.0, 0.5, 1.0, 2.0, 2.7]:
+            self.assertEqual(path.states[path.num_jumps_by(t)], int(np.floor(t)))
+
+    def test_raises_if_interarrival_times_missing(self):
+        obj = DiscreteValued()
+        with self.assertRaises(AttributeError):
+            obj.num_jumps_by(1.0)
+
+    def test_works_on_a_real_process_path(self):
+        from symbulate import ContinuousTimeMarkovChain
+
+        path = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0]).draw()
+        arrivals = path.get_arrival_times()
+        n = path.num_jumps_by(5.0)
+        self.assertGreater(arrivals[n], 5.0)
+        if n > 0:
+            self.assertLessEqual(arrivals[n - 1], 5.0)
+
+    def test_combines_with_infinite_vector_plot_type(self):
+        path = self._make_path(step=1.0)
+        n = path.num_jumps_by(3.5)
+        path.states.plot(tmax=n, type="impulse")
+        xs = sorted(_impulse_heights(plt.gca()))
+        self.assertEqual(xs, list(range(n)))
+        plt.close("all")
+
+
 if __name__ == "__main__":
     unittest.main()

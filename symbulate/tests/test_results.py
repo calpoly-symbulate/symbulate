@@ -1109,5 +1109,63 @@ class TestRVResultsTabulate(unittest.TestCase):
             RVResults([float(i) for i in range(1, 101)]).tabulate(binwidth=10)
 
 
+# ---------------------------------------------------------------------------
+# RVResults.plot() forwards type="hist"/"impulse" to path-shaped results
+# ---------------------------------------------------------------------------
+
+
+class TestPathResultsTypeForwarding(unittest.TestCase):
+    """The dim-is-None path branch forwards only "hist"/"impulse".
+
+    X.apply(states).sim(n) is a batch of jump-indexed InfiniteVectors, the
+    one path-shaped result that understands type= (see
+    InfiniteVector.plot). Every other type value must stay unforwarded --
+    notably "path", which reaches this same branch by falling through the
+    dim > 2 dispatch and was never meant to reach the individual results.
+    """
+
+    def setUp(self):
+        from symbulate import RV, ContinuousTimeMarkovChain, states
+
+        self.X = RV(ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0]))
+        self.states = states
+
+    def tearDown(self):
+        plt.close("all")
+
+    def test_impulse_is_forwarded_to_each_realization(self):
+        self.X.apply(self.states).sim(3).plot(type="impulse", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Impulse Plot")
+
+    def test_hist_is_forwarded_to_each_realization(self):
+        self.X.apply(self.states).sim(3).plot(type="hist", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Histogram")
+
+    def test_one_series_is_drawn_per_realization(self):
+        self.X.apply(self.states).sim(4).plot(type="impulse", suggest=False)
+        self.assertEqual(len(plt.gca().collections), 4)
+
+    def test_no_type_still_draws_the_sample_paths(self):
+        self.X.apply(self.states).sim(3).plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Sample Path")
+
+    def test_unsupported_type_is_not_forwarded_on_ordinary_paths(self):
+        """type="path" reaches this branch via the dim > 2 fallthrough; it
+        must not be handed to results that would reject it."""
+        from symbulate import RV, Normal
+
+        RV(Normal(0, 1) ** 4).sim(20).plot(type="path", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Sample Path")
+
+    def test_unsupported_type_on_a_time_function_result_raises(self):
+        """A type= that IS forwarded but isn't meaningful for the result
+        must surface as result.plot()'s clear error, not a matplotlib one."""
+        from symbulate import BrownianMotion
+
+        with self.assertRaises(ValueError) as cm:
+            BrownianMotion().sim(2).plot(type="hist", suggest=False)
+        self.assertIn("ContinuousTimeFunction.plot()", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
