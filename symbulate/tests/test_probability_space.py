@@ -230,6 +230,24 @@ class TestBoxModel(unittest.TestCase):
         self.assertEqual(len(bm.box), 4)
         self.assertEqual(bm.box.count("a"), 3)
 
+    def test_empty_box_raises_at_construction(self):
+        # Regression test: an empty box used to pass construction silently
+        # and only fail later, inside .draw(), with a raw NumPy message
+        # ("a must be a positive integer unless no samples are taken").
+        with self.assertRaisesRegex(ValueError, "empty"):
+            BoxModel([])
+
+    def test_negative_size_raises_at_construction(self):
+        # Regression test: a negative size used to pass construction
+        # silently and only fail later, inside .draw(), with a raw NumPy
+        # message ("negative dimensions are not allowed").
+        with self.assertRaisesRegex(ValueError, "size"):
+            BoxModel([1, 2, 3], size=-2)
+
+    def test_infinite_size_still_allowed(self):
+        bm = BoxModel([1, 2, 3], size=float("inf"))
+        self.assertEqual(bm.size, float("inf"))
+
     def test_size_none_returns_scalar(self):
         seed()
         bm = BoxModel(["x", "y", "z"], size=None)

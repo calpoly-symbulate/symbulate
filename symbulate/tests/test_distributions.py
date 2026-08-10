@@ -4448,7 +4448,7 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
             panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
             self.assertEqual(len(panels), 1)
             self.assertEqual(plt.gca().get_xlabel(), "Variable 2")
-            self.assertEqual(plt.gca().get_title(), "PDF Plot")
+            self.assertEqual(plt.gca().get_title(), "Probability Density Function")
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_cannot_share_a_figure(self):
@@ -5050,6 +5050,20 @@ class TestMultinomial(MultivariatePlotTestCase):
         X = Multinomial(n=20, p=[0.2, 0.5, 0.3])
         draw = X.draw()
         self.assertEqual(sum(draw), 20)
+
+    def test_Multinomial_corr_zero_variance_component_is_nan_not_warning(self):
+        # Regression test: a category with probability 0 never varies, so
+        # its correlation row/column is undefined (nan). This used to leak
+        # a raw "RuntimeWarning: invalid value encountered in divide" with
+        # no context; it should now compute quietly, with nan as the
+        # documented, intentional result.
+        import warnings
+
+        X = Multinomial(n=10, p=[1, 0, 0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            corr = X.corr()
+        self.assertTrue(np.all(np.isnan(corr)))
 
     def test_Multinomial_marginals_match_Binomial(self):
         distributions.rng = np.random.default_rng(42)
@@ -6660,18 +6674,23 @@ class TestDistributionAutoZoom(unittest.TestCase):
     # --- what the plot actually draws ---
 
     def test_plot_uses_the_zoomed_window(self):
+        # The drawn window is the zoomed one, plus the half step of air a
+        # discrete plot puts around a window it chose for itself.
         plt.figure()
         d = Binomial(100, 0.5)
         d.plot()
-        self.assertEqual(tuple(plt.gca().get_xlim()), tuple(map(float, d.xlim)))
+        low, high = d.xlim
+        self.assertEqual(tuple(plt.gca().get_xlim()), (low - 0.5, high + 0.5))
         lo, hi = plt.gca().get_xlim()
         self.assertGreater(lo, 5)  # not the full (0, 100) support
         self.assertLess(hi, 95)
 
     def test_plot_keeps_a_filled_window_whole(self):
+        # All of (0, 10) is on screen, with half a step of air at each end so
+        # the dots on 0 and 10 don't sit on the axis spine.
         plt.figure()
         Binomial(10, 0.5).plot()
-        self.assertEqual(tuple(plt.gca().get_xlim()), (0.0, 10.0))
+        self.assertEqual(tuple(plt.gca().get_xlim()), (-0.5, 10.5))
 
     # --- overlay: the theoretical curve no longer stretches the shared axis ---
 
@@ -6689,6 +6708,8 @@ class TestDistributionAutoZoom(unittest.TestCase):
     # --- a window set by hand still wins ---
 
     def test_window_set_by_hand_is_used_as_given(self):
+        # Exactly (10, 90): a hand-chosen window skips the half step of
+        # padding a self-chosen discrete window gets.
         plt.figure()
         d = Binomial(100, 0.5)
         d.xlim = (10, 90)
@@ -6948,16 +6969,22 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_cdf_title(self):
         for d in [Poisson(3), Normal(0, 1)]:
             plt.figure()
-            self.assertEqual(d.plot(cdf=True).ax.get_title(), "CDF Plot")
+            self.assertEqual(
+                d.plot(cdf=True).ax.get_title(), "Cumulative Distribution Function"
+            )
             plt.close("all")
 
     def test_default_pmf_title_for_discrete(self):
         plt.figure()
-        self.assertEqual(Binomial(10, 0.5).plot().ax.get_title(), "PMF Plot")
+        self.assertEqual(
+            Binomial(10, 0.5).plot().ax.get_title(), "Probability Mass Function"
+        )
 
     def test_default_pdf_title_for_continuous(self):
         plt.figure()
-        self.assertEqual(Normal(0, 1).plot().ax.get_title(), "PDF Plot")
+        self.assertEqual(
+            Normal(0, 1).plot().ax.get_title(), "Probability Density Function"
+        )
 
     # --- both vertical and horizontal gridlines, like the ECDF plot ---
 
@@ -7085,6 +7112,92 @@ class TestDistributionCDFPlot(unittest.TestCase):
             plt.figure()
             d.plot(cdf=True)  # must not raise
             plt.close("all")
+
+
+class TestDistributionPlotLegend(unittest.TestCase):
+    """``Distribution.plot()`` labels its curve and shows a legend once the
+    axes holds more than one labeled series -- another theoretical curve,
+    or a simulated plot (hist, density, ecdf, ...) it's overlaid on. A
+    lone curve stays legend-free, matching every other plot type's rule
+    (see ``_refresh_legend`` in ``plot.py``).
+    """
+
+    def tearDown(self):
+        plt.close("all")
+
+    # --- a lone curve gets no legend ---
+
+    def test_lone_curve_has_no_legend(self):
+        plt.figure()
+        Normal(0, 1).plot()
+        self.assertIsNone(plt.gca().get_legend())
+
+    # --- two theoretical curves overlaid get a legend naming each one ---
+
+    def test_two_theoretical_curves_get_a_legend(self):
+        plt.figure()
+        Normal(0, 1).plot()
+        Normal(2, 1).plot()
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Normal(0, 1)", "Normal(2, 1)"])
+
+    # --- default label names the distribution itself ---
+
+    def test_default_label_is_the_distribution_repr(self):
+        plt.figure()
+        Binomial(10, 0.5).plot()
+        Poisson(3).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Binomial(10, 0.5)", "Poisson(3)"])
+
+    # --- an explicit label= still wins over the default ---
+
+    def test_explicit_label_overrides_default(self):
+        plt.figure()
+        Normal(0, 1).plot(label="theoretical")
+        Normal(2, 1).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["theoretical", "Normal(2, 1)"])
+
+    # --- a simulated density overlaid with its theoretical pdf ---
+
+    def test_simulated_density_and_theoretical_pdf_get_a_legend(self):
+        plt.figure()
+        RV(Normal(0, 1)).sim(500).plot(type="density")
+        Normal(0, 1).plot()
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Normal(0, 1)"])
+
+    # --- a simulated histogram overlaid with its theoretical pmf ---
+
+    def test_simulated_histogram_and_theoretical_pmf_get_a_legend(self):
+        plt.figure()
+        RV(Binomial(10, 0.5)).sim(500).plot(type="hist")
+        Binomial(10, 0.5).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Binomial(10, 0.5)"])
+
+    # --- an empirical ECDF overlaid with its theoretical cdf ---
+
+    def test_empirical_ecdf_and_theoretical_cdf_get_a_legend(self):
+        plt.figure()
+        RV(Normal(0, 1)).sim(500).plot(type="ecdf")
+        Normal(0, 1).plot(cdf=True)
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Normal(0, 1)"])
+
+    # --- the discrete pmf's dashed connecting line is not a second entry ---
+
+    def test_discrete_connecting_line_is_not_a_second_legend_entry(self):
+        plt.figure()
+        Binomial(10, 0.5).plot()
+        Poisson(3).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(len(labels), 2)
 
 
 class TestDistributionShade(unittest.TestCase):

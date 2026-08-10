@@ -30,6 +30,7 @@ from matplotlib.ticker import MaxNLocator
 from .plot import (
     B_1D,
     K_2D,
+    VIOLIN_ALPHA,
     TILE_DEFAULT_BINS,
     DISCRETE_INDEX_OFFSET,
     DOTPLOT_MAX_STACK,
@@ -1353,6 +1354,9 @@ class RVResults(Results):
         Exception
             If the results cannot be standardized (e.g. outcomes
             have non-numeric or inconsistent dimension).
+        Exception
+            If the results have no variability -- every simulated value
+            is the same, so the standard deviation divided by is 0.
 
         See Also
         --------
@@ -1372,7 +1376,19 @@ class RVResults(Results):
         """
         self._set_array()
         if self.dim is not None:
-            return (self - self.mean()) / self.std()
+            std = self.std()
+            # A constant RV (e.g. BoxModel([5])) or a single-draw
+            # simulation (.sim(1)) both have a standard deviation of
+            # exactly 0, which used to divide silently into a raw
+            # ZeroDivisionError instead of an explanatory message.
+            if np.any(np.asarray(std, dtype=float) == 0):
+                raise Exception(
+                    "Can't standardize data with no variability -- every "
+                    f"value is {self.mean()!r}. Standardizing divides by "
+                    "the standard deviation, which is 0 when every "
+                    "simulated value is the same."
+                )
+            return (self - self.mean()) / std
         else:
             raise Exception("Could not standardize the given results.")
 
@@ -1829,7 +1845,7 @@ class RVResults(Results):
                         )
                     )
                 # Drop the title each panel drew for itself. On its own a plot
-                # is titled with its type ("Density Curve", "Tile Plot"), but
+                # is titled with its type ("Density (Estimated)", "Tile Plot"), but
                 # in a matrix that repeats the same two or three words down
                 # every panel and crowds them; the figure's own suptitle
                 # says what the layout is. The theoretical pairs plot clears
@@ -2441,8 +2457,8 @@ class RVResults(Results):
                 type = (default,)
             # On continuous x continuous data the short names hist/density
             # mean the 2D mesh variants, so map them to the explicit tokens
-            # for the suggestion note's display name ("2D Histogram" rather
-            # than "Histogram"). On mixed data the short names are already
+            # for the suggestion note's display name ("Joint Histogram"
+            # rather than "Histogram"). On mixed data the short names are already
             # what the table lists (they resolve to the segmented variants in
             # the dispatch), so no remap is needed there.
             if configuration == "2D_mixed":
@@ -2458,9 +2474,11 @@ class RVResults(Results):
             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
             # make_scatter, and the mesh types (hist/density/tile) encode
             # magnitude with a colormap instead of transparency. The
-            # legacy 0.5 default still applies to the violin panel, which
-            # has no per-type constant yet.
-            legacy_alpha = 0.5 if alpha is None else alpha
+            # violin panel uses plot.py's own VIOLIN_ALPHA constant
+            # (previously re-hardcoded as a duplicate literal 0.5 here,
+            # which would have silently drifted out of sync with
+            # VIOLIN_ALPHA if that constant were ever retuned).
+            legacy_alpha = VIOLIN_ALPHA if alpha is None else alpha
 
             if marginal and "mosaic" in type:
                 raise ValueError(

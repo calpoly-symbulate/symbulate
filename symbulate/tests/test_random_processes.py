@@ -119,11 +119,19 @@ class TestSetItemScalar(unittest.TestCase):
         X[0] = 0
         self.assertTrue(all(v == 0 for v in X[0].sim(50)))
 
-    def test_non_scalar_non_rv_is_ignored(self):
-        # A list is neither a scalar nor an RV, so it is silently ignored.
+    def test_non_scalar_non_rv_raises_typeerror(self):
+        # Regression test: a list is neither a scalar nor an RV. This used
+        # to be silently ignored (X.rvs stayed empty, no error, no effect)
+        # instead of raising -- now it raises a clear TypeError instead.
         X = bernoulli_process()
-        X[0] = [1, 2, 3]
+        with self.assertRaises(TypeError):
+            X[0] = [1, 2, 3]
         self.assertEqual(X.rvs, {})
+
+    def test_bad_value_error_names_accepted_types(self):
+        X = bernoulli_process()
+        with self.assertRaisesRegex(TypeError, "RV.*scalar"):
+            X[0] = [1, 2, 3]
 
 
 class TestSetItemValidation(unittest.TestCase):

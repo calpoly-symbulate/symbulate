@@ -39,6 +39,7 @@ from .plot import (
     TRUE_DIST_MARKER_SIZE,
     TRUE_DIST_LINEWIDTH,
     TRUE_DIST_LINESTYLE,
+    _refresh_legend,
 )
 from .result import Scalar, Vector, InfiniteVector
 
@@ -192,12 +193,16 @@ class Distribution(ProbabilitySpace):
     ``Binomial(1000, 0.5)`` frames ``(451, 549)`` rather than drawing a narrow
     spike in the middle of ``(0, 1000)``, while ``Binomial(10, 0.5)`` still
     shows all of ``(0, 10)``, tails included. Nothing has to be passed to
-    ``plot`` to get this; an exact ``xlim=(low, high)`` overrides it.
+    ``plot`` to get this -- it takes no window argument at all. Assigning
+    ``X.xlim = (low, high)`` overrides it, and is used exactly as given.
 
     The bounds come from ``scipy``'s own ``support()``, so a subclass gets the
-    right window with no per-distribution code. Set ``self.xlim = (low, high)``
-    only to *override* that (needed by a degenerate branch that never calls
-    this ``__init__`` and so has no ``scipy`` object to ask).
+    right window with no per-distribution code. A subclass that must preset a
+    window instead (``Zeta``, whose quantile search would never return; the
+    degenerate ``LogNormal`` branch, which never calls this ``__init__`` and so
+    has no ``scipy`` object to ask) assigns ``self._xlim`` directly rather than
+    going through the setter -- that window is still one the distribution chose
+    for itself, so it keeps the discrete padding :meth:`plot` describes.
 
     ``xlim`` is a lazy property, computed on the first read rather than in
     ``__init__``. It is only ever needed for plotting, and ``__init__`` runs
@@ -211,6 +216,12 @@ class Distribution(ProbabilitySpace):
     # multivariate distributions, which have no window at all).
     _xlim = None  # the window, once computed or set outright
     _scipy = None  # the scipy distribution the support is read from
+    # Whether a discrete plot gets half a step of air at each end (see
+    # `plot`). A window the distribution worked out for itself does; one
+    # assigned through the `xlim` setter is used exactly as given, since
+    # someone chose those numbers. A subclass that presets its own default
+    # assigns `_xlim` directly, which leaves this True.
+    _xlim_padded = True
 
     def __init__(self, params, scipy, discrete=True):
         """Initialize the base Distribution."""
@@ -256,8 +267,15 @@ class Distribution(ProbabilitySpace):
 
     @xlim.setter
     def xlim(self, value):
-        """Set an exact plotting window, replacing whatever was deferred."""
+        """Set an exact plotting window, replacing whatever was deferred.
+
+        This is how a window is chosen by hand, since :meth:`plot` takes no
+        window argument. It is used *exactly* as given: a discrete plot skips
+        the half step of padding a self-chosen window gets, because these are
+        someone's own numbers.
+        """
         self._xlim = value
+        self._xlim_padded = False
 
     def _support(self):
         """The distribution's true support bounds, either of which may be infinite.
@@ -465,8 +483,9 @@ class Distribution(ProbabilitySpace):
         ``type=`` argument -- a theoretical distribution has only these two
         curves to show, so the choice is the single boolean ``cdf``.
 
-        The plot is titled by what it shows: "CDF Plot" for ``cdf=True``,
-        and for the default view "PDF Plot" (continuous) or "PMF Plot"
+        The plot is titled by what it shows: "Cumulative Distribution
+        Function" for ``cdf=True``, and for the default view "Probability
+        Density Function" (continuous) or "Probability Mass Function"
         (discrete).
 
         **The x-axis frames itself, and there is no window argument.** The
@@ -479,6 +498,12 @@ class Distribution(ProbabilitySpace):
         range by hand instead, set it on the distribution before plotting
         (``X.xlim = (2, 8)``), or move the axis afterwards with
         ``xlim(2, 8)``.
+
+        For a discrete distribution, a window the distribution chose for
+        itself gets half a step of padding on each end, so the boundary
+        value isn't drawn right on the axis spine. A window assigned by hand
+        is used exactly as given, with no padding added -- those are
+        someone's own numbers.
 
         Parameters
         ----------
@@ -540,7 +565,9 @@ class Distribution(ProbabilitySpace):
                 "X.plot() -- or move the axis after plotting with xlim(2, 8)."
             )
         # The window the distribution chose for itself: a fixed bound where the
-        # probability fills it, a quantile cut where it does not.
+        # probability fills it, a quantile cut where it does not. A window
+        # assigned through the setter comes back from here too, and is the one
+        # case that skips the discrete padding below (see `_xlim_padded`).
         xlim = self.xlim
 
         # get the x and y values. The x-window is chosen the same way for
@@ -548,6 +575,14 @@ class Distribution(ProbabilitySpace):
         # function is evaluated there.
         if self.discrete:
             xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
+            # Half a step of air on each end, so the dot/step at the
+            # boundary value doesn't sit right on the axis spine -- same
+            # convention as the single-point collapse case below, just
+            # applied whenever the window is one the distribution worked out
+            # for itself rather than one assigned by hand (the docstring
+            # promises `X.xlim = (low, high)` is used as given).
+            if self._xlim_padded:
+                xlim = (xlim[0] - 0.5, xlim[1] + 0.5)
         else:
             xs = np.linspace(xlim[0], xlim[1], 200)
         ys = self.cdf(xs) if cdf else self.pdf(xs)
@@ -592,6 +627,19 @@ class Distribution(ProbabilitySpace):
         # get next color in cycle
         color = get_next_color(ax)
 
+        # Default label names the distribution itself, e.g. "Binomial(10,
+        # 0.5)", so a legend can tell two theoretical curves apart, or tell
+        # a theoretical curve apart from a simulated one it's overlaid on.
+        # setdefault, not an override, so a user's own label= still wins.
+        # This only reaches the curve/scatter draw calls below (the ones
+        # that forward **kwargs) -- the discrete pmf's dashed connecting
+        # line draws separately, without **kwargs, so it never gets a
+        # second, duplicate legend entry for the same curve.
+        kwargs.setdefault(
+            "label",
+            f"{type(self).__name__}({', '.join(str(v) for v in self.params.values())})",
+        )
+
         if cdf:
             # Match make_ecdf's step-function styling so a theoretical CDF
             # reads as the same kind of curve as its empirical counterpart
@@ -635,11 +683,11 @@ class Distribution(ProbabilitySpace):
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
         if cdf:
-            ax.set_title("CDF Plot")
+            ax.set_title("Cumulative Distribution Function")
         elif self.discrete:
-            ax.set_title("PMF Plot")
+            ax.set_title("Probability Mass Function")
         else:
-            ax.set_title("PDF Plot")
+            ax.set_title("Probability Density Function")
 
         # Label the axes for context: the x-axis shows the possible values of
         # the variable, and the y-axis names what its height means for this
@@ -663,6 +711,13 @@ class Distribution(ProbabilitySpace):
         # reference lines, matching the ECDF plot -- so override it here for
         # this plot type specifically.
         ax.grid(True, axis="both")
+
+        # A legend only helps once there is more than one labeled curve on
+        # the axes -- another theoretical curve, or a simulated plot (hist,
+        # density, rug, ecdf, ...) it's overlaid on. A lone curve stays
+        # legend-free. "upper left" matches make_ecdf's own default, since a
+        # rising CDF has more room there than "upper right".
+        _refresh_legend(ax, loc="upper left" if cdf else "upper right")
 
         return DistributionPlot(ax, self, "cdf" if cdf else "pdf")
 
@@ -1635,7 +1690,10 @@ class Zeta(Distribution):
         #
         # Setting it here, before calling up, is safe: `Distribution.__init__`
         # deliberately does not reset the window, so either ordering works.
-        self.xlim = (1, 20)
+        # `_xlim` rather than the `xlim` setter, because this is still a
+        # window the distribution chose for itself -- it keeps the half step
+        # of discrete padding that the setter's hand-chosen numbers give up.
+        self._xlim = (1, 20)
 
         # scipy's `zipf` is the zeta distribution (its `a` is our shape);
         # scipy's `zipfian` is the finite Zipf that this package's Zipf uses.
@@ -4037,7 +4095,10 @@ class LogNormal(Distribution):
                 return np.full(size, _value)
 
             self.sim_func = _degenerate_rvs
-            self.xlim = (0, _value + 1)
+            # `_xlim`, not the setter: this branch never reaches
+            # `Distribution.__init__`, so it is standing in for the computed
+            # default rather than being a window someone chose by hand.
+            self._xlim = (0, _value + 1)
             ProbabilitySpace.__init__(self, lambda: Scalar(_value))
             return
         else:
@@ -5155,11 +5216,22 @@ class MultivariateDistribution(Distribution):
         numpy.ndarray
             The correlation matrix, obtained by scaling the covariance matrix
             by the outer product of the component standard deviations. Its
-            diagonal entries are all 1.
+            diagonal entries are all 1, except that a row/column for a
+            component with zero variance (e.g. ``Multinomial(n=10, p=[1, 0,
+            0])`` -- a category with probability 0 never varies) is entirely
+            ``nan``: correlation with a component that never varies from its
+            mean is undefined, not zero, so ``nan`` is the honest answer
+            rather than a number that looks precise but isn't.
         """
         cov = np.asarray(self.cov(), dtype=float)
         sd = np.sqrt(np.diag(cov))
-        return cov / np.outer(sd, sd)
+        # A zero-variance component makes the corresponding outer-product
+        # entries 0, so this division would otherwise raise a raw
+        # "RuntimeWarning: invalid value encountered in divide" with no
+        # context -- the result (nan) is correct and now documented above,
+        # so the warning is suppressed rather than the calculation changed.
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return cov / np.outer(sd, sd)
 
     # Whether the components must add up to a fixed total -- True for the
     # families whose draws are a breakdown of a whole (``Multinomial``
@@ -5318,6 +5390,10 @@ class MultivariateDistribution(Distribution):
         ``plot`` takes no window argument (it frames itself), so the window is
         pinned on the distribution instead. ``_marginal_1d`` builds a fresh
         distribution on every call, so pinning it affects nothing else.
+
+        The ``xlim`` setter is the right way to pin it: a panel must land on
+        exactly the joint panels' window, with none of the discrete padding a
+        self-chosen window gets, or the column would stop lining up.
 
         Parameters
         ----------

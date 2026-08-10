@@ -709,6 +709,19 @@ class TestRVResultsStandardize(unittest.TestCase):
         with self.assertRaises(Exception):
             RVResults(["H", "T"]).standardize()
 
+    def test_standardize_constant_data_raises_clear_message(self):
+        # Regression test: standardizing zero-variance data used to raise
+        # a raw ZeroDivisionError instead of an explanatory message.
+        rvr = RVResults([5.0] * 20)
+        with self.assertRaisesRegex(Exception, "no variability"):
+            rvr.standardize()
+
+    def test_standardize_single_draw_raises_clear_message(self):
+        # A single value also has zero sample standard deviation.
+        rvr = RVResults([3.0])
+        with self.assertRaisesRegex(Exception, "no variability"):
+            rvr.standardize()
+
 
 # ---------------------------------------------------------------------------
 # RVResults.tabulate

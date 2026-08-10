@@ -249,7 +249,16 @@ showing as much empty axis as distribution.
 **gone** — a stray one raises rather than reaching matplotlib. A window chosen
 by hand is set on the distribution (`X.xlim = (2, 8)`, the setter that already
 existed) or applied to the axes afterwards (`xlim(2, 8)`, the pyplot passthrough
-exported from `plot.py`). Internally, a marginal strip or pairs-matrix diagonal
+exported from `plot.py`).
+
+**Assigning `xlim` also turns off the discrete half-step padding**
+(`_xlim_padded`). A discrete plot pads a window the distribution chose for
+itself by ±0.5 so the boundary dots don't sit on the spine; a window someone
+assigned is used exactly as given. That is why `Zeta` and the degenerate
+`LogNormal` branch preset `self._xlim` directly instead of going through the
+setter — their windows are still self-chosen — while `_marginal_framed` uses
+the setter, since a panel must land on the joint panels' window exactly or the
+column stops lining up. Internally, a marginal strip or pairs-matrix diagonal
 gets its column's window through `MultivariateDistribution._marginal_framed(i)`,
 which pins `xlim` on the fresh marginal — do not add a private window parameter
 back to `plot()`.
