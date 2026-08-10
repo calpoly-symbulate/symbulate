@@ -39,6 +39,7 @@ from .plot import (
     TRUE_DIST_MARKER_SIZE,
     TRUE_DIST_LINEWIDTH,
     TRUE_DIST_LINESTYLE,
+    _refresh_legend,
 )
 from .result import Scalar, Vector, InfiniteVector
 
@@ -406,8 +407,9 @@ class Distribution(ProbabilitySpace):
         ``type=`` argument -- a theoretical distribution has only these two
         curves to show, so the choice is the single boolean ``cdf``.
 
-        The plot is titled by what it shows: "CDF Plot" for ``cdf=True``,
-        and for the default view "PDF Plot" (continuous) or "PMF Plot"
+        The plot is titled by what it shows: "Cumulative Distribution
+        Function" for ``cdf=True``, and for the default view "Probability
+        Density Function" (continuous) or "Probability Mass Function"
         (discrete).
 
         Parameters
@@ -425,7 +427,11 @@ class Distribution(ProbabilitySpace):
             frames roughly ``(451, 549)`` instead of ``(0, 1000)``, with no
             need to work out the endpoints by hand. Also handy for lining a
             theoretical curve up against simulated data, which occupies
-            only the high-probability part of the support.
+            only the high-probability part of the support. For a discrete
+            distribution, a computed default or ``"zoom"`` window gets half
+            a step of padding on each end so the boundary value isn't drawn
+            right on the axis spine; an explicit ``(min, max)`` tuple is
+            always used exactly as given, with no padding added.
         cdf : bool, default False
             Which function to plot. ``False`` (the default) draws the
             probability density/mass function; ``True`` draws the
@@ -475,6 +481,7 @@ class Distribution(ProbabilitySpace):
         #                  framing an unbounded distribution already gets,
         #                  which zooms in on a bounded default;
         #   (low, high) -> those exact limits, used as given.
+        xlim_is_exact = xlim is not None and not isinstance(xlim, str)
         if xlim is None:
             xlim = self.xlim
         elif isinstance(xlim, str):
@@ -492,6 +499,14 @@ class Distribution(ProbabilitySpace):
         # function is evaluated there.
         if self.discrete:
             xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
+            # Half a step of air on each end, so the dot/step at the
+            # boundary value doesn't sit right on the axis spine -- same
+            # convention as the single-point collapse case below, just
+            # applied whenever the window is a computed default rather
+            # than a user-supplied exact range (the docstring promises an
+            # explicit `xlim=(low, high)` tuple is used as given).
+            if not xlim_is_exact:
+                xlim = (xlim[0] - 0.5, xlim[1] + 0.5)
         else:
             xs = np.linspace(xlim[0], xlim[1], 200)
         ys = self.cdf(xs) if cdf else self.pdf(xs)
@@ -534,6 +549,19 @@ class Distribution(ProbabilitySpace):
 
         # get next color in cycle
         color = get_next_color(ax)
+
+        # Default label names the distribution itself, e.g. "Binomial(10,
+        # 0.5)", so a legend can tell two theoretical curves apart, or tell
+        # a theoretical curve apart from a simulated one it's overlaid on.
+        # setdefault, not an override, so a user's own label= still wins.
+        # This only reaches the curve/scatter draw calls below (the ones
+        # that forward **kwargs) -- the discrete pmf's dashed connecting
+        # line draws separately, without **kwargs, so it never gets a
+        # second, duplicate legend entry for the same curve.
+        kwargs.setdefault(
+            "label",
+            f"{type(self).__name__}({', '.join(str(v) for v in self.params.values())})",
+        )
 
         if cdf:
             # Match make_ecdf's step-function styling so a theoretical CDF
@@ -578,11 +606,11 @@ class Distribution(ProbabilitySpace):
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
         if cdf:
-            ax.set_title("CDF Plot")
+            ax.set_title("Cumulative Distribution Function")
         elif self.discrete:
-            ax.set_title("PMF Plot")
+            ax.set_title("Probability Mass Function")
         else:
-            ax.set_title("PDF Plot")
+            ax.set_title("Probability Density Function")
 
         # Label the axes for context: the x-axis shows the possible values of
         # the variable, and the y-axis names what its height means for this
@@ -606,6 +634,13 @@ class Distribution(ProbabilitySpace):
         # reference lines, matching the ECDF plot -- so override it here for
         # this plot type specifically.
         ax.grid(True, axis="both")
+
+        # A legend only helps once there is more than one labeled curve on
+        # the axes -- another theoretical curve, or a simulated plot (hist,
+        # density, rug, ecdf, ...) it's overlaid on. A lone curve stays
+        # legend-free. "upper left" matches make_ecdf's own default, since a
+        # rising CDF has more room there than "upper right".
+        _refresh_legend(ax, loc="upper left" if cdf else "upper right")
 
         return DistributionPlot(ax, self, "cdf" if cdf else "pdf")
 
