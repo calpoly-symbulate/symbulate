@@ -3210,9 +3210,9 @@ class InverseGaussian(Distribution):
 class Beta(Distribution):
     """Probability space for a beta distribution.
 
-    A continuous distribution defined on [0, 1], often used to model
-    probabilities or proportions. The shape changes with parameters
-    ``shape1`` and ``shape2``.
+    A continuous distribution defined on ``[xmin, xmax]`` -- by default
+    ``[0, 1]`` -- often used to model probabilities or proportions. The
+    shape changes with parameters ``shape1`` and ``shape2``.
 
     Parameters
     ----------
@@ -3220,6 +3220,11 @@ class Beta(Distribution):
         First shape parameter (often written α). Must be positive.
     shape2 : float
         Second shape parameter (often written β). Must be positive.
+    xmin : float, optional
+        Smallest possible value. Default is 0.0.
+    xmax : float, optional
+        Largest possible value. Must be greater than ``xmin``. Default
+        is 1.0.
 
     Attributes
     ----------
@@ -3227,6 +3232,28 @@ class Beta(Distribution):
         First shape parameter (α). Must be positive.
     shape2 : float
         Second shape parameter (β). Must be positive.
+    xmin : float
+        Smallest possible value.
+    xmax : float
+        Largest possible value.
+
+    Notes
+    -----
+    The two shape parameters set the *shape* of the density and the two
+    bounds set *where it sits*, so the two choices are independent. A beta
+    on ``[xmin, xmax]`` is the standard one on ``[0, 1]`` stretched by the
+    width and shifted to the new start: if ``S`` has a
+    ``Beta(shape1, shape2)`` distribution, then
+
+        ``xmin + (xmax - xmin) * S``
+
+    has a ``Beta(shape1, shape2, xmin, xmax)`` distribution. Every summary
+    follows from that same stretch-and-shift -- the mean, for instance, is
+    ``xmin + (xmax - xmin) * shape1 / (shape1 + shape2)``.
+
+    The default ``xmin=0``, ``xmax=1`` leaves the standard beta unchanged.
+    :class:`PERT` is built the same way, stretching a beta onto
+    ``[low, high]`` with shapes chosen to put the peak at a given mode.
 
     Examples
     --------
@@ -3236,19 +3263,27 @@ class Beta(Distribution):
     0.5
     >>> round(float(X.pdf(0.5)), 4)
     1.0
+    >>> float(Beta(1, 1, xmin=2, xmax=4).mean())
+    3.0
     >>> X.draw()  # doctest: +SKIP
     0.632
     """
 
-    def __init__(self, shape1, shape2):
+    def __init__(self, shape1, shape2, xmin=0.0, xmax=1.0):
         """Initialize a beta distribution.
 
         Raises
         ------
         Exception
-            If ``shape1`` or ``shape2`` is not a positive number.
+            If ``shape1`` or ``shape2`` is not a positive number, if
+            ``xmin`` or ``xmax`` is not a number, or if ``xmax`` is not
+            greater than ``xmin``.
         """
-
+        # The bounds are compared to each other below, so that check is
+        # guarded by this type check -- otherwise a non-numeric bound would
+        # raise a cryptic TypeError from the comparison instead of reporting
+        # the friendly message. Same guard PERT uses on its three bounds.
+        numeric = isinstance(xmin, numbers.Real) and isinstance(xmax, numbers.Real)
         _validate(
             (
                 not isinstance(shape1, numbers.Real) or shape1 <= 0,
@@ -3258,11 +3293,20 @@ class Beta(Distribution):
                 not isinstance(shape2, numbers.Real) or shape2 <= 0,
                 "shape2 must be a positive number",
             ),
+            (not isinstance(xmin, numbers.Real), "xmin must be a number"),
+            (not isinstance(xmax, numbers.Real), "xmax must be a number"),
+            (numeric and xmax <= xmin, "xmax must be greater than xmin"),
         )
         self.shape1 = shape1
         self.shape2 = shape2
+        self.xmin = xmin
+        self.xmax = xmax
 
-        params = {"a": shape1, "b": shape2}
+        # Stretch the standard beta from [0, 1] onto [xmin, xmax] with
+        # scipy's own loc/scale, the same mechanism PERT uses. The defaults
+        # give loc=0, scale=1, which is scipy's no-op, so the standard beta
+        # is unchanged.
+        params = {"a": shape1, "b": shape2, "loc": xmin, "scale": xmax - xmin}
         super().__init__(params, stats.beta, False)
 
 
