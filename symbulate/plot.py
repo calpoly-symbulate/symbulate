@@ -476,11 +476,14 @@ TILE_OVERLAY_WARNING = (
     "plotting them in separate cells, or using type='scatter' instead."
 )
 
-# Mosaic plot: column widths track each x value's marginal frequency;
-# within a column, segment heights track that column's conditional
-# frequency of each y value, so area encodes joint frequency. Colored by
-# y category (Okabe-Ito) rather than a colormap, so it takes a legend
-# instead of a colorbar.
+# Mosaic plot (type="mosaic"): column widths track each x value's
+# marginal frequency; within a column, segment heights track that
+# column's conditional frequency of each y value, so area encodes joint
+# frequency. Stacked bar chart (type="stackedbar"): the same plot with
+# every column drawn the same width, so the conditional distributions
+# line up for comparison but area no longer encodes joint frequency.
+# Both are colored by y category (Okabe-Ito) rather than a colormap, so
+# they take a legend instead of a colorbar.
 MOSAIC_COLUMN_GAP = 0.003  # fixed gap, in [0, 1] axis-fraction units,
 # between adjacent columns (one column per distinct x value) -- a real
 # numeric gap (background shows through), not a border, so it stays thin
@@ -504,44 +507,36 @@ MOSAIC_LEGEND_BBOX = (1.02, 0.5)  # legend sits outside the axes, to the
 # patch's own edgecolor (which stays unset -- see above), so the pattern
 # stays visible without reintroducing a border around every cell.
 MOSAIC_HATCH_PATTERNS = ["", "//", "xx", "..", "oo"]
-MOSAIC_MIN_LABEL_HEIGHT = 0.04  # a cell's count/decimal-proportion label
-# is only drawn if the cell is at least this tall...
-MOSAIC_MIN_LABEL_WIDTH = 0.05  # ...and at least this wide (both in
-# [0, 1] axis-fraction units), so labels never crowd tiny cells
-MOSAIC_LABEL_FONT_SIZE = 9
-MOSAIC_LABEL_DECIMALS = 2  # decimal places for the in-cell decimal
-# proportion labels (e.g. "0.18"), matching the y-axis's own 2-decimal
-# tick format; raw counts (normalize=False) are always whole numbers
 MOSAIC_LABEL_LUMINANCE_THRESHOLD = 0.5  # perceived luminance (ITU-R
 # BT.709 weights, 0=black to 1=white) above which black label text reads
 # better than white against that cell's fill color -- e.g. the palette's
 # yellow and sky blue land above this line (black text), its dark blue
 # and green fall below it (white text)
 
-MOSAIC_MARGINAL_WIDTH_FRAC = 0.035  # width, in [0, 1] axis-fraction
-# units, reserved for the extra reference column showing y's marginal
-# distribution (see marginal_column= below) -- deliberately skinny,
-# since it's a color reference to compare the real columns against, not
-# real data to read counts or proportions off of (it never gets in-cell
-# labels, regardless of annotate=)
-MOSAIC_MARGINAL_GAP = 0.03  # gap between the real columns and the
-# marginal reference column -- wider than MOSAIC_COLUMN_GAP so the break
-# reads as "this one isn't a real x category" rather than just another
-# column
-MOSAIC_LEGEND_LABEL_GAP = 0.02  # gap, in [0, 1] axis-fraction units,
-# between the marginal column's right edge and its category-name labels
-# -- these double as the plot's legend (see make_mosaic's legend=)
-
 MOSAIC_YAXIS_TICKS = [0.0, 0.25, 0.5, 0.75, 1.0]  # every column's
-# segments -- real or marginal -- independently span 0 to 1 as a
-# cumulative share of that column, so unlike the x-axis, one shared
-# proportion scale on the left is meaningful across every column
+# segments independently span 0 to 1 as a cumulative share of that
+# column, so unlike the x-axis, one shared proportion scale on the left
+# is meaningful across every column
 
-MOSAIC_OVERLAY_WARNING = (
-    "Warning: you drew a second mosaic plot on the same axes. A mosaic "
-    "plot re-partitions the entire plot area for its own data, so the "
-    "second call covers up the first one. Try two separate plots (e.g. "
-    "subplots) instead."
+MOSAIC_SUGGEST_MAX_CATEGORIES = 4  # a mosaic's proportional column
+# widths stay readable while the table is small; past this many
+# categories on either axis the rarest columns get too thin to compare,
+# and equal-width columns (type="stackedbar") read better. Below it the
+# proportional widths are worth having, since they also show how common
+# each x category is. Used only to print a suggestion -- neither type is
+# ever refused (see mosaic_type_suggestion).
+
+# A mosaic or stacked bar plot re-partitions the entire plot area for
+# its own data, so a second one drawn on the same axes completely covers
+# the first -- there is no version of that anyone can read. This is the
+# hard-error tier of the overlay policy, not the readability-warning
+# tier that tile and hist2d use.
+MOSAIC_OVERLAY_ERROR = (
+    "You can't draw a second mosaic or stacked bar plot on the same "
+    "axes. Each one divides the whole plot area up for its own data, so "
+    "the second would completely cover the first. Draw them as two "
+    "separate plots instead -- in Jupyter, put each .plot() call in its "
+    "own cell."
 )
 
 # Box plot.
@@ -1145,8 +1140,27 @@ DEFAULT_PLOT_TYPE = {
         "default": "hist",
         "alternatives": ["rug", "density", "box", "violin", "ecdf"],
     },
-    ("2D_dd", True): {"default": "scatter", "alternatives": ["tile", "mosaic"]},
-    ("2D_dd", False): {"default": "tile", "alternatives": ["scatter", "mosaic"]},
+    ("2D_dd", True): {
+        "default": "scatter",
+        "alternatives": ["tile", "mosaic", "stackedbar"],
+    },
+    ("2D_dd", False): {
+        "default": "tile",
+        "alternatives": ["scatter", "mosaic", "stackedbar"],
+    },
+    # Two categorical (string) variables. Unlike numeric discrete data
+    # there is no meaningful scatter to fall back on (the values aren't
+    # positions), and a mosaic answers the question these are almost
+    # always simulated to ask -- does y's distribution change with x --
+    # so it is the default here rather than tile.
+    ("2D_categorical", True): {
+        "default": "mosaic",
+        "alternatives": ["stackedbar", "tile"],
+    },
+    ("2D_categorical", False): {
+        "default": "mosaic",
+        "alternatives": ["stackedbar", "tile"],
+    },
     ("2D_cc", True): {"default": "scatter", "alternatives": ["density2d", "hist2d"]},
     ("2D_cc", False): {"default": "hist2d", "alternatives": ["density2d", "scatter"]},
     # On mixed data the short names rug / hist / density resolve to the
@@ -1225,7 +1239,7 @@ PLOT_DISPLAY_NAME = {
     "scatter": "Scatter Plot",
     "tile": "Tile Plot",
     "mosaic": "Mosaic Plot",
-    "mosaic_equal_width": "Stacked Plot",
+    "stackedbar": "Stacked Bar Plot",
     "hist2d": "2D Histogram",
     "density2d": "2D Density Plot",
     "violin": "Violin Plot",
@@ -2286,30 +2300,52 @@ def _mosaic_spans(weights, gap, total=1.0):
         to 1 -- they are rescaled here).
     gap : float
         Fixed gap, in the same [0, 1] units as the returned spans,
-        reserved between each pair of adjacent segments.
+        reserved between each pair of adjacent *visible* segments.
     total : float, default 1.0
         The span the segments (plus their gaps) fill, starting at 0.
-        The default fills the whole axes; a mosaic plot that reserves
-        part of the axes for a marginal reference column (see
-        ``make_mosaic``'s ``marginal_column=``) passes a smaller value
-        here so the real columns fill only the remaining space.
+        The default fills the whole axes; a caller that reserves part
+        of the axes for something else passes a smaller value here so
+        the segments fill only the remaining space.
 
     Returns
     -------
     tuple of numpy.ndarray
         ``(starts, widths)``. Segment ``i`` spans ``[starts[i],
-        starts[i] + widths[i]]``; consecutive segments are separated by
-        exactly ``gap``, and the whole row spans exactly ``[0, total]``.
-        A segment with weight 0 gets width 0 (invisible), but still
-        occupies its slot -- and its gap -- in the layout.
+        starts[i] + widths[i]]``; consecutive *visible* segments are
+        separated by exactly ``gap``, and the visible part of the row
+        spans exactly ``[0, total]``.
+
+    Notes
+    -----
+    A segment with weight 0 gets width 0 and reserves **no** gap. Only
+    gaps *between* segments that actually have positive weight are
+    reserved, which is what keeps the row spanning the full
+    ``[0, total]``: a zero-weight segment at either end used to leave
+    its gap behind as a visible sliver of empty space, so a mosaic
+    column missing one category stopped short of 0 or 1 instead of
+    filling its axis.
     """
     weights = np.asarray(weights, dtype=float)
     n = len(weights)
-    total_gap = gap * max(n - 1, 0)
+    positive = weights > 0
+    # Only the gaps *between* visible segments are reserved -- a
+    # zero-weight segment is invisible, so a gap next to it would be an
+    # unexplained blank strip rather than a separator between two cells.
+    total_gap = gap * max(int(positive.sum()) - 1, 0)
     available = max(total - total_gap, 0.0)
     total_weight = weights.sum()
     widths = weights / total_weight * available if total_weight > 0 else weights
-    starts = np.concatenate([[0.0], np.cumsum(widths + gap)[:-1]])
+    # A gap sits before every visible segment except the first one, so
+    # the row starts flush at 0 and the last visible segment ends flush
+    # at `total`.
+    gaps_before = np.zeros(n)
+    seen_positive = False
+    for i in range(n):
+        if positive[i]:
+            if seen_positive:
+                gaps_before[i] = gap
+            seen_positive = True
+    starts = np.cumsum(gaps_before + np.concatenate([[0.0], widths[:-1]]))
     return starts, widths
 
 
@@ -2333,172 +2369,39 @@ def _readable_text_color(bg_color):
     return "black" if luminance > MOSAIC_LABEL_LUMINANCE_THRESHOLD else "white"
 
 
-def make_mosaic(
-    x,
-    y,
-    ax,
-    normalize=True,
-    annotate=True,
-    legend=True,
-    x_label="Variable 1",
-    y_label="Variable 2",
-    marginal_column=True,
-    equal_width=False,
-    **kwargs,
-):
-    """Draw a mosaic plot of simulated (x, y) pairs on the given axes.
+def _draw_mosaic(x, y, ax, equal_width, legend, xlabel, ylabel, **kwargs):
+    """Draw the shared body of a mosaic / stacked bar plot.
 
-    Divides the axes into one column per distinct ``x`` value, with
-    column widths proportional to how often that value occurred (its
-    marginal frequency) -- or, with ``equal_width=True``, every column
-    the same width regardless of marginal frequency (a 100%-stacked bar
-    chart per ``x`` value). Within each column, the column is further
-    divided into one segment per distinct ``y`` value, with segment
-    heights proportional to ``y``'s *conditional* frequency within that
-    column. With the default proportional widths, every rectangle's area
-    is therefore proportional to the joint frequency of that ``(x, y)``
-    pair -- reading the segment heights across columns shows whether
-    ``y``'s distribution changes with ``x`` (an association) or stays
-    the same shape in every column (independence), which a
-    same-color-scale plot like ``tile`` cannot show directly.
-    ``equal_width=True`` trades that area-equals-joint-frequency
-    property for a clean, evenly-spaced comparison across ``x``
-    categories regardless of how often each one occurs -- segment
-    heights (the conditional distributions) are unaffected either way.
-
-    Segments are colored by ``y`` category, one color per distinct
-    value from the package's categorical palette (Okabe-Ito, from
-    ``symbulate.mplstyle``), consistent across every column. With more
-    than 7 distinct ``y`` values, colors repeat -- each repeat also adds
-    a hatch pattern, so two categories never look identical, and a
-    warning explains why. Small gaps separate columns and the segments
-    within each column so the plot reads as a mosaic of distinct tiles.
-    Each in-cell label switches between black and white text (see
-    ``_readable_text_color``) so it stays legible against its own
-    cell's color, whichever end of the palette that is.
-
-    With ``marginal_column=True`` (the default), one extra, deliberately
-    skinny column is added after the real ``x`` columns, set off by a
-    wider gap. Instead of a conditional distribution of ``y`` within one
-    ``x`` value, its segments show ``y``'s *marginal* distribution --
-    ``y``'s overall shape with ``x`` ignored entirely. Placed next to
-    the real columns, it gives a visual baseline: a real column whose
-    segments look like the marginal column suggests ``x`` and ``y`` are
-    close to independent there, while one that looks different suggests
-    an association -- the conditional-vs-marginal comparison a mosaic
-    plot is meant to support. It's a color reference only, not real data
-    to read counts off of, so it never gets in-cell labels -- instead,
-    each of its segments carries its category name just to its right
-    (see ``legend`` below), so the marginal column doubles as the
-    plot's legend instead of a separate floating legend box. Its
-    x-tick label is ``y_label`` itself (e.g. "Variable 2", the default),
-    since the column represents ``y``'s own distribution.
-
-    A shared proportion scale (0 to 1) is shown on the left of the
-    axes: every column's segments, real or marginal, independently span
-    0 to 1 as a cumulative share of that column, so this one scale
-    applies the same way to every column.
-
-    Meant for two discrete-ish variables -- the same configuration
-    ``tile`` targets. Continuous data is not binned here: every
-    distinct value becomes its own column or segment, so continuous
-    input should go through ``hist2d`` / ``density2d`` instead.
-
-    A mosaic plot fills the entire axes, so a second call on the same
-    axes cannot overlay naturally -- this is the "readability warning"
-    category of the overlay policy (the same category as ``tile`` and
-    ``hist2d``): the plot still draws, covering the first one, and
-    prints a warning rather than erroring.
-
-    The caller is responsible for getting the axes (``plt.gca()``, so
-    overlays keep working). This mirrors how the other 2D plot helpers
-    in this module (``make_tile``, ``make_hist2d``) are called.
+    ``make_mosaic`` and ``make_stackedbar`` are the two public entry
+    points; they differ only in how column widths are chosen, so the
+    drawing itself lives here once. Callers should use one of those two
+    rather than calling this directly.
 
     Parameters
     ----------
-    x : array-like
-        Simulated values that determine the columns, e.g. the first
-        column of ``RVResults.array``. Discrete or categorical.
-    y : array-like
-        Simulated values that determine the segments within each
-        column, same length as ``x``. Discrete or categorical.
+    x, y : array-like
+        The paired simulated values. See ``make_mosaic``.
     ax : matplotlib.axes.Axes
         The axes to draw on.
-    normalize : bool, default True
-        Only affects the in-cell labels (the geometry is always
-        proportion-based, since column widths and segment heights must
-        sum to 1 by construction). If True, labels show each cell's
-        frequency conditional on that column's own ``x`` value, as a
-        decimal proportion (e.g. "0.18") -- the same quantity the
-        segment's height encodes, so the printed number always matches
-        what's drawn. If False, labels show the raw joint count
-        instead.
-    annotate : bool, default True
-        If True, print each cell's conditional proportion or joint
-        count (see ``normalize``) inside the cell, but only when the
-        cell is large enough to hold it legibly (see
-        ``MOSAIC_MIN_LABEL_HEIGHT`` / ``MOSAIC_MIN_LABEL_WIDTH``). If
-        False, no in-cell labels.
-    legend : bool, default True
-        If True, label each ``y`` category's color. With
-        ``marginal_column=True`` (the default), these labels are
-        printed directly beside that column's segments, so the
-        marginal column doubles as the legend. With
-        ``marginal_column=False``, there's no column to hang labels
-        off of, so a standard legend is placed outside the right edge
-        of the axes instead.
-    x_label : str, default "X"
-        Label for the x-axis.
-    y_label : str, default "Y"
-        With ``marginal_column=True`` (the default), the x-tick label
-        for the marginal reference column. With
-        ``marginal_column=False``, the title of the standard legend
-        instead (there's no marginal column to label). Either way, the
-        y-axis itself always shows the same 0-to-1 cumulative-share
-        scale, independent of ``y_label``.
-    marginal_column : bool, default True
-        If True, add an extra column (labeled "Marginal" on the x-axis)
-        showing ``y``'s overall distribution with ``x`` ignored, so it
-        can be compared by eye against each real column's conditional
-        distribution. If False, only the real ``x`` columns are drawn.
-    equal_width : bool, default False
-        If False (default), column widths are proportional to each
-        ``x`` value's marginal count, the standard mosaic-plot
-        convention. If True, every real column is drawn the same
-        width, regardless of marginal frequency -- a 100%-stacked bar
-        chart per ``x`` value instead of a mosaic plot. Only the column
-        *widths* change; segment heights (conditional frequencies),
-        in-cell labels, and the marginal column (if any) are computed
-        from the true counts either way, so a labeled proportion is
-        never misrepresented by the width scheme.
+    equal_width : bool
+        If False, column widths are proportional to each ``x`` value's
+        marginal count (a mosaic plot). If True, every column is the
+        same width (a stacked bar chart).
+    legend, xlabel, ylabel
+        See ``make_mosaic``.
     **kwargs
-        Additional keyword arguments passed to every ``ax.bar`` call
-        (one per ``y`` category). For example ``linewidth=`` to
-        override the default cell border width.
+        Passed to every ``ax.bar`` call.
 
     Returns
     -------
     dict
-        Maps each distinct ``y`` value to the ``matplotlib.container.
-        BarContainer`` of its segments (one bar per real ``x`` column,
-        plus one more for the marginal column when
-        ``marginal_column=True``), so the caller can inspect or further
-        style a specific category.
+        Maps each distinct ``y`` value to its ``BarContainer``.
 
     Raises
     ------
     ValueError
-        If ``x`` and ``y`` are not the same length.
-
-    Examples
-    --------
-    >>> import matplotlib.pyplot as plt
-    >>> import numpy as np
-    >>> rng = np.random.default_rng()
-    >>> x = rng.choice(["A", "B", "C"], size=1000, p=[0.5, 0.3, 0.2])
-    >>> y = rng.choice(["yes", "no"], size=1000)
-    >>> ax = plt.gca()
-    >>> make_mosaic(x, y, ax)  # doctest: +SKIP
+        If ``x`` and ``y`` are not the same length, or if a mosaic or
+        stacked bar plot has already been drawn on ``ax``.
     """
     x = np.asarray(x)
     y = np.asarray(y)
@@ -2508,7 +2411,11 @@ def make_mosaic(
             f"{len(x)} values and y has {len(y)}. Check that both come "
             "from the same simulation."
         )
-    n = len(x)
+
+    # Checked before anything is drawn, so a refused overlay leaves the
+    # existing plot exactly as it was rather than half-covering it.
+    if getattr(ax, "_mosaic_count", 0) > 0:
+        raise ValueError(MOSAIC_OVERLAY_ERROR)
 
     # One cell per distinct (x, y) pair, no binning -- the same
     # dense-joint-count approach make_tile uses for two discrete axes.
@@ -2519,57 +2426,26 @@ def make_mosaic(
     joint = np.zeros((len(x_labels), len(y_labels)))
     np.add.at(joint, (x_idx, y_idx), 1)
 
-    # Columns: width proportional to each x value's marginal count, or
-    # (equal_width=True) every column the same width regardless of
-    # marginal count -- a separate weights array feeds _mosaic_spans,
-    # which is itself agnostic to which scheme the caller wants. x_counts
-    # itself is kept around unconditionally: the in-cell labels below
-    # always report the true conditional proportion/count, never
-    # something distorted by the width scheme. When marginal_column is
-    # on, the real columns only fill the space left after reserving a
-    # narrower column (plus a wider gap) for the y marginal reference
-    # column added below.
+    # Columns: width proportional to each x value's marginal count
+    # (mosaic), or every column the same width regardless of marginal
+    # count (stacked bar). A separate weights array feeds _mosaic_spans,
+    # which is itself agnostic to which scheme the caller wants.
     x_counts = joint.sum(axis=1)
     width_weights = np.ones(len(x_labels)) if equal_width else x_counts
-    real_width = (
-        1.0 - MOSAIC_MARGINAL_WIDTH_FRAC - MOSAIC_MARGINAL_GAP
-        if marginal_column
-        else 1.0
-    )
-    x_starts, x_widths = _mosaic_spans(
-        width_weights, MOSAIC_COLUMN_GAP, total=real_width
-    )
+    x_starts, x_widths = _mosaic_spans(width_weights, MOSAIC_COLUMN_GAP)
     x_positions = x_starts + x_widths / 2
     x_tick_labels = [str(v) for v in x_labels]
-
-    n_cols = len(x_labels)
-    if marginal_column:
-        marginal_start = real_width + MOSAIC_MARGINAL_GAP
-        x_starts = np.append(x_starts, marginal_start)
-        x_widths = np.append(x_widths, MOSAIC_MARGINAL_WIDTH_FRAC)
-        x_positions = np.append(
-            x_positions, marginal_start + MOSAIC_MARGINAL_WIDTH_FRAC / 2
-        )
-        x_tick_labels.append(y_label)
-        n_cols += 1
 
     # Rows within each column: height proportional to that column's
     # conditional frequency of each y value. Computed independently per
     # column, since each column's own total (not the grand total) is
-    # what its segment heights divide. The marginal column (if any) is
-    # laid out the same way, but from y's totals summed over every x
-    # value instead of one column's joint counts -- its own "conditional
-    # distribution" is just y's marginal distribution.
-    row_starts = np.zeros((n_cols, len(y_labels)))
-    row_heights = np.zeros((n_cols, len(y_labels)))
+    # what its segment heights divide.
+    row_starts = np.zeros((len(x_labels), len(y_labels)))
+    row_heights = np.zeros((len(x_labels), len(y_labels)))
     for i in range(len(x_labels)):
         starts_i, heights_i = _mosaic_spans(joint[i, :], MOSAIC_ROW_GAP)
         row_starts[i, :] = starts_i
         row_heights[i, :] = heights_i
-    if marginal_column:
-        starts_m, heights_m = _mosaic_spans(joint.sum(axis=0), MOSAIC_ROW_GAP)
-        row_starts[-1, :] = starts_m
-        row_heights[-1, :] = heights_m
 
     # One color per y category, read directly from the active style
     # sheet's categorical cycle (Okabe-Ito) rather than advancing the
@@ -2588,123 +2464,332 @@ def make_mosaic(
     # cells and the legend.
     if len(y_labels) > len(palette):
         warnings.warn(
-            f"This mosaic plot has {len(y_labels)} distinct y-values, more "
-            f"than the {len(palette)} colors in the categorical palette, so "
+            f"This plot has {len(y_labels)} distinct y-values, more than "
+            f"the {len(palette)} colors in the categorical palette, so "
             "some categories repeat a color (distinguished with a hatch "
-            "pattern instead). A mosaic plot is hard to read with this many "
-            "categories -- consider a plot type that doesn't rely on "
-            "category color, like a tile plot.",
+            "pattern instead). Stacked segments are hard to read with "
+            "this many categories -- consider a plot type that doesn't "
+            "rely on category color, like a tile plot.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
-    # Count the mosaic plots drawn on these axes, stored on the axes
-    # object itself (the same pattern get_next_color uses for the color
-    # cycle), to trigger the overlay readability warning.
-    n_prior = getattr(ax, "_mosaic_count", 0)
-    ax._mosaic_count = n_prior + 1
+    # Recorded on the axes object itself (the same pattern
+    # get_next_color uses for the color cycle) so a later call can
+    # detect the overlay and refuse.
+    ax._mosaic_count = 1
 
     bars = {}
-    text_colors = []
     for j, y_label_value in enumerate(y_labels):
-        heights = row_heights[:, j]
-        bottoms = row_starts[:, j]
         color = palette[j % len(palette)]
         hatch = MOSAIC_HATCH_PATTERNS[(j // len(palette)) % len(MOSAIC_HATCH_PATTERNS)]
         bars[y_label_value] = ax.bar(
             x_positions,
-            heights,
+            row_heights[:, j],
             width=x_widths,
-            bottom=bottoms,
+            bottom=row_starts[:, j],
             color=color,
             hatch=hatch,
             label=str(y_label_value),
             **kwargs,
         )
-        # A hatch pattern only changes readability at the edges of a
-        # cell (where the pattern's own lines sit), not its fill -- the
-        # label sits at the cell's center, so only the base color
-        # matters here.
-        text_colors.append(_readable_text_color(color))
-
-    if annotate:
-        # Real columns only -- the marginal reference column (if any) is
-        # a color-only comparison, not real data to read counts or
-        # proportions off of, so it never gets in-cell labels.
-        for i in range(len(x_labels)):
-            for j in range(len(y_labels)):
-                if (
-                    row_heights[i, j] < MOSAIC_MIN_LABEL_HEIGHT
-                    or x_widths[i] < MOSAIC_MIN_LABEL_WIDTH
-                ):
-                    continue
-                if normalize:
-                    # Conditional on this column's own x value (matches
-                    # what the segment's height encodes), not the joint
-                    # frequency over the whole dataset. A decimal
-                    # proportion, not a percentage, to match the
-                    # y-axis's own 0-to-1 scale.
-                    text = f"{joint[i, j] / x_counts[i]:.{MOSAIC_LABEL_DECIMALS}f}"
-                else:
-                    text = f"{int(round(joint[i, j]))}"
-                ax.text(
-                    x_positions[i],
-                    row_starts[i, j] + row_heights[i, j] / 2,
-                    text,
-                    ha="center",
-                    va="center",
-                    fontsize=MOSAIC_LABEL_FONT_SIZE,
-                    color=text_colors[j],
-                )
 
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_xticks(x_positions)
     ax.set_xticklabels(x_tick_labels)
-    ax.set_xlabel(x_label)
-    # Every column's segments -- real or marginal -- independently span
-    # 0 to 1 as a cumulative share of that column, so (unlike the
-    # x-axis) one shared proportion scale on the left is meaningful
-    # across every column: a left-hand reading of "0.40" always means
-    # "40% of the way up this column's total," no matter which column.
+    ax.set_xlabel(xlabel)
+    # Every column's segments independently span 0 to 1 as a cumulative
+    # share of that column, so (unlike the x-axis) one shared proportion
+    # scale on the left is meaningful across every column: a left-hand
+    # reading of "0.40" always means "40% of the way up this column's
+    # total," no matter which column.
     ax.yaxis.set_visible(True)
     ax.set_yticks(MOSAIC_YAXIS_TICKS)
     ax.set_yticklabels([f"{t:.2f}" for t in MOSAIC_YAXIS_TICKS])
-    ax.set_title("Stacked Plot" if equal_width else "Mosaic Plot")
+    ax.set_title("Stacked Bar Plot" if equal_width else "Mosaic Plot")
     # A filled plot covers the whole axes, so the reference grid has
     # nothing to sit on -- turn it off rather than let fragments show
     # at the edges (the same reasoning make_tile / make_hist2d use).
     ax.grid(False)
 
     if legend:
-        if marginal_column:
-            # The marginal column's segments already give each y
-            # category a color swatch -- print its name just to the
-            # right of that swatch instead of a separate floating
-            # legend box.
-            for j, y_label_value in enumerate(y_labels):
-                label_y = row_starts[-1, j] + row_heights[-1, j] / 2
-                ax.text(
-                    x_positions[-1] + x_widths[-1] / 2 + MOSAIC_LEGEND_LABEL_GAP,
-                    label_y,
-                    str(y_label_value),
-                    ha="left",
-                    va="center",
-                    fontsize=MOSAIC_LABEL_FONT_SIZE,
-                )
-        else:
-            # No marginal column to hang labels off of -- fall back to
-            # a standard legend outside the right edge of the axes.
-            ax.legend(
-                loc=MOSAIC_LEGEND_LOC,
-                bbox_to_anchor=MOSAIC_LEGEND_BBOX,
-                title=y_label,
-            )
-
-    if ax._mosaic_count > 1:
-        print(MOSAIC_OVERLAY_WARNING)
+        # The plot fills the entire [0, 1] x [0, 1] canvas, so an in-plot
+        # legend would sit on top of real data -- put it outside instead.
+        ax.legend(
+            loc=MOSAIC_LEGEND_LOC,
+            bbox_to_anchor=MOSAIC_LEGEND_BBOX,
+            title=ylabel,
+        )
 
     return bars
+
+
+def make_mosaic(
+    x,
+    y,
+    ax,
+    legend=True,
+    xlabel="Variable 1",
+    ylabel="Variable 2",
+    **kwargs,
+):
+    """Draw a mosaic plot of simulated (x, y) pairs on the given axes.
+
+    Divides the axes into one column per distinct ``x`` value, with
+    column widths proportional to how often that value occurred (its
+    marginal frequency). Within each column, the column is further
+    divided into one segment per distinct ``y`` value, with segment
+    heights proportional to ``y``'s *conditional* frequency within that
+    column. Every rectangle's area is therefore proportional to the
+    joint frequency of that ``(x, y)`` pair -- reading the segment
+    heights across columns shows whether ``y``'s distribution changes
+    with ``x`` (an association) or stays the same shape in every column
+    (independence), which a same-color-scale plot like ``tile`` cannot
+    show directly.
+
+    For the equal-width variant -- every column the same width
+    regardless of how often its ``x`` value occurred -- see
+    ``make_stackedbar``. That trades the area-equals-joint-frequency
+    property for an even comparison across ``x`` categories; segment
+    heights (the conditional distributions) are identical either way.
+
+    Segments are colored by ``y`` category, one color per distinct
+    value from the package's categorical palette (Okabe-Ito, from
+    ``symbulate.mplstyle``), consistent across every column. With more
+    than 7 distinct ``y`` values, colors repeat -- each repeat also adds
+    a hatch pattern, so two categories never look identical, and a
+    warning explains why. Small gaps separate columns and the segments
+    within each column so the plot reads as a mosaic of distinct tiles;
+    a category that never occurs in a column takes up no space and
+    reserves no gap, so every column still fills its axis from 0 to 1.
+
+    A shared proportion scale (0 to 1) is shown on the left of the
+    axes: every column's segments independently span 0 to 1 as a
+    cumulative share of that column, so this one scale applies the same
+    way to every column.
+
+    Meant for two discrete-ish variables -- the same configuration
+    ``tile`` targets. Continuous data is not binned here: every
+    distinct value becomes its own column or segment, so continuous
+    input should go through ``hist2d`` / ``density2d`` instead.
+
+    A mosaic plot fills the entire axes, so a second one cannot be
+    drawn over the first -- doing so raises (see
+    ``MOSAIC_OVERLAY_ERROR``). This is the hard-error tier of the
+    overlay policy, not the readability-warning tier ``tile`` and
+    ``hist2d`` use.
+
+    The caller is responsible for getting the axes (``plt.gca()``, so
+    overlays keep working). This mirrors how the other 2D plot helpers
+    in this module (``make_tile``, ``make_hist2d``) are called.
+
+    Parameters
+    ----------
+    x : array-like
+        Simulated values that determine the columns, e.g. the first
+        column of ``RVResults.array``. Discrete or categorical.
+    y : array-like
+        Simulated values that determine the segments within each
+        column, same length as ``x``. Discrete or categorical.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    legend : bool, default True
+        If True, label each ``y`` category's color with a legend placed
+        outside the right edge of the axes.
+    xlabel : str, default "Variable 1"
+        Label for the x-axis.
+    ylabel : str, default "Variable 2"
+        Title of the legend, which names the ``y`` categories. The
+        y-axis itself always shows the same 0-to-1 cumulative-share
+        scale, independent of ``ylabel``.
+    **kwargs
+        Additional keyword arguments passed to every ``ax.bar`` call
+        (one per ``y`` category). For example ``linewidth=`` to
+        override the default cell border width.
+
+    Returns
+    -------
+    dict
+        Maps each distinct ``y`` value to the ``matplotlib.container.
+        BarContainer`` of its segments (one bar per ``x`` column), so
+        the caller can inspect or further style a specific category.
+
+    Raises
+    ------
+    ValueError
+        If ``x`` and ``y`` are not the same length, or if a mosaic or
+        stacked bar plot has already been drawn on ``ax``.
+
+    Notes
+    -----
+    There are no in-cell proportion labels: a printed number in every
+    cell crowded out the shapes the plot exists to show, and the
+    segment heights already encode the same quantity against the 0-to-1
+    scale on the left. For the same reason there is no ``normalize``
+    setting here -- the geometry is always proportions.
+
+    See Also
+    --------
+    make_stackedbar : The same plot with every column the same width.
+    make_tile : A colormap-based view of the same two-discrete-variable
+        data.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> x = rng.choice(["A", "B", "C"], size=1000, p=[0.5, 0.3, 0.2])
+    >>> y = rng.choice(["yes", "no"], size=1000)
+    >>> ax = plt.gca()
+    >>> make_mosaic(x, y, ax)  # doctest: +SKIP
+    """
+    return _draw_mosaic(
+        x,
+        y,
+        ax,
+        equal_width=False,
+        legend=legend,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        **kwargs,
+    )
+
+
+def make_stackedbar(
+    x,
+    y,
+    ax,
+    legend=True,
+    xlabel="Variable 1",
+    ylabel="Variable 2",
+    **kwargs,
+):
+    """Draw a 100%-stacked bar chart of simulated (x, y) pairs.
+
+    Identical to ``make_mosaic`` except that every column is drawn the
+    same width, regardless of how often its ``x`` value occurred. That
+    makes the conditional distributions easy to compare across ``x``
+    categories even when some are rare, at the cost of the mosaic's
+    area-equals-joint-frequency property: a wide column no longer means
+    a common ``x`` value, because every column is equally wide.
+
+    Prefer this over ``make_mosaic`` when there are many categories, or
+    when some ``x`` categories are so rare that their mosaic columns
+    would be too thin to read.
+
+    Parameters
+    ----------
+    x : array-like
+        Simulated values that determine the columns. Discrete or
+        categorical.
+    y : array-like
+        Simulated values that determine the segments within each
+        column, same length as ``x``. Discrete or categorical.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    legend : bool, default True
+        If True, label each ``y`` category's color with a legend placed
+        outside the right edge of the axes.
+    xlabel : str, default "Variable 1"
+        Label for the x-axis.
+    ylabel : str, default "Variable 2"
+        Title of the legend, which names the ``y`` categories.
+    **kwargs
+        Additional keyword arguments passed to every ``ax.bar`` call.
+
+    Returns
+    -------
+    dict
+        Maps each distinct ``y`` value to the ``matplotlib.container.
+        BarContainer`` of its segments.
+
+    Raises
+    ------
+    ValueError
+        If ``x`` and ``y`` are not the same length, or if a mosaic or
+        stacked bar plot has already been drawn on ``ax``.
+
+    See Also
+    --------
+    make_mosaic : The same plot with column widths proportional to each
+        ``x`` value's marginal frequency.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> import numpy as np
+    >>> rng = np.random.default_rng()
+    >>> x = rng.choice(["A", "B", "C"], size=1000, p=[0.5, 0.3, 0.2])
+    >>> y = rng.choice(["yes", "no"], size=1000)
+    >>> ax = plt.gca()
+    >>> make_stackedbar(x, y, ax)  # doctest: +SKIP
+    """
+    return _draw_mosaic(
+        x,
+        y,
+        ax,
+        equal_width=True,
+        legend=legend,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        **kwargs,
+    )
+
+
+def mosaic_type_suggestion(x, y, plot_type):
+    """Suggest the other of mosaic / stacked bar when it would read better.
+
+    A mosaic's proportional column widths are informative while the
+    table is small, but past a handful of categories on either axis the
+    rarer columns get too thin to compare -- equal widths
+    (``"stackedbar"``) read better there. Below that size the
+    proportional widths are worth having, since they also show how
+    common each ``x`` category is.
+
+    Neither type is ever refused; this only produces a message.
+
+    Parameters
+    ----------
+    x, y : array-like
+        The paired simulated values about to be plotted.
+    plot_type : str
+        Which of ``"mosaic"`` / ``"stackedbar"`` is being drawn. Any
+        other value returns ``None``.
+
+    Returns
+    -------
+    str or None
+        The suggestion to print, or ``None`` if the chosen type already
+        suits the number of categories.
+
+    Examples
+    --------
+    >>> x = ["a", "b"] * 10
+    >>> y = ["yes", "no"] * 10
+    >>> mosaic_type_suggestion(x, y, "mosaic") is None
+    True
+    """
+    n_x = len(np.unique(np.asarray(x)))
+    n_y = len(np.unique(np.asarray(y)))
+    crowded = max(n_x, n_y) > MOSAIC_SUGGEST_MAX_CATEGORIES
+    if plot_type == "mosaic" and crowded:
+        return (
+            f"This mosaic plot has {n_x} x-categories and {n_y} "
+            "y-categories. With this many, the rarer columns get too "
+            "thin to compare -- try type='stackedbar', which draws "
+            "every column the same width."
+        )
+    if plot_type == "stackedbar" and not crowded:
+        return (
+            f"This stacked bar plot has only {n_x} x-categories and "
+            f"{n_y} y-categories. With this few, try type='mosaic' -- "
+            "it draws each column's width in proportion to how often "
+            "that category occurred, so the plot also shows which "
+            "categories are common."
+        )
+    return None
 
 
 def make_violin(data, positions, ax, color, axis, alpha):

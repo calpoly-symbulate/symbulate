@@ -63,6 +63,8 @@ from .plot import (
     make_hist2d,
     make_impulse,
     make_mosaic,
+    make_stackedbar,
+    mosaic_type_suggestion,
     make_segmented_density,
     make_segmented_hist,
     make_rug,
@@ -149,6 +151,78 @@ def _is_categorical_1d(results):
     if arr.dtype.kind == "O":
         return all(isinstance(x, (str, bytes)) for x in arr.tolist())
     return False
+
+
+def _is_categorical_2d(results):
+    """Check whether results are a 2D collection of categorical (string) pairs.
+
+    The two-variable counterpart of ``_is_categorical_1d`` -- e.g. a joint
+    outcome like ``X, Y = RV(ProbabilitySpace(event_sim))`` where each draw
+    returns a pair of strings. Such a ``Tuple`` is not a numeric vector, so
+    ``RVResults.dim`` is ``None`` and the numeric ``dim == 2`` branch is
+    skipped; ``RVResults.plot()`` uses this to route the pair to the plot
+    types that already accept raw categorical arrays directly (mosaic,
+    stackedbar, tile) instead of falling through to the path-plot
+    catch-all, which drew each pair as a meaningless two-point line
+    against index (0, 1).
+
+    Parameters
+    ----------
+    results : iterable
+        The stored simulation outcomes.
+
+    Returns
+    -------
+    bool
+        True if the outcomes are a 2D collection of strings/bytes, False
+        otherwise (numeric, some other dimension, or non-string objects).
+    """
+    try:
+        arr = np.asarray(list(results))
+    except Exception:
+        return False
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        return False
+    if arr.dtype.kind in ("U", "S"):
+        return True
+    if arr.dtype.kind == "O":
+        return all(isinstance(v, (str, bytes)) for row in arr.tolist() for v in row)
+    return False
+
+
+def _draw_mosaic_family(x, y, ax, type, **kwargs):
+    """Draw whichever of mosaic / stacked bar ``type`` asks for.
+
+    Both the numeric two-variable branch and the two-categorical branch of
+    ``RVResults.plot()`` offer these two types, so the choice, the draw,
+    and the "try the other one" nudge live here once rather than being
+    written out at each call site where they could drift apart.
+
+    Parameters
+    ----------
+    x, y : array-like
+        The paired simulated values.
+    ax : matplotlib.axes.Axes
+        The axes to draw on.
+    type : tuple of str
+        The requested plot type(s). ``"stackedbar"`` wins if present;
+        otherwise a mosaic is drawn.
+    **kwargs
+        Passed through to ``make_mosaic`` / ``make_stackedbar``.
+
+    Returns
+    -------
+    str
+        ``"mosaic"`` or ``"stackedbar"`` -- whichever was drawn, for the
+        caller to record as the resolved type.
+    """
+    resolved = "stackedbar" if "stackedbar" in type else "mosaic"
+    draw = make_stackedbar if resolved == "stackedbar" else make_mosaic
+    draw(x, y, ax, **kwargs)
+    note = mosaic_type_suggestion(x, y, resolved)
+    if note is not None:
+        print(note)
+    return resolved
 
 
 def _sim_with_progress(draw_func, n, progress_delay=5.0, bar_width=30):
@@ -1920,10 +1994,17 @@ class RVResults(Results):
             Plot type or types to display. Valid values are
             ``"hist"``, ``"bar"``, ``"impulse"``, ``"density"``,
             ``"ecdf"``, ``"dotplot"``, ``"rug"``, ``"scatter"``,
-            ``"tile"``, ``"mosaic"``, ``"violin"``, and ``"box"``
-            (alias ``"boxplot"``).
-            ``"mosaic"`` is only meaningful for two discrete-ish
-            variables -- the same configuration ``"tile"`` targets.
+            ``"tile"``, ``"mosaic"``, ``"stackedbar"``, ``"violin"``,
+            and ``"box"`` (alias ``"boxplot"``).
+            ``"mosaic"`` and ``"stackedbar"`` are only meaningful for
+            two discrete-ish variables -- the same configuration
+            ``"tile"`` targets. They are the same plot except for the
+            column widths: a mosaic makes each column's width
+            proportional to how often that ``x`` value occurred, while
+            a stacked bar draws every column the same width, which
+            reads better when there are many categories or some are
+            rare. Whichever you pick, Symbulate suggests the other one
+            if it would suit the number of categories better.
             If None, a default is chosen from the data: whether each
             variable looks discrete (``classify_values``) and whether
             the sample is small select an entry from the
@@ -1994,13 +2075,13 @@ class RVResults(Results):
             times the interquartile range and draws more extreme
             points individually as outliers; ``False`` extends the
             whiskers to the minimum and maximum values instead),
-            ``label`` (legend name for hist, impulse, dot, scatter,
-            segmented density, and segmented histogram plots), and
-            ``equal_width`` (mosaic plots: ``True`` draws every column
-            the same width instead of proportional to its marginal
-            frequency -- a 100%-stacked bar chart per ``x`` value;
-            default ``False`` keeps mosaic's standard proportional
-            widths).
+            and ``label`` (legend name for hist, impulse, dot, scatter,
+            segmented density, and segmented histogram plots).
+
+            The old ``equal_width`` and ``marginal_column`` keywords are
+            gone: equal-width columns are now ``type="stackedbar"``, and
+            a mosaic names its categories with a legend rather than an
+            extra column. Passing either one raises a message saying so.
 
         Returns
         -------
@@ -2095,7 +2176,7 @@ class RVResults(Results):
                     f"Unrecognized plot type {type!r}. "
                     "Valid types are: 'hist', 'bar', 'impulse', 'density', "
                     "'ecdf', 'dotplot', 'rug', 'scatter', 'tile', 'mosaic', "
-                    "'violin', 'box' (alias 'boxplot') (and, "
+                    "'stackedbar', 'violin', 'box' (alias 'boxplot') (and, "
                     "for 2D data, 'hist2d', 'density2d', 'segmented_rug', "
                     "'segmented_density', 'segmented_hist')."
                 )
@@ -2131,6 +2212,28 @@ class RVResults(Results):
                 "as a matrix of every pair by default, so .plot() alone does "
                 "it. Drop pairs=True. (For the old plot of one line per "
                 "realization against its index, use type='path'.)"
+            )
+
+        # equal_width= used to switch a mosaic plot between proportional
+        # and equal column widths, and marginal_column= used to add an
+        # extra reference column. Both are now decided by the plot type
+        # itself, so say what to use instead rather than letting the
+        # stray keyword reach matplotlib as a Rectangle error.
+        if "equal_width" in kwargs:
+            raise ValueError(
+                "equal_width= is no longer a plotting argument: the two "
+                "column widths are now separate plot types. Use "
+                "type='stackedbar' for equal-width columns, or "
+                "type='mosaic' for widths proportional to how often each "
+                "category occurred."
+            )
+        if "marginal_column" in kwargs:
+            raise ValueError(
+                "marginal_column= is no longer a plotting argument. A "
+                "mosaic or stacked bar plot now names its categories with "
+                "a legend instead of an extra column. To see one "
+                "variable's overall distribution on its own, plot that "
+                "variable by itself."
             )
 
         # Three or more variables have no single joint plot, so the default is
@@ -2351,11 +2454,6 @@ class RVResults(Results):
                 _2d_token = {}
             else:
                 _2d_token = {"hist": "hist2d", "density": "density2d"}
-            # equal_width draws mosaic's title as "Stacked Plot" instead of
-            # "Mosaic Plot" (see make_mosaic) -- remap the suggestion note's
-            # display name to match, the same way hist/density remap above.
-            if "mosaic" in type and kwargs.get("equal_width"):
-                _2d_token["mosaic"] = "mosaic_equal_width"
             _suggestion = (_2d_token.get(type[0], type[0]), default, alternatives)
             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
             # make_scatter, and the mesh types (hist/density/tile) encode
@@ -2364,14 +2462,14 @@ class RVResults(Results):
             # has no per-type constant yet.
             legacy_alpha = 0.5 if alpha is None else alpha
 
-            if marginal and "mosaic" in type:
+            if marginal and ("mosaic" in type or "stackedbar" in type):
+                _mt = "stackedbar" if "stackedbar" in type else "mosaic"
                 raise ValueError(
-                    "marginal=True isn't supported with type='mosaic' -- a "
-                    "mosaic plot already shows x's marginal distribution "
-                    "through its column widths and y's marginal "
-                    "distribution through its own marginal column. Use "
-                    "type='mosaic', marginal_column=True (the default) "
-                    "instead of marginal=True."
+                    f"marginal=True isn't supported with type='{_mt}'. A "
+                    "mosaic plot already shows x's distribution through "
+                    "its column widths, and both plot types show y's "
+                    "distribution within each column, so the side strips "
+                    "would draw the same thing twice. Drop marginal=True."
                 )
             # Peeked (not popped) before the main-panel dispatch below,
             # since some branches (segmented density) pop "bandwidth" out
@@ -2564,9 +2662,10 @@ class RVResults(Results):
                     if discrete_y and tile_y_ticks is None:
                         _resolved_main_type_y = None
                     _marginal_hist_edges = (tile_x_edges, tile_y_edges)
-            elif "mosaic" in type:
-                make_mosaic(x, y, ax, normalize=normalize, **kwargs)
-                _resolved_main_type_x = _resolved_main_type_y = "mosaic"
+            elif "mosaic" in type or "stackedbar" in type:
+                _resolved_main_type_x = _resolved_main_type_y = _draw_mosaic_family(
+                    x, y, ax, type, **kwargs
+                )
             elif "violin" in type:
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))
@@ -2723,6 +2822,63 @@ class RVResults(Results):
                 # axes current), and the joint panel is the one plt.gca()
                 # should mean after a two-variable plot.
                 plt.sca(ax)
+        elif self.index_set is None and _is_categorical_2d(self.results):
+            # 2D categorical (string) outcomes, e.g. two dependent
+            # categorical variables built from a raw ProbabilitySpace:
+            #
+            #   def event_sim():
+            #       a = BoxModel(["a", "not a"], probs=[0.8, 0.2]).draw()
+            #       b = BoxModel(["b", "not b"], probs=[0.7, 0.3]).draw()
+            #       return a, b
+            #   X, Y = RV(ProbabilitySpace(event_sim))
+            #   (X & Y).sim(1000).plot()
+            #
+            # A pair of strings is not a numeric vector, so this gets
+            # dim=None and skips the numeric dim == 2 branch above; without
+            # this branch it fell through all the way to the path-plot
+            # catch-all at the bottom, which drew each pair as a
+            # meaningless two-point "path" against index (0, 1).
+            #
+            # Only mosaic, stackedbar, and tile are offered: all three
+            # accept raw categorical arrays directly, unlike make_scatter,
+            # whose jitter modes assume integer-coded positions. A mosaic
+            # is the default because the question two dependent
+            # categorical variables are almost always simulated to ask --
+            # does y's distribution change with x -- is exactly what
+            # comparing its columns answers.
+            arr = np.asarray(list(self.results))
+            x, y = arr[:, 0], arr[:, 1]
+            _, small_n = classify_values(arr[:, 0])
+            default, alternatives = default_plot_type("2D_categorical", small_n)
+            if type is None:
+                type = (default,)
+            _suggestion = (type[0], default, alternatives)
+            if marginal:
+                raise ValueError(
+                    "marginal=True isn't supported for two categorical "
+                    "(text) variables -- only for numeric or mixed data. "
+                    "Drop marginal=True."
+                )
+            ax = plt.gca()
+            get_next_color(ax)
+            if "mosaic" in type or "stackedbar" in type:
+                _draw_mosaic_family(x, y, ax, type, **kwargs)
+            elif "tile" in type:
+                make_tile(
+                    x,
+                    y,
+                    ax,
+                    normalize=normalize,
+                    discrete_x=True,
+                    discrete_y=True,
+                    **kwargs,
+                )
+            else:
+                raise ValueError(
+                    f"{type[0]!r} can't be used for two categorical (text) "
+                    "variables. This works with type='mosaic', "
+                    "type='stackedbar', or type='tile'."
+                )
         elif self.index_set is None and _is_categorical_1d(self.results):
             # 1D categorical (string) outcomes. These are not numbers, so
             # they get dim=None and skip the dim == 1 branch, but they are a

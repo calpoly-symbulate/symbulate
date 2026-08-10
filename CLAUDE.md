@@ -145,7 +145,9 @@ the same axes. Three outcomes:
 - Hard error: multi-panel GridSpec layout cannot be joined.
   Error cases: a simulated plot drawn with `marginal=True`, **every**
   theoretical two-variable plot (they always show the strips), and any pairs
-  matrix.
+  matrix. Also `mosaic`/`stackedbar` — not a GridSpec problem, but each one
+  re-partitions the whole canvas, so a second would completely cover the
+  first (see "Mosaic and Stacked Bar" below).
 See design document Section 5 for exact warning and error text.
 
 A simulated 2-D plot overlays normally, because it is a single panel unless
@@ -542,6 +544,58 @@ of one for a process (index it: `upcrossings(X, level=3)[2]`). See
 - Exhaustion is recorded on `_UpcrossingWalk.finished`, so a sequence that has
   run past `max_time` does not re-walk the path for every later index.
 
+## Mosaic and Stacked Bar
+
+Two discrete-or-categorical variables, drawn as columns of stacked segments:
+column = one x value, segment = one y value, segment heights = y's
+*conditional* distribution within that column. Comparing columns is how you
+see whether y depends on x, which a single-color-scale plot like `tile`
+can't show directly.
+
+**They are two plot types, not one with a flag.** `type="mosaic"` gives
+column widths proportional to each x value's marginal count (so area encodes
+joint frequency — the textbook mosaic). `type="stackedbar"` gives every
+column the same width (a 100%-stacked bar chart), which reads better when
+some categories are rare. `make_mosaic` and `make_stackedbar` in `plot.py`
+are thin wrappers over one shared `_draw_mosaic`; segment heights are
+identical either way, only the widths differ.
+
+The old `equal_width=` and `marginal_column=` keywords are **gone** — both
+now raise a message naming the replacement, the same pattern `dims=`/`pairs=`
+use. Do not reintroduce them as user-facing arguments.
+
+Four things to respect:
+
+- **No in-cell labels, and no `normalize` on these types.** A printed number
+  in every cell crowded out the shapes the plot exists to show, and the
+  segment heights already encode the same quantity against the 0-to-1 scale
+  on the left. `normalize` only ever affected those labels, so it is not
+  passed to either helper; the geometry is always proportions.
+- **A zero-count segment reserves no gap.** `_mosaic_spans` only puts gaps
+  *between* segments with positive weight. Reserving one for an invisible
+  segment left a sliver of blank space, so a column missing a category
+  stopped short of 0 or 1 instead of filling its axis. There are tests
+  pinning both ends at exactly 0 and 1 — don't "simplify" the gap arithmetic
+  back to a flat `gap * (n - 1)`.
+- **Overlay is a hard `ValueError`, checked before anything is drawn** so a
+  refused second plot leaves the first intact. Both types share the one
+  `ax._mosaic_count` counter, so mixing them is still an overlay.
+- **The 4-category nudge is a suggestion, never a refusal.**
+  `mosaic_type_suggestion(x, y, plot_type)` returns a message (or `None`)
+  when the other type would read better: past `MOSAIC_SUGGEST_MAX_CATEGORIES`
+  on *either* axis a mosaic's rare columns get too thin, and below it a
+  stacked bar is throwing away the width information a mosaic would show.
+
+**Two categorical variables default to `mosaic`.** A pair of strings is not a
+numeric vector, so `RVResults.dim` is `None` and the numeric `dim == 2` branch
+is skipped; `_is_categorical_2d` in `results.py` catches them and routes to
+the `"2D_categorical"` lookup row (`mosaic`, then `stackedbar`/`tile`).
+Without that branch they fell through to the path-plot catch-all and drew each
+pair as a meaningless two-point line titled "Sample Path". Only those three
+types are offered — `make_scatter`'s jitter modes assume integer-coded
+positions, so a categorical scatter is future work rather than something to
+silently work around.
+
 ## Suggestion Messages
 
 Print a message after a plot renders — this fires whether or not
@@ -664,10 +718,11 @@ Things to respect:
 - **`plt.gca()` is the joint panel.** Drawing the strips and the colorbar
   moves the current axes (`fig.add_axes` makes its axes current), so both
   sides call `plt.sca(ax)` at the end.
-- **`marginal=True` with `type="mosaic"` raises.** A mosaic already shows
-  both marginals itself (column widths and its own marginal column), so strips
-  would draw each of them twice. Pairs-matrix panels need no such guard: they
-  never pass `marginal=True`.
+- **`marginal=True` with `type="mosaic"` or `type="stackedbar"` raises.** A
+  mosaic already shows x's distribution through its column widths, and both
+  types show y's within each column, so strips would draw the same thing
+  twice. Pairs-matrix panels need no such guard: they never pass
+  `marginal=True`.
 - **The theoretical strips are exact.** They come from `_marginal_1d(i)`, the
   closed-form marginal, drawn by the univariate `Distribution.plot()` — not a
   slice or a sum over the joint surface. `_plot_marginal_panel` draws the
@@ -876,6 +931,8 @@ pytest tests/
 - Do not rename `type=` to `kind=` or anything else — considered and decided against.
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
 - Do not use `viridis_r` (reversed) for 2D density/tile/hist2d — plain `viridis`, 0 = dark.
+- Do not bring back `equal_width=`, `marginal_column=`, `annotate=`, or in-cell labels on mosaic/stacked bar plots, and do not soften their overlay back to a warning — all were removed by request (see "Mosaic and Stacked Bar")
+- Do not reserve a gap for a zero-weight segment in `_mosaic_spans` — that was the bug that stopped columns short of 0 and 1, and there are tests pinning both ends
 - Do not push directly to `main` or `dev`
 - Do not change the public API without team discussion
 - Do not add new dependencies without team agreement (current deps: `numpy`, `scipy`, `matplotlib`)
