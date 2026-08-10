@@ -1,4 +1,5 @@
 from collections import Counter
+import numbers
 
 import numpy as np
 
@@ -543,6 +544,10 @@ class BoxModel(ProbabilitySpace):
         TypeError
             If the ``box`` is not specified as either a list or a dict.
         ValueError
+            If ``box`` is empty.
+        ValueError
+            If ``size`` is negative.
+        ValueError
             If ``probs`` is provided but its length does not match the number
             of tickets in the box.
         ValueError
@@ -559,6 +564,27 @@ class BoxModel(ProbabilitySpace):
             self.probs = None
         else:
             raise TypeError("Box must be specified either as a list or a dict.")
+        if len(self.box) == 0:
+            raise ValueError(
+                "box is empty -- there is nothing to draw from. Give "
+                "BoxModel a non-empty list of tickets, e.g. "
+                "BoxModel([1, 2, 3])."
+            )
+        # size=None means "draw 1 ticket"; float('inf') is a legitimate,
+        # deliberately unbounded lazy sequence. Only an actual negative
+        # number is invalid -- this used to pass silently and only fail
+        # later, inside .draw(), with a raw NumPy message ("negative
+        # dimensions are not allowed") that never mentions size.
+        if (
+            size is not None
+            and isinstance(size, numbers.Real)
+            and size != float("inf")
+            and size < 0
+        ):
+            raise ValueError(
+                f"size must be a non-negative number of tickets to draw, "
+                f"got size={size!r}."
+            )
         if probs is not None and len(probs) != len(self.box):
             raise ValueError(
                 f"probs must have the same length as box, "
