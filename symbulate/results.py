@@ -30,6 +30,7 @@ from matplotlib.ticker import MaxNLocator
 from .plot import (
     B_1D,
     K_2D,
+    VIOLIN_ALPHA,
     TILE_DEFAULT_BINS,
     DISCRETE_INDEX_OFFSET,
     DOTPLOT_MAX_STACK,
@@ -2458,9 +2459,11 @@ class RVResults(Results):
             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
             # make_scatter, and the mesh types (hist/density/tile) encode
             # magnitude with a colormap instead of transparency. The
-            # legacy 0.5 default still applies to the violin panel, which
-            # has no per-type constant yet.
-            legacy_alpha = 0.5 if alpha is None else alpha
+            # violin panel uses plot.py's own VIOLIN_ALPHA constant
+            # (previously re-hardcoded as a duplicate literal 0.5 here,
+            # which would have silently drifted out of sync with
+            # VIOLIN_ALPHA if that constant were ever retuned).
+            legacy_alpha = VIOLIN_ALPHA if alpha is None else alpha
 
             if marginal and "mosaic" in type:
                 raise ValueError(
