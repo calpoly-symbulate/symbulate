@@ -271,6 +271,26 @@ class TestRVGetItem(unittest.TestCase):
         sims = Z[0].sim(100)
         self.assertTrue(all(v == 1 for v in sims))
 
+    def test_open_ended_slice_does_not_crash(self):
+        # Regression test: X[1:] used to crash with a raw
+        # "TypeError: 'NoneType' object cannot be interpreted as an
+        # integer" because __getitem__ rebuilt a range() from the slice's
+        # start/stop/step instead of slicing the realized value directly.
+        seed()
+        X = RV(BoxModel([0, 1, 2, 3, 4], size=5))
+        sub = X[1:].draw()
+        self.assertEqual(len(sub), 4)
+
+    def test_open_ended_slice_matches_native_slicing(self):
+        # Compare against the *same* underlying outcome (not two separate
+        # random draws) so this actually pins the slicing logic itself.
+        P = BoxModel([0, 1, 2, 3, 4], size=5)
+        X = RV(P)
+        outcome = P.draw()
+        full = X.func(outcome)
+        self.assertEqual(tuple(X[1:].func(outcome)), tuple(full[1:]))
+        self.assertEqual(tuple(X[::2].func(outcome)), tuple(full[::2]))
+
 
 class TestRVArithmetic(unittest.TestCase):
 
