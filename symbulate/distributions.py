@@ -1646,8 +1646,9 @@ class Zeta(Distribution):
     first hundred values carry only about 40% of it. So :attr:`xlim`
     deliberately shows just the first 20 values, which is where the
     power-law shape is visible, rather than stretching out along a tail
-    that never really ends. Pass an explicit ``xlim=(1, high)`` to
-    :meth:`plot` to look further out.
+    that never really ends. To look further out, set the window on the
+    distribution before plotting -- ``X = Zeta(shape=1.1); X.xlim = (1,
+    100); X.plot()`` -- or move the axis afterwards with ``xlim(1, 100)``.
 
     **A naming warning about scipy.** ``scipy.stats.zipf`` is this
     distribution, the zeta -- *not* the finite Zipf, which scipy calls
@@ -2756,8 +2757,8 @@ class ExponentiallyModifiedGaussian(Distribution):
         # Unbounded on both sides, like Laplace and Gumbel, so both ends of
         # the default window are quantile cuts, and the automatic zoom has
         # nothing further to give up. A small rate makes the right tail long
-        # enough that the window looks lopsided -- pass an explicit
-        # xlim=(low, high) to plot() to frame the bulk of the probability.
+        # enough that the window looks lopsided -- assign X.xlim = (low, high)
+        # before plotting to frame the bulk of the probability.
 
 
 class Gamma(Distribution):
@@ -3111,12 +3112,110 @@ class LogGamma(Distribution):
         super().__init__(params, stats.loggamma, False)
 
 
+class InverseGaussian(Distribution):
+    """Probability space for an inverse Gaussian (Wald) distribution.
+
+    A right-skewed distribution over the positive numbers. It arises as a
+    *first passage time*: if a Brownian motion drifts steadily upward, the
+    time it first reaches a fixed level has this distribution. That makes it
+    a natural model for a duration or a waiting time -- how long a repair
+    takes, how long a customer stays -- where most values cluster near a
+    typical length but a few run much longer.
+
+    Parameters
+    ----------
+    mean : float, optional
+        Expected value of the distribution. Must be positive. Default is 1.0.
+    shape : float, optional
+        Shape parameter (often written λ). Must be positive. Larger values
+        concentrate the distribution around ``mean`` and make it less skewed.
+        Default is 1.0.
+
+    Attributes
+    ----------
+    mean_param : float
+        Expected value of the distribution, as passed in.
+    shape : float
+        Shape parameter (λ).
+
+    Notes
+    -----
+    **Despite the name, it is unrelated to the reciprocal of a normal random
+    variable.** "Inverse" refers to a relationship between two functions
+    describing Brownian motion, not to dividing anything by anything. It is
+    also called the Wald distribution.
+
+    The variance is ``mean ** 3 / shape``, so spread grows quickly with the
+    mean and shrinks as the shape grows. As ``shape`` goes to infinity with
+    ``mean`` held fixed, the distribution approaches
+    ``Normal(mean, mean ** 3 / shape)`` -- that is, a normal distribution
+    with the same mean and variance, the skewness washing out as the
+    variance shrinks.
+
+    The expected value is stored as ``mean_param`` rather than ``mean``,
+    because :class:`Distribution` gives every distribution a ``mean()``
+    *method* returning the expected value. Storing the parameter under its
+    own name would overwrite that method, so ``X.mean()`` calls the method
+    and ``X.mean_param`` reads the number that was passed in. They agree:
+    ``X.mean() == X.mean_param``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = InverseGaussian(mean=2, shape=3)
+    >>> round(float(X.mean()), 4)
+    2.0
+    >>> round(float(X.var()), 4)
+    2.6667
+    >>> round(float(X.pdf(2)), 4)
+    0.2443
+    >>> X.draw()  # doctest: +SKIP
+    1.37
+    """
+
+    def __init__(self, mean=1.0, shape=1.0):
+        """Initialize an inverse Gaussian distribution.
+
+        Raises
+        ------
+        Exception
+            If ``mean`` or ``shape`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(mean, numbers.Real) or mean <= 0,
+                "mean must be a positive number",
+            ),
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+        )
+        # Stored as `mean_param`, not `mean`: `Distribution.__init__` assigns
+        # `self.mean` the callable that returns the expected value, so a
+        # `self.mean` here would be silently replaced by that method.
+        self.mean_param = mean
+        self.shape = shape
+
+        # scipy's invgauss is parameterized by `mu` and `scale`, with
+        # mean = mu * scale and variance = mu ** 3 * scale ** 2. Setting
+        # scale = shape and mu = mean / shape gives back the textbook
+        # (mean, shape) convention used here:
+        #     mean:      (mean / shape) * shape           = mean
+        #     variance:  (mean / shape) ** 3 * shape ** 2 = mean ** 3 / shape
+        params = {"mu": mean / shape, "scale": shape}
+        # Support is (0, inf), so the default window is (0, quantile(0.999)) --
+        # the fixed lower bound kept as-is, the unbounded upper end cut at a
+        # quantile. No per-distribution window code is needed.
+        super().__init__(params, stats.invgauss, False)
+
+
 class Beta(Distribution):
     """Probability space for a beta distribution.
 
-    A continuous distribution defined on [0, 1], often used to model
-    probabilities or proportions. The shape changes with parameters
-    ``shape1`` and ``shape2``.
+    A continuous distribution defined on ``[xmin, xmax]`` -- by default
+    ``[0, 1]`` -- often used to model probabilities or proportions. The
+    shape changes with parameters ``shape1`` and ``shape2``.
 
     Parameters
     ----------
@@ -3124,6 +3223,11 @@ class Beta(Distribution):
         First shape parameter (often written α). Must be positive.
     shape2 : float
         Second shape parameter (often written β). Must be positive.
+    xmin : float, optional
+        Smallest possible value. Default is 0.0.
+    xmax : float, optional
+        Largest possible value. Must be greater than ``xmin``. Default
+        is 1.0.
 
     Attributes
     ----------
@@ -3131,6 +3235,28 @@ class Beta(Distribution):
         First shape parameter (α). Must be positive.
     shape2 : float
         Second shape parameter (β). Must be positive.
+    xmin : float
+        Smallest possible value.
+    xmax : float
+        Largest possible value.
+
+    Notes
+    -----
+    The two shape parameters set the *shape* of the density and the two
+    bounds set *where it sits*, so the two choices are independent. A beta
+    on ``[xmin, xmax]`` is the standard one on ``[0, 1]`` stretched by the
+    width and shifted to the new start: if ``S`` has a
+    ``Beta(shape1, shape2)`` distribution, then
+
+        ``xmin + (xmax - xmin) * S``
+
+    has a ``Beta(shape1, shape2, xmin, xmax)`` distribution. Every summary
+    follows from that same stretch-and-shift -- the mean, for instance, is
+    ``xmin + (xmax - xmin) * shape1 / (shape1 + shape2)``.
+
+    The default ``xmin=0``, ``xmax=1`` leaves the standard beta unchanged.
+    :class:`PERT` is built the same way, stretching a beta onto
+    ``[low, high]`` with shapes chosen to put the peak at a given mode.
 
     Examples
     --------
@@ -3140,19 +3266,27 @@ class Beta(Distribution):
     0.5
     >>> round(float(X.pdf(0.5)), 4)
     1.0
+    >>> float(Beta(1, 1, xmin=2, xmax=4).mean())
+    3.0
     >>> X.draw()  # doctest: +SKIP
     0.632
     """
 
-    def __init__(self, shape1, shape2):
+    def __init__(self, shape1, shape2, xmin=0.0, xmax=1.0):
         """Initialize a beta distribution.
 
         Raises
         ------
         Exception
-            If ``shape1`` or ``shape2`` is not a positive number.
+            If ``shape1`` or ``shape2`` is not a positive number, if
+            ``xmin`` or ``xmax`` is not a number, or if ``xmax`` is not
+            greater than ``xmin``.
         """
-
+        # The bounds are compared to each other below, so that check is
+        # guarded by this type check -- otherwise a non-numeric bound would
+        # raise a cryptic TypeError from the comparison instead of reporting
+        # the friendly message. Same guard PERT uses on its three bounds.
+        numeric = isinstance(xmin, numbers.Real) and isinstance(xmax, numbers.Real)
         _validate(
             (
                 not isinstance(shape1, numbers.Real) or shape1 <= 0,
@@ -3162,11 +3296,20 @@ class Beta(Distribution):
                 not isinstance(shape2, numbers.Real) or shape2 <= 0,
                 "shape2 must be a positive number",
             ),
+            (not isinstance(xmin, numbers.Real), "xmin must be a number"),
+            (not isinstance(xmax, numbers.Real), "xmax must be a number"),
+            (numeric and xmax <= xmin, "xmax must be greater than xmin"),
         )
         self.shape1 = shape1
         self.shape2 = shape2
+        self.xmin = xmin
+        self.xmax = xmax
 
-        params = {"a": shape1, "b": shape2}
+        # Stretch the standard beta from [0, 1] onto [xmin, xmax] with
+        # scipy's own loc/scale, the same mechanism PERT uses. The defaults
+        # give loc=0, scale=1, which is scipy's no-op, so the standard beta
+        # is unchanged.
+        params = {"a": shape1, "b": shape2, "loc": xmin, "scale": xmax - xmin}
         super().__init__(params, stats.beta, False)
 
 
@@ -4604,9 +4747,10 @@ class HalfCauchy(Distribution):
 
     That same heavy tail makes the default plotting window wide -- covering
     most of the probability genuinely requires reaching far out along the
-    tail -- so the density can look like a spike at 0. Pass an explicit
-    ``xlim=(0, high)`` to :meth:`plot` to inspect the bulk of the
-    distribution.
+    tail -- so the density can look like a spike at 0. To inspect the bulk
+    of the distribution, set the window on the distribution before plotting
+    -- ``X = HalfCauchy(scale=1); X.xlim = (0, 10); X.plot()`` -- or move
+    the axis afterwards with ``xlim(0, 10)``.
 
     Examples
     --------

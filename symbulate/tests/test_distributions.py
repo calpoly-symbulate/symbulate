@@ -21,6 +21,10 @@ from symbulate import distributions
 # module directly rather than coming in through the star import above.
 from symbulate.distributions import Benford
 
+# InverseGaussian is likewise not exported yet -- awaiting team sign-off on the
+# public-API addition -- so it too is imported straight from its module.
+from symbulate.distributions import InverseGaussian
+
 Nsim = 10000
 
 
@@ -2440,6 +2444,113 @@ class TestLogGamma(unittest.TestCase):
         plt.close("all")
 
 
+class TestInverseGaussian(unittest.TestCase):
+
+    # The (mean, shape) pairs the formula checks sweep over.
+    PAIRS = [(1.0, 1.0), (2.0, 3.0), (0.5, 4.0), (5.0, 0.5), (3.0, 10.0)]
+
+    def test_InverseGaussian_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(InverseGaussian(mean=2, shape=3))
+        sims = X.sim(Nsim)
+        # scipy's own parameters, translated: mu = mean / shape, scale = shape.
+        cdf = stats.invgauss(mu=2 / 3, scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_InverseGaussian_mean_matches_parameter(self):
+        for mean, shape in self.PAIRS:
+            X = InverseGaussian(mean=mean, shape=shape)
+            self.assertAlmostEqual(float(X.mean()), mean, places=8)
+
+    def test_InverseGaussian_variance_is_mean_cubed_over_shape(self):
+        for mean, shape in self.PAIRS:
+            X = InverseGaussian(mean=mean, shape=shape)
+            self.assertAlmostEqual(float(X.var()), mean**3 / shape, places=8)
+
+    def test_InverseGaussian_mean_param_agrees_with_mean_method(self):
+        # `mean` is the method inherited from Distribution; the parameter is
+        # kept under `mean_param` so the two do not collide.
+        X = InverseGaussian(mean=2, shape=3)
+        self.assertEqual(X.mean_param, 2)
+        self.assertAlmostEqual(float(X.mean()), X.mean_param, places=8)
+
+    def test_InverseGaussian_pdf_matches_scipy(self):
+        for mean, shape in self.PAIRS:
+            X = InverseGaussian(mean=mean, shape=shape)
+            ref = stats.invgauss(mu=mean / shape, scale=shape)
+            for x in [0.1, 0.5, 1.0, 2.0, 5.0]:
+                self.assertAlmostEqual(float(X.pdf(x)), float(ref.pdf(x)), places=8)
+
+    @staticmethod
+    def _max_normal_gap(mean, shape):
+        """Largest cdf gap to Normal(mean, mean ** 3 / shape), over +/- 2 sd."""
+        X = InverseGaussian(mean=mean, shape=shape)
+        sd = (mean**3 / shape) ** 0.5
+        normal = Normal(mean=mean, sd=sd)
+        return max(
+            abs(float(X.cdf(mean + z * sd)) - float(normal.cdf(mean + z * sd)))
+            for z in [-2, -1, 0, 1, 2]
+        )
+
+    def test_InverseGaussian_approaches_normal_as_shape_grows(self):
+        # With the mean fixed, a large shape shrinks the variance and the skew
+        # washes out, leaving Normal(mean, mean ** 3 / shape). This is exact
+        # arithmetic, not a simulation, so the gap below is reproducible: it is
+        # about 2.8e-4 at shape = 1e6, comfortably inside the tolerance.
+        self.assertLess(self._max_normal_gap(2.0, 1_000_000), 1e-3)
+
+    def test_InverseGaussian_normal_gap_shrinks_with_shape(self):
+        # The limit itself, not just one point on the way to it: the gap has to
+        # keep closing as the shape grows.
+        gaps = [self._max_normal_gap(2.0, s) for s in [1e3, 1e4, 1e5, 1e6, 1e7]]
+        for earlier, later in zip(gaps, gaps[1:]):
+            self.assertLess(later, earlier)
+
+    def test_InverseGaussian_defaults(self):
+        X = InverseGaussian()
+        self.assertEqual(X.mean_param, 1.0)
+        self.assertEqual(X.shape, 1.0)
+
+    def test_InverseGaussian_is_positive(self):
+        X = InverseGaussian(mean=2, shape=3)
+        self.assertEqual(float(X.cdf(0)), 0.0)
+        self.assertGreater(float(X.quantile(0.001)), 0.0)
+
+    def test_InverseGaussian_is_right_skewed(self):
+        for mean, shape in self.PAIRS:
+            sk = float(stats.invgauss(mu=mean / shape, scale=shape).stats(moments="s"))
+            self.assertGreater(sk, 0.0)
+
+    def test_InverseGaussian_xlim_starts_at_zero(self):
+        # Support is (0, inf): the fixed lower bound is kept, the unbounded
+        # upper end is cut at the 0.999 quantile. No per-distribution code.
+        X = InverseGaussian(mean=2, shape=3)
+        low, high = X.xlim
+        self.assertEqual(low, 0.0)
+        self.assertAlmostEqual(high, float(X.quantile(0.999)), places=8)
+
+    def test_InverseGaussian_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(InverseGaussian(mean=2, shape=3).draw(), Scalar)
+
+    def test_InverseGaussian_invalid_mean_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: InverseGaussian(mean=b))
+
+    def test_InverseGaussian_invalid_shape_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: InverseGaussian(shape=b))
+
+    def test_InverseGaussian_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        InverseGaussian(mean=2, shape=3).draw()
+        RV(InverseGaussian(mean=2, shape=3)).sim(100).plot()
+        InverseGaussian(mean=2, shape=3).plot()
+        InverseGaussian(mean=2, shape=3).plot(cdf=True)
+        plt.close("all")
+
+
 class TestBeta(unittest.TestCase):
 
     def test_Beta_error_shape1(self):
@@ -2484,6 +2595,115 @@ class TestBeta(unittest.TestCase):
         X = Beta(shape1=2, shape2=5)
         self.assertAlmostEqual(float(X.mean()), 2 / 7)
         self.assertAlmostEqual(float(X.pdf(0.5)), stats.beta(a=2, b=5).pdf(0.5))
+
+    # --- xmin / xmax: the beta stretched onto an interval other than [0, 1] ---
+
+    def test_Beta_default_bounds_are_zero_one(self):
+        X = Beta(shape1=2, shape2=5)
+        self.assertEqual(X.xmin, 0.0)
+        self.assertEqual(X.xmax, 1.0)
+
+    def test_Beta_defaults_reproduce_standard_beta(self):
+        # The bounds are new, so the default case has to be bit-for-bit what
+        # it was: loc=0, scale=1 is scipy's no-op.
+        for a, b in [(1, 1), (2, 5), (0.5, 0.5), (3, 1), (7.5, 2.25)]:
+            X = Beta(shape1=a, shape2=b)
+            ref = stats.beta(a=a, b=b)
+            self.assertAlmostEqual(float(X.mean()), float(ref.mean()), places=12)
+            self.assertAlmostEqual(float(X.var()), float(ref.var()), places=12)
+            for x in [0.01, 0.25, 0.5, 0.75, 0.99]:
+                self.assertAlmostEqual(float(X.pdf(x)), float(ref.pdf(x)), places=12)
+                self.assertAlmostEqual(float(X.cdf(x)), float(ref.cdf(x)), places=12)
+
+    def test_Beta_with_bounds_matches_hand_stretched_beta(self):
+        # The defining identity: xmin + (xmax - xmin) * Beta(a, b) has this
+        # distribution. Compared against a stretched RV, not against scipy, so
+        # the test states the identity rather than restating the loc/scale call.
+        xmin, xmax = 10, 20
+        distributions.rng = np.random.default_rng(42)
+        stretched = (xmin + (xmax - xmin) * RV(Beta(shape1=2, shape2=5))).sim(Nsim)
+        cdf = Beta(shape1=2, shape2=5, xmin=xmin, xmax=xmax).cdf
+        pval = stats.kstest(stretched, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Beta_bounds_shift_and_stretch_the_mean(self):
+        for a, b, xmin, xmax in [
+            (1, 1, 2, 4),
+            (2, 5, 10, 20),
+            (3, 1, -5, 5),
+            (0.5, 0.5, 0, 100),
+        ]:
+            X = Beta(shape1=a, shape2=b, xmin=xmin, xmax=xmax)
+            expected = xmin + (xmax - xmin) * a / (a + b)
+            self.assertAlmostEqual(float(X.mean()), expected, places=8)
+            # Variance stretches by the square of the width.
+            standard_var = a * b / ((a + b) ** 2 * (a + b + 1))
+            self.assertAlmostEqual(
+                float(X.var()), (xmax - xmin) ** 2 * standard_var, places=8
+            )
+
+    def test_Beta_doctest_mean_is_three(self):
+        # Beta(1, 1) is Uniform(0, 1) with mean 0.5, so on [2, 4] the mean is
+        # 2 + 2 * 0.5 = 3. This is the value the class docstring shows.
+        self.assertEqual(float(Beta(1, 1, xmin=2, xmax=4).mean()), 3.0)
+
+    def test_Beta_support_follows_bounds(self):
+        # No per-distribution window code: the support comes from scipy, so
+        # xlim follows the bounds automatically.
+        X = Beta(shape1=2, shape2=5, xmin=10, xmax=20)
+        self.assertEqual(X._support(), (10.0, 20.0))
+        self.assertEqual(X.xlim, (10.0, 20.0))
+
+    def test_Beta_bounds_can_be_negative(self):
+        X = Beta(shape1=2, shape2=2, xmin=-3, xmax=-1)
+        self.assertEqual(X._support(), (-3.0, -1.0))
+        self.assertAlmostEqual(float(X.mean()), -2.0, places=8)
+
+    def test_Beta_error_xmax_not_greater_than_xmin(self):
+        for xmin, xmax in [(1, 1), (5, 2), (0, -1)]:
+            self.assertRaises(
+                Exception,
+                lambda lo=xmin, hi=xmax: Beta(shape1=2, shape2=5, xmin=lo, xmax=hi),
+            )
+
+    def test_Beta_error_non_numeric_bounds(self):
+        # A bad type must produce the friendly message, not a TypeError raised
+        # from inside the xmax > xmin comparison.
+        for bad in ["a", None, [0, 1]]:
+            with self.assertRaises(Exception) as cm:
+                Beta(shape1=2, shape2=5, xmin=bad)
+            self.assertIn("xmin must be a number", str(cm.exception))
+            with self.assertRaises(Exception) as cm:
+                Beta(shape1=2, shape2=5, xmax=bad)
+            self.assertIn("xmax must be a number", str(cm.exception))
+
+    def test_Beta_very_narrow_interval_is_well_behaved(self):
+        # A tiny width is legal; check nothing degenerates into nan or escapes
+        # the interval.
+        xmin, width = 1.0, 1e-10
+        X = Beta(shape1=2, shape2=5, xmin=xmin, xmax=xmin + width)
+        self.assertAlmostEqual(float(X.mean()), xmin + width * 2 / 7, places=12)
+        self.assertFalse(math.isnan(float(X.var())))
+        self.assertGreater(float(X.var()), 0.0)
+        distributions.rng = np.random.default_rng(0)
+        sims = np.array(RV(X).sim(1000), dtype=float)
+        self.assertFalse(np.isnan(sims).any())
+        self.assertTrue(((sims >= xmin) & (sims <= xmin + width)).all())
+
+    def test_Beta_plots_with_non_default_bounds(self):
+        Beta(shape1=2, shape2=5, xmin=10, xmax=20).draw()
+        RV(Beta(shape1=2, shape2=5, xmin=10, xmax=20)).sim(100).plot()
+        Beta(shape1=2, shape2=5, xmin=10, xmax=20).plot()
+        Beta(shape1=2, shape2=5, xmin=10, xmax=20).plot(cdf=True)
+        plt.close("all")
+
+    def test_Beta_internal_uses_are_unaffected(self):
+        # Beta is reused inside Dirichlet (and stretched the same way by PERT),
+        # neither of which passes bounds. Pin that they still get [0, 1].
+        marginal = Dirichlet([2.0, 3.0, 5.0])._marginal_1d(0)
+        self.assertIsInstance(marginal, Beta)
+        self.assertEqual((marginal.xmin, marginal.xmax), (0.0, 1.0))
+        self.assertEqual(marginal._support(), (0.0, 1.0))
 
 
 class TestPERT(unittest.TestCase):

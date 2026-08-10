@@ -218,8 +218,13 @@ class MA(RV):
     noise_dist : Distribution or RV, optional
         The distribution of one shock. Default is ``Normal(0, 1)``.
     mean : float, optional
-        The level the process varies around. Default is 0. Because the
-        shocks average out, this really is the mean of every value.
+        The level the process varies around. Default is 0. This really is
+        the mean of every value *only* when ``noise_dist`` has mean 0 (the
+        default, ``Normal(0, 1)``) -- the shocks then average out exactly.
+        A ``noise_dist`` with nonzero mean does not average out, so it
+        shifts the process's actual mean to
+        ``mean + noise_dist.mean() * (1 + sum(coefs))`` instead of
+        ``mean`` itself.
 
     Attributes
     ----------
@@ -672,8 +677,15 @@ class ARMA(RV):
     noise_dist : Distribution or RV, optional
         The distribution of one shock. Default is ``Normal(0, 1)``.
     mean : float, optional
-        The level the process varies around. Default is 0. For a stationary
-        process this really is the mean of every value.
+        The level the process varies around. Default is 0. For a
+        stationary process this really is the mean of every value *only*
+        when ``noise_dist`` has mean 0 (the default, ``Normal(0, 1)``).
+        A ``noise_dist`` with nonzero mean shifts the process's actual
+        mean to
+        ``mean + noise_dist.mean() * (1 + sum(ma_coefs)) / (1 - sum(ar_coefs))``
+        instead of ``mean`` itself, since each shock's drift echoes
+        forward through the autoregressive part exactly like a deviation
+        from ``mean`` does.
     initial : float, sequence, Distribution, or str, optional
         Where the ``p`` values before time 0 come from. Default is 0. See
         Notes.
@@ -799,9 +811,11 @@ class AR(ARMA):
     Notes
     -----
     For a stationary AR(1) with coefficient ``phi`` and shock standard
-    deviation ``s``, every value has mean ``mean`` and variance
-    ``s ** 2 / (1 - phi ** 2)``, and the correlation between values ``k``
-    steps apart is ``phi ** k`` -- decaying, but never reaching zero.
+    deviation ``s``, every value has mean ``mean`` (when ``noise_dist``
+    has mean 0 -- see :class:`ARMA`'s ``mean`` parameter for the
+    correction when it does not) and variance ``s ** 2 / (1 - phi ** 2)``,
+    and the correlation between values ``k`` steps apart is ``phi ** k``
+    -- decaying, but never reaching zero.
 
     Examples
     --------
@@ -832,42 +846,59 @@ class AR(ARMA):
         self.coefs = self.ar_coefs
 
 
-def _garch_is_stationary(arch_coefs, garch_coefs):
+def _garch_is_stationary(arch_coefs, garch_coefs, noise_var):
     """Whether a GARCH process has a finite long-run variance.
 
-    True when the coefficients sum to less than 1. At 1 or above the
-    variance keeps growing instead of settling, so there is no
-    unconditional variance to speak of.
+    True when the persistence -- the ARCH coefficients scaled by the
+    variance of one standardized shock, plus the GARCH coefficients --
+    is less than 1. At 1 or above the variance keeps growing instead of
+    settling, so there is no unconditional variance to speak of.
+
+    The scaling matters because the ARCH terms weight *squared* shocks:
+    a shock with variance other than 1 changes how much persistence
+    those coefficients actually carry, even though the coefficients
+    themselves didn't change. See ``_unconditional_variance`` for the
+    matching long-run-variance formula.
 
     Parameters
     ----------
     arch_coefs, garch_coefs : list of float
         The two sets of coefficients.
+    noise_var : float
+        The variance of one draw from ``noise_dist`` (the standardized
+        shock). The textbook GARCH convention is a shock with variance
+        1, but Symbulate's ``noise_dist`` can be any distribution, so
+        this is not assumed here -- pass ``float(noise_dist.var())``.
 
     Returns
     -------
     bool
         ``True`` if the process settles down.
     """
-    return sum(arch_coefs) + sum(garch_coefs) < 1
+    return sum(arch_coefs) * noise_var + sum(garch_coefs) < 1
 
 
-def _unconditional_variance(omega, arch_coefs, garch_coefs):
-    """The long-run variance ``omega / (1 - sum of all coefficients)``.
+def _unconditional_variance(omega, arch_coefs, garch_coefs, noise_var):
+    """The long-run variance ``omega / (1 - persistence)``.
 
     Parameters
     ----------
     omega : float
         The constant term in the variance recursion.
     arch_coefs, garch_coefs : list of float
-        The two sets of coefficients. Must sum to less than 1.
+        The two sets of coefficients. Must give a persistence below 1
+        (see ``_garch_is_stationary``).
+    noise_var : float
+        The variance of one draw from ``noise_dist``. See
+        ``_garch_is_stationary`` for why this has to be passed in rather
+        than assumed to be 1.
 
     Returns
     -------
     float
         The variance the process settles at.
     """
-    return omega / (1 - sum(arch_coefs) - sum(garch_coefs))
+    return omega / (1 - sum(arch_coefs) * noise_var - sum(garch_coefs))
 
 
 def _validate_garch(omega, arch_coefs, garch_coefs, noise_dist, initial):
@@ -922,12 +953,14 @@ def _validate_garch(omega, arch_coefs, garch_coefs, noise_dist, initial):
     if initial is None:
         return
     if initial == STATIONARY:
-        if not _garch_is_stationary(arch_coefs, garch_coefs):
+        if not _garch_is_stationary(arch_coefs, garch_coefs, float(noise_dist.var())):
             raise ValueError(
-                'initial="stationary" is impossible when the coefficients sum '
-                "to 1 or more: the variance never settles, so there is no "
-                "long-run value to start from. Give a positive starting "
-                "variance instead, for example initial=1."
+                'initial="stationary" is impossible with these coefficients '
+                "and this noise_dist: the persistence -- arch_coefs scaled "
+                "by the shock's variance, plus garch_coefs -- is 1 or more, "
+                "so the variance never settles and there is no long-run "
+                "value to start from. Give a positive starting variance "
+                "instead, for example initial=1."
             )
         return
     if not isinstance(initial, numbers.Real):
@@ -1107,14 +1140,17 @@ class GARCHProbabilitySpace(ProbabilitySpace):
         self.garch_coefs = list(garch_coefs)
         self.noise_dist = noise_dist
 
-        settles = _garch_is_stationary(self.arch_coefs, self.garch_coefs)
+        noise_var = float(self.noise_dist.var())
+        settles = _garch_is_stationary(self.arch_coefs, self.garch_coefs, noise_var)
         if initial is None or initial == STATIONARY:
             # Starting at the long-run variance means there is no warm-up:
             # the variance is already where it belongs at time 0. When the
             # process does not settle there is no such value, so fall back to
             # omega and let the warm-up show.
             self.initial = (
-                _unconditional_variance(omega, self.arch_coefs, self.garch_coefs)
+                _unconditional_variance(
+                    omega, self.arch_coefs, self.garch_coefs, noise_var
+                )
                 if settles
                 else omega
             )
@@ -1192,13 +1228,19 @@ class GARCH(RV):
     ``GARCH(omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85])``. Longer lists
     give higher orders.
 
-    The process settles down when the coefficients sum to less than 1, and
-    its long-run variance is then ``omega / (1 - sum of all coefficients)``.
-    Since that is where ``initial`` starts by default, every value has the
-    same variance from time 0 onward. Coefficients summing to 1 or more are
-    allowed and simulate fine -- the variance simply grows instead of
-    settling -- but ``initial="stationary"`` rejects them, since there is no
-    long-run value to start from.
+    The process settles down when its *persistence* -- ``arch_coefs``
+    scaled by the variance of one shock from ``noise_dist``, plus
+    ``garch_coefs`` -- sums to less than 1, and its long-run variance is
+    then ``omega / (1 - persistence)``. With the default ``Normal(0, 1)``
+    shock (variance 1) persistence is just the coefficients' own sum, which
+    is the formula most textbooks show; a ``noise_dist`` with a different
+    variance changes how much persistence the same coefficients carry, and
+    both formulas above account for that. Since the long-run variance is
+    where ``initial`` starts by default, every value has the same variance
+    from time 0 onward. Coefficients (and shock variance) giving a
+    persistence of 1 or more are allowed and simulate fine -- the variance
+    simply grows instead of settling -- but ``initial="stationary"`` rejects
+    them, since there is no long-run value to start from.
 
     Examples
     --------
