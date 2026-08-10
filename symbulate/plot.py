@@ -697,9 +697,9 @@ class DistributionPlot(SymbulatePlot):
 
         The shaded region spans the currently displayed x-axis, so it
         honors whatever window :meth:`Distribution.plot` produced -- the
-        full default range, an ``xlim="zoom"`` window, an explicit
-        ``xlim=(low, high)``, or the union created by overlaying onto
-        existing axes.
+        distribution's own window, zoomed or not, a window set by hand on
+        the distribution, or the union created by overlaying onto existing
+        axes.
 
         Parameters
         ----------
@@ -744,8 +744,9 @@ class DistributionPlot(SymbulatePlot):
         ax = self.ax
         dist = self.dist
         # Bound the region by the *displayed* window, so an open tail extends
-        # to the visible edge of whatever plot() drew (xlim="zoom", a custom
-        # xlim, or an overlay union), not the distribution's static self.xlim.
+        # to the visible edge of whatever plot() drew (an automatically zoomed
+        # window, a custom xlim, or an overlay union), not the distribution's
+        # static self.xlim.
         axlo, axhi = ax.get_xlim()
 
         lo, hi = axlo, axhi
