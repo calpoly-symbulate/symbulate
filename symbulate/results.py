@@ -25,19 +25,26 @@ from .base import (
     Transformable,
     _build_mv_filter,
 )
+from matplotlib.ticker import MaxNLocator
+
 from .plot import (
     B_1D,
     K_2D,
+    VIOLIN_ALPHA,
     TILE_DEFAULT_BINS,
     DISCRETE_INDEX_OFFSET,
     DOTPLOT_MAX_STACK,
     JOINT_PAIRS_MAX_DIM,
     JOINT_PAIRS_OVERLAY_ERROR,
+    _thin_discrete_ticks,
     JOINT_PAIRS_PANEL_SIZE,
+    PAIRS_MAX_DISCRETE_TICKS,
     add_pairs_panel_colorbar,
     MARGINAL_OVERLAY_ERROR,
     setup_marginal_axes,
     pairs_colorbar_pair_label,
+    pairs_joint_label,
+    pairs_marginal_label,
     advance_pairs_diagonal_color,
     align_pairs_columns,
     PAIRS_SUPTITLE,
@@ -1421,6 +1428,9 @@ class RVResults(Results):
         Exception
             If the results cannot be standardized (e.g. outcomes
             have non-numeric or inconsistent dimension).
+        Exception
+            If the results have no variability -- every simulated value
+            is the same, so the standard deviation divided by is 0.
 
         See Also
         --------
@@ -1440,7 +1450,19 @@ class RVResults(Results):
         """
         self._set_array()
         if self.dim is not None:
-            return (self - self.mean()) / self.std()
+            std = self.std()
+            # A constant RV (e.g. BoxModel([5])) or a single-draw
+            # simulation (.sim(1)) both have a standard deviation of
+            # exactly 0, which used to divide silently into a raw
+            # ZeroDivisionError instead of an explanatory message.
+            if np.any(np.asarray(std, dtype=float) == 0):
+                raise Exception(
+                    "Can't standardize data with no variability -- every "
+                    f"value is {self.mean()!r}. Standardizing divides by "
+                    "the standard deviation, which is 0 when every "
+                    "simulated value is the same."
+                )
+            return (self - self.mean()) / std
         else:
             raise Exception("Could not standardize the given results.")
 
@@ -1767,6 +1789,11 @@ class RVResults(Results):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
                 cells[(row, col)] = ax
+                # What this panel's frequency axis measures, for a diagonal
+                # panel that has one. Read off the panel itself after it
+                # draws, so it follows the type actually used rather than
+                # being re-derived here (see the label section below).
+                marginal_quantity = ""
                 if row == col:
                     # The diagonal is this variable on its own, so it is
                     # exactly the univariate plot -- reuse the whole 1-D
@@ -1787,13 +1814,94 @@ class RVResults(Results):
                         # bins: the others draw every value where it falls and
                         # warn if handed a bin count.
                         diagonal_kwargs["bins"] = panel_bins
-                    self._pairs_subset((chosen[row],)).plot(
-                        type=diagonal_type,
-                        alpha=alpha,
-                        normalize=normalize,
-                        suggest=False,
-                        **diagonal_kwargs,
+
+                    column_values = np.asarray(self._pairs_column(chosen[row]))
+                    is_numeric = column_values.dtype.kind not in "USO"
+                    # A large-n discrete diagonal's column is always tiled
+                    # below it (never scatter, which is small-n only), so
+                    # checking one neighboring pair's resolved type is enough
+                    # to know how *this* column lays this axis out --
+                    # setup_tile_axis's real-value-vs-rank-index choice for
+                    # an axis depends only on that axis's own values, so
+                    # every tile panel in the column already agrees (the same
+                    # assumption align_pairs_columns makes).
+                    neighbor = (row + 1) % k if k > 1 else row
+                    uses_tile = (
+                        is_numeric
+                        and diagonal_type == "impulse"
+                        and self._pairs_joint_type(chosen[row], chosen[neighbor])
+                        == "tile"
                     )
+                    rank_ticks = (
+                        setup_tile_axis(column_values, True, panel_bins)[3]
+                        if uses_tile
+                        else None
+                    )
+                    if rank_ticks is not None:
+                        # This column's tile panels laid this axis out on
+                        # compacted rank-index cells rather than real values
+                        # -- setup_tile_axis does that for non-whole-number
+                        # discrete data (e.g. values 0.7 apart), which has no
+                        # "possible value in between" to fill on a real
+                        # number line. Draw the diagonal on the matching rank
+                        # codes instead of real values, so its stems land
+                        # under the correct tile column/row rather than on an
+                        # unrelated scale -- the same tile/marginal
+                        # coordinate mismatch DECISIONS.md already fixed once
+                        # for the marginal=True layout (DISCRETE_INDEX_OFFSET).
+                        positions, labels = rank_ticks
+                        rank_codes = np.searchsorted(labels, column_values)
+                        RVResults(list(rank_codes)).plot(
+                            type=diagonal_type,
+                            alpha=alpha,
+                            normalize=normalize,
+                            suggest=False,
+                            **diagonal_kwargs,
+                        )
+                        tick_pos, tick_lab = _thin_discrete_ticks(
+                            positions, labels, PAIRS_MAX_DISCRETE_TICKS
+                        )
+                        ax.set_xticks(tick_pos)
+                        ax.set_xticklabels([str(v) for v in tick_lab])
+                    else:
+                        self._pairs_subset((chosen[row],)).plot(
+                            type=diagonal_type,
+                            alpha=alpha,
+                            normalize=normalize,
+                            suggest=False,
+                            **diagonal_kwargs,
+                        )
+                        # A discrete diagonal's value axis otherwise inherits
+                        # whichever tick count its own plot type picked for a
+                        # full-size figure -- too many for this panel's
+                        # fraction of the width. ``integer=True`` is only
+                        # correct for a whole-number axis -- forcing it on a
+                        # non-whole-number discrete axis would snap ticks
+                        # onto values the variable never takes. An impulse
+                        # plot's value axis keeps its locator as drawn, so
+                        # cap it directly; a dot plot re-frames its value
+                        # axis on every draw (_dotplot_relayout), so record
+                        # the cap there instead.
+                        whole_number = is_numeric and np.all(
+                            column_values == np.round(column_values)
+                        )
+                        if is_numeric and diagonal_type == "impulse":
+                            ax.xaxis.set_major_locator(
+                                MaxNLocator(
+                                    nbins=PAIRS_MAX_DISCRETE_TICKS,
+                                    integer=whole_number,
+                                )
+                            )
+                        elif is_numeric and diagonal_type == "dotplot":
+                            ax._symbulate_value_ticks = PAIRS_MAX_DISCRETE_TICKS
+                    # Whatever this panel's own plot type called its
+                    # frequency axis -- "Density" or "Count" for a
+                    # histogram, "Relative Frequency" or "Count" for an
+                    # impulse plot, "Count" for a dot plot. A rug plot has
+                    # no frequency axis at all (it hides that direction
+                    # outright), so it leaves this empty and the panel keeps
+                    # the variable name below.
+                    marginal_quantity = ax.get_ylabel()
                 else:
                     joint_panels.append(
                         (
@@ -1811,7 +1919,7 @@ class RVResults(Results):
                         )
                     )
                 # Drop the title each panel drew for itself. On its own a plot
-                # is titled with its type ("Density Curve", "Tile Plot"), but
+                # is titled with its type ("Density (Estimated)", "Tile Plot"), but
                 # in a matrix that repeats the same two or three words down
                 # every panel and crowds them; the figure's own suptitle
                 # says what the layout is. The theoretical pairs plot clears
@@ -1830,14 +1938,19 @@ class RVResults(Results):
                     # panel's y-axis is a density and genuinely differs
                     # from its neighbors'.
                     ax.set_xticklabels([])
-                # The left column names its row's variable, so the labels read
-                # down the side in order -- including the top-left panel, which
-                # is the only one in its row and would otherwise go unnamed
-                # until the bottom of its column. That panel's y-axis is really
-                # a density rather than the variable, so the label names the
-                # row it heads rather than the axis it sits on; this is the
-                # convention seaborn's PairGrid uses too.
-                if col == 0:
+                # A diagonal panel's y-axis is not the variable at all -- it is
+                # how often that variable took each value -- so it says so,
+                # and says which of the matrix's two kinds of distribution it
+                # is showing. The variable itself is still named at the bottom
+                # of that column, since a diagonal panel sits above one.
+                # Everything else in the left column names its row's variable,
+                # so the labels read down the side in order; the inner panels
+                # stay unlabeled rather than repeat them.
+                if marginal_quantity:
+                    ax.set_ylabel(pairs_marginal_label(marginal_quantity))
+                elif col == 0:
+                    # A small-n continuous diagonal is a rug plot, which has no
+                    # frequency axis to name -- fall back to the row's variable.
                     ax.set_ylabel(self._pairs_variable_label(chosen[row]))
                 else:
                     ax.set_ylabel("")
@@ -1855,7 +1968,7 @@ class RVResults(Results):
         # Each joint panel gets its own colorbar, in the empty cell mirroring
         # it across the diagonal. Done after tight_layout, so the cells are
         # where they will finally be.
-        quantity = "Density" if normalize else "Count"
+        quantity = pairs_joint_label("Density" if normalize else "Count")
         for mappable, row, col in joint_panels:
             if mappable is None:
                 continue
@@ -1972,6 +2085,7 @@ class RVResults(Results):
                 discrete_x=discrete_x,
                 discrete_y=discrete_y,
                 colorbar=False,
+                max_discrete_ticks=PAIRS_MAX_DISCRETE_TICKS,
                 **kwargs,
             )
 
@@ -2446,8 +2560,8 @@ class RVResults(Results):
                 type = (default,)
             # On continuous x continuous data the short names hist/density
             # mean the 2D mesh variants, so map them to the explicit tokens
-            # for the suggestion note's display name ("2D Histogram" rather
-            # than "Histogram"). On mixed data the short names are already
+            # for the suggestion note's display name ("Joint Histogram"
+            # rather than "Histogram"). On mixed data the short names are already
             # what the table lists (they resolve to the segmented variants in
             # the dispatch), so no remap is needed there.
             if configuration == "2D_mixed":
@@ -2458,9 +2572,11 @@ class RVResults(Results):
             # Scatter defaults its own alpha (SCATTER_ALPHA) inside
             # make_scatter, and the mesh types (hist/density/tile) encode
             # magnitude with a colormap instead of transparency. The
-            # legacy 0.5 default still applies to the violin panel, which
-            # has no per-type constant yet.
-            legacy_alpha = 0.5 if alpha is None else alpha
+            # violin panel uses plot.py's own VIOLIN_ALPHA constant
+            # (previously re-hardcoded as a duplicate literal 0.5 here,
+            # which would have silently drifted out of sync with
+            # VIOLIN_ALPHA if that constant were ever retuned).
+            legacy_alpha = VIOLIN_ALPHA if alpha is None else alpha
 
             if marginal and ("mosaic" in type or "stackedbar" in type):
                 _mt = "stackedbar" if "stackedbar" in type else "mosaic"

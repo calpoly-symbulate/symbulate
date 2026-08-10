@@ -1,6 +1,7 @@
 """Tests for symbulate.probability_space.
 
 Covers ProbabilitySpace (draw, sim, apply, multiply, power),
+HierarchicalProbabilitySpace / Hierarchical / '>>' (draw, chaining, type guards),
 Event (draw, sim, logical operators, type guards),
 BoxModel (list/dict init, size, replacement, ordering, error handling),
 and DeckOfCards.
@@ -11,7 +12,7 @@ import numpy as np
 
 from symbulate import *
 from symbulate import probability_space
-from symbulate.probability_space import Event
+from symbulate.probability_space import Event, HierarchicalProbabilitySpace
 from symbulate.result import Vector, InfiniteVector
 
 
@@ -111,6 +112,54 @@ class TestProbabilitySpace(unittest.TestCase):
             P1.check_same(P2)
 
 
+class TestHierarchicalProbabilitySpace(unittest.TestCase):
+
+    def test_rshift_returns_probability_space(self):
+        P = ProbabilitySpace(lambda: 1) >> (lambda x: ProbabilitySpace(lambda: x + 1))
+        self.assertIsInstance(P, ProbabilitySpace)
+
+    def test_rshift_draws_joined_outcome(self):
+        P = ProbabilitySpace(lambda: 3) >> (lambda x: ProbabilitySpace(lambda: x + 10))
+        self.assertEqual(tuple(P.draw()), (3, 13))
+
+    def test_hierarchical_function_matches_rshift(self):
+        prior = ProbabilitySpace(lambda: 5)
+        cond_func = lambda x: ProbabilitySpace(lambda: x * 2)
+        P = Hierarchical(prior, cond_func)
+        self.assertIsInstance(P, HierarchicalProbabilitySpace)
+        self.assertEqual(tuple(P.draw()), (5, 10))
+
+    def test_chained_rshift_flattens_tuple(self):
+        P = (
+            ProbabilitySpace(lambda: 1)
+            >> (lambda a: ProbabilitySpace(lambda: a + 1))
+            >> (lambda ab: ProbabilitySpace(lambda: ab[1] + 1))
+        )
+        self.assertEqual(tuple(P.draw()), (1, 2, 3))
+
+    def test_beta_binomial_matches_theoretical_means(self):
+        seed()
+        P = Beta(1, 2) >> (lambda x: Binomial(10, x))
+        results = P.sim(20000)
+        xs = [outcome[0] for outcome in results]
+        ys = [outcome[1] for outcome in results]
+        self.assertAlmostEqual(sum(xs) / len(xs), 1 / 3, delta=0.05)
+        self.assertAlmostEqual(sum(ys) / len(ys), 10 / 3, delta=0.5)
+
+    def test_cond_func_not_returning_prob_space_raises_type_error(self):
+        P = ProbabilitySpace(lambda: 1) >> (lambda x: x + 1)
+        with self.assertRaises(TypeError):
+            P.draw()
+
+    def test_rshift_with_non_callable_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            ProbabilitySpace(lambda: 1) >> 5
+
+    def test_hierarchical_with_non_probability_space_prior_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            Hierarchical(5, lambda x: ProbabilitySpace(lambda: x))
+
+
 class TestEvent(unittest.TestCase):
 
     def test_draw_returns_bool(self):
@@ -180,6 +229,24 @@ class TestBoxModel(unittest.TestCase):
         bm = BoxModel({"a": 3, "b": 1})
         self.assertEqual(len(bm.box), 4)
         self.assertEqual(bm.box.count("a"), 3)
+
+    def test_empty_box_raises_at_construction(self):
+        # Regression test: an empty box used to pass construction silently
+        # and only fail later, inside .draw(), with a raw NumPy message
+        # ("a must be a positive integer unless no samples are taken").
+        with self.assertRaisesRegex(ValueError, "empty"):
+            BoxModel([])
+
+    def test_negative_size_raises_at_construction(self):
+        # Regression test: a negative size used to pass construction
+        # silently and only fail later, inside .draw(), with a raw NumPy
+        # message ("negative dimensions are not allowed").
+        with self.assertRaisesRegex(ValueError, "size"):
+            BoxModel([1, 2, 3], size=-2)
+
+    def test_infinite_size_still_allowed(self):
+        bm = BoxModel([1, 2, 3], size=float("inf"))
+        self.assertEqual(bm.size, float("inf"))
 
     def test_size_none_returns_scalar(self):
         seed()

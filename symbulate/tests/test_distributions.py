@@ -4336,18 +4336,26 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_labels_every_row(self):
-        # The left column names its row's variable, top-left panel included --
-        # that panel is the only one in its row, so without the label the
-        # first row goes unnamed. Matches a simulated pairs matrix.
+        # A diagonal panel's y-axis is that variable's own density, not the
+        # variable, so it says which -- and says "Marginal" so it can't be
+        # read as the joint density its colorbar measures. The rest of the
+        # left column names its row's variable. Matches a simulated matrix.
         plt.close("all")
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
         X.plot()
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
-        # Panels are added row by row, so the first one is (0, 0).
-        self.assertEqual(panels[0].get_ylabel(), "Variable 1")
+        # Panels are added row by row, so the first one is (0, 0) -- the
+        # diagonal panel for variable 1.
+        self.assertEqual(panels[0].get_ylabel(), "Marginal Density")
         self.assertEqual(
             sorted(a.get_ylabel() for a in panels if a.get_ylabel()),
-            ["Variable 1", "Variable 2", "Variable 3"],
+            [
+                "Marginal Density",
+                "Marginal Density",
+                "Marginal Density",
+                "Variable 2",
+                "Variable 3",
+            ],
         )
         plt.close("all")
 
@@ -4367,7 +4375,9 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
                 "Variables 2 & 3",
             ],
         )
-        self.assertEqual({a.get_ylabel() for a in bars}, {"Density"})
+        # "Joint", so a bar can't be confused with the marginal density on the
+        # diagonal panel it sits across from.
+        self.assertEqual({a.get_ylabel() for a in bars}, {"Joint Density"})
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_colorbars_avoid_the_panels(self):
@@ -4436,7 +4446,7 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
             panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
             self.assertEqual(len(panels), 1)
             self.assertEqual(plt.gca().get_xlabel(), "Variable 2")
-            self.assertEqual(plt.gca().get_title(), "PDF Plot")
+            self.assertEqual(plt.gca().get_title(), "Probability Density Function")
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_cannot_share_a_figure(self):
@@ -5125,7 +5135,7 @@ class TestMultinomial(MultivariatePlotTestCase):
         plt.close("all")
         Multinomial(n=12, p=[0.3, 0.3, 0.2, 0.2]).plot()
         bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
-        self.assertEqual({a.get_ylabel() for a in bars}, {"Probability"})
+        self.assertEqual({a.get_ylabel() for a in bars}, {"Joint Probability"})
         plt.close("all")
 
     def test_Multinomial_plot_pairs(self):
@@ -6609,9 +6619,11 @@ class TestDistributionXlimZoom(unittest.TestCase):
     # --- xlim=None / an explicit (a, b) behave as documented ---
 
     def test_default_keeps_full_support_for_binomial(self):
+        """The full support (0, 100) is framed, plus half a step of padding
+        on each end so the boundary dots aren't drawn on the axis spine."""
         plt.figure()
         Binomial(100, 0.5).plot()  # xlim defaults to None
-        self.assertEqual(tuple(plt.gca().get_xlim()), (0.0, 100.0))
+        self.assertEqual(tuple(plt.gca().get_xlim()), (-0.5, 100.5))
 
     def test_explicit_xlim_used_as_given(self):
         plt.figure()
@@ -6844,16 +6856,16 @@ class TestDistributionCDFPlot(unittest.TestCase):
     def test_cdf_title(self):
         for d in [Poisson(3), Normal(0, 1)]:
             plt.figure()
-            self.assertEqual(d.plot(cdf=True).ax.get_title(), "CDF Plot")
+            self.assertEqual(d.plot(cdf=True).ax.get_title(), "Cumulative Distribution Function")
             plt.close("all")
 
     def test_default_pmf_title_for_discrete(self):
         plt.figure()
-        self.assertEqual(Binomial(10, 0.5).plot().ax.get_title(), "PMF Plot")
+        self.assertEqual(Binomial(10, 0.5).plot().ax.get_title(), "Probability Mass Function")
 
     def test_default_pdf_title_for_continuous(self):
         plt.figure()
-        self.assertEqual(Normal(0, 1).plot().ax.get_title(), "PDF Plot")
+        self.assertEqual(Normal(0, 1).plot().ax.get_title(), "Probability Density Function")
 
     # --- both vertical and horizontal gridlines, like the ECDF plot ---
 
@@ -6979,6 +6991,92 @@ class TestDistributionCDFPlot(unittest.TestCase):
             plt.figure()
             d.plot(cdf=True)  # must not raise
             plt.close("all")
+
+
+class TestDistributionPlotLegend(unittest.TestCase):
+    """``Distribution.plot()`` labels its curve and shows a legend once the
+    axes holds more than one labeled series -- another theoretical curve,
+    or a simulated plot (hist, density, ecdf, ...) it's overlaid on. A
+    lone curve stays legend-free, matching every other plot type's rule
+    (see ``_refresh_legend`` in ``plot.py``).
+    """
+
+    def tearDown(self):
+        plt.close("all")
+
+    # --- a lone curve gets no legend ---
+
+    def test_lone_curve_has_no_legend(self):
+        plt.figure()
+        Normal(0, 1).plot()
+        self.assertIsNone(plt.gca().get_legend())
+
+    # --- two theoretical curves overlaid get a legend naming each one ---
+
+    def test_two_theoretical_curves_get_a_legend(self):
+        plt.figure()
+        Normal(0, 1).plot()
+        Normal(2, 1).plot()
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Normal(0, 1)", "Normal(2, 1)"])
+
+    # --- default label names the distribution itself ---
+
+    def test_default_label_is_the_distribution_repr(self):
+        plt.figure()
+        Binomial(10, 0.5).plot()
+        Poisson(3).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Binomial(10, 0.5)", "Poisson(3)"])
+
+    # --- an explicit label= still wins over the default ---
+
+    def test_explicit_label_overrides_default(self):
+        plt.figure()
+        Normal(0, 1).plot(label="theoretical")
+        Normal(2, 1).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["theoretical", "Normal(2, 1)"])
+
+    # --- a simulated density overlaid with its theoretical pdf ---
+
+    def test_simulated_density_and_theoretical_pdf_get_a_legend(self):
+        plt.figure()
+        RV(Normal(0, 1)).sim(500).plot(type="density")
+        Normal(0, 1).plot()
+        legend = plt.gca().get_legend()
+        self.assertIsNotNone(legend)
+        labels = [t.get_text() for t in legend.get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Normal(0, 1)"])
+
+    # --- a simulated histogram overlaid with its theoretical pmf ---
+
+    def test_simulated_histogram_and_theoretical_pmf_get_a_legend(self):
+        plt.figure()
+        RV(Binomial(10, 0.5)).sim(500).plot(type="hist")
+        Binomial(10, 0.5).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Binomial(10, 0.5)"])
+
+    # --- an empirical ECDF overlaid with its theoretical cdf ---
+
+    def test_empirical_ecdf_and_theoretical_cdf_get_a_legend(self):
+        plt.figure()
+        RV(Normal(0, 1)).sim(500).plot(type="ecdf")
+        Normal(0, 1).plot(cdf=True)
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Normal(0, 1)"])
+
+    # --- the discrete pmf's dashed connecting line is not a second entry ---
+
+    def test_discrete_connecting_line_is_not_a_second_legend_entry(self):
+        plt.figure()
+        Binomial(10, 0.5).plot()
+        Poisson(3).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(len(labels), 2)
 
 
 class TestDistributionShade(unittest.TestCase):

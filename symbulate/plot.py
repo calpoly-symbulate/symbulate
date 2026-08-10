@@ -110,6 +110,16 @@ REPEAT_FRACTION_THRESHOLD = 0.6
 # count low enough to fit unrotated.
 MAX_DISCRETE_TICKS = 10
 
+# A pairs-matrix panel (make_tile / make_joint_pmf below the diagonal) is
+# only JOINT_PAIRS_PANEL_SIZE (2.2in) square -- a third the width of a normal
+# single-plot figure (figure.figsize, 6.4in) -- so MAX_DISCRETE_TICKS worth
+# of labels, sized for the full-width case, run into each other there.
+# PAIRS_MAX_DISCRETE_TICKS is the same cap scaled down for that panel size,
+# used by every pairs-matrix panel (the tile/joint-pmf grid and the discrete
+# diagonal's value axis) so a column's ticks stay legible and consistent
+# with each other. Provisional, like MAX_DISCRETE_TICKS itself.
+PAIRS_MAX_DISCRETE_TICKS = 5
+
 figure = plt.figure
 
 xlabel = plt.xlabel
@@ -1240,14 +1250,14 @@ PLOT_DISPLAY_NAME = {
     "tile": "Tile Plot",
     "mosaic": "Mosaic Plot",
     "stackedbar": "Stacked Bar Plot",
-    "hist2d": "2D Histogram",
-    "density2d": "2D Density Plot",
+    "hist2d": "Joint Histogram",
+    "density2d": "Joint Density (Estimated)",
     "violin": "Violin Plot",
     "box": "Box Plot",
     "boxplot": "Box Plot",
-    "segmented_rug": "Segmented Rug Plot",
-    "segmented_density": "Segmented Density Plot",
-    "segmented_hist": "Segmented Histogram",
+    "segmented_rug": "Rug Plot",
+    "segmented_density": "Conditional Density (Estimated)",
+    "segmented_hist": "Conditional Histogram",
     "pairs": "Pairs Plot",
     "path": "Path Plot",
 }
@@ -1835,6 +1845,55 @@ def pairs_colorbar_pair_label(first, second):
     return "Variables %d & %d" % (first + 1, second + 1)
 
 
+def pairs_joint_label(quantity):
+    """Name what a joint panel's colorbar measures, e.g. ``"Joint Density"``.
+
+    A pairs matrix shows two kinds of distribution at once: each off-diagonal
+    panel is a *joint* distribution of two variables, each diagonal panel is
+    one variable's own *marginal* distribution. "Density" on its own does not
+    say which of the two a scale belongs to, and the two are read differently
+    -- so the word in front says it. Both the simulated and the theoretical
+    matrix call this, so they can't drift apart.
+
+    Parameters
+    ----------
+    quantity : str
+        What the colors measure on their own: ``"Density"``, ``"Count"``
+        (a simulated matrix with ``normalize=False``), or ``"Probability"``
+        (a discrete distribution's exact joint pmf).
+
+    Returns
+    -------
+    str
+        The quantity named as a joint one, e.g. ``"Joint Count"``.
+    """
+    return "Joint %s" % quantity
+
+
+def pairs_marginal_label(quantity):
+    """Name what a diagonal panel's frequency axis measures.
+
+    The counterpart of :func:`pairs_joint_label` for the other half of the
+    matrix -- see there for why the word in front is needed at all. The
+    quantity is whatever that panel's own plot type already labeled its
+    frequency axis, so this adapts on its own: a count histogram's diagonal
+    reads "Marginal Count", an exact pmf's reads "Marginal Probability".
+
+    Parameters
+    ----------
+    quantity : str
+        What the panel's frequency axis measures on its own, e.g.
+        ``"Density"``, ``"Relative Frequency"``, ``"Count"``, or
+        ``"Probability"``.
+
+    Returns
+    -------
+    str
+        The quantity named as a marginal one, e.g. ``"Marginal Density"``.
+    """
+    return "Marginal %s" % quantity
+
+
 def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
     """Put one joint panel's colorbar in the empty cell mirroring it.
 
@@ -1861,9 +1920,9 @@ def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
     pair_label : str
         Which two variables the panel shows, e.g. ``"X1 & X2"``.
     quantity_label : str
-        What the colors measure: ``"Density"``, ``"Count"``, or
-        ``"Probability"``. Counts are whole numbers, so their ticks are
-        drawn without decimals.
+        What the colors measure: ``"Joint Density"``, ``"Joint Count"``, or
+        ``"Joint Probability"``, from :func:`pairs_joint_label`. Counts are
+        whole numbers, so their ticks are drawn without decimals.
 
     Returns
     -------
@@ -1886,7 +1945,7 @@ def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
     caxes.set_title(pair_label, fontsize=JOINT_PAIRS_COLORBAR_TITLE_SIZE)
     # A count is a whole number of simulated values, so decimals on its ticks
     # would be noise; a density or a probability needs them.
-    decimals = 0 if quantity_label == "Count" else JOINT_CBAR_DECIMALS
+    decimals = 0 if quantity_label.endswith("Count") else JOINT_CBAR_DECIMALS
     cbar.ax.yaxis.set_major_formatter(
         FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
     )
@@ -2036,6 +2095,7 @@ def make_tile(
     discrete_x=None,
     discrete_y=None,
     colorbar=True,
+    max_discrete_ticks=MAX_DISCRETE_TICKS,
     **kwargs,
 ):
     """Draw a 2D tile plot of simulated (x, y) pairs on the given axes.
@@ -2045,7 +2105,8 @@ def make_tile(
     ``symbulate.mplstyle``), with a colorbar on the right labeled
     "Relative Frequency" (or "Count" when ``normalize=False``). The
     x-axis is labeled "X", the y-axis "Y", and the title reads "Tile
-    Plot". The color scale always starts from 0 so a cell that never
+    Plot" when both axes are discrete, "Joint Histogram" when one axis
+    has been binned. The color scale always starts from 0 so a cell that never
     occurred reads as "no data" rather than an arbitrary color. The
     colorbar ticks both endpoints (0 and the peak value) with
     ``TILE_CBAR_TICKS`` (8) evenly spaced ticks; relative-frequency
@@ -2120,6 +2181,11 @@ def make_tile(
         'marginal' layout in ``RVResults.plot()`` passes False and
         places its own colorbar so the marginal panels aren't
         squeezed.
+    max_discrete_ticks : int, optional
+        Cap on how many ticks a discrete axis shows. Defaults to the
+        module constant ``MAX_DISCRETE_TICKS``; a panel of a pairs
+        matrix passes ``PAIRS_MAX_DISCRETE_TICKS`` instead, since its
+        panel is a fraction of a full-size plot's width.
     **kwargs
         Additional keyword arguments passed to ``ax.imshow``.
 
@@ -2196,9 +2262,9 @@ def make_tile(
     # categorical / non-whole-number / pathologically wide-range discrete
     # axis instead falls back to compacted rank-index cells, thinned here.
     if discrete_x and x_ticks is not None:
-        x_ticks = _thin_discrete_ticks(x_ticks[0], x_ticks[1], MAX_DISCRETE_TICKS)
+        x_ticks = _thin_discrete_ticks(x_ticks[0], x_ticks[1], max_discrete_ticks)
     if discrete_y and y_ticks is not None:
-        y_ticks = _thin_discrete_ticks(y_ticks[0], y_ticks[1], MAX_DISCRETE_TICKS)
+        y_ticks = _thin_discrete_ticks(y_ticks[0], y_ticks[1], max_discrete_ticks)
     intensity = np.zeros((ny, nx))
     np.add.at(intensity, (y_idx, x_idx), 1)
     if normalize:
@@ -2229,18 +2295,21 @@ def make_tile(
     # rank-index discrete axis (categorical data, or data that couldn't
     # be laid out in real values) instead gets its own pre-thinned ticks.
     if discrete_x and x_ticks is None:
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))
     elif x_ticks is not None:
         ax.set_xticks(x_ticks[0])
         ax.set_xticklabels(x_ticks[1])
     if discrete_y and y_ticks is None:
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))
     elif y_ticks is not None:
         ax.set_yticks(y_ticks[0])
         ax.set_yticklabels(y_ticks[1])
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Tile Plot")
+    # Only both-discrete data actually tiles one cell per value pair; a
+    # mixed axis has been binned like a histogram, so the title should
+    # read that way instead of claiming a discreteness the data doesn't have.
+    ax.set_title("Tile Plot" if discrete_x and discrete_y else "Joint Histogram")
     # On mixed data (exactly one discrete axis), draw separator lines on
     # the discrete axis' cell boundaries -- every integer position between
     # the axis's own extent endpoints, which are always half a cell-width
@@ -3153,9 +3222,7 @@ def make_impulse(
             ax.set_yticks(range(len(categories)))
             ax.set_yticklabels([str(c) for c in categories])
 
-    ax.set_title(
-        "Relative Frequency Impulse Plot" if normalize else "Count Impulse Plot"
-    )
+    ax.set_title("Impulse Plot")
     _refresh_legend(ax)
     return xs, freqs
 
@@ -3176,8 +3243,8 @@ def make_hist(
     Draws in the style of the approved histogram prototype: solid
     bars with thin white edges so adjacent bars stay visually
     distinct. The x-axis is always labeled "Value"; the y-axis label
-    and title read "Density" / "Density Histogram" when normalized,
-    "Count" / "Count Histogram" otherwise.
+    the title always reads "Histogram"; the y-axis label reads "Density"
+    when normalized, "Count" otherwise.
 
     Histograms overlay naturally: a second call on the same axes draws
     on top of the first, and a legend appears automatically in the top
@@ -3273,11 +3340,10 @@ def make_hist(
     else:
         ax.set_ylabel(value_label)
         ax.set_xlabel(freq_label)
-    ax.set_title("Density Histogram" if normalize else "Count Histogram")
-    # A legend only helps once there is more than one histogram to
-    # tell apart; a lone histogram stays legend-free.
-    if ax._hist_count > 1:
-        ax.legend(loc=HIST_LEGEND_LOC)
+    ax.set_title("Histogram")
+    # A legend only helps once there is more than one labeled artist to
+    # tell apart -- another histogram, or a true-distribution overlay.
+    _refresh_legend(ax, loc=HIST_LEGEND_LOC)
     return histogram
 
 
@@ -3790,7 +3856,7 @@ def make_density(
 
     Draws in the style of the approved density prototype: a single
     smooth line with no fill. The x-axis is always labeled "Value";
-    the y-axis label and title are "Density" / "Density Curve". The
+    the y-axis label is "Density" and the title is "Density (Estimated)". The
     curve is evaluated and displayed over a quantile-based x-range
     (the 0.1th to 99.9th percentile of ``values``, plus padding)
     rather than the raw min/max, so outlier-heavy data doesn't
@@ -3885,17 +3951,16 @@ def make_density(
         ax.set_ylabel("Value")
         ax.set_xlabel("Density")
         ax.set_xlim(left=0)
-    ax.set_title("Density Curve")
+    ax.set_title("Density (Estimated)")
     # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
     # y), but the approved density prototype shows both horizontal and
     # vertical reference lines, so this overrides it for this plot type
     # specifically -- the same per-type override pattern the scatter and
     # 2D density plots use.
     ax.grid(True, axis="both")
-    # A legend only helps once there is more than one curve to tell
-    # apart; a lone curve stays legend-free.
-    if ax._density_count > 1:
-        ax.legend(loc=DENSITY_LEGEND_LOC)
+    # A legend only helps once there is more than one labeled artist to
+    # tell apart -- another curve, or a true-distribution overlay.
+    _refresh_legend(ax, loc=DENSITY_LEGEND_LOC)
     return line
 
 
@@ -4051,10 +4116,9 @@ def make_rug(
         ax.set_xlabel("Value")
     else:
         ax.set_ylabel("Value")
-    # A legend only helps once there is more than one rug to tell
-    # apart; a lone rug stays legend-free.
-    if ax._rug_count > 1:
-        ax.legend(loc=RUG_LEGEND_LOC)
+    # A legend only helps once there is more than one labeled artist to
+    # tell apart -- another rug, or a true-distribution overlay.
+    _refresh_legend(ax, loc=RUG_LEGEND_LOC)
     return rug
 
 
@@ -4174,10 +4238,9 @@ def make_ecdf(values, ax, color, normalize=True, alpha=None, label=None, **kwarg
     # vertical reference lines, so this overrides it for this plot type
     # specifically -- the same per-type override the density plot uses.
     ax.grid(True, axis="both")
-    # A legend only helps once there is more than one curve to tell
-    # apart; a lone curve stays legend-free.
-    if ax._ecdf_count > 1:
-        ax.legend(loc=ECDF_LEGEND_LOC)
+    # A legend only helps once there is more than one labeled artist to
+    # tell apart -- another curve, or a true-distribution CDF overlay.
+    _refresh_legend(ax, loc=ECDF_LEGEND_LOC)
     return line
 
 
@@ -4487,7 +4550,7 @@ def make_segmented_rug(
         ax.set_xlim(-0.5, len(levels) - 0.5)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Segmented Rug Plot")
+    ax.set_title("Rug Plot")
     # Reference gridlines run along the discrete axis only -- one line per
     # level (band), so every distinct rug reads as its own group, even the
     # ones whose tick label was thinned out to avoid crowding. which="both"
@@ -4835,7 +4898,7 @@ def make_segmented_density(
         ax.set_xlim(lo, hi)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Segmented Density Plot")
+    ax.set_title("Conditional Density (Estimated)")
     # A light reference grid along the continuous axis only, for reading
     # values off the curves. The discrete axis needs no grid line: each
     # level's baseline (the full-width grey line drawn on top above)
@@ -4847,10 +4910,9 @@ def make_segmented_density(
     # it on the continuous axis only.
     ax.grid(False)
     ax.grid(True, axis="x" if discrete_y else "y")
-    # A legend only helps once there is more than one batch to tell
-    # apart; a lone batch stays legend-free.
-    if ax._segmented_density_count > 1:
-        ax.legend(loc=SEGMENTED_DENSITY_LEGEND_LOC)
+    # A legend only helps once there is more than one labeled artist to
+    # tell apart; a lone batch stays legend-free.
+    _refresh_legend(ax, loc=SEGMENTED_DENSITY_LEGEND_LOC)
     return [artists[level] for level in all_levels if level in artists]
 
 
@@ -5172,7 +5234,7 @@ def make_segmented_hist(
         ax.set_xlim(lo, hi)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Segmented Histogram")
+    ax.set_title("Conditional Histogram")
     # A light reference grid along the continuous axis only, for reading
     # values off the bars. The discrete axis needs no grid line: each
     # level's baseline (the full-width grey line drawn on top above)
@@ -5183,10 +5245,9 @@ def make_segmented_hist(
     # it on the continuous axis only.
     ax.grid(False)
     ax.grid(True, axis="x" if discrete_y else "y")
-    # A legend only helps once there is more than one batch to tell
-    # apart; a lone batch stays legend-free.
-    if ax._segmented_hist_count > 1:
-        ax.legend(loc=SEGMENTED_HIST_LEGEND_LOC)
+    # A legend only helps once there is more than one labeled artist to
+    # tell apart; a lone batch stays legend-free.
+    _refresh_legend(ax, loc=SEGMENTED_HIST_LEGEND_LOC)
     return [artists[level] for level in all_levels if level in artists]
 
 
@@ -5573,7 +5634,16 @@ def _dotplot_relayout(ax):
             ]
         )
     elif np.all(positions == np.round(positions)):
-        value_axis.set_major_locator(MaxNLocator(integer=True))
+        # This runs on every draw, so it would undo a cap set on the tick
+        # count afterwards -- a dot plot on the diagonal of a pairs matrix
+        # is thinned to fit its small panel (RVResults._plot_pairs records
+        # the cap on the axes), so honor that cap if it is there.
+        value_cap = getattr(ax, "_symbulate_value_ticks", None)
+        value_axis.set_major_locator(
+            MaxNLocator(integer=True)
+            if value_cap is None
+            else MaxNLocator(integer=True, nbins=value_cap)
+        )
     # The count axis is always integer counts. This runs on every draw, so
     # it would undo a cap set on the tick count afterwards -- a dot plot in a
     # marginal strip is thinned to fit (thin_marginal_frequency_ticks, which
@@ -6206,7 +6276,7 @@ def make_hist2d(
     filled bin mesh using the package's sequential colormap (viridis,
     from ``symbulate.mplstyle``), with a colorbar on the right labeled
     "Density" (or "Count" when ``normalize=False``). The x-axis is
-    labeled "X", the y-axis "Y", and the title reads "2-D Histogram".
+    labeled "X", the y-axis "Y", and the title reads "Joint Histogram".
     The color scale always starts from 0 so empty bins read as
     "no data" rather than an arbitrary color. The colorbar ticks both
     endpoints (0 and the peak value) with ``HIST2D_CBAR_TICKS`` (8)
@@ -6318,7 +6388,7 @@ def make_hist2d(
     ax.grid(False)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Hexbin Plot" if hex else "2-D Histogram")
+    ax.set_title("Hexbin Plot" if hex else "Joint Histogram")
     if colorbar:
         # Colorbar on the right, sized relative to the axes so it
         # tracks figure resizing (the approved replacement for the old
@@ -6388,16 +6458,18 @@ def make_density2D(x, y, ax, contour=True, levels=None, colorbar=True, **kwargs)
     Both modes plot the *same* KDE-estimated density surface with
     ``ax.contourf``; they differ in how finely it is quantized:
 
-    - ``contour=True`` (default): a topographic "Contour Plot". The
-      surface is split into ``levels`` discrete color bands with thin
-      white outlines between them, so each band can be matched to the
+    - ``contour=True`` (default): a topographic band look. The surface
+      is split into ``levels`` discrete color bands with thin white
+      outlines between them, so each band can be matched to the
       colorbar by eye rather than guessed at from a gradient.
     - ``contour=False``: a *continuous* density plot. The surface is
       drawn with a large fixed number of color bands
       (``DENSITY2D_CONTINUOUS_LEVELS``) so they blend into a smooth
-      gradient with no visible banding -- the "2D Density Plot" look.
-      The ``levels`` argument does not apply there; passing it warns
-      and has no effect.
+      gradient with no visible banding. The ``levels`` argument does
+      not apply there; passing it warns and has no effect.
+
+    Either way the title reads "Joint Density (Estimated)" -- the two
+    modes are the same underlying estimate, just quantized differently.
 
     The axis limits are quantile-based (0.1st to 99.9th percentile of
     each variable, plus padding), not raw min/max, so outlier-heavy
@@ -6530,7 +6602,7 @@ def make_density2D(x, y, ax, contour=True, levels=None, colorbar=True, **kwargs)
     ax.set_ylim(ymin, ymax)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Contour Plot" if contour else "2D Density Plot")
+    ax.set_title("Joint Density (Estimated)")
     # symbulate.mplstyle's global grid is horizontal-only
     # (axes.grid.axis: y); the approved prototypes call for both
     # horizontal and vertical reference lines, so this overrides it for
@@ -6787,6 +6859,7 @@ def make_joint_pmf(
     xlabel="Variable 1",
     ylabel="Variable 2",
     title=True,
+    max_discrete_ticks=MAX_DISCRETE_TICKS,
     **kwargs,
 ):
     """Draw the joint probability grid of a discrete 2-D distribution.
@@ -6822,6 +6895,11 @@ def make_joint_pmf(
         Axis labels, naming the two variables being plotted.
     title : bool, default True
         Whether to title the axes. A panel of a pairs matrix passes False.
+    max_discrete_ticks : int, optional
+        Cap on how many ticks each axis shows. Defaults to the module
+        constant ``MAX_DISCRETE_TICKS``; a panel of a pairs matrix passes
+        ``PAIRS_MAX_DISCRETE_TICKS`` instead, since its panel is a
+        fraction of a full-size plot's width.
     **kwargs
         Additional keyword arguments passed to ``ax.imshow``.
 
@@ -6898,8 +6976,8 @@ def make_joint_pmf(
         ax.set_title("Joint PMF Plot")
     # Counts are whole numbers, so only whole-number ticks make sense; cap
     # how many appear so the labels can't crowd into each other.
-    ax.xaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))
     # A filled mesh covers the axes, so a grid would only show at the
     # spines; turn it off entirely rather than leave stray ticks of it,
     # matching make_tile.

@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
 from .probability_space import ProbabilitySpace
+from matplotlib.ticker import MaxNLocator
+
 from .plot import (
     get_next_color,
     DistributionPlot,
@@ -19,8 +21,11 @@ from .plot import (
     ECDF_LINEWIDTH,
     JOINT_CBAR_DECIMALS,
     JOINT_PAIRS_MAX_DIM,
+    PAIRS_MAX_DISCRETE_TICKS,
     setup_marginal_axes,
     pairs_colorbar_pair_label,
+    pairs_joint_label,
+    pairs_marginal_label,
     advance_pairs_diagonal_color,
     align_pairs_columns,
     thin_marginal_frequency_ticks,
@@ -34,6 +39,7 @@ from .plot import (
     TRUE_DIST_MARKER_SIZE,
     TRUE_DIST_LINEWIDTH,
     TRUE_DIST_LINESTYLE,
+    _refresh_legend,
 )
 from .result import Scalar, Vector, InfiniteVector
 
@@ -401,8 +407,9 @@ class Distribution(ProbabilitySpace):
         ``type=`` argument -- a theoretical distribution has only these two
         curves to show, so the choice is the single boolean ``cdf``.
 
-        The plot is titled by what it shows: "CDF Plot" for ``cdf=True``,
-        and for the default view "PDF Plot" (continuous) or "PMF Plot"
+        The plot is titled by what it shows: "Cumulative Distribution
+        Function" for ``cdf=True``, and for the default view "Probability
+        Density Function" (continuous) or "Probability Mass Function"
         (discrete).
 
         Parameters
@@ -420,7 +427,11 @@ class Distribution(ProbabilitySpace):
             frames roughly ``(451, 549)`` instead of ``(0, 1000)``, with no
             need to work out the endpoints by hand. Also handy for lining a
             theoretical curve up against simulated data, which occupies
-            only the high-probability part of the support.
+            only the high-probability part of the support. For a discrete
+            distribution, a computed default or ``"zoom"`` window gets half
+            a step of padding on each end so the boundary value isn't drawn
+            right on the axis spine; an explicit ``(min, max)`` tuple is
+            always used exactly as given, with no padding added.
         cdf : bool, default False
             Which function to plot. ``False`` (the default) draws the
             probability density/mass function; ``True`` draws the
@@ -470,6 +481,7 @@ class Distribution(ProbabilitySpace):
         #                  framing an unbounded distribution already gets,
         #                  which zooms in on a bounded default;
         #   (low, high) -> those exact limits, used as given.
+        xlim_is_exact = xlim is not None and not isinstance(xlim, str)
         if xlim is None:
             xlim = self.xlim
         elif isinstance(xlim, str):
@@ -487,6 +499,14 @@ class Distribution(ProbabilitySpace):
         # function is evaluated there.
         if self.discrete:
             xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
+            # Half a step of air on each end, so the dot/step at the
+            # boundary value doesn't sit right on the axis spine -- same
+            # convention as the single-point collapse case below, just
+            # applied whenever the window is a computed default rather
+            # than a user-supplied exact range (the docstring promises an
+            # explicit `xlim=(low, high)` tuple is used as given).
+            if not xlim_is_exact:
+                xlim = (xlim[0] - 0.5, xlim[1] + 0.5)
         else:
             xs = np.linspace(xlim[0], xlim[1], 200)
         ys = self.cdf(xs) if cdf else self.pdf(xs)
@@ -529,6 +549,19 @@ class Distribution(ProbabilitySpace):
 
         # get next color in cycle
         color = get_next_color(ax)
+
+        # Default label names the distribution itself, e.g. "Binomial(10,
+        # 0.5)", so a legend can tell two theoretical curves apart, or tell
+        # a theoretical curve apart from a simulated one it's overlaid on.
+        # setdefault, not an override, so a user's own label= still wins.
+        # This only reaches the curve/scatter draw calls below (the ones
+        # that forward **kwargs) -- the discrete pmf's dashed connecting
+        # line draws separately, without **kwargs, so it never gets a
+        # second, duplicate legend entry for the same curve.
+        kwargs.setdefault(
+            "label",
+            f"{type(self).__name__}({', '.join(str(v) for v in self.params.values())})",
+        )
 
         if cdf:
             # Match make_ecdf's step-function styling so a theoretical CDF
@@ -573,11 +606,11 @@ class Distribution(ProbabilitySpace):
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
         if cdf:
-            ax.set_title("CDF Plot")
+            ax.set_title("Cumulative Distribution Function")
         elif self.discrete:
-            ax.set_title("PMF Plot")
+            ax.set_title("Probability Mass Function")
         else:
-            ax.set_title("PDF Plot")
+            ax.set_title("Probability Density Function")
 
         # Label the axes for context: the x-axis shows the possible values of
         # the variable, and the y-axis names what its height means for this
@@ -601,6 +634,13 @@ class Distribution(ProbabilitySpace):
         # reference lines, matching the ECDF plot -- so override it here for
         # this plot type specifically.
         ax.grid(True, axis="both")
+
+        # A legend only helps once there is more than one labeled curve on
+        # the axes -- another theoretical curve, or a simulated plot (hist,
+        # density, rug, ecdf, ...) it's overlaid on. A lone curve stays
+        # legend-free. "upper left" matches make_ecdf's own default, since a
+        # rising CDF has more room there than "upper right".
+        _refresh_legend(ax, loc="upper left" if cdf else "upper right")
 
         return DistributionPlot(ax, self, "cdf" if cdf else "pdf")
 
@@ -5385,7 +5425,16 @@ class MultivariateDistribution(Distribution):
         return tuple(int(d) for d in variables), pairs
 
     def _plot_joint(
-        self, i, j, ax, contour, colorbar=True, title=True, alpha=None, **kwargs
+        self,
+        i,
+        j,
+        ax,
+        contour,
+        colorbar=True,
+        title=True,
+        alpha=None,
+        max_discrete_ticks=None,
+        **kwargs,
     ):
         """Draw the joint distribution of components ``i`` and ``j`` on one axes.
 
@@ -5413,6 +5462,13 @@ class MultivariateDistribution(Distribution):
             False, since the figure carries one title instead.
         alpha : float, optional
             Transparency of the surface, from 0 (invisible) to 1 (opaque).
+        max_discrete_ticks : int, optional
+            Cap on how many ticks a discrete axis shows, forwarded to
+            ``make_joint_pmf``. ``None`` (default) leaves that function's
+            own default in place; a panel of a pairs matrix passes
+            ``PAIRS_MAX_DISCRETE_TICKS``, since its panel is a fraction of
+            a full-size plot's width. Has no effect on a continuous
+            distribution's density surface.
         **kwargs
             Additional keyword arguments forwarded to matplotlib.
 
@@ -5425,6 +5481,8 @@ class MultivariateDistribution(Distribution):
         xlabel = self._variable_label(i)
         ylabel = self._variable_label(j)
         if self.discrete:
+            if max_discrete_ticks is not None:
+                kwargs["max_discrete_ticks"] = max_discrete_ticks
             return make_joint_pmf(
                 func,
                 self._plot_values(i),
@@ -5578,6 +5636,9 @@ class MultivariateDistribution(Distribution):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
                 cells[(row, col)] = ax
+                # What this panel's frequency axis measures, for a diagonal
+                # panel (see the label section below).
+                marginal_quantity = ""
                 if row == col:
                     # The diagonal is this variable on its own, so it is
                     # exactly the univariate plot -- reuse it rather than
@@ -5592,6 +5653,20 @@ class MultivariateDistribution(Distribution):
                         xlim=self._plot_window(variables[row]), ax=ax, alpha=alpha
                     )
                     ax.set_title("")
+                    # Whatever the univariate plot called its own frequency
+                    # axis -- "Density" for a continuous family, "Probability"
+                    # for a discrete one. Read off the panel rather than
+                    # re-derived, so the two can't disagree.
+                    marginal_quantity = ax.get_ylabel()
+                    # A discrete marginal's value axis otherwise keeps
+                    # matplotlib's default locator, sized for a full-size
+                    # plot -- too many ticks for this panel's fraction of
+                    # the width. Not re-laid-out later (unlike a simulated
+                    # dot plot), so setting it directly here is enough.
+                    if self.discrete:
+                        ax.xaxis.set_major_locator(
+                            MaxNLocator(nbins=PAIRS_MAX_DISCRETE_TICKS, integer=True)
+                        )
                 else:
                     joint_panels.append(
                         (
@@ -5603,6 +5678,7 @@ class MultivariateDistribution(Distribution):
                                 colorbar=False,
                                 title=False,
                                 alpha=alpha,
+                                max_discrete_ticks=PAIRS_MAX_DISCRETE_TICKS,
                                 **kwargs,
                             ),
                             row,
@@ -5626,15 +5702,18 @@ class MultivariateDistribution(Distribution):
                     # panel's y-axis is a density and genuinely differs from
                     # its neighbors'.
                     ax.set_xticklabels([])
-                # The left column names its row's variable, so the labels read
-                # down the side in order -- including the top-left panel, which
-                # is the only one in its row and would otherwise go unnamed
-                # until the bottom of its column. That panel's y-axis is really
-                # a density or a probability rather than the variable, so the
-                # label names the row it heads rather than the axis it sits on;
-                # this is the convention seaborn's PairGrid uses, and the one a
-                # simulated pairs matrix follows.
-                if col == 0:
+                # A diagonal panel's y-axis is not the variable at all -- it is
+                # that variable's own density or probability -- so it says so,
+                # and says which of the matrix's two kinds of distribution it
+                # is showing. The variable itself is still named at the bottom
+                # of that column, since a diagonal panel sits above one.
+                # Everything else in the left column names its row's variable,
+                # so the labels read down the side in order; the inner panels
+                # stay unlabeled rather than repeat them. A simulated pairs
+                # matrix labels itself the same way.
+                if marginal_quantity:
+                    ax.set_ylabel(pairs_marginal_label(marginal_quantity))
+                elif col == 0:
                     ax.set_ylabel(self._variable_label(variables[row]))
                 else:
                     ax.set_ylabel("")
@@ -5662,7 +5741,7 @@ class MultivariateDistribution(Distribution):
         # it across the diagonal -- the same treatment a simulated pairs
         # matrix gets, so the two can be read side by side. Done after
         # tight_layout, so the cells are where they will finally be.
-        quantity = "Probability" if self.discrete else "Density"
+        quantity = pairs_joint_label("Probability" if self.discrete else "Density")
         for mappable, row, col in joint_panels:
             if mappable is None:
                 continue

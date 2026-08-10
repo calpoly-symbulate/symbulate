@@ -814,6 +814,14 @@ demo appended to `team/models-and-sim-design/hitting_times_demo.ipynb`.
 `upcrossings` is exported from `symbulate/__init__.py` (a public-API addition —
 flagged). Roadmap row 22, "Upcrossings, as a sequence."
 
+**Partly superseded** by "Decision: Upcrossings — a Reset Level for Continuous
+Paths" below, which took up this entry's own "worth revisiting if the demand
+appears" invitation. Continuous paths are now handled **when given a `reset`
+level**, and `step`/`tol` do now exist as arguments. Everything else here still
+holds, including the reason a *single* level on a continuous path is refused —
+that refusal is what motivates the reset. Where the two disagree, the paragraphs
+below say so inline.
+
 **Decision**
 > `upcrossings(process, level, max_time=100.0, start_time=0.0)` returns the
 > sequence of times the path crosses up through `level`: a lazy
@@ -825,6 +833,10 @@ flagged). Roadmap row 22, "Upcrossings, as a sequence."
 > **It covers the two Tier A families only** — pure-jump and discrete-time
 > paths. Every continuous path is refused: any Gaussian process,
 > `GeometricBrownianMotion`, and the Tier C diffusions.
+>
+> *Superseded in part:* a Gaussian process or `GeometricBrownianMotion` given a
+> `reset` level is now handled. The Tier C diffusions still raise, because they
+> cannot be read at all, band or no band.
 
 **Rationale for the Tier A restriction — this is not a missing feature**
 > A path that moves continuously recrosses a level infinitely often in every
@@ -843,6 +855,13 @@ flagged). Roadmap row 22, "Upcrossings, as a sequence."
 > argument applied: you should be able to call `hitting_time` the same way
 > across a class's worth of processes, some Tier A and some Tier B. Here there
 > is no Tier B to be uniform with.
+>
+> *Reversed:* there is a Tier B now, so the uniformity argument applies here too.
+> `step` and `tol` are arguments, and are accepted and ignored on a Tier A path
+> exactly as on `hitting_time`. Note that the first paragraph above is **not**
+> reversed: a single level on a continuous path still has no sequence of
+> crossings, and adding `step` did not change that. It is the `reset` level, not
+> the `step`, that makes the question answerable.
 
 **What an upcrossing is, and the two searches it takes**
 > A crossing is a time when the path is at or above `level` **having been
@@ -899,6 +918,13 @@ flagged). Roadmap row 22, "Upcrossings, as a sequence."
 > kwarg that is meaningless for every Tier A process and required for every
 > Tier B one, and the answer then depends on a band the student has to invent.
 > Worth revisiting as its own row if the demand appears.
+>
+> *Adopted, as `reset=`* — see the next entry. The demand appeared: a two-level
+> question ("when does it reach A having been down to B?") is what a user asked
+> for, which makes the second level part of the question rather than a parameter
+> invented to work around the mathematics. The objection about a meaningless
+> kwarg was answered by making it optional and by letting Tier A take it too,
+> where it usefully filters out small wobbles.
 > **One crossing per `step`-sized window** for Gaussian paths — rejected. It
 > needs no new argument and is the easiest thing to write, but the number of
 > crossings then grows without bound as `step` shrinks, so the same path and
@@ -917,6 +943,132 @@ flagged). Roadmap row 22, "Upcrossings, as a sequence."
 >   notes that a count crosses at most once anyway.
 > - An epidemic path and a single epidemic compartment are unsupported, exactly
 >   as for `hitting_time`.
+
+---
+
+## Decision: Upcrossings — a Reset Level for Continuous Paths
+
+**Status:** Implemented — `reset`, `step` and `tol` added to `upcrossings`, plus
+`_is_continuous_path`, `_tier_b_reader`, `_gaussian_hitting_time`,
+`_validate_precision` and `_validate_upcrossings` in
+`symbulate/hitting_times.py`; tested in
+`symbulate/tests/test_hitting_times.py`; demo appended to
+`team/models-and-sim-design/hitting_times_demo.ipynb`. No change to
+`symbulate/__init__.py`. This takes up the "worth revisiting if the demand
+appears" invitation left by "Decision: Upcrossings — Tier A Only" above, and
+closes the Tier B half of roadmap row 22.
+
+**Decision**
+> `upcrossings(process, level, reset=None, max_time=100.0, start_time=0.0,
+> step=None, tol=1e-6)`. `reset` is the level the path has to get back to before
+> another crossing of `level` counts.
+>
+> - `reset=None` is exactly the old behaviour, unchanged: Tier A only, exact,
+>   and a continuous path raises.
+> - `reset=<number>` **also accepts a continuous path** — any Gaussian process
+>   or `GeometricBrownianMotion`. It is allowed on a Tier A path too, where it
+>   filters out wobbles that do not come back far enough.
+> - `reset` **below** `level` counts crossings upward; **above** it counts them
+>   downward. The direction is read off which of the two is lower, never asked
+>   for separately, which is the same choice `hitting_time` makes.
+> - `reset == level` is a `ValueError`, not a synonym for `None`.
+
+**Why a reset level is what makes the question well-posed**
+> Not a convenience. A continuous path recrosses a single level infinitely often
+> the instant it touches it, so the count of crossings of one level *diverges* as
+> `step` shrinks — that is the whole argument of the previous entry, and it still
+> stands. A reset level gives the path a finite distance to travel between one
+> crossing and the next, so only finitely many fit into a finite window, and the
+> sequence exists.
+>
+> That is also why `reset` is a modelling choice rather than a tuning knob:
+> "reaches 110 having been down to 90" and "reaches 110 having been down to 109"
+> are different questions, both legitimate, with different answers. The
+> docstring says so rather than implying one right value.
+
+**It is the same walk, with one number changed**
+> `_UpcrossingWalk` already found each crossing with a *pair* of searches — get
+> back below, then rise to the level. A band aims the first search at `reset`
+> instead of at `level`, and needs no `strict` flag, because two distinct levels
+> are already apart. So `reset` is one branch in `__init__` choosing
+> `(arm_level, arm_strict, sign)`; `_find_one_more` is otherwise untouched, and
+> `reset=None` reproduces the old triple exactly.
+>
+> The band is also what makes the continuous case robust. `_localize_crossing`
+> returns the midpoint of a `tol`-wide bracket, so the path at a reported
+> crossing time is only *near* `level`, not on it. With a band the next search
+> starts a whole band-width away from its target, so that slack cannot cause a
+> spurious immediate re-crossing. Without one it would.
+
+**Measured: the count does not run away with `step`**
+> The worry that sank "one crossing per `step`-sized window" does not apply
+> here, and this was checked rather than assumed. Brownian motion, `level=0.2`,
+> `reset=-0.2`, `max_time=5`, 400 paths, mean crossings found:
+>
+> | `step` | mean count |
+> |---|---|
+> | 0.5 | 2.158 ± 0.105 |
+> | 0.1 | 2.165 ± 0.094 |
+> | 0.02 | 1.995 ± 0.087 |
+>
+> A 25× change in `step` moves the mean by about one standard error. The reason
+> it is this stable is that each crossing is localized to within `tol` before the
+> next is looked for, so a coarse nominal `step` does not stop two nearby
+> crossings being told apart. `test_the_count_does_not_run_away_as_the_step_shrinks`
+> pins a cheaper version of this.
+>
+> It is still **approximate**, inheriting `hitting_time`'s Tier B accuracy: the
+> coin flip is exact for Brownian motion and bridges and a local stand-in
+> otherwise, and the placement inside a step leans slightly late.
+
+**Implementation notes**
+> - **`_gaussian_hitting_time` was extracted from `hitting_time`'s body**, so
+>   there is one copy of the Tier B scan and the two functions cannot drift
+>   apart — the same reasoning that produced `_tier_a_reader`. It gained an
+>   optional `sign`, because the band walk alternates between two levels and so
+>   wants a particular direction rather than whichever the path suggests. With
+>   `sign=None` it behaves exactly as the inlined code did; the added
+>   "already at or past the level" early return is unreachable in that case.
+> - **`_tier_b_reader` hands back the two levels restated on the scan's own
+>   scale**, which for a `GeometricBrownianMotion` is the log scale. It gets them
+>   by calling `_prepare` twice, once per level — `_prepare`'s third return value
+>   *is* "this level on that scale", so this needs no new signature, and it
+>   rejects a `reset` of 0 or below for a price for free. Taking logs is
+>   increasing, so which level is the lower is unchanged, and the walk never has
+>   to know what scale it is on. There is a test that the crossings of
+>   `(110, 90)` on a price are *bit-identical* to those of the matching log band
+>   on its own Brownian motion.
+> - **`_is_continuous_path` replaces the duplicated `hasattr` pair** that
+>   `_upcrossings_unsupported` used inline. `MertonJumpDiffusion` has a
+>   `brownian_path` but no `scale`, so it is correctly *not* continuous by this
+>   test and still falls through to the general message — worth knowing before
+>   changing either attribute.
+> - `_validate` was split again, with `_validate_precision` shared, mirroring
+>   `_validate_window`.
+> - The Tier C diffusions still raise **with or without** a `reset`. A band makes
+>   a *readable* continuous path answerable; it does not make an unreadable one
+>   readable. Tested.
+
+**Alternatives Considered**
+> **A separate `crossing_times` function** — rejected. It would duplicate the
+> whole walk, and a reset is a refinement of the question `upcrossings` already
+> asks, not a different question.
+> **Separate `upcrossings` / `downcrossings`** — rejected. They are the same scan
+> reporting the two halves of one cycle, and `hitting_time` already takes its
+> direction from the data rather than from an argument, so `reset` above or below
+> `level` is the consistent way to say which way round you mean.
+> **Naming it `band=` as a width** (`reset = level - band`) — rejected. Two
+> absolute levels is how the question is actually posed ("reaches A, having been
+> down to B"), and a width forces the user to do the subtraction and makes the
+> downward case read strangely.
+> **Requiring `reset` for continuous paths silently, by defaulting it** to some
+> fraction of the level or of the process's scale — rejected. It would hide the
+> modelling choice, and there is no defensible default: the right band depends
+> on the question, not on the process.
+> **Leaving `step`/`tol` off and using the defaults internally** — rejected. The
+> default divides the window into 100, which is far too coarse for a long
+> `max_time`, and the previous entry's reason for omitting them ("there is no
+> Tier B to be uniform with") no longer holds.
 
 ---
 
@@ -1385,7 +1537,13 @@ of the two threads answers that question unilaterally, the other has to
 
 ## Decision: Phase 3 — Hierarchical Models
 
-**Status:** Proposed
+**Status:** Implemented
+
+> Shipped: the lambda-only core mechanism — `HierarchicalProbabilitySpace`,
+> `Hierarchical(prior, cond_func)`, and `>>` (`ProbabilitySpace.__rshift__`),
+> with the `TypeError` guard for a conditional function that doesn't return a
+> `ProbabilitySpace`. Still deferred: `Placeholder` (sub-phase 3b) and
+> `AssumeHierarchical` (sub-phase 3c).
 
 **Decision**
 > Build the core mechanism first — `HierarchicalProbabilitySpace`,

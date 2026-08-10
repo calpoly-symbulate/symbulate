@@ -740,7 +740,7 @@ class TestMarginalLayoutIsOptIn(PlotTestCase):
         Xd, Yd = RV(Binomial(5, 0.4) ** 2)
         Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
         cases = [
-            ((X & Y).sim(500), None, "2-D Histogram"),
+            ((X & Y).sim(500), None, "Joint Histogram"),
             ((X & Y).sim(500), "scatter", "2D Scatter Plot"),
             ((X & Y).sim(40), None, "2D Scatter Plot"),
             ((Xd & Yd).sim(500), None, "Tile Plot"),
@@ -1080,11 +1080,11 @@ class TestPlot1DHistStyling(PlotTestCase):
         self.sims.plot()
         ax = plt.gca()
         self.assertEqual(ax.get_xlabel(), "Value")
-        self.assertEqual(ax.get_title(), "Density Histogram")
+        self.assertEqual(ax.get_title(), "Histogram")
 
     def test_hist_count_title_when_not_normalized(self):
         self.sims.plot(normalize=False)
-        self.assertEqual(plt.gca().get_title(), "Count Histogram")
+        self.assertEqual(plt.gca().get_title(), "Histogram")
 
     def test_hist_user_edgecolor_does_not_raise(self):
         """edgecolor= used to flow straight into ax.hist; it still must."""
@@ -1317,7 +1317,7 @@ class TestPlot1DDensityFeatures(PlotTestCase):
     def test_density_title_and_xlabel(self):
         self.sims.plot(type="density")
         ax = plt.gca()
-        self.assertEqual(ax.get_title(), "Density Curve")
+        self.assertEqual(ax.get_title(), "Density (Estimated)")
         self.assertEqual(ax.get_xlabel(), "Value")
 
     def test_density_default_alpha_opaque(self):
@@ -1891,23 +1891,23 @@ class TestPlot2DMeshFeatures(PlotTestCase):
 
     def test_hist2d_title(self):
         self.sims.plot(type="hist")
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
 
     def test_density2d_draws_contour_surface(self):
-        """Banded by default now, so it titles itself a contour plot."""
+        """Banded by default now, so it still draws collections/images."""
         self.sims.plot(type="density")
         ax = plt.gca()
         self.assertGreater(len(ax.collections + ax.images), 0)
-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
 
     def test_density2d_smooth_surface_with_contour_off(self):
         """contour=False is how the smooth gradient is asked for now."""
         self.sims.plot(type="density", contour=False)
-        self.assertEqual(plt.gca().get_title(), "2D Density Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
 
     def test_density2d_contour_mode(self):
         self.sims.plot(type="density", contour=True)
-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
 
     def test_density2d_levels_without_contour_warns(self):
         """levels only bands a contour plot, so it warns with contour=False."""
@@ -2008,7 +2008,7 @@ class TestPlot2DMeshFeatures(PlotTestCase):
         self.mixed_sims.plot(type="rug")
         ax = plt.gca()
         self.assertGreater(len(ax.collections), 0)
-        self.assertEqual(plt.gca().get_title(), "Segmented Rug Plot")
+        self.assertEqual(plt.gca().get_title(), "Rug Plot")
 
     def test_segmented_rug_gridlines_on_discrete_axis_only(self):
         """Gridlines run along the discrete axis only: vertical (x) when x
@@ -2450,9 +2450,9 @@ class TestPlot2DCombinedTypes(PlotTestCase):
 
     def test_an_overlay_type_alone_is_still_the_whole_plot(self):
         for type, title in [
-            ("density", "Segmented Density Plot"),
-            ("rug", "Segmented Rug Plot"),
-            ("segmented_density", "Segmented Density Plot"),
+            ("density", "Conditional Density (Estimated)"),
+            ("rug", "Rug Plot"),
+            ("segmented_density", "Conditional Density (Estimated)"),
         ]:
             with self.subTest(type=type):
                 plt.figure()
@@ -2495,7 +2495,7 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         sims = (X & Y).sim(500)
         sims.plot(type="segmented_density")
         ax = plt.gca()
-        self.assertEqual(plt.gca().get_title(), "Segmented Density Plot")
+        self.assertEqual(plt.gca().get_title(), "Conditional Density (Estimated)")
         # One unfilled Line2D curve per observed level of X, and no
         # fills by default (ridge=False)
         n_levels = len(np.unique(sims.array[:, 0]))
@@ -2601,20 +2601,20 @@ class TestPlot2DSegmentedDensity(PlotTestCase):
         self.assertIn("density", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"])
         self.assertIn("density", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"])
         self.assertEqual(
-            PLOT_DISPLAY_NAME["segmented_density"], "Segmented Density Plot"
+            PLOT_DISPLAY_NAME["segmented_density"], "Conditional Density (Estimated)"
         )
 
     def test_density_short_name_is_segmented_on_mixed(self):
         """On mixed data, type='density' produces the segmented density."""
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="density", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "Segmented Density Plot")
+        self.assertEqual(plt.gca().get_title(), "Conditional Density (Estimated)")
 
     def test_density2d_still_forces_surface_on_mixed(self):
         """type='density2d' forces the 2D surface even on mixed data."""
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(
             type="density2d", suggest=False
         )
-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
 
 
 class TestPlot2DSegmentedHist(PlotTestCase):
@@ -2628,7 +2628,7 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         sims = (X & Y).sim(500)
         sims.plot(type="segmented_hist")
         ax = plt.gca()
-        self.assertEqual(plt.gca().get_title(), "Segmented Histogram")
+        self.assertEqual(plt.gca().get_title(), "Conditional Histogram")
         self.assertGreater(len(ax.patches), 0)
         # Discrete x -> flipped orientation: baselines on the x-axis
         n_levels = len(np.unique(sims.array[:, 0]))
@@ -2734,22 +2734,22 @@ class TestPlot2DSegmentedHist(PlotTestCase):
         # the segmented histogram (the "segmented_hist" alias also works).
         self.assertIn("hist", DEFAULT_PLOT_TYPE[("2D_mixed", True)]["alternatives"])
         self.assertIn("hist", DEFAULT_PLOT_TYPE[("2D_mixed", False)]["alternatives"])
-        self.assertEqual(PLOT_DISPLAY_NAME["segmented_hist"], "Segmented Histogram")
+        self.assertEqual(PLOT_DISPLAY_NAME["segmented_hist"], "Conditional Histogram")
 
     def test_hist_short_name_is_segmented_on_mixed(self):
         """On mixed data, type='hist' produces the segmented histogram."""
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="hist", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "Segmented Histogram")
+        self.assertEqual(plt.gca().get_title(), "Conditional Histogram")
 
     def test_hist2d_still_forces_mesh_on_mixed(self):
         """type='hist2d' forces the 2D mesh even on mixed data."""
         RV(Normal(0, 1) * Binomial(3, 0.5)).sim(500).plot(type="hist2d", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
 
     def test_hist_short_name_stays_2d_on_continuous(self):
         """On two continuous variables, type='hist' is still the 2D mesh."""
         RV(Normal(0, 1) * Normal(0, 1)).sim(500).plot(type="hist", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
 
 
 # ===========================================================================
@@ -3330,9 +3330,11 @@ class TestDefaultLookupDispatch(PlotTestCase):
         self.assertGreater(len(plt.gca().patches), 0)
 
     def test_2d_mixed_large_defaults_to_tile(self):
+        """Dispatches to make_tile, but the title reads "Joint Histogram"
+        since the continuous axis has been binned rather than tiled."""
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         (X & Y).sim(500).plot()
-        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
 
     def test_2d_both_axes_under_K_2D_is_tile(self):
         """Two discrete axes both within the per-axis cap -> tile."""
@@ -3342,12 +3344,14 @@ class TestDefaultLookupDispatch(PlotTestCase):
         self.assertEqual(plt.gca().get_title(), "Tile Plot")
 
     def test_2d_one_axis_over_K_2D_stays_tile(self):
-        """One axis over the per-axis cap bins only that axis -> still a
-        (mixed) tile, not yet a 2-D histogram: per-axis independence."""
+        """One axis over the per-axis cap bins only that axis -> still
+        dispatches to make_tile (a mixed tile, not yet a 2-D histogram:
+        per-axis independence), but the title reads "Joint Histogram"
+        since one axis is no longer discrete."""
         RV(BoxModel(list(range(5))) * BoxModel(list(range(40)))).sim(3000).plot(
             suggest=False
         )
-        self.assertEqual(plt.gca().get_title(), "Tile Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
 
     def test_2d_both_axes_over_K_2D_is_hist2d(self):
         """Both axes over the per-axis cap now bin to a 2-D histogram -- the
@@ -3356,12 +3360,12 @@ class TestDefaultLookupDispatch(PlotTestCase):
         RV(BoxModel(list(range(40))) * BoxModel(list(range(40)))).sim(3000).plot(
             suggest=False
         )
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
 
     def test_2d_mixed_small_defaults_to_segmented_rug(self):
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         (X & Y).sim(60).plot()
-        self.assertEqual(plt.gca().get_title(), "Segmented Rug Plot")
+        self.assertEqual(plt.gca().get_title(), "Rug Plot")
 
     def test_2d_discrete_large_defaults_to_tile(self):
         X, Y = RV(Binomial(5, 0.4) ** 2)
@@ -3378,14 +3382,14 @@ class TestDefaultLookupDispatch(PlotTestCase):
         X, Y = RV(Normal(0, 1) ** 2)
         sims = (X & Y).sim(200)
         sims.plot(type="hist2d")
-        self.assertEqual(plt.gca().get_title(), "2-D Histogram")
+        self.assertEqual(plt.gca().get_title(), "Joint Histogram")
         plt.close("all")
         sims.plot(type="density2d")
-        self.assertEqual(plt.gca().get_title(), "Contour Plot")
+        self.assertEqual(plt.gca().get_title(), "Joint Density (Estimated)")
         plt.close("all")
         Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
         (Xm & Ym).sim(200).plot(type="segmented_rug")
-        self.assertEqual(plt.gca().get_title(), "Segmented Rug Plot")
+        self.assertEqual(plt.gca().get_title(), "Rug Plot")
 
     def test_2d_mixed_explicit_box_type_works(self):
         """'box' is a listed alternative for 2D_mixed data and dispatches
@@ -3479,7 +3483,7 @@ class TestSuggestionNote(PlotTestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             (X & Y).sim(500).plot(type="hist", suggest=True)
-        self.assertIn("Currently Showing: 2D Histogram (Default)", buf.getvalue())
+        self.assertIn("Currently Showing: Joint Histogram (Default)", buf.getvalue())
 
     def test_stackedbar_note_says_stacked_bar_plot(self):
         """type='stackedbar' replaced equal_width=True, so its suggestion
@@ -4653,7 +4657,7 @@ class TestVariablesChoosesWhatIsDrawn(PlotTestCase):
                 plt.figure()
                 p = self.dist.plot(variables=arg)
                 self.assertEqual(len(self._panels()), 1)
-                self.assertEqual(p.ax.get_title(), "PDF Plot")
+                self.assertEqual(p.ax.get_title(), "Probability Density Function")
                 # Named for the variable asked for, not a generic "Value".
                 self.assertEqual(p.ax.get_xlabel(), "Variable 3")
                 self.assertEqual(p.ax.get_ylabel(), "Density")
@@ -4668,7 +4672,7 @@ class TestVariablesChoosesWhatIsDrawn(PlotTestCase):
 
     def test_a_single_discrete_variable_draws_its_pmf(self):
         p = Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot(variables=1)
-        self.assertEqual(p.ax.get_title(), "PMF Plot")
+        self.assertEqual(p.ax.get_title(), "Probability Mass Function")
         self.assertEqual(p.ax.get_xlabel(), "Variable 2")
 
     def test_one_variable_works_where_the_joint_plot_is_refused(self):
@@ -4902,20 +4906,33 @@ class TestPairsLayout(PlotTestCase):
             sorted(l for l in x_labels if l),
             ["Variable 1", "Variable 2", "Variable 3"],
         )
-        # The left column names its row's variable, top-left panel included,
-        # so every row is identified.
+        # A diagonal panel's y-axis is that variable's own distribution rather
+        # than the variable, so it names what it measures; the rest of the
+        # left column names its row's variable.
         y_labels = [a.get_ylabel() for a in axes]
         self.assertEqual(
             sorted(l for l in y_labels if l),
-            ["Variable 1", "Variable 2", "Variable 3"],
+            [
+                "Marginal Density",
+                "Marginal Density",
+                "Marginal Density",
+                "Variable 2",
+                "Variable 3",
+            ],
         )
 
-    def test_top_left_panel_names_its_row(self):
-        """The first row holds one panel; without a label it goes unnamed."""
+    def test_diagonal_panels_name_the_marginal_they_show(self):
+        """The diagonal is not the joint distribution its neighbors are."""
         plt.figure()
         _continuous_sim(k=3).plot()
         # Panels are added row by row, so the first one is (0, 0).
-        self.assertEqual(_pairs_panels()[0].get_ylabel(), "Variable 1")
+        self.assertEqual(_pairs_panels()[0].get_ylabel(), "Marginal Density")
+
+    def test_diagonal_marginal_label_follows_the_quantity_shown(self):
+        """Counts aren't densities, so a count diagonal doesn't claim to be."""
+        plt.figure()
+        _continuous_sim(k=3).plot(normalize=False)
+        self.assertEqual(_pairs_panels()[0].get_ylabel(), "Marginal Count")
 
     def test_inner_x_tick_labels_are_hidden(self):
         """Every panel in a column shares the variable, so they'd repeat."""
@@ -4967,8 +4984,9 @@ class TestPairsLayout(PlotTestCase):
         """A bar's caption is lettered alike top and side.
 
         The pair label identifies the bar rather than titling a plot, so it
-        is the size of the bar's own "Density"/"Count" label, below a panel
-        title. Both matrices go through ``add_pairs_panel_colorbar``, so the
+        is the size of the bar's own "Joint Density"/"Joint Count" label,
+        below a panel title. Both matrices go through
+        ``add_pairs_panel_colorbar``, so the
         simulated and theoretical sides are checked together.
         """
         expected = (
@@ -4993,7 +5011,7 @@ class TestPairsLayout(PlotTestCase):
                 draw()
                 bars = _pairs_colorbars()
                 self.assertEqual({a.title.get_fontsize() for a in bars}, {expected})
-                # The "Density" label sits on the bar's y-axis.
+                # The "Joint Density" label sits on the bar's y-axis.
                 self.assertEqual(
                     {a.yaxis.label.get_fontsize() for a in bars}, {expected}
                 )
@@ -5013,7 +5031,9 @@ class TestPairsLayout(PlotTestCase):
                 )
 
     def test_density_by_default_counts_when_asked(self):
-        for normalize, expected in [(True, "Density"), (False, "Count")]:
+        # "Joint", so a bar can't be confused with the marginal density or
+        # count on the diagonal panel it sits across from.
+        for normalize, expected in [(True, "Joint Density"), (False, "Joint Count")]:
             with self.subTest(normalize=normalize):
                 plt.close("all")
                 plt.figure()

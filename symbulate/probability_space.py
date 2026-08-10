@@ -1,4 +1,5 @@
 from collections import Counter
+import numbers
 
 import numpy as np
 
@@ -198,6 +199,138 @@ class ProbabilitySpace:
                 return Vector(self.draw() for _ in range(exponent))
 
         return ProbabilitySpace(draw)
+
+    def __rshift__(self, cond_space_func):
+        """Create a hierarchical probability space from a prior and a conditional function.
+
+        Parameters
+        ----------
+        cond_space_func : callable
+            A function that takes one outcome drawn from ``self`` (the
+            prior) and returns a ``ProbabilitySpace`` (the conditional,
+            or "child," space to draw from given that outcome).
+
+        Returns
+        -------
+        ProbabilitySpace
+            A new probability space whose draws produce one outcome from
+            ``self`` and one from the conditional space it determines,
+            joined into a single tuple.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> P = Beta(1, 2) >> (lambda x: Binomial(10, x))
+        >>> P.draw()  # doctest: +SKIP
+        (0.34, 3)
+        """
+        return Hierarchical(self, cond_space_func)
+
+
+class HierarchicalProbabilitySpace(ProbabilitySpace):
+    """Defines a probability space built from a prior and a conditional space.
+
+    A hierarchical probability space draws an outcome from a prior
+    probability space, uses that outcome to determine a second
+    ("conditional," or "child") probability space, and draws from that
+    child space. The two outcomes are joined into a single tuple. This is
+    the mechanism behind the ``>>`` operator.
+
+    Parameters
+    ----------
+    prior_space : ProbabilitySpace
+        The probability space to draw the prior outcome from.
+    cond_space_func : callable
+        A function that takes one outcome drawn from ``prior_space`` and
+        returns a ``ProbabilitySpace`` to draw the conditional outcome
+        from.
+
+    Attributes
+    ----------
+    prior_space : ProbabilitySpace
+        The probability space the prior outcome is drawn from.
+    cond_space_func : callable
+        The function mapping a prior outcome to a conditional
+        probability space.
+
+    Raises
+    ------
+    TypeError
+        If ``prior_space`` is not a ``ProbabilitySpace``, if
+        ``cond_space_func`` is not callable, or if calling
+        ``cond_space_func`` on a prior outcome does not return a
+        ``ProbabilitySpace``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = HierarchicalProbabilitySpace(Beta(1, 2), lambda x: Binomial(10, x))
+    >>> P.draw()  # doctest: +SKIP
+    (0.34, 3)
+    """
+
+    def __init__(self, prior_space, cond_space_func):
+        """Initialize the hierarchical probability space."""
+        if not isinstance(prior_space, ProbabilitySpace):
+            raise TypeError(
+                "The left-hand side of '>>' must be a ProbabilitySpace "
+                f"(e.g., a distribution), but got {type(prior_space).__name__}."
+            )
+        if not callable(cond_space_func):
+            raise TypeError(
+                "The right-hand side of '>>' must be a callable (e.g., a "
+                "lambda or function) that takes the prior's value and "
+                f"returns a ProbabilitySpace, but got {type(cond_space_func).__name__}."
+            )
+        self.prior_space = prior_space
+        self.cond_space_func = cond_space_func
+
+        def draw():
+            prior_value = prior_space.draw()
+            cond_space = cond_space_func(prior_value)
+            if not isinstance(cond_space, ProbabilitySpace):
+                raise TypeError(
+                    "The function passed to '>>' must return a "
+                    "ProbabilitySpace, but got "
+                    f"{type(cond_space).__name__}. Did you forget to wrap "
+                    "the return value in a distribution, e.g. "
+                    "'lambda x: Binomial(10, x)'?"
+                )
+            return join(prior_value, cond_space.draw())
+
+        super().__init__(draw)
+
+
+def Hierarchical(prior_space, cond_space_func):
+    """Create a hierarchical probability space from a prior and a conditional function.
+
+    A convenience alias for ``HierarchicalProbabilitySpace``, and the
+    function that ``prior_space >> cond_space_func`` calls.
+
+    Parameters
+    ----------
+    prior_space : ProbabilitySpace
+        The probability space to draw the prior outcome from.
+    cond_space_func : callable
+        A function that takes one outcome drawn from ``prior_space`` and
+        returns a ``ProbabilitySpace`` to draw the conditional outcome
+        from.
+
+    Returns
+    -------
+    ProbabilitySpace
+        A new probability space whose draws produce one outcome from
+        ``prior_space`` and one from the conditional space it determines,
+        joined into a single tuple.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> P = Hierarchical(Beta(1, 2), lambda x: Binomial(10, x))
+    >>> P.draw()  # doctest: +SKIP
+    (0.34, 3)
+    """
+    return HierarchicalProbabilitySpace(prior_space, cond_space_func)
 
 
 class Event(Logical):
@@ -411,6 +544,10 @@ class BoxModel(ProbabilitySpace):
         TypeError
             If the ``box`` is not specified as either a list or a dict.
         ValueError
+            If ``box`` is empty.
+        ValueError
+            If ``size`` is negative.
+        ValueError
             If ``probs`` is provided but its length does not match the number
             of tickets in the box.
         ValueError
@@ -427,6 +564,27 @@ class BoxModel(ProbabilitySpace):
             self.probs = None
         else:
             raise TypeError("Box must be specified either as a list or a dict.")
+        if len(self.box) == 0:
+            raise ValueError(
+                "box is empty -- there is nothing to draw from. Give "
+                "BoxModel a non-empty list of tickets, e.g. "
+                "BoxModel([1, 2, 3])."
+            )
+        # size=None means "draw 1 ticket"; float('inf') is a legitimate,
+        # deliberately unbounded lazy sequence. Only an actual negative
+        # number is invalid -- this used to pass silently and only fail
+        # later, inside .draw(), with a raw NumPy message ("negative
+        # dimensions are not allowed") that never mentions size.
+        if (
+            size is not None
+            and isinstance(size, numbers.Real)
+            and size != float("inf")
+            and size < 0
+        ):
+            raise ValueError(
+                f"size must be a non-negative number of tickets to draw, "
+                f"got size={size!r}."
+            )
         if probs is not None and len(probs) != len(self.box):
             raise ValueError(
                 f"probs must have the same length as box, "
