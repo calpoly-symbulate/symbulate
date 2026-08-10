@@ -3655,6 +3655,45 @@ class TestRayleigh(unittest.TestCase):
         pval = stats.kstest(sims, cdf).pvalue
         self.assertTrue(pval > 0.01)
 
+    def test_Rayleigh_default_scale_is_one(self):
+        X = Rayleigh()
+        self.assertEqual(X.scale, 1.0)
+
+    def test_Rayleigh_distributional_nondefault_scale(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Rayleigh(scale=3))
+        sims = X.sim(Nsim)
+        cdf = stats.rayleigh(scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Rayleigh_mean_var_across_scales(self):
+        for s in [0.5, 1, 2, 5]:
+            X = Rayleigh(scale=s)
+            th = stats.rayleigh(scale=s)
+            self.assertAlmostEqual(float(X.mean()), float(th.mean()), places=6)
+            self.assertAlmostEqual(float(X.var()), float(th.var()), places=6)
+
+    def test_Rayleigh_stretch_identity(self):
+        # scale * Rayleigh() ~ Rayleigh(scale)
+        distributions.rng = np.random.default_rng(42)
+        X = RV(Rayleigh())
+        sims = (3 * X).sim(Nsim)
+        cdf = stats.rayleigh(scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_Rayleigh_invalid_scale_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: Rayleigh(scale=b))
+
+    def test_Rayleigh_plots_without_error(self):
+        Rayleigh(2).draw()
+        RV(Rayleigh(2)).sim(100).plot()
+        Rayleigh(2).plot()
+        Rayleigh(2).plot(cdf=True)
+        plt.close("all")
+
 
 class TestHalfNormal(unittest.TestCase):
 

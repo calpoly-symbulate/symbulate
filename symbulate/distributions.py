@@ -4387,6 +4387,17 @@ class Rayleigh(Distribution):
     whose components are independent, identically distributed normal
     random variables. Often used in signal processing.
 
+    Parameters
+    ----------
+    scale : float, optional
+        Scale parameter of the distribution. Must be positive.
+        Default is 1.0.
+
+    Attributes
+    ----------
+    scale : float
+        Scale parameter of the distribution.
+
     Examples
     --------
     >>> from symbulate import *
@@ -4395,11 +4406,27 @@ class Rayleigh(Distribution):
     1.2533
     >>> X.draw()  # doctest: +SKIP
     0.88
+    >>> round(float(Rayleigh(scale=2).mean()), 4)
+    2.5066
     """
 
-    def __init__(self):
-        """Initialize a Rayleigh distribution."""
-        params = {}
+    def __init__(self, scale=1.0):
+        """Initialize a Rayleigh distribution.
+
+        Raises
+        ------
+        Exception
+            If ``scale`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(scale, numbers.Real) or scale <= 0,
+                "scale must be a positive number",
+            ),
+        )
+        self.scale = scale
+
+        params = {"scale": scale}
         super().__init__(params, stats.rayleigh, False)
 
 
