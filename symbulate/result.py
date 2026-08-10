@@ -5,7 +5,49 @@ import matplotlib.pyplot as plt
 import symbulate
 from .base import Arithmetic, Transformable, Statistical, Filterable, _build_mv_filter
 from .index_sets import DiscreteTimeSequence, Reals, Naturals, TimeInterval
-from .plot import SymbulatePlot, get_next_color, make_sample_path
+from .plot import (
+    SymbulatePlot,
+    get_next_color,
+    make_hist,
+    make_impulse,
+    make_sample_path,
+)
+
+
+def _reject_path_plot_type(type, plot_description):
+    """Raise a clear error for an unsupported ``type=`` on a path plot.
+
+    Only ``InfiniteVector.plot()`` (typically reached through a jump
+    process's ``.states``, e.g. ``X.apply(states)``) supports
+    ``type="hist"``/``type="impulse"``. Every other path-shaped
+    ``.plot()`` always draws a sample path, so a stray ``type=`` -- most
+    likely forwarded here by ``RVResults.plot(type=...)`` on an ensemble
+    of these -- would otherwise fall through ``**kwargs`` all the way to
+    ``matplotlib.axes.Axes.plot`` and surface as an opaque "unexpected
+    keyword argument" error far from the actual mistake.
+
+    Parameters
+    ----------
+    type : object
+        The ``type=`` argument as received. ``None`` is the ordinary
+        case and passes silently.
+    plot_description : str
+        How to name the offending plot method in the message, e.g.
+        ``"Tuple.plot()"``.
+
+    Raises
+    ------
+    ValueError
+        If ``type`` is anything other than ``None``.
+    """
+    if type is not None:
+        raise ValueError(
+            f"type={type!r} is not supported here -- {plot_description} "
+            'always draws a sample path. type="hist" and type="impulse" '
+            "are only available on a jump process's visited states, e.g. "
+            'X.apply(states).plot(type="impulse") -- see '
+            "InfiniteVector.plot."
+        )
 
 
 class Scalar(numbers.Number):
@@ -461,7 +503,7 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         """
         return type(self)(np.cumsum(self.values))
 
-    def plot(self, **kwargs):
+    def plot(self, type=None, **kwargs):
         """
         Plot the values of the tuple as a sample path.
 
@@ -475,6 +517,11 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
 
         Parameters
         ----------
+        type : None, optional
+            Not supported here -- a ``Tuple`` always draws a sample
+            path. Passing anything other than ``None`` raises; see the
+            states-based histogram/impulse plots on
+            ``InfiniteVector.plot``.
         **kwargs
             Additional keyword arguments passed to
             ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
@@ -487,9 +534,15 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
             on. Its printed representation is empty, so Jupyter shows
             only the plot.
 
+        Raises
+        ------
+        ValueError
+            If ``type`` is given (not ``None``).
+
         See Also
         --------
-        InfiniteVector.plot : Plot values from an infinite vector.
+        InfiniteVector.plot : Plot values from an infinite vector, with
+            type="hist"/"impulse" support for a jump process's states.
         DiscreteTimeFunction.plot : Plot a discrete-time function.
         ContinuousTimeFunction.plot : Plot a continuous-time function.
 
@@ -500,6 +553,7 @@ class Tuple(Arithmetic, Transformable, Statistical, Filterable):
         >>> t.plot()  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
         """
+        _reject_path_plot_type(type, "Tuple.plot()")
         ax = plt.gca()
         color = kwargs.pop("color", None)
         if color is None:
@@ -906,28 +960,63 @@ class InfiniteVector(InfiniteTuple):
 
         return InfiniteVector(_func)
 
-    def plot(self, tmin=0, tmax=10, **kwargs):
+    def plot(self, tmin=0, tmax=10, type=None, weights=None, **kwargs):
         """
         Plot values from the vector over a specified index range.
 
-        The values are drawn over their index as a marker at each index
-        joined by a dashed line (``make_sample_path``, ``style="dots"``),
-        colored by the package color cycle -- there is nothing "between"
-        one index and the next, so this avoids implying values exist
-        there. Overlaid paths -- a second ``.plot()`` call on the same
-        axes -- get distinct colors and an automatic "Path 1", "Path 2",
-        ... legend.
+        By default, the values are drawn over their index as a marker at
+        each index joined by a dashed line (``make_sample_path``,
+        ``style="dots"``), colored by the package color cycle -- there is
+        nothing "between" one index and the next, so this avoids implying
+        values exist there. Overlaid paths -- a second ``.plot()`` call
+        on the same axes -- get distinct colors and an automatic
+        "Path 1", "Path 2", ... legend.
+
+        Passing ``type="hist"`` or ``type="impulse"`` instead treats
+        ``self[tmin], ..., self[tmax - 1]`` as a batch of values and
+        draws a histogram or impulse plot of them, rather than a path.
+        This is meant for a jump process's *visited states* -- e.g.
+        ``X.apply(states)`` (see ``states()`` in ``math.py``) returns
+        exactly this kind of ``InfiniteVector``, one entry per jump
+        rather than per unit of time.
+
+        **These two plots answer different questions, and one is not an
+        estimate of the other.** Unweighted, each visited state is
+        counted once no matter how long the process stayed there, so the
+        plot describes the *embedded jump chain*: how often each state
+        was jumped into. Weighted by how long each state was held --
+        ``weights=`` the same path's ``interarrival_times`` -- each state
+        instead accumulates the time spent in it, so the plot describes
+        the *fraction of time* the process was in each state. Holding
+        times are generally random and state-dependent (in an ``MM1``
+        queue an empty system empties at a different rate than a
+        congested one), so the two plots genuinely differ, and the
+        unweighted one is **not** a time average. Pick the one that
+        matches the question being asked.
 
         Parameters
         ----------
         tmin : int, optional
             Starting index, by default 0.
         tmax : int, optional
-            Ending index (exclusive), by default 10.
+            Ending index (exclusive), by default 10. For a jump
+            process's states this is a count of *jumps*, not a clock
+            time; ``DiscreteValued.num_jumps_by(t)`` converts an
+            elapsed time into the jump count that covers it.
+        type : {"hist", "impulse"}, optional
+            If given, draw a histogram (continuous-valued states) or an
+            impulse plot (discrete-valued states) of the values instead
+            of a sample path. Left unset (the default) for the ordinary
+            path plot.
+        weights : array-like, optional
+            Only used with ``type=``. A weight for each index from
+            ``tmin`` to ``tmax`` (e.g. ``interarrival_times``), summed
+            per value instead of counting occurrences -- see above.
         **kwargs
-            Additional keyword arguments passed to
-            ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
-            and from there to ``matplotlib.axes.Axes.plot``.
+            Additional keyword arguments passed to ``make_sample_path``
+            (e.g. ``label``, ``alpha``, ``style``) when ``type`` is
+            unset, or to ``make_hist`` / ``make_impulse`` (e.g.
+            ``normalize``, ``bins``) when it is given.
 
         Returns
         -------
@@ -936,8 +1025,15 @@ class InfiniteVector(InfiniteTuple):
             on. Its printed representation is empty, so Jupyter shows
             only the plot.
 
+        Raises
+        ------
+        ValueError
+            If ``type`` is given but is not ``"hist"`` or ``"impulse"``.
+
         See Also
         --------
+        DiscreteValued.num_jumps_by : Convert an elapsed time into a
+            number of jumps, to bound a states plot by time.
         DiscreteTimeFunction.plot : Plot a discrete-time function.
         ContinuousTimeFunction.plot : Plot a continuous-time function.
         Tuple.plot : Plot a finite Tuple.
@@ -948,16 +1044,51 @@ class InfiniteVector(InfiniteTuple):
         >>> iv = InfiniteVector(lambda n: n ** 2)
         >>> iv.plot(tmin=0, tmax=5)  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
+
+        The states visited by a jump process, as an impulse plot of the
+        first 100 jumps -- how often the chain jumped into each state:
+
+        >>> from symbulate import *
+        >>> path = ContinuousTimeMarkovChain(
+        ...     [[-1, 1], [2, -2]], [1.0, 0.0]
+        ... ).draw()
+        >>> path.states.plot(tmin=0, tmax=100, type="impulse")  # doctest: +SKIP
+
+        The same states weighted by how long each was held -- the
+        fraction of *time* spent in each state, which is a different
+        distribution:
+
+        >>> path.states.plot(
+        ...     tmin=0, tmax=100, type="impulse",
+        ...     weights=path.interarrival_times,
+        ... )  # doctest: +SKIP
         """
+        if type is not None and type not in ("hist", "impulse"):
+            raise ValueError(
+                f'type={type!r} is not supported here. Use type="hist" or '
+                'type="impulse" to plot a histogram or impulse plot of the '
+                "values from tmin to tmax, or leave type unset for the "
+                "default sample-path plot."
+            )
         xs = range(tmin, tmax)
         ys = [self[t] for t in range(tmin, tmax)]
         ax = plt.gca()
         color = kwargs.pop("color", None)
         if color is None:
             color = get_next_color(ax)
-        kwargs.setdefault("xlabel", "Index")
-        kwargs.setdefault("style", "dots")
-        make_sample_path(xs, ys, ax, color, **kwargs)
+
+        if type in ("hist", "impulse"):
+            # weights is indexed the same way self is -- one entry per
+            # index -- so take the same window from it.
+            w = None if weights is None else [weights[t] for t in range(tmin, tmax)]
+            if type == "hist":
+                make_hist(ys, ax, color, weights=w, **kwargs)
+            else:
+                make_impulse(ys, ax, color, weights=w, **kwargs)
+        else:
+            kwargs.setdefault("xlabel", "Index")
+            kwargs.setdefault("style", "dots")
+            make_sample_path(xs, ys, ax, color, **kwargs)
         return SymbulatePlot(ax)
 
 
@@ -1311,7 +1442,7 @@ class DiscreteTimeFunction(TimeFunction):
         """
         return self.__str__()
 
-    def plot(self, tmin=0, tmax=10, **kwargs):
+    def plot(self, tmin=0, tmax=10, type=None, **kwargs):
         """
         Plot values over a specified time range.
 
@@ -1329,6 +1460,11 @@ class DiscreteTimeFunction(TimeFunction):
             Starting time, by default 0.
         tmax : int or float, optional
             Ending time, by default 10.
+        type : None, optional
+            Not supported here -- this always draws a sample path.
+            Passing anything other than ``None`` raises; see the
+            states-based histogram/impulse plots on
+            ``InfiniteVector.plot``.
         **kwargs
             Additional keyword arguments passed to
             ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
@@ -1341,10 +1477,16 @@ class DiscreteTimeFunction(TimeFunction):
             on. Its printed representation is empty, so Jupyter shows
             only the plot.
 
+        Raises
+        ------
+        ValueError
+            If ``type`` is given (not ``None``).
+
         See Also
         --------
         ContinuousTimeFunction.plot : Plot a continuous-time function.
-        InfiniteVector.plot : Plot values from an infinite vector.
+        InfiniteVector.plot : Plot values from an infinite vector, with
+            type="hist"/"impulse" support for a jump process's states.
         Tuple.plot : Plot a finite Tuple.
 
         Examples
@@ -1354,6 +1496,7 @@ class DiscreteTimeFunction(TimeFunction):
         >>> f.plot(tmin=0, tmax=5)  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
         """
+        _reject_path_plot_type(type, "DiscreteTimeFunction.plot()")
         nmin = int(np.floor(tmin * self.index_set.fs))
         nmax = int(np.ceil(tmax * self.index_set.fs))
         ts = [self.index_set[n] for n in range(nmin, nmax)]
@@ -1636,7 +1779,7 @@ class ContinuousTimeFunction(TimeFunction):
         """
         return self.__str__()
 
-    def plot(self, tmin=0, tmax=10, **kwargs):
+    def plot(self, tmin=0, tmax=10, type=None, **kwargs):
         """
         Plot values over a specified time range.
 
@@ -1657,12 +1800,26 @@ class ContinuousTimeFunction(TimeFunction):
         the same axes -- get distinct colors and an automatic "Path 1",
         "Path 2", ... legend.
 
+        This always draws a sample path over time -- ``type=`` is not
+        supported here even for a jump process, since sampling a step
+        function on a time grid only *approximates* a states histogram,
+        and jitters depending on where the samples happen to fall
+        relative to the jumps. For a histogram or impulse plot of the
+        *states visited*, use ``.states`` (or ``X.apply(states)``)
+        directly, which is exact -- optionally with ``num_jumps_by(t)``
+        (on ``DiscreteValued``) to convert an elapsed time into how many
+        jumps that covers, e.g.
+        ``path.states.plot(tmax=path.num_jumps_by(T), type="impulse")``.
+
         Parameters
         ----------
         tmin : float, optional
             Starting time, by default 0.
         tmax : float, optional
             Ending time, by default 10.
+        type : None, optional
+            Not supported here -- see above. Passing anything other than
+            ``None`` raises.
         **kwargs
             Additional keyword arguments passed to
             ``make_sample_path`` (e.g. ``label``, ``alpha``, ``style``),
@@ -1675,10 +1832,16 @@ class ContinuousTimeFunction(TimeFunction):
             on. Its printed representation is empty, so Jupyter shows
             only the plot.
 
+        Raises
+        ------
+        ValueError
+            If ``type`` is given (not ``None``).
+
         See Also
         --------
         DiscreteTimeFunction.plot : Plot a discrete-time function.
-        InfiniteVector.plot : Plot values from an infinite vector.
+        InfiniteVector.plot : Plot values from an infinite vector, with
+            type="hist"/"impulse" support for a jump process's states.
         Tuple.plot : Plot a finite Tuple.
 
         Examples
@@ -1689,6 +1852,7 @@ class ContinuousTimeFunction(TimeFunction):
         >>> f.plot(tmin=0, tmax=2 * np.pi)  # doctest: +SKIP
         >>> plt.show()  # doctest: +SKIP
         """
+        _reject_path_plot_type(type, "ContinuousTimeFunction.plot()")
         ts = ys = None
         if isinstance(self, DiscreteValued):
             try:
@@ -1864,6 +2028,65 @@ class DiscreteValued:
         if not hasattr(self, "interarrival_times"):
             raise AttributeError("Interarrival times not defined for this function.")
         return self.interarrival_times.cumsum()
+
+    def num_jumps_by(self, t):
+        """
+        Return how many jumps of this path occurred by time ``t``.
+
+        Converts a clock-time bound into a jump-count bound, for plotting
+        a states histogram or impulse plot over an elapsed stretch of
+        time rather than a fixed number of jumps -- e.g.
+        ``path.states.plot(tmax=path.num_jumps_by(T), type="impulse")``
+        plots every state visited by time ``T``, no matter how many jumps
+        that took (see ``InfiniteVector.plot``). Walks
+        ``get_arrival_times()`` forward one jump at a time, the same way
+        ``ContinuousTimeMarkovChainResult`` evaluates itself at a given
+        time.
+
+        A jump landing exactly at ``t`` is counted, matching how the path
+        itself reads that moment: it has already moved on to the next
+        state by time ``t``. So ``states[num_jumps_by(t)]`` is the state
+        the path is in at time ``t``.
+
+        Parameters
+        ----------
+        t : float
+            An elapsed amount of time, measured from 0.
+
+        Returns
+        -------
+        int
+            The number of jumps with an arrival time at or before ``t``.
+
+        Raises
+        ------
+        AttributeError
+            If interarrival times are not defined for this function.
+
+        See Also
+        --------
+        DiscreteValued.get_arrival_times : Return the arrival (jump) times.
+        InfiniteVector.plot : Draw the visited states as a histogram or
+            impulse plot, bounded by a jump count.
+
+        Examples
+        --------
+        >>> from symbulate import *
+        >>> path = ContinuousTimeMarkovChain([[-1, 1], [2, -2]], [1.0, 0.0]).draw()
+        >>> path.num_jumps_by(0.0)
+        0
+
+        Every state visited in the first 20 units of time, rather than
+        the first 20 jumps:
+
+        >>> n = path.num_jumps_by(20.0)
+        >>> path.states.plot(tmax=n, type="impulse")  # doctest: +SKIP
+        """
+        arrival_times = self.get_arrival_times()
+        n = 0
+        while arrival_times[n] <= t:
+            n += 1
+        return n
 
 
 def join(result1, result2):

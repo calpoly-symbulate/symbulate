@@ -1442,6 +1442,48 @@ def count_var(x):
     return counts
 
 
+def weighted_count_var(x, weights):
+    """Like ``count_var``, but sum ``weights`` instead of counting by 1.
+
+    Used for a states impulse plot weighted by how long each state was
+    held (``interarrival_times``): the count for a value becomes the
+    total time spent there instead of the number of jumps into it, so
+    the plot answers "what fraction of time was spent in each state"
+    rather than "how often was each state jumped into." Those are two
+    genuinely different questions -- a state that is jumped into rarely
+    but held for a long time is common in time and rare in jumps.
+
+    Parameters
+    ----------
+    x : iterable
+        The values (or category codes) to group by.
+    weights : iterable
+        A weight for each entry of ``x``, same length and same order.
+
+    Returns
+    -------
+    dict
+        Maps each distinct value in ``x`` to the sum of the weights of
+        its occurrences.
+
+    See Also
+    --------
+    count_var : The unweighted version, counting each occurrence once.
+
+    Examples
+    --------
+    >>> weighted_count_var([0, 1, 0], [1.0, 5.0, 2.0])
+    {0: 3.0, 1: 5.0}
+    """
+    sums = {}
+    for val, weight in zip(x, weights):
+        if val in sums:
+            sums[val] += weight
+        else:
+            sums[val] = weight
+    return sums
+
+
 def compute_density(values):
     density = gaussian_kde(values)
     density.covariance_factor = lambda: 0.25
@@ -3098,6 +3140,7 @@ def make_impulse(
     alpha=None,
     label=None,
     orientation="vertical",
+    weights=None,
     **kwargs,
 ):
     """Draw a 1D impulse (stem) plot of simulated discrete values.
@@ -3144,6 +3187,16 @@ def make_impulse(
         behavior. "horizontal" draws stems extending from the y-axis
         instead, values on the y-axis, frequency/count on the x-axis --
         for drawing sideways in a 2D plot's y-marginal panel.
+    weights : array-like, optional
+        A weight for each entry of ``values``, same length. If given,
+        each stem's height is the *sum* of the weights of the values
+        that fall on it, instead of a plain count -- e.g. weighting a
+        jump process's visited states by how long each one was held
+        (``interarrival_times``) turns "how often was each state jumped
+        into" into "what fraction of time was spent in each state,"
+        which is a different question with a different answer.
+        ``normalize`` then divides by the total weight instead of by
+        the number of values.
     **kwargs
         Additional keyword arguments passed to the stems
         (``matplotlib.axes.Axes.vlines`` / ``hlines``).
@@ -3153,6 +3206,12 @@ def make_impulse(
     tuple
         The ``(xs, freqs)`` values plotted, so the caller can inspect
         or further style the stems.
+
+    Raises
+    ------
+    ValueError
+        If ``weights`` is given but is not the same length as
+        ``values``.
 
     Examples
     --------
@@ -3171,13 +3230,25 @@ def make_impulse(
     # values keep their real positions (categories is None).
     codes, categories = _encode_categories(values)
     n = len(codes)
-    counts = count_var(codes)
+    if weights is None:
+        counts = count_var(codes)
+        total = n
+    else:
+        weights = list(weights)
+        if len(weights) != n:
+            raise ValueError(
+                f"weights has {len(weights)} entries but values has {n}. "
+                "weights must give exactly one weight per value, in the "
+                "same order."
+            )
+        counts = weighted_count_var(codes, weights)
+        total = sum(weights)
     # Sort the code positions when categorical so the stems line up with
     # the sorted tick labels; keep first-seen order for numeric data.
     xs = sorted(counts.keys()) if categories is not None else list(counts.keys())
     freqs = [counts[x] for x in xs]
     if normalize:
-        freqs = [freq / n for freq in freqs]
+        freqs = [freq / total for freq in freqs]
 
     # Track the impulse series drawn on these axes, stored on the axes
     # object itself (the same pattern get_next_color uses for the
@@ -3277,6 +3348,7 @@ def make_hist(
     alpha=None,
     label=None,
     orientation="vertical",
+    weights=None,
     **kwargs,
 ):
     """Draw a 1D histogram of simulated values on the given axes.
@@ -3328,6 +3400,14 @@ def make_hist(
         on the x-axis -- today's behavior. "horizontal" draws bars
         extending from the y-axis instead, values on the y-axis -- for
         drawing sideways in a 2D plot's y-marginal panel.
+    weights : array-like, optional
+        A weight for each entry of ``values``, same length, passed
+        straight through to ``matplotlib.axes.Axes.hist``. Weighting a
+        jump process's visited states by how long each one was held
+        (``interarrival_times``) turns each bar into "what fraction of
+        time was the value in this range" instead of "how often did a
+        jump land in this range" -- a different question with a
+        different answer.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.hist``.
@@ -3372,6 +3452,7 @@ def make_hist(
         alpha=alpha,
         label=label,
         orientation=orientation,
+        weights=weights,
         **kwargs,
     )
     value_label, freq_label = "Value", "Density" if normalize else "Count"
