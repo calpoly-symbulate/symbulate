@@ -39,6 +39,7 @@ from symbulate.result import (
     Scalar,
     Tuple,
     Vector,
+    _discrete_valued_step_path,
     concat,
     is_number,
     is_numeric_vector,
@@ -909,17 +910,54 @@ class TestResultPlotsReturnWrapper(unittest.TestCase):
 class TestResultSamplePathPlots(unittest.TestCase):
     """Result-type plot() methods draw sample paths via make_sample_path.
 
-    The old ".--" dot-dash format is replaced by a plain solid line;
-    index-based results label the x-axis "Index", time-based ones
-    "Time"; overlaid paths get distinct colors and an automatic
-    "Path 1", "Path 2", ... legend.
+    A discrete sequence of values -- Tuple, InfiniteVector,
+    DiscreteTimeFunction -- draws a marker at each point joined by a
+    dashed line (``style="dots"``), since there is nothing "between" one
+    index or discrete time step and the next. A smooth continuous-time
+    function keeps the plain solid line. Index-based results label the
+    x-axis "Index", time-based ones "Time"; overlaid paths get distinct
+    colors and an automatic "Path 1", "Path 2", ... legend.
     """
 
     def tearDown(self):
         plt.close("all")
 
-    def test_tuple_plot_is_solid_line_without_markers(self):
+    def test_tuple_plot_is_dots_joined_by_dashed_line(self):
         Tuple([1, 4, 2, 8, 5]).plot()
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_linestyle(), "--")
+        self.assertEqual(line.get_marker(), ".")
+
+    def test_vector_plot_is_dots_joined_by_dashed_line(self):
+        Vector([1.0, 2.0, 3.0]).plot()
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_linestyle(), "--")
+        self.assertEqual(line.get_marker(), ".")
+
+    def test_infinite_vector_plot_is_dots_joined_by_dashed_line(self):
+        InfiniteVector(lambda n: n**2).plot(tmin=0, tmax=5)
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_linestyle(), "--")
+        self.assertEqual(line.get_marker(), ".")
+
+    def test_discrete_time_function_plot_is_dots_joined_by_dashed_line(self):
+        DiscreteTimeFunction(lambda n: n, fs=1).plot(tmin=0, tmax=5)
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_linestyle(), "--")
+        self.assertEqual(line.get_marker(), ".")
+
+    def test_continuous_time_function_plot_is_still_a_plain_solid_line(self):
+        """A smooth (non-DiscreteValued) continuous-time path is
+        unaffected: still a plain solid line sampled on a fine grid."""
+        ContinuousTimeFunction(lambda t: np.sin(t)).plot(tmin=0, tmax=6)
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_linestyle(), "-")
+        self.assertEqual(line.get_marker(), "None")
+        self.assertEqual(line.get_drawstyle(), "default")
+        self.assertEqual(len(line.get_xdata()), 200)
+
+    def test_explicit_style_kwarg_overrides_the_dots_default(self):
+        Tuple([1, 4, 2, 8, 5]).plot(style="line")
         (line,) = plt.gca().lines
         self.assertEqual(line.get_linestyle(), "-")
         self.assertEqual(line.get_marker(), "None")
@@ -967,6 +1005,134 @@ class TestResultSamplePathPlots(unittest.TestCase):
         Tuple([2, 2, 6, 3, 9]).plot()
         labels = [text.get_text() for text in plt.gca().get_legend().get_texts()]
         self.assertEqual(labels, ["First walk", "Path 2"])
+
+
+# ---------------------------------------------------------------------------
+# ContinuousTimeFunction.plot() steps through the exact jumps of a
+# DiscreteValued path, instead of sampling a dense grid
+# ---------------------------------------------------------------------------
+
+
+class _JumpPath(ContinuousTimeFunction, DiscreteValued):
+    """A deterministic jump process, for testing the step-plot dispatch.
+
+    Jumps to the next integer state every ``step`` units of time, forever:
+    state ``n`` is held from time ``n * step`` until ``(n + 1) * step``.
+    """
+
+    def __init__(self, step=1.0):
+        super().__init__(func=lambda t: int(t // step))
+        self.states = InfiniteVector(lambda n: n)
+        self.interarrival_times = InfiniteVector(lambda n: step)
+
+
+class _StatesOnlyPath(ContinuousTimeFunction, DiscreteValued):
+    """A DiscreteValued path with states but no interarrival times.
+
+    Mirrors the documented gap in ``NonHomogeneousPoissonProcessResult`` (and
+    ``CoxProcessResult``, which builds on it): it counts events on a scale
+    where ``get_states()`` makes sense, but never converts back to clock time,
+    so it has no ``interarrival_times`` and ``get_arrival_times()`` raises.
+    Closing that gap is out of scope here -- plotting only has to survive it.
+    """
+
+    def __init__(self):
+        super().__init__(func=lambda t: int(t))
+        self.states = InfiniteVector(lambda n: n)
+
+
+class TestDiscreteValuedStepPath(unittest.TestCase):
+    """_discrete_valued_step_path builds exact step data from the jumps."""
+
+    def test_walks_states_and_arrival_times_from_the_start(self):
+        times, values = _discrete_valued_step_path(_JumpPath(step=1.0), 0, 3)
+        np.testing.assert_allclose(times, [0, 1, 2, 3])
+        self.assertEqual(values, [0, 1, 2, 2])
+
+    def test_window_starting_mid_state_holds_the_state_in_progress(self):
+        """tmin=1.5 lands inside state 1's stretch, so the path starts
+        there rather than restarting the walk at state 0."""
+        times, values = _discrete_valued_step_path(_JumpPath(step=1.0), 1.5, 3)
+        np.testing.assert_allclose(times, [1.5, 2, 3])
+        self.assertEqual(values, [1, 2, 2])
+
+    def test_window_entirely_inside_one_state_is_flat(self):
+        times, values = _discrete_valued_step_path(_JumpPath(step=1.0), 1.2, 1.8)
+        np.testing.assert_allclose(times, [1.2, 1.8])
+        self.assertEqual(values, [1, 1])
+
+    def test_finer_jumps_give_more_points_over_the_same_window(self):
+        times, values = _discrete_valued_step_path(_JumpPath(step=0.5), 0, 2)
+        np.testing.assert_allclose(times, [0, 0.5, 1.0, 1.5, 2])
+        self.assertEqual(values, [0, 1, 2, 3, 3])
+
+    def test_last_state_is_held_out_to_tmax(self):
+        times, values = _discrete_valued_step_path(_JumpPath(step=1.0), 0, 2.5)
+        self.assertEqual(times[-1], 2.5)
+        self.assertEqual(values[-1], values[-2])
+
+    def test_step_data_agrees_with_the_path_itself(self):
+        """Reading the step data as a right-continuous step function
+        reproduces the path's own value at every time in the window."""
+        path = _JumpPath(step=0.7)
+        times, values = _discrete_valued_step_path(path, 0, 5)
+        for t in np.linspace(0, 5, 201)[:-1]:
+            k = int(np.searchsorted(times, t, side="right")) - 1
+            self.assertEqual(values[k], path(t))
+
+    def test_missing_interarrival_times_raises_attribute_error(self):
+        with self.assertRaises(AttributeError):
+            _discrete_valued_step_path(_StatesOnlyPath(), 0, 3)
+
+
+class TestContinuousTimeFunctionStepPlots(unittest.TestCase):
+    """ContinuousTimeFunction.plot() defaults a jump process to steps."""
+
+    def tearDown(self):
+        plt.close("all")
+
+    def test_jump_process_plot_uses_steps_drawstyle(self):
+        _JumpPath().plot(tmin=0, tmax=3)
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_drawstyle(), "steps-post")
+
+    def test_jump_process_plot_uses_exact_arrival_times(self):
+        _JumpPath(step=1.0).plot(tmin=0, tmax=3)
+        (line,) = plt.gca().lines
+        np.testing.assert_allclose(line.get_xdata(), [0, 1, 2, 3])
+        np.testing.assert_allclose(line.get_ydata(), [0, 1, 2, 2])
+
+    def test_jump_process_plot_holds_state_already_in_progress_at_tmin(self):
+        _JumpPath(step=1.0).plot(tmin=1.5, tmax=3)
+        (line,) = plt.gca().lines
+        np.testing.assert_allclose(line.get_xdata(), [1.5, 2, 3])
+        np.testing.assert_allclose(line.get_ydata(), [1, 2, 2])
+
+    def test_jump_process_plot_point_count_reflects_jumps_not_200(self):
+        _JumpPath(step=1.0).plot(tmin=0, tmax=3)
+        (line,) = plt.gca().lines
+        self.assertEqual(len(line.get_xdata()), 4)
+
+    def test_jump_process_style_kwarg_can_override_the_steps_default(self):
+        _JumpPath().plot(tmin=0, tmax=3, style="line")
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_drawstyle(), "default")
+
+    def test_smooth_continuous_process_plot_is_unaffected(self):
+        ContinuousTimeFunction(lambda t: np.sin(t)).plot(tmin=0, tmax=6)
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_drawstyle(), "default")
+        self.assertEqual(line.get_linestyle(), "-")
+        self.assertEqual(line.get_marker(), "None")
+        self.assertEqual(len(line.get_xdata()), 200)
+
+    def test_discrete_valued_without_arrival_times_falls_back_to_dense_grid(self):
+        """The documented NonHomogeneousPoissonProcess/CoxProcess gap:
+        plotting such a path must fall back silently, not raise."""
+        _StatesOnlyPath().plot(tmin=0, tmax=3)
+        (line,) = plt.gca().lines
+        self.assertEqual(line.get_drawstyle(), "default")
+        self.assertEqual(len(line.get_xdata()), 200)
 
 
 if __name__ == "__main__":

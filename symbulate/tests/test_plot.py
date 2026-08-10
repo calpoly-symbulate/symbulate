@@ -3963,6 +3963,49 @@ class TestMakeSamplePath(PlotTestCase):
         self.draw_path(label="_nolegend_")
         self.assertIsNone(plt.gca().get_legend())
 
+    def test_default_style_is_a_plain_line(self):
+        line = self.draw_path()
+        self.assertEqual(line.get_drawstyle(), "default")
+        self.assertEqual(line.get_linestyle(), "-")
+        self.assertEqual(line.get_marker(), "None")
+
+    def test_line_style_is_the_same_as_the_default(self):
+        line = self.draw_path(style="line")
+        self.assertEqual(line.get_drawstyle(), "default")
+        self.assertEqual(line.get_linestyle(), "-")
+        self.assertEqual(line.get_marker(), "None")
+
+    def test_dots_style_marks_each_point_with_a_dashed_line(self):
+        line = self.draw_path(style="dots")
+        self.assertEqual(line.get_linestyle(), "--")
+        self.assertEqual(line.get_marker(), ".")
+
+    def test_steps_style_holds_flat_until_the_next_point(self):
+        line = self.draw_path(style="steps")
+        self.assertEqual(line.get_drawstyle(), "steps-post")
+        self.assertEqual(line.get_linestyle(), "-")
+        self.assertEqual(line.get_marker(), "None")
+
+    def test_invalid_style_raises_helpful_error(self):
+        with self.assertRaises(ValueError) as cm:
+            self.draw_path(style="scatter")
+        message = str(cm.exception)
+        self.assertIn("scatter", message)
+        self.assertIn("line", message)
+        self.assertIn("dots", message)
+        self.assertIn("steps", message)
+
+    def test_style_does_not_change_the_data_or_the_defaults(self):
+        """style= only changes how the points are joined."""
+        for style in ("line", "dots", "steps"):
+            with self.subTest(style=style):
+                plt.close("all")
+                line = self.draw_path(style=style)
+                np.testing.assert_allclose(line.get_xdata(), self.times)
+                np.testing.assert_allclose(line.get_ydata(), self.values)
+                self.assertEqual(line.get_linewidth(), SAMPLE_PATH_LINEWIDTH)
+                self.assertEqual(line.get_alpha(), SAMPLE_PATH_ALPHA)
+
 
 # ===========================================================================
 # Error handling
