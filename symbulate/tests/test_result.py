@@ -261,6 +261,24 @@ class TestInfiniteTuple(unittest.TestCase):
         self.assertEqual(shifted[0], 2)
         self.assertEqual(shifted[3], 5)
 
+    def test_slice_no_stop_honors_step(self):
+        # Regression test: an open-ended slice with a start used to
+        # silently drop the step entirely (iv[2::2] behaved like iv[2:]).
+        iv = InfiniteTuple(lambda n: n)
+        stepped = iv[2::2]
+        self.assertEqual([stepped[i] for i in range(5)], [2, 4, 6, 8, 10])
+
+    def test_slice_no_start_honors_step(self):
+        # Same bug, sibling branch: with no start (iv[::2]) the old code
+        # returned self unchanged, silently ignoring the step too.
+        iv = InfiniteTuple(lambda n: n)
+        stepped = iv[::2]
+        self.assertEqual([stepped[i] for i in range(5)], [0, 2, 4, 6, 8])
+
+    def test_full_slice_still_returns_self(self):
+        iv = InfiniteTuple(lambda n: n)
+        self.assertIs(iv[:], iv)
+
     def test_str_contains_ellipsis(self):
         iv = InfiniteTuple(lambda n: n)
         self.assertIn("...", str(iv))
@@ -562,6 +580,46 @@ class TestJoin(unittest.TestCase):
     def test_join_tuple_and_scalar(self):
         result = join(Tuple([1, 2]), Scalar(3))
         self.assertEqual(tuple(result), (1, 2, 3))
+
+    def test_join_vector_and_scalar_stays_nested(self):
+        # Regression test: Vector is a Tuple subclass, but join() must not
+        # unpack it -- only an exact Tuple should be flattened. A Vector
+        # result (e.g. from ** or a multivariate distribution draw) should
+        # stay as a single nested component.
+        v = Vector([1, 2])
+        result = join(v, Scalar(3))
+        self.assertEqual(len(result), 2)
+        self.assertIsInstance(result[0], Vector)
+        self.assertEqual(tuple(result[0]), (1, 2))
+        self.assertEqual(result[1], 3)
+
+    def test_join_scalar_and_vector_stays_nested(self):
+        v = Vector([1, 2])
+        result = join(Scalar(0), v)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], 0)
+        self.assertIsInstance(result[1], Vector)
+        self.assertEqual(tuple(result[1]), (1, 2))
+
+    def test_join_vector_and_vector_stays_nested(self):
+        v1 = Vector([1, 2])
+        v2 = Vector([3, 4])
+        result = join(v1, v2)
+        self.assertEqual(len(result), 2)
+        self.assertIsInstance(result[0], Vector)
+        self.assertIsInstance(result[1], Vector)
+        self.assertEqual(tuple(result[0]), (1, 2))
+        self.assertEqual(tuple(result[1]), (3, 4))
+
+    def test_join_distinguishes_exact_tuple_from_vector_subclass(self):
+        # The core distinction the fix depends on: an exact Tuple flattens,
+        # but a Tuple *subclass* (Vector) does not. If join() is ever
+        # changed to use isinstance(x, Tuple) instead of type(x) == Tuple,
+        # this test will fail, since Vector would then also flatten.
+        flattened = join(Tuple([1, 2]), Scalar(3))
+        nested = join(Vector([1, 2]), Scalar(3))
+        self.assertEqual(len(flattened), 3)
+        self.assertEqual(len(nested), 2)
 
 
 # ---------------------------------------------------------------------------

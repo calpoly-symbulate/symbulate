@@ -19,7 +19,10 @@ from scipy.stats import gaussian_kde
 # "Decision: .mplstyle Standards".
 plt.style.use(os.path.join(os.path.dirname(__file__), "symbulate.mplstyle"))
 
-rng = np.random.default_rng()
+# The shared generator, owned by probability_space.py -- this module used to
+# create its own, which made seed() unable to reach it. Do not reintroduce a
+# local `rng = np.random.default_rng()` here.
+from .probability_space import rng
 
 # Discreteness budgets for the default plot lookup -- see classify_values()
 # and DECISIONS.md, "Decision: Data Classification Thresholds (Budget Model)".
@@ -666,6 +669,19 @@ MARGINAL_OVERLAY_ERROR = (
     "that a second plot can't share. Plot each one in its own cell -- or, for "
     "simulated data, draw both without marginal=True so they can overlay."
 )
+# Distribution.plot(): a pdf/pmf and a cdf on the same axes use incompatible
+# y-scales (one can exceed 1, the other runs 0 to 1), so this is a hard error
+# rather than a natural overlay or a readability warning -- there is no
+# reading of the combined plot that is correct. Same "hard error" tier as
+# MARGINAL_OVERLAY_ERROR above; see DECISIONS.md, "Decision: Overlay Behavior".
+THEORETICAL_CDF_PDF_OVERLAY_ERROR = (
+    "This axes already has a {existing} plotted on it, and you're now trying "
+    "to add a {new}. A density/mass curve and a cumulative distribution "
+    "curve use different y-axis scales (one can exceed 1, the other runs "
+    "from 0 to 1), so overlaying them on the same axes produces a plot that "
+    "can't be read correctly. Draw them in separate cells, or pass ax= to "
+    "place them in your own subplots (e.g. via plt.subplots())."
+)
 # Geometry of that three-panel layout, as a GridSpec of MARGINAL_GRID by
 # MARGINAL_GRID cells: the joint panel takes all but the first row and last
 # column, each variable's own distribution takes the strip beside it.
@@ -687,6 +703,11 @@ MARGINAL_COLORBAR_RECT = (0.80, 0.11, 0.03, 0.52)
 # itself there -- 0, 2, 4, 6, 8 running together. The value axis is left
 # alone: it is shared with the joint panel, which sets the ticks there.
 MARGINAL_FREQ_TICKS = 3
+MARGINAL_FREQ_TICK_ROTATION = 90  # degrees. The right-hand strip's
+# frequency-axis tick labels are rotated by this much so decimal labels
+# ("0.00", "0.15", "0.30") fit in the strip's narrow width without running
+# into each other (see thin_marginal_frequency_ticks). The strip above the
+# joint panel is wide, not narrow, so its tick labels are left horizontal.
 
 
 class SymbulatePlot:
@@ -1333,7 +1354,7 @@ PLOT_DISPLAY_NAME = {
     "scatter": "Scatter Plot",
     "tile": "Tile Plot",
     "mosaic": "Mosaic Plot",
-    "stackedbar": "Stacked Bar Plot",
+    "stackedbar": "Stacked Bar Chart",
     "hist2d": "Joint Histogram",
     "density2d": "Joint Density (Estimated)",
     "violin": "Violin Plot",
@@ -1744,7 +1765,10 @@ def thin_marginal_frequency_ticks(marg_ax, orientation, integer=False):
     orientation : {"vertical", "horizontal"}
         How the strip was drawn. ``"vertical"`` (the strip above the joint
         panel) has its frequency on the y-axis; ``"horizontal"`` (the strip
-        to the right) has it on the x-axis.
+        to the right) has it on the x-axis. The horizontal one is also the
+        narrow one, so its frequency tick labels are rotated by
+        ``MARGINAL_FREQ_TICK_ROTATION`` to fit; the vertical one's are left
+        upright.
     integer : bool, default False
         Whether the frequency is a whole number, i.e. a count. Counts get
         whole-number ticks, since half a simulated value doesn't exist.
@@ -1755,6 +1779,22 @@ def thin_marginal_frequency_ticks(marg_ax, orientation, integer=False):
     # (_dotplot_relayout, which runs on draw), so setting the locator here is
     # not enough on its own -- record the cap where that rebuild can find it.
     marg_ax._symbulate_freq_ticks = MARGINAL_FREQ_TICKS
+    if orientation == "horizontal":
+        # The right-hand strip is narrow (a fraction of the joint panel's
+        # width), and its frequency axis's decimal tick labels ("0.00",
+        # "0.15", "0.30") are wide enough that even MARGINAL_FREQ_TICKS (3)
+        # of them run into each other laid out horizontally -- unlike the
+        # strip above the joint panel, which is wide and short, so the same
+        # 3 labels have plenty of room stacked side by side there. Rotating
+        # keeps the same tick count and precision while fitting the width.
+        # Set here (on this axis object) rather than after the caller's
+        # later value/frequency transpose: rotation is a tick-label display
+        # property, not tied to which values are currently on this axis, so
+        # it survives that transpose unchanged.
+        axis.set_tick_params(rotation=MARGINAL_FREQ_TICK_ROTATION)
+        for label in axis.get_ticklabels():
+            label.set_horizontalalignment("center")
+            label.set_verticalalignment("top")
 
 
 def marginal_rug_tick_height(main_ax, marg_ax, orientation):
@@ -2660,7 +2700,7 @@ def _draw_mosaic(x, y, ax, equal_width, legend, xlabel, ylabel, **kwargs):
     ax.yaxis.set_visible(True)
     ax.set_yticks(MOSAIC_YAXIS_TICKS)
     ax.set_yticklabels([f"{t:.2f}" for t in MOSAIC_YAXIS_TICKS])
-    set_plot_title(ax, "Stacked Bar Plot" if equal_width else "Mosaic Plot")
+    set_plot_title(ax, "Stacked Bar Chart" if equal_width else "Mosaic Plot")
     # A filled plot covers the whole axes, so the reference grid has
     # nothing to sit on -- turn it off rather than let fragments show
     # at the edges (the same reasoning make_tile / make_hist2d use).

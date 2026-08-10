@@ -2,8 +2,16 @@ import warnings
 
 from .base import Arithmetic, Transformable, Comparable
 from .probability_space import Event, ProbabilitySpace
-from .result import Vector, join, is_scalar, is_numeric_vector, TimeFunction
+from .result import Vector, join, is_scalar, is_numeric_vector, TimeFunction, Scalar
 from .results import RVResults, _sim_with_progress
+
+# The identity function RV uses when no `func` is given, named so that
+# sim() can recognize it with `is`. Python evaluates a default argument
+# once, so this is the very same object every bare RV(P) already received
+# implicitly -- naming it changes nothing except that it can now be
+# identified. A hand-written `X.apply(lambda x: x)` builds a *different*
+# lambda, so it correctly fails the `is` check and keeps the slow path.
+_IDENTITY = lambda x: x  # noqa: E731 -- named on purpose, see comment above
 
 
 class RV(Arithmetic, Transformable, Comparable):
@@ -43,7 +51,7 @@ class RV(Arithmetic, Transformable, Comparable):
     -0.9
     """
 
-    def __init__(self, prob_space, func=lambda x: x):
+    def __init__(self, prob_space, func=_IDENTITY):
         """Create a random variable."""
         if not callable(func):
             raise TypeError(
@@ -63,12 +71,25 @@ class RV(Arithmetic, Transformable, Comparable):
 
         Examples
         --------
+        Use ``seed()`` to make a draw reproducible. ``np.random.seed()`` does
+        **not** work here -- Symbulate draws from a NumPy ``Generator``, which
+        the legacy global seed does not control.
+
         >>> from symbulate import *
-        >>> import numpy as np
-        >>> np.random.seed(0)
+        >>> seed(0)
         >>> X = RV(Normal(0, 1))
-        >>> X.draw()
-        1.764052345967664
+        >>> X.draw()  # doctest: +SKIP
+        0.1257302210933933
+
+        The exact value above depends on NumPy's and SciPy's internals, so it
+        is not asserted here; what is guaranteed is that reseeding with the
+        same value reproduces the same draw.
+
+        >>> seed(0)
+        >>> first = X.draw()
+        >>> seed(0)
+        >>> first == X.draw()
+        True
         """
         return self.func(self.prob_space.draw())
 
@@ -93,13 +114,23 @@ class RV(Arithmetic, Transformable, Comparable):
         Examples
         --------
         >>> from symbulate import *
-        >>> import numpy as np
-        >>> np.random.seed(0)
+        >>> seed(0)
         >>> X = RV(Normal(0, 1))
         >>> X.sim(3)  # doctest: +SKIP
         """
         if not isinstance(n, int) or n < 1:
             raise ValueError(f"n must be a positive integer, got {n!r}.")
+        # Batched fast path, but only for a bare random variable sitting
+        # directly on a distribution that offers one. `func is _IDENTITY`
+        # means nothing has been composed on top: the moment .apply(),
+        # conditioning, or arithmetic replaces func, the check fails and the
+        # ordinary per-draw loop runs, since those have to see each outcome
+        # one at a time. Distribution._fast_sim returns None for all but two
+        # distributions, so almost everything falls through regardless.
+        if self.func is _IDENTITY and hasattr(self.prob_space, "_fast_sim"):
+            batch = self.prob_space._fast_sim(n)
+            if batch is not None:
+                return RVResults([Scalar(v) for v in batch])
         return RVResults(_sim_with_progress(self.draw, n))
 
     def __call__(self, outcome):

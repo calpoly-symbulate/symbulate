@@ -93,6 +93,53 @@ from .table import Table
 # Standards".
 
 
+def _call_plot_helper(func, *args, **kwargs):
+    """Call a plot-drawing helper (a ``make_*`` function in ``plot.py``),
+    turning a mistyped keyword argument into a message a student can act
+    on instead of a raw traceback from deep inside matplotlib.
+
+    A bad keyword aimed at the underlying matplotlib call surfaces two
+    different ways depending on which matplotlib function ends up
+    handling it: a function that forwards leftover kwargs to a
+    matplotlib Artist's ``.set()`` (``ax.hist``, ``ax.vlines``,
+    ``ax.scatter``, ...) raises ``AttributeError``; a function that
+    checks its own signature directly (``ax.boxplot``, ``ax.violinplot``)
+    raises ``TypeError``. Both are caught here; anything else -- a
+    genuine bug inside the ``make_*`` helper itself, unrelated to a bad
+    kwarg -- is left to propagate as-is rather than being mislabeled.
+
+    Parameters
+    ----------
+    func : callable
+        The ``make_*`` plot-drawing helper to call.
+    *args, **kwargs
+        Passed through to ``func`` unchanged.
+
+    Returns
+    -------
+    object
+        Whatever ``func`` returns.
+
+    Raises
+    ------
+    TypeError
+        If ``func`` raised because of an unexpected keyword argument,
+        re-raised with a message that names the plot type and points at
+        `.plot()`'s keyword arguments as the likely cause.
+    """
+    try:
+        return func(*args, **kwargs)
+    except (TypeError, AttributeError) as e:
+        message = str(e)
+        if "unexpected keyword argument" in message:
+            raise TypeError(
+                f"plot() got a keyword argument that isn't valid for this "
+                f"plot type ({message}). Check the spelling -- some keyword "
+                f"arguments only apply to certain plot types."
+            ) from None
+        raise
+
+
 def _is_hashable(obj):
     """Check whether an object is hashable.
 
@@ -125,6 +172,154 @@ def _is_boolean_vector(vector):
         ``numpy.bool_``, False otherwise.
     """
     return all(isinstance(x, (bool, np.bool_)) for x in vector)
+
+
+#: Default number of decimal places shown for float outcomes in
+#: ``Results.__repr__`` / ``Results._repr_html_``. Fixed-width decimals
+#: (rather than e.g. ``%.4g``'s variable-width significant figures) is
+#: what makes a right-justified column line up on the decimal point --
+#: the number of characters after the point is constant, so the point
+#: ends up a constant distance from the right edge of the column.
+RESULT_DISPLAY_DECIMALS = 4
+
+
+def _format_scalar(value, decimals=RESULT_DISPLAY_DECIMALS):
+    """Format one numeric scalar outcome for display.
+
+    Floats are rounded to a fixed number of decimal places so that a
+    column of them lines up on the decimal point once right-justified
+    (see ``RESULT_DISPLAY_DECIMALS``). Integers and booleans are left
+    exactly as-is: they are typically exact counts or category codes
+    (e.g. a die roll, a coin flip encoded as 0/1) rather than measured
+    quantities, so rounding them would be misleading, not clarifying.
+
+    Parameters
+    ----------
+    value : object
+        One numeric outcome, or one component of a numeric-vector
+        outcome. Booleans are handled before ints because ``bool`` is
+        a subclass of ``int`` in Python.
+    decimals : int, optional
+        Number of decimal places to show for floats. Defaults to
+        ``RESULT_DISPLAY_DECIMALS``.
+
+    Returns
+    -------
+    str
+        The formatted value, not yet padded/aligned.
+
+    Examples
+    --------
+    >>> _format_scalar(3)
+    '3'
+    >>> _format_scalar(3.14159)
+    '3.1416'
+    >>> _format_scalar(True)
+    'True'
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return str(value)
+    if isinstance(value, (int, np.integer)):
+        return str(value)
+    if isinstance(value, (float, np.floating)):
+        return f"{value:.{decimals}f}"
+    return str(value)
+
+
+def _format_result(value, decimals=RESULT_DISPLAY_DECIMALS):
+    """Format one simulation outcome for display.
+
+    Numeric scalars are rounded to a fixed number of decimals (see
+    ``_format_scalar``). Numeric-vector outcomes (e.g. a ``Tuple`` or
+    ``Vector`` from ``(X & Y).sim(n)``) have each component formatted
+    the same way and rejoined, so a bivariate outcome gets the same
+    fixed-decimal treatment as a scalar one. Anything else --
+    categorical outcomes, ``TimeFunction`` values, and so on -- falls
+    back to ``str(value)`` unchanged.
+
+    Parameters
+    ----------
+    value : object
+        One stored simulation outcome.
+    decimals : int, optional
+        Number of decimal places to show for floats.
+
+    Returns
+    -------
+    str
+        The formatted outcome, not yet padded/aligned.
+
+    See Also
+    --------
+    _format_display_column :
+        Formats and aligns an entire column of outcomes, including
+        per-component alignment for numeric-vector outcomes.
+    """
+    if is_number(value):
+        return _format_scalar(value, decimals)
+    if is_numeric_vector(value):
+        formatted = ", ".join(_format_scalar(v, decimals) for v in value)
+        return f"({formatted})"
+    return str(value)
+
+
+def _format_display_column(values, decimals=RESULT_DISPLAY_DECIMALS):
+    """Format and right-justify a column of simulation outcomes for display.
+
+    Every value is formatted individually (see ``_format_result``).
+    When every value is a numeric vector of the same length -- e.g. a
+    column of ``(X, Y)`` pairs -- each *component position* is
+    additionally aligned on its own: component 0 across all rows is
+    padded to the widest formatted component 0, component 1 to the
+    widest component 1, and so on, so a two-column outcome reads as
+    two neat sub-columns instead of one ragged tuple string. The whole
+    column (vector or scalar) is then right-justified to a single
+    common width, so it lines up under its header.
+
+    Parameters
+    ----------
+    values : list
+        The simulation outcomes to format. Should already be narrowed
+        down to just the rows that will actually be displayed --
+        widths are computed only from what's passed in.
+    decimals : int, optional
+        Number of decimal places to show for floats.
+
+    Returns
+    -------
+    list of str
+        One formatted, aligned, right-justified string per input
+        value, all of the same length.
+
+    Examples
+    --------
+    >>> _format_display_column([1, 22, 3])
+    [' 1', '22', ' 3']
+    >>> _format_display_column([(1.5, 20), (13.25, 4)])
+    ['( 1.5000, 20)', '(13.2500,  4)']
+    """
+    if values and all(is_numeric_vector(v) for v in values):
+        lengths = {len(v) for v in values}
+        if len(lengths) == 1:
+            dim = lengths.pop()
+            columns = []
+            for j in range(dim):
+                component_strs = [_format_scalar(v[j], decimals) for v in values]
+                width = max(len(s) for s in component_strs)
+                columns.append([s.rjust(width) for s in component_strs])
+            formatted = [
+                "(" + ", ".join(columns[j][i] for j in range(dim)) + ")"
+                for i in range(len(values))
+            ]
+        else:
+            # Inconsistent dimension across rows -- fall back to
+            # formatting each row on its own, unaligned internally.
+            formatted = [_format_result(v, decimals) for v in values]
+    else:
+        formatted = [_format_result(v, decimals) for v in values]
+
+    width = max((len(s) for s in formatted), default=0)
+    return [s.rjust(width) for s in formatted]
 
 
 def _is_categorical_1d(results):
@@ -1094,9 +1289,40 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             "Then call .plot() on those simulations."
         )
 
+    def _display_rows(self):
+        """Return the rows that ``__repr__``/``_repr_html_`` show.
+
+        Shows every row when there are at most 11; otherwise the
+        first 9 and the last one, with an ``"..."`` marker in
+        between standing in for the omitted middle. Shared by both
+        display methods so they always agree on which rows appear
+        (previously ``_repr_html_`` inserted a spurious ``"..."``
+        row even at exactly 10 or 11 results, where nothing was
+        actually omitted).
+
+        Returns
+        -------
+        list of (str, object or None)
+            ``(index_label, result)`` pairs for real rows, and
+            ``("...", None)`` for the ellipsis marker.
+        """
+        n = len(self)
+        if n <= 11:
+            return [(str(i), self.results[i]) for i in range(n)]
+        rows = [(str(i), self.results[i]) for i in range(9)]
+        rows.append(("...", None))
+        rows.append((str(n - 1), self.results[n - 1]))
+        return rows
+
     def __repr__(self):
         """
         Return a string representation of the results.
+
+        Numeric outcomes are rounded to a fixed number of decimal
+        places and the Result column is right-justified (see
+        ``_format_display_column``), so a column of simulated values
+        lines up on the decimal point instead of trailing off at
+        whatever precision each float happened to print at.
 
         Returns
         -------
@@ -1111,53 +1337,38 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         >>> P = BoxModel(["H", "T"])
         >>> results = P.sim(3)
         >>> print(repr(results))  # doctest: +SKIP
-        Index  Result
-        0      H
-        1      T
-        2      H
+        Index Result
+        0     H
+        1     T
+        2     H
         """
+        rows = self._display_rows()
+        index_strs = [label for label, _ in rows]
+        real_values = [result for label, result in rows if label != "..."]
+        formatted_reals = iter(_format_display_column(real_values))
+        result_strs = [
+            "..." if label == "..." else next(formatted_reals) for label, _ in rows
+        ]
 
-        i_last = len(self) - 1
-        max_index_length = len(str(i_last))
+        index_width = max([len("Index")] + [len(s) for s in index_strs])
+        result_width = max([len("Result")] + [len(s) for s in result_strs])
 
-        if max_index_length <= 5:
-            index_header_space = ""
-            index_value_space = " " * 4
-        else:
-            index_header_space = " " * (max_index_length - 5)
-            index_value_space = " " * (max_index_length - 1)
-
-        table_rows = []
-
-        table_rows.append(f"Index{index_header_space} Result")
-
-        for i, result in enumerate(self.results):
-            table_rows.append(f"{str(i)}{index_value_space} {str(result)}")
-
-            if len(self) > 9 and i >= 8:
-                index_value_space = " " * (5 - len(str(i_last)))
-
-                if len(self) > 11:
-                    table_rows.append(
-                        f"{'.' * max_index_length}{index_value_space} "
-                        f"{'.' * len(str(self.get(i_last)))}"
-                    )
-                elif len(self) == 11:
-                    table_rows.append(
-                        f"{str(i_last - 1)}{' ' * (5 - len(str(i_last - 1)))} "
-                        f"{str(self.get(i_last - 1))}"
-                    )
-
-                table_rows.append(
-                    f"{str(i_last)}{index_value_space} {str(self.get(i_last))}"
-                )
-                break
+        table_rows = [f"{'Index'.ljust(index_width)} {'Result'.rjust(result_width)}"]
+        for index_str, result_str in zip(index_strs, result_strs):
+            table_rows.append(
+                f"{index_str.ljust(index_width)} {result_str.rjust(result_width)}"
+            )
 
         return "\n".join(table_rows)
 
     def _repr_html_(self):
         """
         Return an HTML table representation of the results.
+
+        Numeric outcomes are rounded the same way as in ``__repr__``
+        (see ``_format_display_column``) and the Result column is
+        right-aligned via CSS, so the notebook table matches the
+        plain-text one instead of showing raw, unrounded floats.
 
         Returns
         -------
@@ -1181,7 +1392,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         """
         row_template = """
         <tr>
-          <td>%s</td><td>%s</td>
+          <td>%s</td><td style="text-align: right">%s</td>
         </tr>
         """
 
@@ -1190,19 +1401,15 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
                 return result[:100] + "..."
             return result
 
+        rows = self._display_rows()
+        real_values = [result for label, result in rows if label != "..."]
+        formatted_reals = iter(_format_display_column(real_values))
+
         table_body = ""
-        for i, result in enumerate(self.results):
-            table_body += row_template % (i, _truncate(str(result)))
-            # if we've already printed 9 rows, skip to end
-            if i >= 8:
-                if len(self) > 9:
-                    table_body += "<tr><td>...</td><td>...</td></tr>"
-                    i_last = len(self) - 1
-                    table_body += row_template % (
-                        i_last,
-                        _truncate(str(self.get(i_last))),
-                    )
-                break
+        for label, _ in rows:
+            result_str = "..." if label == "..." else _truncate(next(formatted_reals))
+            table_body += row_template % (label, result_str)
+
         return table_template.format(table_body=table_body)
 
 
@@ -2357,6 +2564,22 @@ class RVResults(Results):
                 "variable by itself."
             )
 
+        # This has to run before the self.dim > 2 branch below, not after
+        # it: that branch can return early (the "pairs" case), building a
+        # GridSpec, resizing the figure, and adding a subplot before this
+        # check would otherwise ever run for that path -- so a call like
+        # (X**3).sim(50).plot(dims=[0, 1]) used to raise only after a
+        # figure was already half-built, from a re-entrant inner call
+        # rather than this intended check.
+        if "dims" in kwargs:
+            raise ValueError(
+                "dims= is not a plotting argument for simulated results: "
+                "choose the variables when you simulate them instead, by "
+                "indexing the random variable -- X[[0, 2]].sim(1000).plot() "
+                "for the 1st and 3rd. (A distribution's own .plot() does take "
+                "variables=, since there is nothing to simulate.)"
+            )
+
         # Three or more variables have no single joint plot, so the default is
         # the matrix of every pair. type="path" asks for the old behavior: each
         # realization drawn against its index. Gated on a known dimension, so
@@ -2390,14 +2613,6 @@ class RVResults(Results):
                 )
             # Fall through to the path branch, with the note it should print.
             _suggestion = (type[0], default, alternatives)
-        if "dims" in kwargs:
-            raise ValueError(
-                "dims= is not a plotting argument for simulated results: "
-                "choose the variables when you simulate them instead, by "
-                "indexing the random variable -- X[[0, 2]].sim(1000).plot() "
-                "for the 1st and 3rd. (A distribution's own .plot() does take "
-                "variables=, since there is nothing to simulate.)"
-            )
 
         if self.dim == 1:
             # make sure self.array, a Numpy array, has been set
@@ -2470,7 +2685,8 @@ class RVResults(Results):
             color = get_next_color(ax)
 
             if "dotplot" in type:
-                make_dotplot(
+                _call_plot_helper(
+                    make_dotplot,
                     _plot_array,
                     ax,
                     color,
@@ -2487,7 +2703,8 @@ class RVResults(Results):
                 else:
                     # bandwidth is popped here so it never leaks into the
                     # hist/impulse branches of a combined type.
-                    make_density(
+                    _call_plot_helper(
+                        make_density,
                         _plot_array,
                         ax,
                         color,
@@ -2495,7 +2712,8 @@ class RVResults(Results):
                         alpha=alpha,
                     )
             if "hist" in type:
-                make_hist(
+                _call_plot_helper(
+                    make_hist,
                     _plot_array,
                     ax,
                     color,
@@ -2505,7 +2723,8 @@ class RVResults(Results):
                     **kwargs,
                 )
             elif "bar" in type:
-                make_bar(
+                _call_plot_helper(
+                    make_bar,
                     _plot_array,
                     ax,
                     color,
@@ -2514,7 +2733,8 @@ class RVResults(Results):
                     **kwargs,
                 )
             elif "impulse" in type:
-                make_impulse(
+                _call_plot_helper(
+                    make_impulse,
                     _plot_array,
                     ax,
                     color,
@@ -2523,13 +2743,24 @@ class RVResults(Results):
                     **kwargs,
                 )
             elif "box" in type or "boxplot" in type:
-                make_boxplot(_plot_array, ax, color, alpha=alpha, **kwargs)
+                _call_plot_helper(
+                    make_boxplot, _plot_array, ax, color, alpha=alpha, **kwargs
+                )
             elif "violin" in type:
-                make_violinplot(_plot_array, ax, color, alpha=alpha, **kwargs)
+                _call_plot_helper(
+                    make_violinplot, _plot_array, ax, color, alpha=alpha, **kwargs
+                )
             if "rug" in type:
-                make_rug(_plot_array, ax, color, alpha=alpha)
+                # Previously missing **kwargs here (unlike every sibling
+                # branch above), so e.g. plot(type='rug', linewidth=10)
+                # silently ignored linewidth instead of applying it or
+                # raising like the other plot types do.
+                _call_plot_helper(
+                    make_rug, _plot_array, ax, color, alpha=alpha, **kwargs
+                )
             if "ecdf" in type:
-                make_ecdf(
+                _call_plot_helper(
+                    make_ecdf,
                     _plot_array,
                     ax,
                     color,
@@ -2678,7 +2909,8 @@ class RVResults(Results):
                     scatter_jitter = (
                         auto_jitter_mode(x, y) if discrete_x and discrete_y else False
                     )
-                make_scatter(
+                _call_plot_helper(
+                    make_scatter,
                     x,
                     y,
                     ax,
@@ -2696,7 +2928,8 @@ class RVResults(Results):
                 # On mixed data the short name "hist" means the segmented
                 # histogram; "hist2d" always forces the 2D mesh.
                 if configuration == "2D_mixed" and "hist2d" not in type:
-                    make_segmented_hist(
+                    _call_plot_helper(
+                        make_segmented_hist,
                         x,
                         y,
                         ax,
@@ -2710,7 +2943,8 @@ class RVResults(Results):
                     )
                     _resolved_main_type_x = _resolved_main_type_y = "segmented_hist"
                 elif marginal:
-                    histo = make_hist2d(
+                    histo = _call_plot_helper(
+                        make_hist2d,
                         x,
                         y,
                         ax,
@@ -2727,9 +2961,12 @@ class RVResults(Results):
                     if isinstance(histo, tuple):
                         _marginal_hist_edges = (histo[1], histo[2])
                 else:
-                    make_hist2d(x, y, ax, bins=bins, normalize=normalize, **kwargs)
+                    _call_plot_helper(
+                        make_hist2d, x, y, ax, bins=bins, normalize=normalize, **kwargs
+                    )
             elif "segmented_hist" in type:
-                make_segmented_hist(
+                _call_plot_helper(
+                    make_segmented_hist,
                     x,
                     y,
                     ax,
@@ -2743,7 +2980,8 @@ class RVResults(Results):
                 )
                 _resolved_main_type_x = _resolved_main_type_y = "segmented_hist"
             elif "tile" in type:
-                hm = make_tile(
+                hm = _call_plot_helper(
+                    make_tile,
                     x,
                     y,
                     ax,
@@ -2786,11 +3024,13 @@ class RVResults(Results):
                         _resolved_main_type_y = None
                     _marginal_hist_edges = (tile_x_edges, tile_y_edges)
             elif "mosaic" in type or "stackedbar" in type:
-                _drawn = _draw_mosaic_family(x, y, ax, type, **kwargs)
+                _drawn = _call_plot_helper(
+                    _draw_mosaic_family, x, y, ax, type, **kwargs
+                )
                 _resolved_main_type_x = _resolved_main_type_y = _drawn
-                # A crowded mosaic is drawn as a stacked bar instead, so
+                # The category count can override the type asked for, so
                 # the note has to name what is on screen rather than what
-                # was asked for.
+                # was requested.
                 _suggestion = (_drawn, default, alternatives)
             elif "violin" in type:
                 # outliers= is consumed here rather than left in kwargs:
@@ -2799,7 +3039,8 @@ class RVResults(Results):
                 _violin_outliers = kwargs.pop("outliers", False)
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))
-                    make_violin(
+                    _call_plot_helper(
+                        make_violin,
                         self.array,
                         positions,
                         ax,
@@ -2810,7 +3051,8 @@ class RVResults(Results):
                     )
                 elif not discrete_x and discrete_y:
                     positions = sorted(list(y_count.keys()))
-                    make_violin(
+                    _call_plot_helper(
+                        make_violin,
                         self.array,
                         positions,
                         ax,
@@ -2835,7 +3077,8 @@ class RVResults(Results):
                     )
                 _resolved_main_type_x = _resolved_main_type_y = "violin"
             elif "box" in type or "boxplot" in type:
-                make_grouped_boxplot(
+                _call_plot_helper(
+                    make_grouped_boxplot,
                     x,
                     y,
                     ax,
@@ -2870,7 +3113,8 @@ class RVResults(Results):
                 if "segmented_density" in type or (
                     configuration == "2D_mixed" and "density2d" not in type
                 ):
-                    make_segmented_density(
+                    _call_plot_helper(
+                        make_segmented_density,
                         x,
                         y,
                         ax,
@@ -2886,14 +3130,21 @@ class RVResults(Results):
                             "segmented_density"
                         )
                 elif marginal:
-                    den = make_density2D(x, y, ax, colorbar=False, **kwargs)
+                    den = _call_plot_helper(
+                        make_density2D, x, y, ax, colorbar=False, **kwargs
+                    )
                     add_colorbar(fig, marginal, den, "Density")
                     if not drew_main:
                         _resolved_main_type_x = _resolved_main_type_y = "density2d"
                 else:
-                    make_density2D(x, y, ax, **kwargs)
+                    _call_plot_helper(make_density2D, x, y, ax, **kwargs)
             if wants_rug:
-                make_segmented_rug(
+                # Previously missing **kwargs here, the same gap as the 1D
+                # rug branch above -- a bad or custom kwarg was silently
+                # dropped instead of applied or raising like its sibling
+                # 2D branches (hist2d, density2d) do.
+                _call_plot_helper(
+                    make_segmented_rug,
                     x,
                     y,
                     ax,
@@ -2901,6 +3152,7 @@ class RVResults(Results):
                     alpha=alpha,
                     discrete_x=discrete_x,
                     discrete_y=discrete_y,
+                    **kwargs,
                 )
                 if not drew_main:
                     _resolved_main_type_x = _resolved_main_type_y = "segmented_rug"
@@ -3008,13 +3260,16 @@ class RVResults(Results):
             ax = plt.gca()
             get_next_color(ax)
             if "mosaic" in type or "stackedbar" in type:
-                _drawn = _draw_mosaic_family(x, y, ax, type, **kwargs)
-                # A crowded mosaic is drawn as a stacked bar instead, so
+                _drawn = _call_plot_helper(
+                    _draw_mosaic_family, x, y, ax, type, **kwargs
+                )
+                # The category count can override the type asked for, so
                 # the note has to name what is on screen rather than what
-                # was asked for.
+                # was requested.
                 _suggestion = (_drawn, default, alternatives)
             elif "tile" in type:
-                make_tile(
+                _call_plot_helper(
+                    make_tile,
                     x,
                     y,
                     ax,
@@ -3055,12 +3310,28 @@ class RVResults(Results):
             ax = plt.gca()
             color = get_next_color(ax)
             if "bar" in type:
-                make_bar(values, ax, color, normalize=normalize, alpha=alpha, **kwargs)
+                _call_plot_helper(
+                    make_bar,
+                    values,
+                    ax,
+                    color,
+                    normalize=normalize,
+                    alpha=alpha,
+                    **kwargs,
+                )
             elif "dotplot" in type:
-                make_dotplot(values, ax, color, alpha=alpha, **kwargs)
+                _call_plot_helper(
+                    make_dotplot, values, ax, color, alpha=alpha, **kwargs
+                )
             elif "impulse" in type:
-                make_impulse(
-                    values, ax, color, normalize=normalize, alpha=alpha, **kwargs
+                _call_plot_helper(
+                    make_impulse,
+                    values,
+                    ax,
+                    color,
+                    normalize=normalize,
+                    alpha=alpha,
+                    **kwargs,
                 )
             else:
                 raise ValueError(

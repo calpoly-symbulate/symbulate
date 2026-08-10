@@ -16,10 +16,6 @@ from symbulate.probability_space import Event, HierarchicalProbabilitySpace
 from symbulate.result import Vector, InfiniteVector
 
 
-def seed(value=42):
-    probability_space.rng = np.random.default_rng(value)
-
-
 class TestProbabilitySpace(unittest.TestCase):
 
     def test_draw_returns_outcome(self):
@@ -56,13 +52,13 @@ class TestProbabilitySpace(unittest.TestCase):
         self.assertIn("b", result)
 
     def test_pow_returns_vector(self):
-        seed()
+        seed(42)
         P = ProbabilitySpace(lambda: 1)
         result = (P**3).draw()
         self.assertIsInstance(result, Vector)
 
     def test_pow_vector_has_correct_length(self):
-        seed()
+        seed(42)
         P = ProbabilitySpace(lambda: 1)
         result = (P**4).draw()
         self.assertEqual(len(result), 4)
@@ -138,7 +134,7 @@ class TestHierarchicalProbabilitySpace(unittest.TestCase):
         self.assertEqual(tuple(P.draw()), (1, 2, 3))
 
     def test_beta_binomial_matches_theoretical_means(self):
-        seed()
+        seed(42)
         P = Beta(1, 2) >> (lambda x: Binomial(10, x))
         results = P.sim(20000)
         xs = [outcome[0] for outcome in results]
@@ -163,13 +159,13 @@ class TestHierarchicalProbabilitySpace(unittest.TestCase):
 class TestEvent(unittest.TestCase):
 
     def test_draw_returns_bool(self):
-        seed()
+        seed(42)
         P = ProbabilitySpace(lambda: probability_space.rng.choice(range(1, 7)))
         event = Event(P, lambda x: x > 3)
         self.assertIsInstance(event.draw(), (bool, np.bool_))
 
     def test_sim_contains_only_bools(self):
-        seed()
+        seed(42)
         P = ProbabilitySpace(lambda: probability_space.rng.choice(range(1, 7)))
         event = Event(P, lambda x: x > 3)
         results = event.sim(20)
@@ -216,12 +212,12 @@ class TestEvent(unittest.TestCase):
 class TestBoxModel(unittest.TestCase):
 
     def test_draw_from_list_in_box(self):
-        seed()
+        seed(42)
         bm = BoxModel(["a", "b", "c"])
         self.assertIn(bm.draw(), ["a", "b", "c"])
 
     def test_draw_from_dict_in_box(self):
-        seed()
+        seed(42)
         bm = BoxModel({"H": 1, "T": 1})
         self.assertIn(bm.draw(), ["H", "T"])
 
@@ -249,7 +245,7 @@ class TestBoxModel(unittest.TestCase):
         self.assertEqual(bm.size, float("inf"))
 
     def test_size_none_returns_scalar(self):
-        seed()
+        seed(42)
         bm = BoxModel(["x", "y", "z"], size=None)
         self.assertNotIsInstance(bm.draw(), Vector)
 
@@ -259,28 +255,28 @@ class TestBoxModel(unittest.TestCase):
         self.assertIsNone(bm.size)
 
     def test_size_n_returns_vector(self):
-        seed()
+        seed(42)
         bm = BoxModel(["a", "b", "c"], size=2)
         self.assertIsInstance(bm.draw(), Vector)
 
     def test_size_n_vector_has_correct_length(self):
-        seed()
+        seed(42)
         bm = BoxModel(["a", "b", "c"], size=2)
         self.assertEqual(len(bm.draw()), 2)
 
     def test_size_inf_returns_infinite_vector(self):
-        seed()
+        seed(42)
         bm = BoxModel(["a", "b"], size=float("inf"))
         self.assertIsInstance(bm.draw(), InfiniteVector)
 
     def test_replace_false_no_duplicates(self):
-        seed()
+        seed(42)
         bm = BoxModel([1, 2, 3, 4, 5], size=5, replace=False)
         result = list(bm.draw())
         self.assertEqual(len(result), len(set(result)))
 
     def test_order_matters_false_result_is_sorted(self):
-        seed()
+        seed(42)
         bm = BoxModel([3, 1, 2], size=3, replace=False, order_matters=False)
         result = list(bm.draw())
         self.assertEqual(result, sorted(result, key=str))
@@ -325,12 +321,12 @@ class TestDeckOfCards(unittest.TestCase):
         self.assertFalse(deck.replace)
 
     def test_draw_single_card_is_tuple(self):
-        seed()
+        seed(42)
         deck = DeckOfCards()
         self.assertIsInstance(deck.draw(), tuple)
 
     def test_draw_size_returns_vector(self):
-        seed()
+        seed(42)
         deck = DeckOfCards(size=5)
         result = deck.draw()
         self.assertIsInstance(result, Vector)
@@ -513,9 +509,98 @@ class TestPokerHands(unittest.TestCase):
 
     def test_works_on_a_real_draw(self):
         # classify_hand should accept a Vector straight from a deck draw.
-        seed()
+        seed(42)
         hand = DeckOfCards(size=5).draw()
         self.assertIn(classify_hand(hand), POKER_HANDS)
+
+
+class TestSeed(unittest.TestCase):
+    """The one shared generator, and the public seed() that reseeds it.
+
+    Symbulate used to create a separate np.random.default_rng() in each of
+    seven modules, so nothing could reseed them all and np.random.seed() did
+    not touch any of them. These tests pin the consolidation.
+    """
+
+    # Every module that used to own its own generator.
+    MODULE_NAMES = [
+        "probability_space",
+        "distributions",
+        "gaussian_process",
+        "markov_chains",
+        "diffusion_process",
+        "hitting_times",
+        "plot",
+    ]
+
+    def _modules(self):
+        # symbulate.plot is shadowed by the exported plot() function, so the
+        # modules have to be reached through sys.modules rather than getattr.
+        import sys
+
+        return [sys.modules["symbulate." + n] for n in self.MODULE_NAMES]
+
+    def test_all_modules_share_one_generator(self):
+        # Not merely equal -- the same object, which is what makes an
+        # in-place reseed visible everywhere.
+        ids = {id(m.rng) for m in self._modules()}
+        self.assertEqual(len(ids), 1)
+
+    def test_seed_reseeds_every_module(self):
+        def draw_across_modules():
+            return [m.rng.random() for m in self._modules()]
+
+        seed(42)
+        first = draw_across_modules()
+        seed(42)
+        self.assertEqual(first, draw_across_modules())
+
+    def test_seed_does_not_rebind_the_generator(self):
+        # The whole fix depends on mutating the existing generator's state
+        # rather than rebinding the name: every other module holds its own
+        # reference to this object, so a rebind would reseed nothing for them.
+        before = id(probability_space.rng)
+        seed(7)
+        self.assertEqual(id(probability_space.rng), before)
+
+    def test_same_seed_reproduces_across_different_features(self):
+        # A distribution, a Markov chain, and a diffusion process all draw
+        # through the shared generator, so one seed() covers all of them --
+        # this is what replaced the per-file offset-seed helpers.
+        def run():
+            normal = list(RV(Normal(0, 1)).sim(5))
+            chain = list(MarkovChain([[0.3, 0.7], [0.6, 0.4]], [1.0, 0.0]).draw()[:5])
+            path = DiffusionProcess(
+                drift=lambda x, t: 0.0, diffusion=lambda x, t: 1.0, x0=0.0
+            ).draw()
+            return normal, chain, [float(path(t)) for t in (0.5, 1.0)]
+
+        seed(42)
+        first = run()
+        seed(42)
+        self.assertEqual(first, run())
+
+    def test_seed_with_no_argument_is_not_reproducible(self):
+        # seed() must reseed from fresh entropy, not fall back to a fixed
+        # default -- otherwise every unseeded session would be identical.
+        seed()
+        first = list(RV(Normal(0, 1)).sim(5))
+        seed()
+        self.assertNotEqual(first, list(RV(Normal(0, 1)).sim(5)))
+
+    def test_different_seeds_give_different_runs(self):
+        seed(1)
+        first = list(RV(Normal(0, 1)).sim(5))
+        seed(2)
+        self.assertNotEqual(first, list(RV(Normal(0, 1)).sim(5)))
+
+    def test_numpy_legacy_seed_does_not_control_symbulate(self):
+        # Documents Finding 2: np.random.seed() is the obvious thing to try
+        # and has never worked, because Symbulate draws from a Generator.
+        np.random.seed(0)
+        first = list(RV(Normal(0, 1)).sim(5))
+        np.random.seed(0)
+        self.assertNotEqual(first, list(RV(Normal(0, 1)).sim(5)))
 
 
 if __name__ == "__main__":

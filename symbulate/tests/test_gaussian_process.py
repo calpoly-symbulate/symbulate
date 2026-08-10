@@ -29,10 +29,6 @@ from symbulate.index_sets import DiscreteTimeSequence
 Nsim = 1000
 
 
-def seed(value=42):
-    gaussian_process.rng = np.random.default_rng(value)
-
-
 class TestGaussianProcessConstruction(unittest.TestCase):
 
     def test_is_random_process(self):
@@ -44,7 +40,7 @@ class TestGaussianProcessConstruction(unittest.TestCase):
         self.assertIsInstance(X, RV)
 
     def test_draw_returns_callable_path(self):
-        seed()
+        seed(42)
         X = GaussianProcess(lambda t: 0, lambda s, t: min(s, t))
         path = X.draw()
         result = path(1.0)
@@ -58,13 +54,13 @@ class TestGaussianProcessConstruction(unittest.TestCase):
 class TestGaussianProcessPaths(unittest.TestCase):
 
     def test_same_time_returns_cached_value(self):
-        seed()
+        seed(42)
         X = GaussianProcess(lambda t: 0, lambda s, t: min(s, t))
         path = X.draw()
         self.assertEqual(path(1.0), path(1.0))
 
     def test_subsequent_times_are_consistent(self):
-        seed()
+        seed(42)
         X = GaussianProcess(lambda t: 0, lambda s, t: min(s, t))
         path = X.draw()
         v0 = path(0.5)
@@ -73,7 +69,7 @@ class TestGaussianProcessPaths(unittest.TestCase):
         self.assertTrue(np.isfinite(v0) and np.isfinite(v1) and np.isfinite(v2))
 
     def test_cached_value_unchanged_after_new_time(self):
-        seed()
+        seed(42)
         X = GaussianProcess(lambda t: 0, lambda s, t: min(s, t))
         path = X.draw()
         v_before = path(1.0)
@@ -82,7 +78,7 @@ class TestGaussianProcessPaths(unittest.TestCase):
         self.assertEqual(v_before, v_after)
 
     def test_different_draws_produce_different_paths(self):
-        seed()
+        seed(42)
         X = GaussianProcess(lambda t: 0, lambda s, t: min(s, t))
         values = {X.draw()(1.0) for _ in range(10)}
         self.assertGreater(len(values), 1)
@@ -95,7 +91,7 @@ class TestGaussianProcessPaths(unittest.TestCase):
 
     def test_invalid_time_raises_key_error(self):
         # infinity is not in the Reals index set
-        seed()
+        seed(42)
         X = GaussianProcess(lambda t: 0, lambda s, t: min(s, t))
         path = X.draw()
         with self.assertRaises(KeyError):
@@ -105,7 +101,7 @@ class TestGaussianProcessPaths(unittest.TestCase):
 class TestGaussianProcessStatistics(unittest.TestCase):
 
     def setUp(self):
-        seed()
+        seed(42)
 
     def test_mean_function_respected(self):
         X = GaussianProcess(lambda t: 3.0, lambda s, t: min(s, t))
@@ -128,7 +124,7 @@ class TestGaussianProcessStatistics(unittest.TestCase):
 class TestGaussianProcessDiscreteTime(unittest.TestCase):
 
     def test_discrete_time_path_is_subscriptable(self):
-        seed()
+        seed(42)
         X = GaussianProcess(
             lambda t: 0, lambda s, t: min(s, t), DiscreteTimeSequence(fs=4)
         )
@@ -138,7 +134,7 @@ class TestGaussianProcessDiscreteTime(unittest.TestCase):
         self.assertIsInstance(result, float)
 
     def test_discrete_time_caches_index(self):
-        seed()
+        seed(42)
         X = GaussianProcess(
             lambda t: 0, lambda s, t: min(s, t), DiscreteTimeSequence(fs=4)
         )
@@ -149,13 +145,13 @@ class TestGaussianProcessDiscreteTime(unittest.TestCase):
 class TestGaussianProcessProbabilitySpace(unittest.TestCase):
 
     def test_draw_gives_path(self):
-        seed()
+        seed(42)
         P = GaussianProcessProbabilitySpace(lambda t: 0, lambda s, t: min(s, t))
         path = P.draw()
         self.assertIsInstance(path(1.0), float)
 
     def test_two_draws_differ(self):
-        seed()
+        seed(42)
         P = GaussianProcessProbabilitySpace(lambda t: 0, lambda s, t: min(s, t))
         values = {P.draw()(1.0) for _ in range(10)}
         self.assertGreater(len(values), 1)
@@ -173,51 +169,51 @@ class TestBrownianMotion(unittest.TestCase):
 
     def test_starts_at_zero(self):
         # cov(0, 0) = scale**2 * min(0, 0) = 0, so path value is exactly mean(0) = 0
-        seed()
+        seed(42)
         B = BrownianMotion()
         for _ in range(10):
             self.assertEqual(B.draw()(0), 0)
 
     def test_starts_at_zero_with_drift(self):
-        seed()
+        seed(42)
         B = BrownianMotion(drift=3.0)
         for _ in range(10):
             self.assertEqual(B.draw()(0), 0)
 
     def test_mean_is_zero_at_t(self):
-        seed()
+        seed(42)
         B = BrownianMotion()
         simulated_mean = B[1.0].sim(Nsim).mean()
         self.assertAlmostEqual(simulated_mean, 0.0, delta=0.1)
 
     def test_variance_equals_t(self):
-        seed()
+        seed(42)
         B = BrownianMotion()
         simulated_var = B[1.0].sim(Nsim).var()
         self.assertAlmostEqual(simulated_var, 1.0, delta=0.2)
 
     def test_variance_scales_with_t(self):
-        seed()
+        seed(42)
         B = BrownianMotion()
         simulated_var = B[2.0].sim(Nsim).var()
         self.assertAlmostEqual(simulated_var, 2.0, delta=0.3)
 
     def test_drift_shifts_mean(self):
-        seed()
+        seed(42)
         drift = 2.0
         B = BrownianMotion(drift=drift)
         simulated_mean = B[1.0].sim(Nsim).mean()
         self.assertAlmostEqual(simulated_mean, drift, delta=0.2)
 
     def test_scale_affects_variance(self):
-        seed()
+        seed(42)
         scale = 2.0
         B = BrownianMotion(scale=scale)
         simulated_var = B[1.0].sim(Nsim).var()
         self.assertAlmostEqual(simulated_var, scale**2, delta=0.5)
 
     def test_different_paths_from_same_process(self):
-        seed()
+        seed(42)
         B = BrownianMotion()
         values = {B.draw()(1.0) for _ in range(10)}
         self.assertGreater(len(values), 1)
@@ -230,13 +226,13 @@ class TestBrownianMotion(unittest.TestCase):
 class TestBrownianMotionProbabilitySpace(unittest.TestCase):
 
     def test_draw_gives_path(self):
-        seed()
+        seed(42)
         P = BrownianMotionProbabilitySpace()
         path = P.draw()
         self.assertIsInstance(path(1.0), float)
 
     def test_starts_at_zero(self):
-        seed()
+        seed(42)
         P = BrownianMotionProbabilitySpace()
         for _ in range(10):
             self.assertEqual(P.draw()(0), 0)
@@ -275,7 +271,7 @@ class TestGaussianProcessErrors(unittest.TestCase):
 
     def test_invalid_time_raises_key_error(self):
         """Evaluating a path outside the index set raises KeyError."""
-        seed()
+        seed(42)
         X = GaussianProcess(lambda t: 0, lambda s, t: min(s, t))
         path = X.draw()
         with self.assertRaises(KeyError):
@@ -283,7 +279,7 @@ class TestGaussianProcessErrors(unittest.TestCase):
 
     def test_valid_construction_does_not_raise(self):
         """Callable mean/cov and a valid index set must not raise."""
-        seed()
+        seed(42)
         X = GaussianProcess(
             mean_func=lambda t: 0,
             cov_func=lambda s, t: min(s, t),
@@ -318,14 +314,14 @@ class TestBrownianMotionErrors(unittest.TestCase):
 
     def test_valid_negative_drift_does_not_raise(self):
         """Negative drift is valid; only scale must be positive."""
-        seed()
+        seed(42)
         B = BrownianMotion(drift=-2.0, scale=0.5)
         path = B.draw()
         self.assertIsInstance(path(1.0), float)
 
     def test_valid_large_scale_does_not_raise(self):
         """Any positive scale is valid."""
-        seed()
+        seed(42)
         B = BrownianMotion(drift=0, scale=10.0)
         path = B.draw()
         self.assertIsInstance(path(1.0), float)
@@ -365,38 +361,38 @@ class TestOrnsteinUhlenbeckPaths(unittest.TestCase):
     def test_starts_at_zero_by_default(self):
         # cov(0, 0) = 0 for the fixed-start parameterization, so the path
         # value at 0 is exactly mean_func(0) = initial_value.
-        seed()
+        seed(42)
         X = OrnsteinUhlenbeck()
         for _ in range(10):
             self.assertEqual(X.draw()(0), 0)
 
     def test_starts_at_initial_value(self):
-        seed()
+        seed(42)
         X = OrnsteinUhlenbeck(mean=0, initial_value=5.0)
         for _ in range(10):
             self.assertEqual(X.draw()(0), 5.0)
 
     def test_same_time_returns_cached_value(self):
-        seed()
+        seed(42)
         path = OrnsteinUhlenbeck().draw()
         self.assertEqual(path(1.0), path(1.0))
 
     def test_cached_value_unchanged_after_new_time(self):
-        seed()
+        seed(42)
         path = OrnsteinUhlenbeck().draw()
         before = path(1.0)
         path(2.0)
         self.assertEqual(before, path(1.0))
 
     def test_different_draws_produce_different_paths(self):
-        seed()
+        seed(42)
         X = OrnsteinUhlenbeck()
         values = {X.draw()(1.0) for _ in range(10)}
         self.assertGreater(len(values), 1)
 
     def test_stationary_start_is_random(self):
         # Started from the long-run distribution, time 0 is not deterministic.
-        seed()
+        seed(42)
         X = OrnsteinUhlenbeck(initial_value="stationary")
         values = {X.draw()(0.0) for _ in range(10)}
         self.assertGreater(len(values), 1)
@@ -406,7 +402,7 @@ class TestOrnsteinUhlenbeckStatistics(unittest.TestCase):
     """Simulated moments against the closed-form OU mean and variance."""
 
     def setUp(self):
-        seed()
+        seed(42)
         self.reversion_rate = 1.5
         self.mean = 4.0
         self.scale = 2.0
@@ -464,7 +460,7 @@ class TestOrnsteinUhlenbeckStationary(unittest.TestCase):
     """The stationary parameterization looks the same at every time."""
 
     def setUp(self):
-        seed()
+        seed(42)
         self.reversion_rate = 1.0
         self.mean = 4.0
         self.scale = 2.0
@@ -527,7 +523,7 @@ class TestOrnsteinUhlenbeckRelationships(unittest.TestCase):
 
     def test_stationary_marginal_is_normal(self):
         # The long-run distribution is Normal(mean, sd=sqrt(long-run var)).
-        seed()
+        seed(42)
         reversion_rate, mean, scale = 2.0, 1.0, 1.5
         long_run_sd = np.sqrt(scale**2 / (2 * reversion_rate))
         X = OrnsteinUhlenbeck(
@@ -584,7 +580,7 @@ class TestOrnsteinUhlenbeckErrors(unittest.TestCase):
 
     def test_negative_mean_and_initial_value_are_valid(self):
         # Only reversion_rate and scale are restricted in sign.
-        seed()
+        seed(42)
         X = OrnsteinUhlenbeck(reversion_rate=1, mean=-3.0, initial_value=-8.0)
         self.assertEqual(X.draw()(0), -8.0)
         self.assertIsInstance(X.draw()(1.0), float)
@@ -624,7 +620,7 @@ class TestBrownianBridgeEndpoints(unittest.TestCase):
     """Both ends are pinned exactly, which is what makes it a bridge."""
 
     def test_starts_and_ends_at_zero_by_default(self):
-        seed()
+        seed(42)
         X = BrownianBridge()
         for _ in range(10):
             path = X.draw()
@@ -632,7 +628,7 @@ class TestBrownianBridgeEndpoints(unittest.TestCase):
             self.assertEqual(path(1), 0)
 
     def test_hits_both_given_endpoints_exactly(self):
-        seed()
+        seed(42)
         X = BrownianBridge(end_time=4, initial_value=2, final_value=10)
         for _ in range(10):
             path = X.draw()
@@ -641,7 +637,7 @@ class TestBrownianBridgeEndpoints(unittest.TestCase):
 
     def test_endpoints_exact_even_after_visiting_other_times(self):
         # Pinning must survive conditioning on interior points.
-        seed()
+        seed(42)
         path = BrownianBridge(end_time=2, final_value=5).draw()
         path(0.5)
         path(1.0)
@@ -650,13 +646,13 @@ class TestBrownianBridgeEndpoints(unittest.TestCase):
         self.assertEqual(path(2), 5)
 
     def test_endpoints_have_no_randomness(self):
-        seed()
+        seed(42)
         X = BrownianBridge(end_time=3, initial_value=1, final_value=7)
         self.assertEqual({X.draw()(0) for _ in range(10)}, {1})
         self.assertEqual({X.draw()(3) for _ in range(10)}, {7})
 
     def test_interior_is_random(self):
-        seed()
+        seed(42)
         X = BrownianBridge()
         self.assertGreater(len({X.draw()(0.5) for _ in range(10)}), 1)
 
@@ -664,7 +660,7 @@ class TestBrownianBridgeEndpoints(unittest.TestCase):
 class TestBrownianBridgeStatistics(unittest.TestCase):
 
     def setUp(self):
-        seed()
+        seed(42)
         self.end_time = 4.0
         self.initial_value = 2.0
         self.final_value = 10.0
@@ -716,7 +712,7 @@ class TestBrownianBridgeStatistics(unittest.TestCase):
             )
 
     def test_scale_widens_the_middle(self):
-        seed()
+        seed(42)
         narrow = BrownianBridge(scale=1)[0.5].sim(Nsim).var()
         wide = BrownianBridge(scale=3)[0.5].sim(Nsim).var()
         self.assertGreater(wide, narrow)
@@ -730,25 +726,25 @@ class TestBrownianBridgeDomain(unittest.TestCase):
         self.assertEqual(X.draw().index_set, TimeInterval(0, 3))
 
     def test_time_after_end_raises_key_error(self):
-        seed()
+        seed(42)
         path = BrownianBridge(end_time=1).draw()
         with self.assertRaises(KeyError):
             path(1.5)
 
     def test_time_before_start_raises_key_error(self):
-        seed()
+        seed(42)
         path = BrownianBridge(end_time=1).draw()
         with self.assertRaises(KeyError):
             path(-0.5)
 
     def test_error_message_names_the_interval(self):
-        seed()
+        seed(42)
         path = BrownianBridge(end_time=1).draw()
         with self.assertRaisesRegex(KeyError, r"TimeInterval\(0, 1\)"):
             path(1.5)
 
     def test_the_two_ends_themselves_are_allowed(self):
-        seed()
+        seed(42)
         path = BrownianBridge(end_time=1).draw()
         self.assertEqual(path(0), 0)
         self.assertEqual(path(1), 0)
@@ -761,7 +757,7 @@ class TestBrownianBridgePlot(unittest.TestCase):
         return plt.gca().lines[-1].get_xdata()
 
     def test_plot_defaults_to_the_bridge_interval(self):
-        seed()
+        seed(42)
         plt.figure()
         BrownianBridge(end_time=3).draw().plot()
         xs = self._last_xdata()
@@ -772,13 +768,13 @@ class TestBrownianBridgePlot(unittest.TestCase):
     def test_plot_does_not_raise_key_error(self):
         # Regression: the old default tmax=10 evaluated past the bridge's
         # domain and raised KeyError.
-        seed()
+        seed(42)
         plt.figure()
         BrownianBridge(end_time=2).draw().plot()  # must not raise
         plt.close("all")
 
     def test_explicit_tmax_overrides_the_default(self):
-        seed()
+        seed(42)
         plt.figure()
         BrownianBridge(end_time=3).draw().plot(tmax=1.5)
         self.assertAlmostEqual(self._last_xdata()[-1], 1.5)
@@ -790,7 +786,7 @@ class TestBrownianBridgeRelationships(unittest.TestCase):
     def test_is_brownian_motion_with_the_far_end_subtracted(self):
         # B(t) - (t / T) * B(T) is a standard Brownian bridge, so its
         # variance at t must match the bridge's t * (T - t) / T.
-        seed()
+        seed(42)
         end_time = 2.0
         B = BrownianMotion()
         bridge_like = B[1.0] - (1.0 / end_time) * B[end_time]
@@ -798,7 +794,7 @@ class TestBrownianBridgeRelationships(unittest.TestCase):
         self.assertAlmostEqual(bridge_like.sim(2000).var(), expected, delta=0.15)
 
     def test_standard_bridge_marginal_is_normal(self):
-        seed()
+        seed(42)
         X = BrownianBridge()
         sims = X[0.5].sim(2000)
         # Var at the midpoint of a standard bridge is 0.5 * 0.5 / 1 = 0.25.
@@ -842,7 +838,7 @@ class TestBrownianBridgeErrors(unittest.TestCase):
 
     def test_negative_endpoint_values_are_valid(self):
         # Only end_time and scale are restricted in sign.
-        seed()
+        seed(42)
         path = BrownianBridge(initial_value=-5, final_value=-2).draw()
         self.assertEqual(path(0), -5)
         self.assertEqual(path(1), -2)
@@ -896,7 +892,7 @@ class TestTimeInterval(unittest.TestCase):
             TimeInterval(2, 1)
 
     def test_usable_directly_with_gaussian_process(self):
-        seed()
+        seed(42)
         X = GaussianProcess(
             lambda t: 0, lambda s, t: min(s, t), index_set=TimeInterval(0, 5)
         )
@@ -932,26 +928,26 @@ class TestFractionalBrownianMotionPaths(unittest.TestCase):
 
     def test_starts_at_zero(self):
         # cov(0, 0) = 0 for every hurst, so time 0 is deterministic.
-        seed()
+        seed(42)
         for hurst in [0.2, 0.5, 0.9]:
             X = FractionalBrownianMotion(hurst=hurst)
             for _ in range(5):
                 self.assertEqual(X.draw()(0), 0)
 
     def test_same_time_returns_cached_value(self):
-        seed()
+        seed(42)
         path = FractionalBrownianMotion(hurst=0.8).draw()
         self.assertEqual(path(1.0), path(1.0))
 
     def test_cached_value_unchanged_after_new_time(self):
-        seed()
+        seed(42)
         path = FractionalBrownianMotion(hurst=0.8).draw()
         before = path(1.0)
         path(2.0)
         self.assertEqual(before, path(1.0))
 
     def test_different_draws_produce_different_paths(self):
-        seed()
+        seed(42)
         X = FractionalBrownianMotion(hurst=0.7)
         self.assertGreater(len({X.draw()(1.0) for _ in range(10)}), 1)
 
@@ -962,7 +958,7 @@ class TestFractionalBrownianMotionStatistics(unittest.TestCase):
         # Var(X(t)) = scale**2 * t**(2 * hurst).
         scale = 1.5
         for hurst in [0.3, 0.5, 0.8]:
-            seed()
+            seed(42)
             X = FractionalBrownianMotion(hurst=hurst, scale=scale)
             for t in [0.5, 2.0]:
                 expected = scale**2 * t ** (2 * hurst)
@@ -971,18 +967,18 @@ class TestFractionalBrownianMotionStatistics(unittest.TestCase):
                 )
 
     def test_mean_is_zero(self):
-        seed()
+        seed(42)
         X = FractionalBrownianMotion(hurst=0.8)
         self.assertAlmostEqual(X[2.0].sim(Nsim).mean(), 0.0, delta=0.3)
 
     def test_larger_hurst_spreads_faster(self):
-        seed()
+        seed(42)
         low = FractionalBrownianMotion(hurst=0.3)[4.0].sim(Nsim).var()
         high = FractionalBrownianMotion(hurst=0.8)[4.0].sim(Nsim).var()
         self.assertGreater(high, low)
 
     def test_covariance_matches_closed_form(self):
-        seed()
+        seed(42)
         hurst, scale = 0.7, 1.0
         X = FractionalBrownianMotion(hurst=hurst, scale=scale)
         for s, t in [(1.0, 2.0), (0.5, 1.5)]:
@@ -995,7 +991,7 @@ class TestFractionalBrownianMotionStatistics(unittest.TestCase):
 
     def test_self_similar(self):
         # Stretching time by a scales the spread by a**(2 * hurst).
-        seed()
+        seed(42)
         hurst = 0.7
         X = FractionalBrownianMotion(hurst=hurst)
         at_one = X[1.0].sim(Nsim).var()
@@ -1004,7 +1000,7 @@ class TestFractionalBrownianMotionStatistics(unittest.TestCase):
 
     def test_defined_at_negative_times(self):
         # The absolute values in the covariance keep it valid below 0.
-        seed()
+        seed(42)
         X = FractionalBrownianMotion(hurst=0.7)
         self.assertAlmostEqual(X[-2.0].sim(Nsim).var(), 2 ** (2 * 0.7), delta=0.5)
 
@@ -1013,7 +1009,7 @@ class TestFractionalBrownianMotionMemory(unittest.TestCase):
     """The Hurst parameter is exactly the sign of the increment correlation."""
 
     def _increment_cov(self, hurst):
-        seed()
+        seed(42)
         X = FractionalBrownianMotion(hurst=hurst)
         return (X[1.0] & (X[2.0] - X[1.0])).sim(5000).cov()
 
@@ -1043,12 +1039,12 @@ class TestFractionalBrownianMotionRelationships(unittest.TestCase):
             self.assertAlmostEqual(cov_func(s, t), 4.0 * min(s, t), places=12)
 
     def test_hurst_half_matches_brownian_motion_variance(self):
-        seed()
+        seed(42)
         X = FractionalBrownianMotion(hurst=0.5)
         self.assertAlmostEqual(X[3.0].sim(Nsim).var(), 3.0, delta=0.5)
 
     def test_marginal_is_normal(self):
-        seed()
+        seed(42)
         hurst = 0.7
         X = FractionalBrownianMotion(hurst=hurst)
         sims = X[2.0].sim(2000)
@@ -1096,7 +1092,7 @@ class TestFractionalBrownianMotionErrors(unittest.TestCase):
             FractionalBrownianMotion(scale=-1)
 
     def test_hurst_near_the_ends_is_valid(self):
-        seed()
+        seed(42)
         for hurst in [0.01, 0.99]:
             path = FractionalBrownianMotion(hurst=hurst).draw()
             self.assertIsInstance(path(1.0), float)
@@ -1135,19 +1131,19 @@ class TestGeometricBrownianMotionConstruction(unittest.TestCase):
 class TestGeometricBrownianMotionPaths(unittest.TestCase):
 
     def test_starts_at_initial_value(self):
-        seed()
+        seed(42)
         for initial_value in [1, 100, 0.5]:
             X = GeometricBrownianMotion(initial_value=initial_value)
             for _ in range(5):
                 self.assertAlmostEqual(float(X.draw()(0)), float(initial_value))
 
     def test_same_time_returns_cached_value(self):
-        seed()
+        seed(42)
         path = GeometricBrownianMotion(initial_value=100).draw()
         self.assertEqual(path(1.0), path(1.0))
 
     def test_cached_value_unchanged_after_zooming_in(self):
-        seed()
+        seed(42)
         path = GeometricBrownianMotion(initial_value=100).draw()
         before = float(path(1.0)), float(path(2.0))
         for t in [1.1, 1.25, 1.5, 1.75, 1.9]:
@@ -1155,18 +1151,18 @@ class TestGeometricBrownianMotionPaths(unittest.TestCase):
         self.assertEqual((float(path(1.0)), float(path(2.0))), before)
 
     def test_different_draws_produce_different_paths(self):
-        seed()
+        seed(42)
         X = GeometricBrownianMotion(initial_value=100)
         self.assertGreater(len({float(X.draw()(1.0)) for _ in range(10)}), 1)
 
     def test_stays_positive(self):
         # Multiplying by a positive factor can never reach 0.
-        seed()
+        seed(42)
         X = GeometricBrownianMotion(initial_value=100, growth_rate=0, scale=0.8)
         self.assertTrue(all(value > 0 for value in X[5.0].sim(500)))
 
     def test_negative_time_raises_value_error(self):
-        seed()
+        seed(42)
         path = GeometricBrownianMotion().draw()
         with self.assertRaisesRegex(ValueError, "only defined for t >= 0"):
             path(-1.0)
@@ -1175,7 +1171,7 @@ class TestGeometricBrownianMotionPaths(unittest.TestCase):
 class TestGeometricBrownianMotionStatistics(unittest.TestCase):
 
     def setUp(self):
-        seed()
+        seed(42)
         self.initial_value = 100.0
         self.growth_rate = 0.05
         self.scale = 0.3
@@ -1204,12 +1200,12 @@ class TestGeometricBrownianMotionStatistics(unittest.TestCase):
 
     def test_zero_growth_rate_keeps_the_mean_flat(self):
         # growth_rate is the growth rate of the mean, so 0 means no growth.
-        seed()
+        seed(42)
         X = GeometricBrownianMotion(initial_value=50, growth_rate=0, scale=0.2)
         self.assertAlmostEqual(X[5.0].sim(Nsim).mean(), 50.0, delta=2.0)
 
     def test_larger_scale_spreads_wider(self):
-        seed()
+        seed(42)
         calm = GeometricBrownianMotion(initial_value=100, scale=0.1)
         wild = GeometricBrownianMotion(initial_value=100, scale=0.5)
         self.assertGreater(wild[3.0].sim(Nsim).var(), calm[3.0].sim(Nsim).var())
@@ -1220,7 +1216,7 @@ class TestGeometricBrownianMotionRelationships(unittest.TestCase):
     def test_log_of_the_path_is_normal(self):
         # log(value(t) / initial_value) is Normal with mean
         # (growth_rate - scale**2 / 2) * t and sd scale * sqrt(t).
-        seed()
+        seed(42)
         initial_value, growth_rate, scale, t = 100.0, 0.05, 0.3, 2.0
         X = GeometricBrownianMotion(
             initial_value=initial_value, growth_rate=growth_rate, scale=scale
@@ -1233,7 +1229,7 @@ class TestGeometricBrownianMotionRelationships(unittest.TestCase):
     def test_path_is_exactly_the_exponential_of_its_brownian_motion(self):
         # Not an approximation: the value is the closed-form transform of the
         # underlying Brownian path, to the last floating-point bit.
-        seed()
+        seed(42)
         initial_value, growth_rate, scale = 100.0, 0.05, 0.3
         path = GeometricBrownianMotion(
             initial_value=initial_value, growth_rate=growth_rate, scale=scale
@@ -1245,7 +1241,7 @@ class TestGeometricBrownianMotionRelationships(unittest.TestCase):
             self.assertEqual(float(path(t)), float(expected))
 
     def test_underlying_brownian_path_starts_at_zero(self):
-        seed()
+        seed(42)
         path = GeometricBrownianMotion(initial_value=100).draw()
         path(1.0)
         self.assertEqual(path.brownian_path(0), 0)
@@ -1260,7 +1256,7 @@ class TestGeometricBrownianMotionRelationships(unittest.TestCase):
         # the starting value even though the true mean is above it. The
         # median is robust to the skew, so that is the half that is checked
         # against simulation.
-        seed()
+        seed(42)
         initial_value, growth_rate, scale, t = 100.0, 0.01, 0.5, 10.0
         true_mean = initial_value * np.exp(growth_rate * t)
         true_median = initial_value * np.exp((growth_rate - scale**2 / 2) * t)
@@ -1314,7 +1310,7 @@ class TestGeometricBrownianMotionErrors(unittest.TestCase):
 
     def test_negative_growth_rate_is_valid(self):
         # A shrinking price is perfectly meaningful.
-        seed()
+        seed(42)
         X = GeometricBrownianMotion(initial_value=100, growth_rate=-0.1)
         self.assertLess(X[5.0].sim(Nsim).mean(), 100)
 

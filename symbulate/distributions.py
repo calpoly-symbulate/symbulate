@@ -15,6 +15,7 @@ from matplotlib.ticker import MaxNLocator
 from .plot import (
     get_next_color,
     set_plot_title,
+    THEORETICAL_CDF_PDF_OVERLAY_ERROR,
     DistributionPlot,
     JointDistributionPlot,
     make_joint_pdf,
@@ -44,7 +45,10 @@ from .plot import (
 )
 from .result import Scalar, Vector, InfiniteVector
 
-rng = np.random.default_rng()
+# The shared generator, owned by probability_space.py -- this module used to
+# create its own, which made seed() unable to reach it. Do not reintroduce a
+# local `rng = np.random.default_rng()` here.
+from .probability_space import rng
 
 
 def _validate(*checks):
@@ -278,6 +282,43 @@ class Distribution(ProbabilitySpace):
         self._xlim = value
         self._xlim_padded = False
 
+    def _fast_sim(self, n):
+        """Optional fast path for ``.sim(n)``: draw all ``n`` samples at once.
+
+        Returns ``None`` -- the default, and the answer for every
+        distribution unless it overrides this. A ``None`` here means
+        ``.sim(n)`` runs its ordinary one-draw-at-a-time loop, exactly as
+        it always has.
+
+        Override it only when the underlying scipy sampler carries a large
+        per-call setup cost that does *not* grow with the number of samples
+        requested, so that paying it once per ``.sim(n)`` instead of ``n``
+        times is a real saving. As of this change that is
+        :class:`NegativeHypergeometric` and :class:`TruncatedNormal`; see
+        ``team/final-tasks/audit/fast_sim_notes.md`` for how those two were
+        identified and why the list stops there. Adding another is a
+        one-line override here, with no change at either call site.
+
+        Deliberately takes no ``random_state`` argument. An override draws
+        from this module's own ``rng`` -- the same generator ``draw()``
+        uses -- rather than accepting one from whoever called ``.sim()``,
+        which lives in a different module. Passing a generator across that
+        boundary would make it possible to advance a different stream than
+        ``draw()`` does, and the two would silently disagree.
+
+        Parameters
+        ----------
+        n : int
+            How many samples ``.sim()`` was asked for.
+
+        Returns
+        -------
+        array-like or None
+            ``n`` samples drawn in one batched call, or ``None`` to mean
+            "no batched path -- use the ordinary loop."
+        """
+        return None
+
     def _support(self):
         """The distribution's true support bounds, either of which may be infinite.
 
@@ -487,7 +528,10 @@ class Distribution(ProbabilitySpace):
         The plot is titled by what it shows: "Cumulative Distribution
         Function" for ``cdf=True``, and for the default view "Probability
         Density Function" (continuous) or "Probability Mass Function"
-        (discrete).
+        (discrete) -- only when the axes doesn't already have a title, so
+        overlaying onto an existing plot keeps that plot's title. Overlaying
+        a pdf/pmf and a cdf on the same axes raises instead of drawing an
+        unreadable plot -- see ``ax=`` below for comparing both side by side.
 
         **The x-axis frames itself, and there is no window argument.** The
         distribution's own :attr:`xlim` is used, and it zooms in whenever the
@@ -571,6 +615,38 @@ class Distribution(ProbabilitySpace):
         # case that skips the discrete padding below (see `_xlim_padded`).
         xlim = self.xlim
 
+        # The window itself can come back non-finite, which is a different
+        # failure from the all-non-finite curve guarded below: here there is
+        # no range of values to evaluate at all. Two distinct causes, so two
+        # distinct messages -- an infinite bound means the 0.999 quantile
+        # never came back (Pareto(shape=1e-3) frames `(1.0, inf)`, which
+        # reaches matplotlib as a bare "Axis limits cannot be NaN or Inf"),
+        # while a nan bound means the quantiles themselves are undefined
+        # (Normal(sd=0), Uniform(a=5, b=5)). Checking here also keeps a nan
+        # bound away from the `int(xlim[0])` on the discrete branch below,
+        # which would raise its own uninformative conversion error.
+        if not all(np.isfinite(bound) for bound in xlim):
+            if any(np.isnan(bound) for bound in xlim):
+                cause = (
+                    "This usually means a parameter is at a degenerate edge "
+                    "-- zero variance, or bounds that collapse to a single "
+                    "point -- which leaves the distribution with no range of "
+                    "values to draw."
+                )
+            else:
+                cause = (
+                    "This usually means a tail so heavy that no window holds "
+                    "most of the probability -- a shape parameter very close "
+                    "to 0, say."
+                )
+            raise ValueError(
+                f"{type(self).__name__}'s parameters give the plotting window "
+                f"{tuple(xlim)}, which is not a finite range of values. "
+                f"{cause} This is rarely a bug in your code -- check the "
+                f"distribution's parameters, or choose the window yourself "
+                f"with X.xlim = (low, high) before plotting."
+            )
+
         # get the x and y values. The x-window is chosen the same way for
         # both plot types (it only picks x-values); `cdf` decides which
         # function is evaluated there.
@@ -588,18 +664,54 @@ class Distribution(ProbabilitySpace):
             xs = np.linspace(xlim[0], xlim[1], 200)
         ys = self.cdf(xs) if cdf else self.pdf(xs)
 
+        # A degenerate parameter (zero variance, a shape parameter at an
+        # extreme edge, bounds that collapse to a point, ...) can make every
+        # evaluated value non-finite, which would otherwise reach a bare
+        # NumPy "zero-size array" crash below with no context for a student.
+        # Name the likely cause and point at the fix instead.
+        finite = np.isfinite(ys)
+        if not np.any(finite):
+            quantity = "cdf" if cdf else "pmf" if self.discrete else "pdf"
+            raise ValueError(
+                f"{type(self).__name__}'s parameters make the {quantity} "
+                f"undefined or infinite everywhere in the plotting window "
+                f"{tuple(xlim)}. This usually means a parameter is at a "
+                f"degenerate edge -- zero variance, a shape parameter at 0, "
+                f"or bounds that collapse to a single point -- rather than a "
+                f"bug in your code. Check the distribution's parameters."
+            )
+
         # determine limits for y-axes based on y values. Anchor the baseline
         # at exactly 0 so the curve sits right on the x-axis: a pdf/pmf height
         # is never negative and only reads correctly against a zero baseline,
         # and a CDF likewise runs from 0 upward. Padding below 0 would float
         # the curve off the axis and misrepresent it.
-        ymax = ys[np.isfinite(ys)].max()
+        ymax = ys[finite].max()
         ylim = 0, 1.05 * ymax
 
         # get the current axis (creating one if the figure has none) unless
         # an axis was specified
         if ax is None:
             ax = plt.gca()
+
+        # A pdf/pmf and a cdf use different y-axis scales (one can exceed 1,
+        # the other runs from 0 to 1), so overlaying both on one axes -- e.g.
+        # Normal(0,1).plot(); Normal(0,1).plot(cdf=True) -- produces a plot
+        # that can't be read correctly no matter which curve's title/label
+        # wins. Tag the axes with which kind was drawn (the same pattern
+        # RVResults.plot() uses for _symbulate_marginal) and refuse a second,
+        # mismatched call rather than silently drawing an unreadable overlay.
+        # Different Axes objects (e.g. ax1, ax2 = ax1.twinx()) are unaffected,
+        # since each has its own tag -- that's the escape hatch for anyone who
+        # deliberately wants both curves side by side.
+        new_kind = "cdf" if cdf else "pdf/pmf"
+        existing_kind = getattr(ax, "_symbulate_theoretical_kind", None)
+        if existing_kind is not None and existing_kind != new_kind and ax.has_data():
+            raise ValueError(
+                THEORETICAL_CDF_PDF_OVERLAY_ERROR.format(
+                    existing=existing_kind, new=new_kind
+                )
+            )
 
         # If the axes already has a plot on it, widen the window to the union
         # of both, so overlaying a second curve doesn't crop the first. An
@@ -683,9 +795,18 @@ class Distribution(ProbabilitySpace):
         # Title the plot by what it shows: the cumulative distribution
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
-        # set_plot_title, not ax.set_title: overlaying the true distribution
-        # on a plot of simulated values should leave the simulated plot's
-        # title in place, since that is what the figure is mainly showing.
+        # set_plot_title, not ax.set_title: only set it when the axes
+        # doesn't already have a title, matching the same "keep the first
+        # plot's framing" rule the labels below already followed -- title
+        # and label used to disagree (title always overwritten, label only
+        # filled if unset), which is exactly how a pdf-then-cdf overlay
+        # used to end up titled "Cumulative Distribution Function" while
+        # still y-labeled "Density". The overlay guard above blocks that
+        # specific combination outright now, but this keeps title and label
+        # in agreement for every other overlay too (e.g. a pdf curve added
+        # on top of a histogram keeps that histogram's title). The helper
+        # is the one shared definition of that rule -- every make_* title
+        # in plot.py goes through it too.
         if cdf:
             set_plot_title(ax, "Cumulative Distribution Function")
         elif self.discrete:
@@ -722,6 +843,10 @@ class Distribution(ProbabilitySpace):
         # legend-free. "upper left" matches make_ecdf's own default, since a
         # rising CDF has more room there than "upper right".
         _refresh_legend(ax, loc="upper left" if cdf else "upper right")
+
+        # Record what this call drew, for the overlay guard above to check
+        # on the next call.
+        ax._symbulate_theoretical_kind = new_kind
 
         return DistributionPlot(ax, self, "cdf" if cdf else "pdf")
 
@@ -1197,6 +1322,22 @@ class NegativeHypergeometric(Distribution):
         params = {"M": N0 + N1, "n": N1, "r": r}
         super().__init__(params, stats.nhypergeom, True)
 
+    def _fast_sim(self, n):
+        """Draw all ``n`` samples in one vectorized call.
+
+        A plain ``draw()`` goes through
+        ``self.sim_func(**self.params, random_state=rng)``, and scipy's
+        ``nhypergeom_gen._rvs`` rebuilds an entire CDF table and an
+        inverse-CDF interpolator from scratch on *every* call, however few
+        samples are asked for. Paying that once per ``.sim(n)`` rather than
+        ``n`` times is the whole saving: roughly 1.1 ms per sample looped
+        against about a microsecond per sample batched (~850x).
+
+        See :meth:`Distribution._fast_sim` for why no generator is passed
+        in.
+        """
+        return self.sim_func(**self.params, size=n, random_state=rng)
+
 
 class Geometric(Distribution):
     """Probability space for a geometric distribution.
@@ -1647,8 +1788,9 @@ class Zeta(Distribution):
     first hundred values carry only about 40% of it. So :attr:`xlim`
     deliberately shows just the first 20 values, which is where the
     power-law shape is visible, rather than stretching out along a tail
-    that never really ends. Pass an explicit ``xlim=(1, high)`` to
-    :meth:`plot` to look further out.
+    that never really ends. To look further out, set the window on the
+    distribution before plotting -- ``X = Zeta(shape=1.1); X.xlim = (1,
+    100); X.plot()`` -- or move the axis afterwards with ``xlim(1, 100)``.
 
     **A naming warning about scipy.** ``scipy.stats.zipf`` is this
     distribution, the zeta -- *not* the finite Zipf, which scipy calls
@@ -2412,6 +2554,19 @@ class TruncatedNormal(Distribution):
         lower = a if np.isfinite(a) else self.quantile(0.001)
         upper = b if np.isfinite(b) else self.quantile(0.999)
 
+    def _fast_sim(self, n):
+        """Draw all ``n`` samples in one vectorized call.
+
+        The same idea as :meth:`NegativeHypergeometric._fast_sim`, less
+        extreme: scipy's ``truncnorm._rvs`` inverts a uniform through
+        ``_ppf``, which is real per-call work rather than a table rebuild,
+        but still work that batching amortizes -- about 80x in testing.
+
+        See :meth:`Distribution._fast_sim` for why no generator is passed
+        in.
+        """
+        return self.sim_func(**self.params, size=n, random_state=rng)
+
 
 class SkewNormal(Distribution):
     """Probability space for a skew-normal distribution.
@@ -2757,8 +2912,8 @@ class ExponentiallyModifiedGaussian(Distribution):
         # Unbounded on both sides, like Laplace and Gumbel, so both ends of
         # the default window are quantile cuts, and the automatic zoom has
         # nothing further to give up. A small rate makes the right tail long
-        # enough that the window looks lopsided -- pass an explicit
-        # xlim=(low, high) to plot() to frame the bulk of the probability.
+        # enough that the window looks lopsided -- assign X.xlim = (low, high)
+        # before plotting to frame the bulk of the probability.
 
 
 class Gamma(Distribution):
@@ -3112,12 +3267,110 @@ class LogGamma(Distribution):
         super().__init__(params, stats.loggamma, False)
 
 
+class InverseGaussian(Distribution):
+    """Probability space for an inverse Gaussian (Wald) distribution.
+
+    A right-skewed distribution over the positive numbers. It arises as a
+    *first passage time*: if a Brownian motion drifts steadily upward, the
+    time it first reaches a fixed level has this distribution. That makes it
+    a natural model for a duration or a waiting time -- how long a repair
+    takes, how long a customer stays -- where most values cluster near a
+    typical length but a few run much longer.
+
+    Parameters
+    ----------
+    mean : float, optional
+        Expected value of the distribution. Must be positive. Default is 1.0.
+    shape : float, optional
+        Shape parameter (often written λ). Must be positive. Larger values
+        concentrate the distribution around ``mean`` and make it less skewed.
+        Default is 1.0.
+
+    Attributes
+    ----------
+    mean_param : float
+        Expected value of the distribution, as passed in.
+    shape : float
+        Shape parameter (λ).
+
+    Notes
+    -----
+    **Despite the name, it is unrelated to the reciprocal of a normal random
+    variable.** "Inverse" refers to a relationship between two functions
+    describing Brownian motion, not to dividing anything by anything. It is
+    also called the Wald distribution.
+
+    The variance is ``mean ** 3 / shape``, so spread grows quickly with the
+    mean and shrinks as the shape grows. As ``shape`` goes to infinity with
+    ``mean`` held fixed, the distribution approaches
+    ``Normal(mean, mean ** 3 / shape)`` -- that is, a normal distribution
+    with the same mean and variance, the skewness washing out as the
+    variance shrinks.
+
+    The expected value is stored as ``mean_param`` rather than ``mean``,
+    because :class:`Distribution` gives every distribution a ``mean()``
+    *method* returning the expected value. Storing the parameter under its
+    own name would overwrite that method, so ``X.mean()`` calls the method
+    and ``X.mean_param`` reads the number that was passed in. They agree:
+    ``X.mean() == X.mean_param``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = InverseGaussian(mean=2, shape=3)
+    >>> round(float(X.mean()), 4)
+    2.0
+    >>> round(float(X.var()), 4)
+    2.6667
+    >>> round(float(X.pdf(2)), 4)
+    0.2443
+    >>> X.draw()  # doctest: +SKIP
+    1.37
+    """
+
+    def __init__(self, mean=1.0, shape=1.0):
+        """Initialize an inverse Gaussian distribution.
+
+        Raises
+        ------
+        Exception
+            If ``mean`` or ``shape`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(mean, numbers.Real) or mean <= 0,
+                "mean must be a positive number",
+            ),
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+        )
+        # Stored as `mean_param`, not `mean`: `Distribution.__init__` assigns
+        # `self.mean` the callable that returns the expected value, so a
+        # `self.mean` here would be silently replaced by that method.
+        self.mean_param = mean
+        self.shape = shape
+
+        # scipy's invgauss is parameterized by `mu` and `scale`, with
+        # mean = mu * scale and variance = mu ** 3 * scale ** 2. Setting
+        # scale = shape and mu = mean / shape gives back the textbook
+        # (mean, shape) convention used here:
+        #     mean:      (mean / shape) * shape           = mean
+        #     variance:  (mean / shape) ** 3 * shape ** 2 = mean ** 3 / shape
+        params = {"mu": mean / shape, "scale": shape}
+        # Support is (0, inf), so the default window is (0, quantile(0.999)) --
+        # the fixed lower bound kept as-is, the unbounded upper end cut at a
+        # quantile. No per-distribution window code is needed.
+        super().__init__(params, stats.invgauss, False)
+
+
 class Beta(Distribution):
     """Probability space for a beta distribution.
 
-    A continuous distribution defined on [0, 1], often used to model
-    probabilities or proportions. The shape changes with parameters
-    ``shape1`` and ``shape2``.
+    A continuous distribution defined on ``[xmin, xmax]`` -- by default
+    ``[0, 1]`` -- often used to model probabilities or proportions. The
+    shape changes with parameters ``shape1`` and ``shape2``.
 
     Parameters
     ----------
@@ -3125,6 +3378,11 @@ class Beta(Distribution):
         First shape parameter (often written α). Must be positive.
     shape2 : float
         Second shape parameter (often written β). Must be positive.
+    xmin : float, optional
+        Smallest possible value. Default is 0.0.
+    xmax : float, optional
+        Largest possible value. Must be greater than ``xmin``. Default
+        is 1.0.
 
     Attributes
     ----------
@@ -3132,6 +3390,28 @@ class Beta(Distribution):
         First shape parameter (α). Must be positive.
     shape2 : float
         Second shape parameter (β). Must be positive.
+    xmin : float
+        Smallest possible value.
+    xmax : float
+        Largest possible value.
+
+    Notes
+    -----
+    The two shape parameters set the *shape* of the density and the two
+    bounds set *where it sits*, so the two choices are independent. A beta
+    on ``[xmin, xmax]`` is the standard one on ``[0, 1]`` stretched by the
+    width and shifted to the new start: if ``S`` has a
+    ``Beta(shape1, shape2)`` distribution, then
+
+        ``xmin + (xmax - xmin) * S``
+
+    has a ``Beta(shape1, shape2, xmin, xmax)`` distribution. Every summary
+    follows from that same stretch-and-shift -- the mean, for instance, is
+    ``xmin + (xmax - xmin) * shape1 / (shape1 + shape2)``.
+
+    The default ``xmin=0``, ``xmax=1`` leaves the standard beta unchanged.
+    :class:`PERT` is built the same way, stretching a beta onto
+    ``[low, high]`` with shapes chosen to put the peak at a given mode.
 
     Examples
     --------
@@ -3141,19 +3421,27 @@ class Beta(Distribution):
     0.5
     >>> round(float(X.pdf(0.5)), 4)
     1.0
+    >>> float(Beta(1, 1, xmin=2, xmax=4).mean())
+    3.0
     >>> X.draw()  # doctest: +SKIP
     0.632
     """
 
-    def __init__(self, shape1, shape2):
+    def __init__(self, shape1, shape2, xmin=0.0, xmax=1.0):
         """Initialize a beta distribution.
 
         Raises
         ------
         Exception
-            If ``shape1`` or ``shape2`` is not a positive number.
+            If ``shape1`` or ``shape2`` is not a positive number, if
+            ``xmin`` or ``xmax`` is not a number, or if ``xmax`` is not
+            greater than ``xmin``.
         """
-
+        # The bounds are compared to each other below, so that check is
+        # guarded by this type check -- otherwise a non-numeric bound would
+        # raise a cryptic TypeError from the comparison instead of reporting
+        # the friendly message. Same guard PERT uses on its three bounds.
+        numeric = isinstance(xmin, numbers.Real) and isinstance(xmax, numbers.Real)
         _validate(
             (
                 not isinstance(shape1, numbers.Real) or shape1 <= 0,
@@ -3163,11 +3451,20 @@ class Beta(Distribution):
                 not isinstance(shape2, numbers.Real) or shape2 <= 0,
                 "shape2 must be a positive number",
             ),
+            (not isinstance(xmin, numbers.Real), "xmin must be a number"),
+            (not isinstance(xmax, numbers.Real), "xmax must be a number"),
+            (numeric and xmax <= xmin, "xmax must be greater than xmin"),
         )
         self.shape1 = shape1
         self.shape2 = shape2
+        self.xmin = xmin
+        self.xmax = xmax
 
-        params = {"a": shape1, "b": shape2}
+        # Stretch the standard beta from [0, 1] onto [xmin, xmax] with
+        # scipy's own loc/scale, the same mechanism PERT uses. The defaults
+        # give loc=0, scale=1, which is scipy's no-op, so the standard beta
+        # is unchanged.
+        params = {"a": shape1, "b": shape2, "loc": xmin, "scale": xmax - xmin}
         super().__init__(params, stats.beta, False)
 
 
@@ -4605,9 +4902,10 @@ class HalfCauchy(Distribution):
 
     That same heavy tail makes the default plotting window wide -- covering
     most of the probability genuinely requires reaching far out along the
-    tail -- so the density can look like a spike at 0. Pass an explicit
-    ``xlim=(0, high)`` to :meth:`plot` to inspect the bulk of the
-    distribution.
+    tail -- so the density can look like a spike at 0. To inspect the bulk
+    of the distribution, set the window on the distribution before plotting
+    -- ``X = HalfCauchy(scale=1); X.xlim = (0, 10); X.plot()`` -- or move
+    the axis afterwards with ``xlim(0, 10)``.
 
     Examples
     --------

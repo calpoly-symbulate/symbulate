@@ -14,7 +14,10 @@ from .result import ContinuousTimeFunction
 from .random_variables import RV
 from .random_processes import RandomProcess
 
-rng = np.random.default_rng()
+# The shared generator, owned by probability_space.py -- this module used to
+# create its own, which made seed() unable to reach it. Do not reintroduce a
+# local `rng = np.random.default_rng()` here.
+from .probability_space import rng
 
 
 def get_diffusion_process_result(drift, diffusion, x0=0, tol=1e-3):

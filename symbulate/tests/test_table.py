@@ -8,7 +8,6 @@ import unittest
 import numpy as np
 
 from symbulate import *
-from symbulate import distributions
 from symbulate.table import Table
 
 
@@ -146,24 +145,24 @@ class TestTableArithmetic(unittest.TestCase):
 class TestTableFromTabulate(unittest.TestCase):
 
     def test_tabulate_returns_table(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         result = RV(Bernoulli(0.5)).sim(100).tabulate()
         self.assertIsInstance(result, Table)
 
     def test_tabulate_counts_sum_to_n(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         n = 200
         result = RV(Bernoulli(0.5)).sim(n).tabulate()
         self.assertEqual(sum(result.values()), n)
 
     def test_tabulate_keys_are_outcomes(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         result = RV(Bernoulli(0.5)).sim(100).tabulate()
         self.assertIn(0, result)
         self.assertIn(1, result)
 
     def test_tabulate_normalize_sums_to_one(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         result = RV(Bernoulli(0.5)).sim(100).tabulate(normalize=True)
         self.assertAlmostEqual(sum(result.values()), 1.0)
 

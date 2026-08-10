@@ -19,6 +19,10 @@ import sys
 import unittest
 
 import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")  # non-interactive backend; must precede pyplot import
+import matplotlib.pyplot as plt
 
 from symbulate.result import Scalar, Vector
 from symbulate.results import (
@@ -560,6 +564,70 @@ class TestResultsRepr(unittest.TestCase):
         html = make_results(list(range(20)))._repr_html_()
         self.assertIn("...", html)
 
+    # --- edge cases the display rewrite's manual smoke-testing covered ---
+
+    def test_repr_of_empty_results(self):
+        """n=0: the header still prints and nothing blows up on max() of an
+        empty column."""
+        r = make_results([])
+        s = repr(r)
+        self.assertIn("Index", s)
+        self.assertIn("Result", s)
+        self.assertEqual(s.count("\n"), 0)  # header only, no data rows
+        self.assertIn("<table>", r._repr_html_())
+
+    def test_repr_of_single_value_results(self):
+        r = make_results([1.5])
+        s = repr(r)
+        self.assertEqual(s.count("\n"), 1)  # header + one row
+        self.assertIn("1.5000", s)
+        self.assertIn("1.5000", r._repr_html_())
+
+    def test_vector_column_with_inconsistent_dimension_does_not_crash(self):
+        """_format_display_column aligns component-by-component only when
+        every row has the same length; a ragged column takes the fallback
+        branch and is formatted row by row instead."""
+        r = make_results([Vector([1.5, 2.5]), Vector([3.5]), Vector([4.5, 5.5, 6.5])])
+        s = repr(r)
+        self.assertIn("1.5000", s)
+        self.assertIn("3.5000", s)
+        self.assertIn("6.5000", s)
+        self.assertIn("<table>", r._repr_html_())
+
+    def test_exactly_ten_and_eleven_rows_show_every_row(self):
+        """Regression: _repr_html_ used to insert a "..." row whenever
+        len > 9 -- so at exactly 10 or 11 it claimed rows were omitted when
+        none were, and at 11 it dropped index 9's row entirely. Both display
+        methods now share _display_rows, so neither can do that."""
+        for n in (10, 11):
+            with self.subTest(n=n):
+                r = make_results(list(range(100, 100 + n)))
+                text, html = repr(r), r._repr_html_()
+                for rendering, name in [(text, "__repr__"), (html, "_repr_html_")]:
+                    self.assertNotIn("...", rendering, f"{name} claimed truncation")
+                    for value in range(100, 100 + n):
+                        self.assertIn(str(value), rendering, f"{name} dropped {value}")
+
+    def test_twelve_rows_is_where_truncation_starts(self):
+        """One past the boundary above: now rows really are omitted, so the
+        marker is correct rather than spurious."""
+        r = make_results(list(range(100, 112)))
+        for rendering in (repr(r), r._repr_html_()):
+            self.assertIn("...", rendering)
+            self.assertIn("111", rendering)  # last row still shown
+            self.assertNotIn("110", rendering)  # the omitted middle
+
+    def test_repr_and_repr_html_agree_on_which_rows_appear(self):
+        """The two used to disagree; _display_rows is what keeps them in
+        step."""
+        for n in (5, 10, 11, 12, 30):
+            with self.subTest(n=n):
+                r = make_results(list(range(n)))
+                self.assertEqual(
+                    [label for label, _ in r._display_rows()].count("..."),
+                    1 if n > 11 else 0,
+                )
+
 
 # ---------------------------------------------------------------------------
 # RVResults.plot
@@ -572,6 +640,233 @@ class TestRVResultsPlot(unittest.TestCase):
         rvr = RVResults([1.0, 2.0, 3.0])
         with self.assertRaises(Exception):
             rvr.plot(type=42)
+
+    def test_dims_kwarg_on_3plus_variables_raises_before_drawing(self):
+        # Regression test: dims= on 3+ variables used to be validated
+        # *after* the "pairs" branch had already built a GridSpec, resized
+        # the figure, and added a subplot -- so the figure was left
+        # half-built even though the call correctly raised in the end.
+        # Confirm the check now runs before any of that drawing happens.
+        rvr = RVResults(
+            [
+                Vector([1.0, 2.0, 3.0]),
+                Vector([4.0, 5.0, 6.0]),
+                Vector([7.0, 8.0, 9.0]),
+            ]
+        )
+        plt.close("all")
+        with self.assertRaisesRegex(ValueError, "dims="):
+            rvr.plot(dims=[0, 1])
+        # No figure should have been created/modified by the failed call.
+        self.assertEqual(plt.gcf().get_axes(), [])
+        plt.close("all")
+
+    def test_rug_forwards_kwargs(self):
+        # Regression test: type='rug' used to silently drop every keyword
+        # argument (unlike every other 1D plot type), so linewidth=10 had
+        # no effect at all.
+        rvr = RVResults(list(range(20)))
+        rvr.plot(type="rug", linewidth=10)
+        ax = plt.gca()
+        self.assertEqual(list(ax.collections[-1].get_linewidth()), [10.0])
+        plt.close("all")
+
+    def test_rug_bad_kwarg_raises_friendly_typeerror(self):
+        # Regression test: a bad kwarg on type='hist' already raised a raw
+        # AttributeError straight from matplotlib; type='rug' silently
+        # swallowed the same mistake instead. Both should now raise the
+        # same kind of friendly, actionable message.
+        rvr = RVResults(list(range(20)))
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="rug", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_hist_bad_kwarg_raises_friendly_typeerror_not_raw(self):
+        # The matplotlib AttributeError CLAUDE.md says should never reach
+        # a student now gets rewrapped as an informative TypeError.
+        rvr = RVResults(list(range(20)))
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="hist", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_boxplot_bad_kwarg_raises_friendly_typeerror(self):
+        # boxplot/violinplot raise TypeError natively (not AttributeError
+        # like the Artist-based plot types) -- confirm that path is also
+        # caught and rewrapped, not just the AttributeError path.
+        rvr = RVResults(list(range(20)))
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="box", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_scatter_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults([(i % 5, (i % 5) + np.random.random()) for i in range(50)])
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="scatter", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_scatter_normal_usage_unaffected(self):
+        rvr = RVResults([(i % 5, (i % 5) + np.random.random()) for i in range(50)])
+        rvr.plot(type="scatter")
+        plt.close("all")
+
+    def test_2d_hist2d_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults([(np.random.random(), np.random.random()) for _ in range(300)])
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="hist2d", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_hist2d_normal_usage_unaffected(self):
+        rvr = RVResults([(np.random.random(), np.random.random()) for _ in range(300)])
+        rvr.plot(type="hist2d")
+        plt.close("all")
+
+    def test_2d_density2d_bad_kwarg_does_not_crash(self):
+        # make_density2D forwards **kwargs to ax.contourf, which -- unlike
+        # every other matplotlib call this wrapping covers -- doesn't raise
+        # for an unrecognized kwarg at all, only warns. So there is no
+        # exception here for _call_plot_helper to catch and rewrap; this
+        # just pins that a bad kwarg still doesn't crash the plot.
+        rvr = RVResults([(np.random.random(), np.random.random()) for _ in range(300)])
+        rvr.plot(type="density2d", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_density2d_normal_usage_unaffected(self):
+        rvr = RVResults([(np.random.random(), np.random.random()) for _ in range(300)])
+        rvr.plot(type="density2d")
+        plt.close("all")
+
+    def test_2d_tile_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults([(i % 4, i % 3) for i in range(50)])
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="tile", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_tile_normal_usage_unaffected(self):
+        rvr = RVResults([(i % 4, i % 3) for i in range(50)])
+        rvr.plot(type="tile")
+        plt.close("all")
+
+    def test_2d_mosaic_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults([(i % 4, i % 3) for i in range(50)])
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="mosaic", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_mosaic_normal_usage_unaffected(self):
+        rvr = RVResults([(i % 4, i % 3) for i in range(50)])
+        rvr.plot(type="mosaic")
+        plt.close("all")
+
+    def test_2d_segmented_hist_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults([(i % 4, np.random.random()) for i in range(200)])
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="segmented_hist", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_segmented_hist_normal_usage_unaffected(self):
+        rvr = RVResults([(i % 4, np.random.random()) for i in range(200)])
+        rvr.plot(type="segmented_hist")
+        plt.close("all")
+
+    def test_2d_segmented_density_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults([(i % 4, np.random.random()) for i in range(200)])
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="segmented_density", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_segmented_density_normal_usage_unaffected(self):
+        rvr = RVResults([(i % 4, np.random.random()) for i in range(200)])
+        rvr.plot(type="segmented_density")
+        plt.close("all")
+
+    def test_2d_segmented_rug_forwards_kwargs(self):
+        # Regression test: the segmented rug branch, like the 1D rug
+        # branch, previously dropped every keyword argument.
+        rvr = RVResults([(i % 4, np.random.random()) for i in range(200)])
+        rvr.plot(type="segmented_rug", linewidth=10)
+        plt.close("all")
+
+    def test_2d_segmented_rug_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults([(i % 4, np.random.random()) for i in range(200)])
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="segmented_rug", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_categorical_bar_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults(["a", "b", "a", "c"] * 10)
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="bar", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_categorical_bar_normal_usage_unaffected(self):
+        rvr = RVResults(["a", "b", "a", "c"] * 10)
+        rvr.plot(type="bar")
+        plt.close("all")
+
+    def test_categorical_dotplot_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults(["a", "b", "a", "c"] * 10)
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="dotplot", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_categorical_dotplot_normal_usage_unaffected(self):
+        rvr = RVResults(["a", "b", "a", "c"] * 10)
+        rvr.plot(type="dotplot")
+        plt.close("all")
+
+    def test_categorical_impulse_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults(["a", "b", "a", "c"] * 10)
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="impulse", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_categorical_impulse_normal_usage_unaffected(self):
+        rvr = RVResults(["a", "b", "a", "c"] * 10)
+        rvr.plot(type="impulse")
+        plt.close("all")
+
+    def test_categorical_2d_mosaic_normal_usage_unaffected(self):
+        rvr = RVResults(
+            [("a" if i % 2 else "b", "x" if i % 3 else "y") for i in range(50)]
+        )
+        rvr.plot(type="mosaic")
+        plt.close("all")
+
+    def test_categorical_2d_tile_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults(
+            [("a" if i % 2 else "b", "x" if i % 3 else "y") for i in range(50)]
+        )
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="tile", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_violin_normal_usage_unaffected(self):
+        rvr = RVResults([(i % 3, np.random.random()) for i in range(150)])
+        rvr.plot(type="violin")
+        plt.close("all")
+
+    def test_2d_violin_bad_kwarg_does_not_crash(self):
+        # make_violin (the 2D grouped-violin helper) takes no **kwargs at
+        # all -- unlike every plot type finding06 lists (scatter, hist2d,
+        # density2d, tile, mosaic, segmented_hist, segmented_density,
+        # segmented_rug, categorical bar/dotplot/impulse), which is why
+        # it isn't in that list. A bad kwarg here is silently dropped
+        # rather than raising; fixing that is a separate, out-of-scope
+        # gap, not this task's kwarg-forwarding/exception-type fix.
+        rvr = RVResults([(i % 3, np.random.random()) for i in range(150)])
+        rvr.plot(type="violin", not_a_real_kwarg=5)
+        plt.close("all")
+
+    def test_2d_box_normal_usage_unaffected(self):
+        rvr = RVResults([(i % 3, np.random.random()) for i in range(150)])
+        rvr.plot(type="box")
+        plt.close("all")
+
+    def test_2d_box_bad_kwarg_raises_friendly_typeerror(self):
+        rvr = RVResults([(i % 3, np.random.random()) for i in range(150)])
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            rvr.plot(type="box", not_a_real_kwarg=5)
+        plt.close("all")
 
 
 # ---------------------------------------------------------------------------

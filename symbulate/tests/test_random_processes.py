@@ -28,11 +28,6 @@ from symbulate.result import TimeFunction
 Nsim = 10000
 
 
-def seed(value=42):
-    """Reseed the generator that distribution draws route through."""
-    distributions.rng = np.random.default_rng(value)
-
-
 def bernoulli_process(p=0.5):
     """A RandomProcess of i.i.d. Bernoulli(p) values indexed by the naturals."""
     return RandomProcess(Bernoulli(p=p) ** inf)
@@ -65,18 +60,18 @@ class TestGetItem(unittest.TestCase):
         self.assertIsInstance(bernoulli_process()[3], RV)
 
     def test_unset_time_draws_from_process(self):
-        seed()
+        seed(42)
         X = bernoulli_process()
         self.assertTrue(set(X[3].sim(Nsim)) <= {0, 1})
 
     def test_unset_time_marginal_mean(self):
-        seed()
+        seed(42)
         X = bernoulli_process(p=0.3)
         self.assertAlmostEqual(X[5].sim(Nsim).mean(), 0.3, delta=0.03)
 
     def test_different_times_are_independent_draws(self):
         # Two distinct times should not be perfectly identical streams.
-        seed()
+        seed(42)
         X = bernoulli_process()
         s0 = list(X[0].sim(Nsim))
         s1 = list(X[1].sim(Nsim))
@@ -160,7 +155,7 @@ class TestCall(unittest.TestCase):
         self.assertIsInstance(bernoulli_process()(3), RV)
 
     def test_values_from_process(self):
-        seed()
+        seed(42)
         X = bernoulli_process()
         self.assertTrue(set(X(3).sim(Nsim)) <= {0, 1})
 
@@ -184,7 +179,7 @@ class TestDraw(unittest.TestCase):
         self.assertIsInstance(bernoulli_process().draw(), TimeFunction)
 
     def test_draw_is_callable_at_a_time(self):
-        seed()
+        seed(42)
         path = bernoulli_process().draw()
         self.assertIn(path(0), (0, 1))
 
@@ -215,14 +210,14 @@ class TestIndexSets(unittest.TestCase):
 class TestCustomFunc(unittest.TestCase):
 
     def test_custom_func_is_applied(self):
-        seed()
+        seed(42)
         X = RandomProcess(
             Bernoulli(p=0.5) ** inf, Naturals(), lambda outcome, t: outcome[t] * 10
         )
         self.assertTrue(set(X[2].sim(Nsim)) <= {0, 10})
 
     def test_custom_func_reflected_through_call(self):
-        seed()
+        seed(42)
         X = RandomProcess(
             Bernoulli(p=0.5) ** inf, Naturals(), lambda outcome, t: outcome[t] + 100
         )
@@ -243,7 +238,7 @@ class TestReproducibility(unittest.TestCase):
 class TestMarginalDistribution(unittest.TestCase):
 
     def test_bernoulli_marginal_goodness_of_fit(self):
-        seed()
+        seed(42)
         X = bernoulli_process(p=0.4)
         simulated = X[7].sim(Nsim).tabulate()
         exp_list, obs_list = [], []

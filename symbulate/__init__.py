@@ -2,6 +2,10 @@ from .probability_space import (
     ProbabilitySpace,
     HierarchicalProbabilitySpace,
     Hierarchical,
+    # NEW PUBLIC API -- needs team sign-off. Reseeds the one shared generator
+    # every distribution, process, and plot now draws from. Note that
+    # np.random.seed() has never worked for this and still does not.
+    seed,
     BoxModel,
     DeckOfCards,
     POKER_HANDS,

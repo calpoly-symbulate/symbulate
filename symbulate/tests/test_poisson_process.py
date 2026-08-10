@@ -57,11 +57,6 @@ from symbulate.result import ContinuousTimeFunction, DiscreteValued, InfiniteVec
 Nsim = 10000
 
 
-def seed(value=42):
-    """Reseed the generator that distribution draws route through."""
-    distributions.rng = np.random.default_rng(value)
-
-
 class TestPoissonProcessResult(unittest.TestCase):
 
     def test_is_continuous_time_function(self):
@@ -73,12 +68,12 @@ class TestPoissonProcessResult(unittest.TestCase):
         self.assertIsInstance(path, DiscreteValued)
 
     def test_starts_at_zero(self):
-        seed()
+        seed(42)
         path = PoissonProcess(rate=5).draw()
         self.assertEqual(path(0), 0)
 
     def test_counts_are_nonnegative_integers(self):
-        seed()
+        seed(42)
         path = PoissonProcess(rate=2).draw()
         for t in [0.5, 1.0, 2.0, 5.0]:
             value = path(t)
@@ -86,14 +81,14 @@ class TestPoissonProcessResult(unittest.TestCase):
             self.assertGreaterEqual(value, 0)
 
     def test_counts_are_nondecreasing(self):
-        seed()
+        seed(42)
         path = PoissonProcess(rate=2).draw()
         values = [path(t) for t in range(0, 11)]
         for earlier, later in zip(values, values[1:]):
             self.assertLessEqual(earlier, later)
 
     def test_getitem_matches_call(self):
-        seed()
+        seed(42)
         path = PoissonProcess(rate=2).draw()
         for t in [0.5, 1.0, 3.5]:
             self.assertEqual(path[t], path(t))
@@ -117,12 +112,12 @@ class TestPoissonProcessProbabilitySpace(unittest.TestCase):
         self.assertEqual(PoissonProcessProbabilitySpace(rate=3).rate, 3)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         path = PoissonProcessProbabilitySpace(rate=2).draw()
         self.assertIsInstance(path, PoissonProcessResult)
 
     def test_draw_path_starts_at_zero(self):
-        seed()
+        seed(42)
         path = PoissonProcessProbabilitySpace(rate=2).draw()
         self.assertEqual(path(0), 0)
 
@@ -181,7 +176,7 @@ class TestMarginalDistribution(unittest.TestCase):
 
     def test_marginal_is_poisson(self):
         # N(t) is Poisson(rate * t); here rate=1, t=3 -> Poisson(3).
-        seed()
+        seed(42)
         N = PoissonProcess(rate=1)
         simulated = N(3).sim(Nsim).tabulate()
         exp_list, obs_list = [], []
@@ -196,7 +191,7 @@ class TestMarginalDistribution(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_marginal_mean_scales_with_rate(self):
-        seed()
+        seed(42)
         N = PoissonProcess(rate=2)
         # E[N(4)] = rate * t = 8
         self.assertAlmostEqual(N(4).sim(Nsim).mean(), 8.0, delta=0.3)
@@ -237,14 +232,14 @@ class TestPoissonProcessErrors(unittest.TestCase):
 
     def test_valid_integer_rate_does_not_raise(self):
         """A positive integer rate is valid."""
-        seed()
+        seed(42)
         N = PoissonProcess(rate=3)
         path = N.draw()
         self.assertGreaterEqual(path(1.0), 0)
 
     def test_valid_float_rate_does_not_raise(self):
         """A positive float rate is valid."""
-        seed()
+        seed(42)
         N = PoissonProcess(rate=0.5)
         path = N.draw()
         self.assertGreaterEqual(path(1.0), 0)
@@ -271,12 +266,12 @@ class TestNonHomogeneousPoissonProcessResult(unittest.TestCase):
         self.assertIsInstance(path, DiscreteValued)
 
     def test_starts_at_zero(self):
-        seed()
+        seed(42)
         path = NonHomogeneousPoissonProcess(rate=growing_rate).draw()
         self.assertEqual(path(0), 0)
 
     def test_counts_are_nonnegative_integers(self):
-        seed()
+        seed(42)
         path = NonHomogeneousPoissonProcess(rate=growing_rate).draw()
         for t in [0.5, 1.0, 2.0, 5.0]:
             value = path(t)
@@ -284,14 +279,14 @@ class TestNonHomogeneousPoissonProcessResult(unittest.TestCase):
             self.assertGreaterEqual(value, 0)
 
     def test_counts_are_nondecreasing(self):
-        seed()
+        seed(42)
         path = NonHomogeneousPoissonProcess(rate=growing_rate).draw()
         values = [path(t) for t in range(0, 11)]
         for earlier, later in zip(values, values[1:]):
             self.assertLessEqual(earlier, later)
 
     def test_getitem_matches_call(self):
-        seed()
+        seed(42)
         path = NonHomogeneousPoissonProcess(rate=growing_rate).draw()
         for t in [0.5, 1.0, 3.5]:
             self.assertEqual(path[t], path(t))
@@ -320,24 +315,24 @@ class TestNonHomogeneousPoissonProcessProbabilitySpace(unittest.TestCase):
         self.assertIs(space.rate, growing_rate)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         space = NonHomogeneousPoissonProcessProbabilitySpace(growing_rate)
         self.assertIsInstance(space.draw(), NonHomogeneousPoissonProcessResult)
 
     def test_draw_path_starts_at_zero(self):
-        seed()
+        seed(42)
         space = NonHomogeneousPoissonProcessProbabilitySpace(growing_rate)
         self.assertEqual(space.draw()(0), 0)
 
     def test_paths_share_one_cumulative_rate(self):
         # The rate function is integrated once for the whole space, not once
         # per sample path, so every draw must be handed the same object.
-        seed()
+        seed(42)
         space = NonHomogeneousPoissonProcessProbabilitySpace(growing_rate)
         self.assertIs(space.draw().cumulative_rate, space.draw().cumulative_rate)
 
     def test_successive_draws_are_independent(self):
-        seed()
+        seed(42)
         space = NonHomogeneousPoissonProcessProbabilitySpace(growing_rate)
         first, second = space.draw(), space.draw()
         self.assertNotEqual(
@@ -446,7 +441,7 @@ class TestNonHomogeneousMarginalDistribution(unittest.TestCase):
     def test_marginal_is_poisson_with_cumulative_rate_mean(self):
         # N(t) is Poisson(cumulative_rate(t)); with rate 2t and t=3 that is
         # Poisson(9).
-        seed()
+        seed(42)
         N = NonHomogeneousPoissonProcess(rate=growing_rate)
         simulated = N(3).sim(Nsim).tabulate()
         exp_list, obs_list = [], []
@@ -461,24 +456,24 @@ class TestNonHomogeneousMarginalDistribution(unittest.TestCase):
         self.assertTrue(pval > 0.01)
 
     def test_mean_matches_cumulative_rate(self):
-        seed()
+        seed(42)
         N = NonHomogeneousPoissonProcess(rate=growing_rate)
         self.assertAlmostEqual(N(3).sim(Nsim).mean(), 9.0, delta=0.3)
 
     def test_constant_rate_matches_ordinary_poisson_process(self):
         # A rate that never changes must reproduce PoissonProcess: both have
         # E[N(4)] = rate * t = 8.
-        seed()
+        seed(42)
         N = NonHomogeneousPoissonProcess(rate=2)
         self.assertAlmostEqual(N(4).sim(Nsim).mean(), 8.0, delta=0.3)
 
     def test_events_concentrate_where_the_rate_is_high(self):
         # With the rate jumping from 1 to 10 at time 5, the second five units
         # of time should see about ten times as many events as the first five.
-        seed()
+        seed(42)
         N = NonHomogeneousPoissonProcess(rate=shift_change_rate)
         before = N(5).sim(1000).mean()
-        seed()
+        seed(42)
         during = (N(10) - N(5)).sim(1000).mean()
         self.assertAlmostEqual(before, 5.0, delta=0.5)
         self.assertAlmostEqual(during, 50.0, delta=1.5)
@@ -486,7 +481,7 @@ class TestNonHomogeneousMarginalDistribution(unittest.TestCase):
     def test_decaying_rate_gives_finitely_many_events(self):
         # With rate exp(-t) the total expected count is 1, so paths stay small
         # forever rather than the count running away.
-        seed()
+        seed(42)
         N = NonHomogeneousPoissonProcess(rate=lambda t: np.exp(-t))
         self.assertAlmostEqual(N(50).sim(1000).mean(), 1.0, delta=0.15)
 
@@ -569,7 +564,7 @@ class TestNonHomogeneousPoissonProcessValidation(unittest.TestCase):
     def test_rate_that_is_zero_for_a_while_is_allowed(self):
         # Events that only start at time 5 are a legitimate model, unlike a
         # constant rate of 0, which would mean no events ever.
-        seed()
+        seed(42)
         N = NonHomogeneousPoissonProcess(rate=lambda t: 0 if t < 5 else 2)
         self.assertEqual(N.cumulative_rate(5), 0.0)
         self.assertEqual(N.draw()(4.0), 0)
@@ -660,30 +655,30 @@ class TestCoxProcessValidation(unittest.TestCase):
 class TestCoxProcessResult(unittest.TestCase):
 
     def test_is_continuous_time_function(self):
-        seed()
+        seed(42)
         self.assertIsInstance(
             CoxProcess(Gamma(shape=2, rate=1)).draw(), ContinuousTimeFunction
         )
 
     def test_is_discrete_valued(self):
-        seed()
+        seed(42)
         self.assertIsInstance(CoxProcess(Gamma(shape=2, rate=1)).draw(), DiscreteValued)
 
     def test_is_a_nonhomogeneous_poisson_path(self):
         # Conditional on its intensity, a Cox process *is* a non-homogeneous
         # Poisson process, and the counting is literally that class's.
-        seed()
+        seed(42)
         self.assertIsInstance(
             CoxProcess(Gamma(shape=2, rate=1)).draw(),
             NonHomogeneousPoissonProcessResult,
         )
 
     def test_starts_at_zero(self):
-        seed()
+        seed(42)
         self.assertEqual(CoxProcess(Gamma(shape=2, rate=1)).draw()(0), 0)
 
     def test_counts_are_nonnegative_integers(self):
-        seed()
+        seed(42)
         path = CoxProcess(Gamma(shape=2, rate=1)).draw()
         for t in [0.5, 1.0, 2.0, 5.0]:
             value = path(t)
@@ -691,34 +686,34 @@ class TestCoxProcessResult(unittest.TestCase):
             self.assertGreaterEqual(value, 0)
 
     def test_counts_are_nondecreasing(self):
-        seed()
+        seed(42)
         path = CoxProcess(Gamma(shape=2, rate=1)).draw()
         values = [path(t) for t in range(0, 11)]
         for earlier, later in zip(values, values[1:]):
             self.assertLessEqual(earlier, later)
 
     def test_getitem_matches_call(self):
-        seed()
+        seed(42)
         path = CoxProcess(Gamma(shape=2, rate=1)).draw()
         for t in [0.5, 1.0, 3.5]:
             self.assertEqual(path[t], path(t))
 
     def test_get_states_counts_up_from_zero(self):
-        seed()
+        seed(42)
         states = CoxProcess(Gamma(shape=2, rate=1)).draw().get_states()
         self.assertEqual([states[i] for i in range(5)], [0, 1, 2, 3, 4])
 
     def test_drawn_intensity_is_kept_on_the_path(self):
         # The whole point of a Cox process: each path knows the rate it was
         # generated at, so it can be looked at and plotted.
-        seed()
+        seed(42)
         path = CoxProcess(Gamma(shape=2, rate=1)).draw()
         self.assertIsInstance(path.intensity, float)
         self.assertGreater(path.intensity, 0)
 
     def test_drawn_intensity_is_the_whole_path_for_a_process(self):
-        seed()
-        markov_chains.rng = np.random.default_rng(3)
+        seed(42)
+        seed(3)
         path = CoxProcess(two_state_chain([1, 5])).draw()
         self.assertIsInstance(path.intensity, DiscreteValued)
 
@@ -740,29 +735,29 @@ class TestCoxProcessProbabilitySpace(unittest.TestCase):
         self.assertIs(CoxProcessProbabilitySpace(intensity).intensity, intensity)
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         space = CoxProcessProbabilitySpace(Gamma(shape=2, rate=1))
         self.assertIsInstance(space.draw(), CoxProcessResult)
 
     def test_each_path_gets_its_own_intensity(self):
-        seed()
+        seed(42)
         space = CoxProcessProbabilitySpace(Gamma(shape=2, rate=1))
         self.assertNotEqual(space.draw().intensity, space.draw().intensity)
 
     def test_each_path_gets_its_own_cumulative_rate(self):
         # A random intensity means a different expected count for every path,
         # unlike the non-homogeneous Poisson process, where one is shared.
-        seed()
+        seed(42)
         space = CoxProcessProbabilitySpace(Gamma(shape=2, rate=1))
         self.assertIsNot(space.draw().cumulative_rate, space.draw().cumulative_rate)
 
     def test_paths_share_one_cumulative_rate_when_intensity_is_not_random(self):
-        seed()
+        seed(42)
         space = CoxProcessProbabilitySpace(growing_rate)
         self.assertIs(space.draw().cumulative_rate, space.draw().cumulative_rate)
 
     def test_successive_draws_are_independent(self):
-        seed()
+        seed(42)
         space = CoxProcessProbabilitySpace(Gamma(shape=2, rate=1))
         first, second = space.draw(), space.draw()
         self.assertNotEqual(
@@ -787,17 +782,17 @@ class TestMixedPoissonProcess(unittest.TestCase):
         return CoxProcess(intensity=Gamma(shape=self.shape, rate=self.rate))
 
     def test_cumulative_rate_is_exactly_rate_times_time(self):
-        seed()
+        seed(42)
         path = self.cox_process().draw()
         for t in [0.0, 0.5, 3.0, 10.0]:
             self.assertAlmostEqual(path.cumulative_rate(t), path.intensity * t)
 
     def test_cumulative_rate_is_zero_before_time_zero(self):
-        seed()
+        seed(42)
         self.assertEqual(self.cox_process().draw().cumulative_rate(-1), 0.0)
 
     def test_mean_matches_negative_binomial(self):
-        seed()
+        seed(42)
         counts = self.cox_process()[self.time].sim(Nsim)
         expected = self.shape * self.time / self.rate
         self.assertAlmostEqual(counts.mean(), expected, delta=0.15)
@@ -805,7 +800,7 @@ class TestMixedPoissonProcess(unittest.TestCase):
     def test_variance_is_overdispersed_and_matches_theory(self):
         # var = mean + (variance of the random expected count), which is what
         # makes a mixed Poisson process wider than a Poisson process.
-        seed()
+        seed(42)
         counts = self.cox_process()[self.time].sim(Nsim)
         mean = self.shape * self.time / self.rate
         expected = mean + self.shape * (self.time / self.rate) ** 2
@@ -813,7 +808,7 @@ class TestMixedPoissonProcess(unittest.TestCase):
         self.assertGreater(counts.var(), counts.mean())
 
     def test_chance_of_no_events_matches_negative_binomial(self):
-        seed()
+        seed(42)
         counts = self.cox_process()[self.time].sim(Nsim)
         p = self.rate / (self.rate + self.time)
         expected = stats.nbinom.pmf(0, self.shape, p)
@@ -821,10 +816,10 @@ class TestMixedPoissonProcess(unittest.TestCase):
         self.assertAlmostEqual(observed, expected, delta=0.01)
 
     def test_step_is_irrelevant_when_the_intensity_never_changes(self):
-        seed()
+        seed(42)
         coarse = CoxProcess(Gamma(shape=self.shape, rate=self.rate), step=1000).draw()
         coarse_counts = [coarse(t) for t in range(1, 10)]
-        seed()
+        seed(42)
         fine = CoxProcess(Gamma(shape=self.shape, rate=self.rate), step=1e-4).draw()
         self.assertEqual(coarse_counts, [fine(t) for t in range(1, 10)])
 
@@ -837,8 +832,8 @@ class TestMarkovModulatedPoissonProcess(unittest.TestCase):
     """
 
     def test_cumulative_rate_matches_states_times_holding_times(self):
-        seed()
-        markov_chains.rng = np.random.default_rng(11)
+        seed(42)
+        seed(11)
         path = CoxProcess(two_state_chain([1, 5])).draw()
         intensity = path.intensity
         # Add the intensity up by hand over the first few stretches it holds.
@@ -850,8 +845,8 @@ class TestMarkovModulatedPoissonProcess(unittest.TestCase):
         self.assertAlmostEqual(path.cumulative_rate(elapsed), total, places=10)
 
     def test_cumulative_rate_interpolates_within_a_stretch(self):
-        seed()
-        markov_chains.rng = np.random.default_rng(5)
+        seed(42)
+        seed(5)
         path = CoxProcess(two_state_chain([1, 5])).draw()
         intensity = path.intensity
         first_switch = intensity.interarrival_times[0]
@@ -863,31 +858,31 @@ class TestMarkovModulatedPoissonProcess(unittest.TestCase):
     def test_equal_rates_reduce_to_an_ordinary_poisson_process(self):
         # If both regimes have the same rate, the switching is invisible and
         # the count must have a Poisson(rate * t) distribution.
-        seed()
-        markov_chains.rng = np.random.default_rng(4)
+        seed(42)
+        seed(4)
         counts = CoxProcess(two_state_chain([3, 3]))[2].sim(Nsim)
         self.assertAlmostEqual(counts.mean(), 6.0, delta=0.15)
         self.assertAlmostEqual(counts.var(), 6.0, delta=0.4)
 
     def test_switching_rates_are_overdispersed(self):
-        seed()
-        markov_chains.rng = np.random.default_rng(6)
+        seed(42)
+        seed(6)
         counts = CoxProcess(two_state_chain([1, 9]))[2].sim(Nsim)
         self.assertGreater(counts.var(), 1.5 * counts.mean())
 
     def test_step_is_irrelevant_when_the_intensity_holds_one_value_at_a_time(self):
-        seed()
-        markov_chains.rng = np.random.default_rng(9)
+        seed(42)
+        seed(9)
         coarse = CoxProcess(two_state_chain([1, 5]), step=1000).draw()
         coarse_counts = [coarse(t) for t in range(1, 8)]
-        seed()
-        markov_chains.rng = np.random.default_rng(9)
+        seed(42)
+        seed(9)
         fine = CoxProcess(two_state_chain([1, 5]), step=1e-3).draw()
         self.assertEqual(coarse_counts, [fine(t) for t in range(1, 8)])
 
     def test_non_numeric_states_raise_type_error(self):
-        seed()
-        markov_chains.rng = np.random.default_rng(2)
+        seed(42)
+        seed(2)
         chain = ContinuousTimeMarkovChain(
             [[-1, 1], [2, -2]], [1.0, 0.0], state_labels=["low", "high"]
         )
@@ -900,7 +895,7 @@ class TestMarkovModulatedPoissonProcess(unittest.TestCase):
     def test_a_count_process_can_be_an_intensity(self):
         # A Poisson process is nonnegative and holds one value at a time, so
         # it is a legitimate (rising) intensity, added up exactly.
-        seed()
+        seed(42)
         path = CoxProcess(PoissonProcess(rate=1)).draw()
         intensity = path.intensity
         first_arrival = intensity.interarrival_times[0]
@@ -977,16 +972,16 @@ class TestPathCumulativeRate(unittest.TestCase):
         # about in -- which is what keeps the count of events from going
         # backwards. A path whose values swing about is the case that would
         # break if the sum used the value at t itself.
-        seed()
-        diffusion_process.rng = np.random.default_rng(13)
+        seed(42)
+        seed(13)
         cumulative_rate = _PathCumulativeRate(CIR(scale=0.9).draw(), 0.01)
         values = [cumulative_rate(t) for t in np.linspace(0, 5, 401)]
         for earlier, later in zip(values, values[1:]):
             self.assertLessEqual(earlier, later)
 
     def test_same_answer_whatever_order_times_are_asked_in(self):
-        seed()
-        diffusion_process.rng = np.random.default_rng(21)
+        seed(42)
+        seed(21)
         path = CIR(scale=0.9).draw()
         forwards = _PathCumulativeRate(path, 0.01)
         backwards = _PathCumulativeRate(path, 0.01)
@@ -1009,20 +1004,20 @@ class TestCoxProcessWithVaryingIntensity(unittest.TestCase):
     def test_mean_matches_the_average_intensity(self):
         # A CIR intensity started at its long-run mean has expected value that
         # mean at every time, so the expected count by time t is mean * t.
-        seed()
-        diffusion_process.rng = np.random.default_rng(17)
+        seed(42)
+        seed(17)
         N = CoxProcess(CIR(reversion_rate=1, mean=2, scale=0.5), step=0.05)
         self.assertAlmostEqual(N[2].sim(2000).mean(), 4.0, delta=0.3)
 
     def test_intensity_path_is_kept_and_can_be_evaluated(self):
-        seed()
-        diffusion_process.rng = np.random.default_rng(19)
+        seed(42)
+        seed(19)
         path = CoxProcess(CIR(mean=2)).draw()
         self.assertGreater(path.intensity(1.0), 0)
 
     def test_a_process_that_goes_negative_raises_naming_the_time(self):
-        seed()
-        gaussian_process.rng = np.random.default_rng(1)
+        seed(42)
+        seed(1)
         with self.assertRaises(ValueError) as context:
             CoxProcess(BrownianMotion())[5.0].draw()
         message = str(context.exception)
@@ -1030,8 +1025,8 @@ class TestCoxProcessWithVaryingIntensity(unittest.TestCase):
         self.assertIn("At time", message)
 
     def test_counts_are_nondecreasing_along_a_rough_intensity(self):
-        seed()
-        diffusion_process.rng = np.random.default_rng(23)
+        seed(42)
+        seed(23)
         path = CoxProcess(CIR(mean=3, scale=0.9)).draw()
         values = [path(t) for t in np.linspace(0, 5, 101)]
         for earlier, later in zip(values, values[1:]):
@@ -1042,19 +1037,19 @@ class TestCoxProcessWithARateThatIsNotRandom(unittest.TestCase):
     """An intensity that is not random reduces to the Poisson family."""
 
     def test_constant_intensity_matches_an_ordinary_poisson_process(self):
-        seed()
+        seed(42)
         counts = CoxProcess(3)[2].sim(Nsim)
         self.assertAlmostEqual(counts.mean(), 6.0, delta=0.15)
         self.assertAlmostEqual(counts.var(), 6.0, delta=0.4)
 
     def test_rate_function_matches_the_nonhomogeneous_poisson_process(self):
-        seed()
+        seed(42)
         N = CoxProcess(growing_rate)
         self.assertAlmostEqual(N.draw().cumulative_rate(3), 9.0, places=6)
         self.assertAlmostEqual(N[3].sim(Nsim).mean(), 9.0, delta=0.2)
 
     def test_drawn_intensity_is_the_rate_as_given(self):
-        seed()
+        seed(42)
         self.assertIs(CoxProcess(growing_rate).draw().intensity, growing_rate)
 
 

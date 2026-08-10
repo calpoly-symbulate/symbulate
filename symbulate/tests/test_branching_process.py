@@ -25,27 +25,22 @@ from symbulate.result import DiscreteValued, InfiniteVector
 Nsim = 5000
 
 
-def seed(value=42):
-    """Reseed the generator that distribution draws route through."""
-    distributions.rng = np.random.default_rng(value)
-
-
 class TestGaltonWatsonResult(unittest.TestCase):
 
     def test_is_infinite_vector(self):
-        seed()
+        seed(42)
         self.assertIsInstance(
             GaltonWatson(offspring_dist=Poisson(1.5)).draw(), InfiniteVector
         )
 
     def test_is_discrete_valued(self):
-        seed()
+        seed(42)
         self.assertIsInstance(
             GaltonWatson(offspring_dist=Poisson(1.5)).draw(), DiscreteValued
         )
 
     def test_generation_zero_is_the_initial_population(self):
-        seed()
+        seed(42)
         self.assertEqual(int(GaltonWatson(offspring_dist=Poisson(1.5)).draw()[0]), 1)
         self.assertEqual(
             int(GaltonWatson(offspring_dist=Poisson(1.5), initial=7).draw()[0]), 7
@@ -53,12 +48,12 @@ class TestGaltonWatsonResult(unittest.TestCase):
 
     def test_deterministic_doubling(self):
         # Everyone has exactly two children, so the tree doubles each step.
-        seed()
+        seed(42)
         path = GaltonWatson(offspring_dist=Binomial(2, 1)).draw()
         self.assertEqual([int(path[n]) for n in range(6)], [1, 2, 4, 8, 16, 32])
 
     def test_sizes_are_non_negative_integers(self):
-        seed()
+        seed(42)
         path = GaltonWatson(offspring_dist=Poisson(1.2)).draw()
         for n in range(12):
             size = int(path[n])
@@ -68,19 +63,19 @@ class TestGaltonWatsonResult(unittest.TestCase):
     def test_extinction_is_absorbing(self):
         # Nobody has children, so generation 1 is empty and stays empty --
         # and reading far ahead must be instant, not a long loop.
-        seed()
+        seed(42)
         path = GaltonWatson(offspring_dist=Binomial(1, 0)).draw()
         self.assertEqual(int(path[1]), 0)
         self.assertEqual(int(path[100000]), 0)
 
     def test_path_is_cached_and_stable(self):
-        seed()
+        seed(42)
         path = GaltonWatson(offspring_dist=Poisson(1.1)).draw()
         first = [int(path[n]) for n in range(10)]
         self.assertEqual(first, [int(path[n]) for n in range(10)])
 
     def test_reading_far_ahead_keeps_earlier_values(self):
-        seed()
+        seed(42)
         path = GaltonWatson(offspring_dist=Poisson(0.9)).draw()
         early = [int(path[n]) for n in range(6)]
         path[40]
@@ -89,12 +84,12 @@ class TestGaltonWatsonResult(unittest.TestCase):
     def test_does_not_clobber_the_infinite_vector_cache(self):
         # The internal list must not be called `values`, which InfiniteTuple
         # already uses for its own cache.
-        seed()
+        seed(42)
         path = GaltonWatson(offspring_dist=Binomial(2, 1)).draw()
         self.assertEqual([int(path[n]) for n in range(5)], [1, 2, 4, 8, 16])
 
     def test_get_states_and_is_extinct(self):
-        seed()
+        seed(42)
         path = GaltonWatson(offspring_dist=Binomial(1, 0)).draw()
         self.assertIs(path.get_states(), path)
         self.assertTrue(path.is_extinct(1))
@@ -115,7 +110,7 @@ class TestGaltonWatsonProbabilitySpace(unittest.TestCase):
         )
 
     def test_draw_returns_result(self):
-        seed()
+        seed(42)
         self.assertIsInstance(
             GaltonWatsonProbabilitySpace(offspring_dist=Poisson(1.5)).draw(),
             GaltonWatsonResult,
@@ -144,7 +139,7 @@ class TestGaltonWatsonTheory(unittest.TestCase):
     """The threshold at a mean of one child, which the process exists to show."""
 
     def test_expected_size_is_m_to_the_n(self):
-        seed()
+        seed(42)
         for m in [0.8, 1.0, 1.5]:
             X = GaltonWatson(offspring_dist=Poisson(m))
             for n in [1, 2, 3]:
@@ -153,14 +148,14 @@ class TestGaltonWatsonTheory(unittest.TestCase):
                 )
 
     def test_initial_population_scales_the_mean(self):
-        seed()
+        seed(42)
         m, start = 1.2, 10
         X = GaltonWatson(offspring_dist=Poisson(m), initial=start)
         self.assertAlmostEqual(float(X[3].sim(Nsim).mean()), start * m**3, delta=2.0)
 
     def test_subcritical_dies_out(self):
         # m < 1: extinction is certain, and fast.
-        seed()
+        seed(42)
         X = GaltonWatson(offspring_dist=Poisson(0.8))
         extinct = X.apply(lambda p: 1 if int(p[15]) == 0 else 0).sim(2000)
         self.assertGreater(float(extinct.mean()), 0.95)
@@ -168,19 +163,19 @@ class TestGaltonWatsonTheory(unittest.TestCase):
     def test_supercritical_extinction_probability(self):
         # m = 1.5 with Poisson offspring: the extinction probability solves
         # s = exp(m * (s - 1)), giving about 0.417.
-        seed()
+        seed(42)
         X = GaltonWatson(offspring_dist=Poisson(1.5))
         extinct = X.apply(lambda p: 1 if int(p[15]) == 0 else 0).sim(2000)
         self.assertAlmostEqual(float(extinct.mean()), 0.417, delta=0.05)
 
     def test_certain_offspring_never_dies(self):
-        seed()
+        seed(42)
         X = GaltonWatson(offspring_dist=Binomial(2, 1))
         extinct = X.apply(lambda p: 1 if int(p[10]) == 0 else 0).sim(200)
         self.assertEqual(float(extinct.mean()), 0.0)
 
     def test_zero_initial_population_stays_empty(self):
-        seed()
+        seed(42)
         path = GaltonWatson(offspring_dist=Poisson(2.0), initial=0).draw()
         self.assertEqual([int(path[n]) for n in range(5)], [0, 0, 0, 0, 0])
 
