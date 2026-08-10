@@ -581,6 +581,46 @@ class TestJoin(unittest.TestCase):
         result = join(Tuple([1, 2]), Scalar(3))
         self.assertEqual(tuple(result), (1, 2, 3))
 
+    def test_join_vector_and_scalar_stays_nested(self):
+        # Regression test: Vector is a Tuple subclass, but join() must not
+        # unpack it -- only an exact Tuple should be flattened. A Vector
+        # result (e.g. from ** or a multivariate distribution draw) should
+        # stay as a single nested component.
+        v = Vector([1, 2])
+        result = join(v, Scalar(3))
+        self.assertEqual(len(result), 2)
+        self.assertIsInstance(result[0], Vector)
+        self.assertEqual(tuple(result[0]), (1, 2))
+        self.assertEqual(result[1], 3)
+
+    def test_join_scalar_and_vector_stays_nested(self):
+        v = Vector([1, 2])
+        result = join(Scalar(0), v)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], 0)
+        self.assertIsInstance(result[1], Vector)
+        self.assertEqual(tuple(result[1]), (1, 2))
+
+    def test_join_vector_and_vector_stays_nested(self):
+        v1 = Vector([1, 2])
+        v2 = Vector([3, 4])
+        result = join(v1, v2)
+        self.assertEqual(len(result), 2)
+        self.assertIsInstance(result[0], Vector)
+        self.assertIsInstance(result[1], Vector)
+        self.assertEqual(tuple(result[0]), (1, 2))
+        self.assertEqual(tuple(result[1]), (3, 4))
+
+    def test_join_distinguishes_exact_tuple_from_vector_subclass(self):
+        # The core distinction the fix depends on: an exact Tuple flattens,
+        # but a Tuple *subclass* (Vector) does not. If join() is ever
+        # changed to use isinstance(x, Tuple) instead of type(x) == Tuple,
+        # this test will fail, since Vector would then also flatten.
+        flattened = join(Tuple([1, 2]), Scalar(3))
+        nested = join(Vector([1, 2]), Scalar(3))
+        self.assertEqual(len(flattened), 3)
+        self.assertEqual(len(nested), 2)
+
 
 # ---------------------------------------------------------------------------
 # concat
