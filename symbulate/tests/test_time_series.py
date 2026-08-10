@@ -256,6 +256,18 @@ class TestMATheory(unittest.TestCase):
         late = np.corrcoef(paths[:, 20], paths[:, 21])[0, 1]
         self.assertAlmostEqual(early, late, delta=0.04)
 
+    def test_nonzero_mean_noise_shifts_mean_by_documented_formula(self):
+        # Regression/documentation test: mean= is only exactly the
+        # process's mean when noise_dist has mean 0 (the default). With a
+        # nonzero-mean noise_dist, the true mean is
+        # mean + noise_dist.mean() * (1 + sum(coefs)) instead of mean
+        # itself, matching the corrected docstring.
+        seed()
+        coefs, noise_mean = [0.5, 0.3], 2.0
+        X = MA(coefs=coefs, noise_dist=Normal(mean=noise_mean, sd=1), mean=1)
+        expected = 1 + noise_mean * (1 + sum(coefs))
+        self.assertAlmostEqual(float(X[10].sim(5000).mean()), expected, delta=0.3)
+
 
 class TestMAErrors(unittest.TestCase):
 
@@ -413,6 +425,38 @@ class TestARMATheory(unittest.TestCase):
         seed()
         X = AR(coefs=[0.6], mean=20, initial=20)
         self.assertAlmostEqual(float(X[40].sim(Nsim).mean()), 20.0, delta=0.3)
+
+    def test_nonzero_mean_noise_shifts_ar_mean_by_documented_formula(self):
+        # Regression/documentation test: mean= is only exactly the
+        # process's mean when noise_dist has mean 0 (the default). With a
+        # nonzero-mean noise_dist, the true mean is
+        # mean + noise_dist.mean() * (1 + sum(ma_coefs)) / (1 - sum(ar_coefs))
+        # -- confirmed here for the pure-AR case (ma_coefs=[]), matching
+        # the corrected AR/ARMA docstrings.
+        seed()
+        phi, noise_mean = 0.5, 2.0
+        X = AR(coefs=[phi], noise_dist=Normal(mean=noise_mean, sd=1), mean=0)
+        expected = 0 + noise_mean * (1 + 0) / (1 - phi)
+        measured = float(X[30].sim(5000).mean())
+        self.assertAlmostEqual(measured, expected, delta=0.3)
+        # ...and confirm it's well away from the (incorrect) old claim
+        # that mean=0 alone would be the process's actual mean.
+        self.assertGreater(abs(measured), 1.0)
+
+    def test_nonzero_mean_noise_shifts_arma_mean_by_documented_formula(self):
+        # Same formula, general ARMA case with a nonzero ma_coefs term.
+        seed()
+        ar_coef, ma_coef, noise_mean = 0.3, 0.4, 1.0
+        X = ARMA(
+            ar_coefs=[ar_coef],
+            ma_coefs=[ma_coef],
+            noise_dist=Normal(mean=noise_mean, sd=1),
+            mean=5,
+        )
+        expected = 5 + noise_mean * (1 + ma_coef) / (1 - ar_coef)
+        self.assertAlmostEqual(
+            float(X[30].sim(5000).mean()), expected, delta=0.3
+        )
 
     def test_unit_coefficient_is_a_random_walk(self):
         # phi = 1 removes the pull home, so the variance grows with n.
@@ -721,6 +765,61 @@ class TestGARCHTheory(unittest.TestCase):
         X = GARCH(omega=0.2, arch_coefs=[0.2], garch_coefs=[0.9])
         self.assertGreater(
             float(X[25].sim(3000).var()), float(X[5].sim(3000).var()) * 2
+        )
+
+    def test_long_run_variance_accounts_for_noise_variance(self):
+        # Regression test: arch_coefs + garch_coefs = 0.95 < 1 looks
+        # stationary if you assume a unit-variance shock, but a shock with
+        # variance 2 makes the true persistence 0.1 * 2 + 0.85 = 1.05 -- the
+        # variance grows without bound instead of settling.
+        seed()
+        omega, a, b = 0.2, 0.1, 0.85
+        X = GARCH(omega=omega, arch_coefs=[a], garch_coefs=[b], noise_dist=Normal(0, 2))
+        self.assertGreater(
+            float(X[60].sim(3000).var()), float(X[5].sim(3000).var()) * 2
+        )
+
+    def test_long_run_variance_matches_closed_form_for_non_unit_variance_noise(self):
+        # A shock with variance 4 rather than 1, and a low persistence
+        # (0.05 * 4 + 0.1 = 0.3) so the warm-up decays within a handful of
+        # steps -- see the note below on why n has to be past that warm-up.
+        #
+        # X's own unconditional variance is the long-run *conditional*
+        # variance (what _unconditional_variance computes, and what
+        # X.initial is set to) times the shock's variance -- Var(X) =
+        # E[sigma**2] * Var(shock) -- so this closed form has an extra
+        # factor of noise_var that GARCHProbabilitySpace.initial itself
+        # does not: initial is E[sigma**2], not Var(X).
+        #
+        # Note: GARCHResult's pre-time-0 stand-in uses `initial` for both
+        # the squared-value slot and the variance slot (see squared_at /
+        # variance_at in GARCHResult), which are only the same quantity
+        # when noise_var == 1. With noise_var != 1 that mismatch shows up
+        # as a real (separate, pre-existing) warm-up transient at small n
+        # even though initial itself is now the correct long-run value --
+        # so this test checks n large enough for that transient to have
+        # decayed, rather than n=0.
+        seed()
+        omega, a, b = 0.7, 0.05, 0.1
+        noise_var = 4
+        X = GARCH(
+            omega=omega, arch_coefs=[a], garch_coefs=[b],
+            noise_dist=Normal(0, noise_var ** 0.5),
+        )
+        expected = (omega / (1 - a * noise_var - b)) * noise_var
+        for n in [20, 40]:
+            self.assertAlmostEqual(float(X[n].sim(Nsim).var()), expected, delta=0.6)
+
+    def test_stationary_initial_rejects_a_shock_variance_that_tips_it_over(self):
+        # arch_coefs + garch_coefs = 0.95 < 1, so this would incorrectly be
+        # accepted as stationary if noise_dist's variance were ignored.
+        self.assertRaisesRegex(
+            ValueError,
+            'initial="stationary" is impossible',
+            lambda: GARCH(
+                omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85],
+                noise_dist=Normal(0, 2), initial="stationary",
+            ),
         )
 
 
