@@ -650,7 +650,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: Default Plotting Window (HDI Removed)
 
-**Status:** Finalized (implemented in `distributions.py`) — supersedes the highest-density-interval window.
+**Status:** Finalized (implemented in `distributions.py`) — supersedes the highest-density-interval window. **Superseded in part** by "Decision: The Plotting Window Zooms Itself (`xlim` Parameter Removed)" below: the rule below is still exactly how the window *starts*, but it is now a first step, and a window the probability barely fills is zoomed automatically. The `xlim=` parameter it describes no longer exists.
 
 **Decision**
 > The highest-density interval (HDI) is **removed**. Both helpers (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, 113 lines), the `_PLOT_COVERAGE` constant, the `_hdi_window` method, and all 22 per-distribution HDI call sites are deleted. The default window follows **one rule, applied to each end of the support independently: a fixed bound is used as-is; an unbounded side is cut at a quantile** (`_PLOT_TAIL = 0.001`, i.e. `quantile(0.001)` / `quantile(0.999)` — the same 0.1% cut Symbulate used before the HDI existed). So:
@@ -686,7 +686,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: `Distribution.plot()` Tight Window — `xlim="zoom"` (not `prob=`/`hdi=`)
 
-**Status:** Finalized (implemented in `distributions.py`)
+**Status:** **Superseded** by "Decision: The Plotting Window Zooms Itself (`xlim` Parameter Removed)" below. The tight window is now applied automatically rather than asked for, and neither `xlim=` nor its `"zoom"` value survives. Kept for the reasoning about *what* the tight window should be and why it is not a `prob=`/`hdi=` parameter, which the automatic version inherits.
 
 **Decision**
 > The tight / high-probability plotting window is exposed as a third accepted value on the existing `xlim` parameter — **`xlim="zoom"`** — not as a separate `prob=` (or `hdi=`) parameter. `xlim` accepts `None` (default window: see "Default Plotting Window (HDI Removed)" below), `(lo, hi)` (exact range), or `"zoom"`. Coverage is a **fixed internal default**; there is no custom-coverage float form.
@@ -698,6 +698,57 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 **Alternatives Considered**
 > A tri-state `prob=None/True/float` parameter (matching the `suggest=None/True/False` pattern), with a float for custom coverage — proposed in earlier drafts, rejected in favor of `xlim="zoom"`; the custom-coverage float was dropped with it. `hdi=` — rejected as semantically pdf/pmf-specific once CDF plotting existed.
+
+---
+
+## Decision: The Plotting Window Zooms Itself (`xlim` Parameter Removed)
+
+**Status:** Finalized (implemented in `distributions.py`) — supersedes `xlim="zoom"`, and makes the "Default Plotting Window (HDI Removed)" rule the first of two steps.
+
+**Decision**
+> A distribution's plotting window **zooms in on its own**, and `Distribution.plot()` **takes no window argument at all**.
+>
+> `_compute_xlim` still starts from the support rule (a fixed bound as-is, an unbounded side cut at `_PLOT_TAIL`). It then compares that window against the two-sided quantile window `_zoom_xlim()`: if the quantile window covers **less than `_ZOOM_FRACTION = 0.5`** of it, the quantile window is returned instead. `Distribution._fills_window` is that test; a window of zero width, or a quantile window that is somehow the wider of the two, keeps the support-derived one.
+>
+> `xlim=` is **removed from `plot()`** — both the `(a, b)` form and the `"zoom"` string. A stray `xlim=` raises a message pointing at the two remaining ways to frame a plot by hand: set it on the distribution before plotting (`X.xlim = (2, 8)`, the property setter that already existed), or move the axes after (`xlim(2, 8)`, the pyplot passthrough already exported from `plot.py`). Internal callers that need a specific window — a marginal strip, a pairs-matrix diagonal — go through `MultivariateDistribution._marginal_framed(i)`, which pins `xlim` on the freshly built marginal.
+
+**Rationale**
+> `xlim="zoom"` solved the right problem but charged the student for it. `Binomial(1000, 0.5).plot()` — the motivating example, and exactly what a class does after simulating 1000 coin flips — drew a spike in the middle of an empty axis unless the student already knew a keyword existed and that this was a case for it. The students least likely to know are the ones whose plot most needs it. Applying it automatically means the plot is readable by default, which is the package's stated philosophy ("default behavior must work without configuration").
+>
+> The window is not zoomed unconditionally, because a fixed bound is real information: `Binomial(10, 0.5)` cut to `(1, 9)` would drop the 0 and 10 outcomes off a plot small enough to read them, and `Uniform(0, 1)` framed at `(0.001, 0.999)` hides the very edges that define it. So the bound is kept while the probability actually fills the window it gives, measured as `zoom_width / window_width`:
+>
+> | distribution | fraction filled | window |
+> |---|---|---|
+> | `Bernoulli(0.3)`, `DiscreteUniform(1, 6)`, `Poisson(3)` | 1.00 | kept |
+> | `Uniform(0, 1)` | 0.998 | kept |
+> | `Exponential`, `Gamma`, `ChiSquare`, `Pareto`, `Weibull` | 0.99–1.00 | kept |
+> | `TruncatedNormal(0, 1, a=-2, b=2)` | 0.99 | kept |
+> | `Kumaraswamy(2, 3)` | 0.93 | kept |
+> | `Beta(2, 5)` | 0.81 | kept |
+> | `Binomial(10, 0.5)` | 0.80 | kept |
+> | `Binomial(30, 0.5)` | 0.53 | kept |
+> | `Binomial(50, 0.5)` | 0.44 | **zoomed** |
+> | `IrwinHall(30)` | 0.32 | **zoomed** |
+> | `Binomial(100, 0.5)` | 0.30 | **zoomed** |
+> | `Poisson(1000)` | 0.18 | **zoomed** |
+> | `Binomial(1000, 0.5)` | 0.098 | **zoomed** |
+> | `Beta(2, 200)` | 0.045 | **zoomed** |
+>
+> Half is the crossover because that is the point where a plot shows as much empty axis as distribution; the measured gap around it is wide (0.53 vs 0.44, i.e. a fair binomial switches over between n = 30 and n = 50), so the exact value is not delicate. For an already-unbounded distribution (`Normal`, `Cauchy`, `StudentT`) the two windows are identical and nothing changes.
+>
+> Removing `xlim=` rather than keeping it alongside the automatic zoom follows the same reasoning as the *rest* of `plot()`'s surface: cosmetic overrides are deferred to a future `.customize()` (see "Decision: Customization Parameters Deferred"), and a window argument that is now needed only for hand-tuning is exactly that. Two ways of setting a window already exist and both work, so nothing became impossible — but see the cost below.
+
+**Costs**
+> - A distribution the heuristic decides *not* to zoom can no longer be zoomed in one call: `Binomial(10, 0.5)` needs `X.xlim = (2, 8)` on a named variable, or `xlim(2, 8)` after plotting. That is more typing than `plot(xlim=(2, 8))` was.
+> - `.xlim` is now load-bearing user surface, not just an internal default — the error message names it, so it cannot quietly become private.
+> - Every distribution now costs two `quantile` calls on the first read of `.xlim`, including fully bounded ones that previously needed none. `.xlim` stays lazy, so no simulation pays for it (see "Kept from the HDI work" above).
+> - `Bernoulli(1)` and similar degenerate cases zoom onto their single realizable value, so `.xlim` can be `(1, 1)` where it used to be `(0, 1)`; `plot()`'s existing single-point padding renders it.
+
+**Alternatives Considered**
+> - **Always zoom** (make `_zoom_xlim` the default outright, no threshold) — one rule, no constant, and the most literal reading of "zoom automatically"; rejected because of what it does to small discrete distributions and to `Uniform`: `Binomial(10, 0.5)` → `(1, 9)` loses two real outcomes, which is a worse default for the introductory case than the wasted axis it fixes for the large-n one.
+> - **Zoom continuous distributions only** — avoids dropping countable outcomes, but leaves `Binomial(1000, 0.5)`, the actual motivating example, unfixed.
+> - **Keep `xlim=` alongside the automatic zoom** — no loss of expressiveness, and the smaller diff; rejected by the same call that removed `"zoom"`: a parameter whose main use case has just been automated is one more thing on a beginner-facing signature.
+> - **A different threshold** (0.25, 0.75) — 0.25 leaves `Binomial(100, 0.5)` unzoomed at 0.30, which is squarely a case that wants it; 0.75 zooms `Beta(2, 5)` and `Binomial(20, 0.5)`, which read fine as they are.
 
 ---
 
@@ -809,4 +860,4 @@ The following questions must be resolved before or during Phase 2.
 - [x] Discrete-axis tick label crowding: `make_tile` upgraded to Option B (real-value cell positions for whole-number data, matplotlib's own locator) — see "Discrete-Axis Tick Label Thinning (2D Plots)". `make_segmented_rug/density/hist/box` and `make_violin` remain on the original Option A (rank-index + thinning); extending real-value positioning to them is still open
 - [ ] Marginal-panel axis mismatch: a tile main panel and its marginal panel don't share a coordinate system — `make_tile`'s discrete axis is now real-valued for whole-number data, which should make this easier to resolve (matplotlib's `sharex`/`sharey` could line the panels up), but the marginal-panel wiring in `results.py` hasn't been touched, so this is not yet fixed
 - [x] `Distribution.plot()` discrete rendering (finding #16): resolved — discrete pmf drawn as filled dots + a dashed dot-to-dot line, styled by named `TRUE_DIST_*` constants (replacing the hardcoded `s=40`); the unused `overlay_true_distribution()` spline helper retired; the unique `set_position("zero")` spine tweak removed. See "Decision: `Distribution.plot()` Discrete Rendering (True-Distribution Curve)"
-- [x] HDI default plotting window: **removed** by supervisor decision. The default window is now derived from the true support (fixed bound as-is, quantile cut where unbounded) and `xlim="zoom"` is a quantile cut at both ends. See "Decision: Default Plotting Window (HDI Removed)"
+- [x] HDI default plotting window: **removed** by supervisor decision. The default window is now derived from the true support (fixed bound as-is, quantile cut where unbounded) and a quantile cut at both ends is applied automatically when the probability fills less than half of that window. `xlim=` (and its `"zoom"` value) is gone from `plot()`. See "Decision: Default Plotting Window (HDI Removed)" and "Decision: The Plotting Window Zooms Itself (`xlim` Parameter Removed)"

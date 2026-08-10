@@ -119,6 +119,15 @@ def _is_whole_number(value):
 # highest-density window restores the original framing exactly.
 _PLOT_TAIL = 0.001
 
+# How much of a fixed-bound window the probability must fill for that bound to
+# be kept. A fixed bound is honored while the quantile window covers at least
+# this fraction of it -- so ``Binomial(10, 0.5)`` keeps all of ``(0, 10)`` (its
+# probability fills 80% of that) while ``Binomial(1000, 0.5)`` zooms to
+# ``(451, 549)`` (9.8%), instead of drawing a spike in the middle of an empty
+# axis. Half is the crossover: at 0.5 a plot is showing as much empty axis as
+# distribution, which is the point where the bounds stop being informative.
+_ZOOM_FRACTION = 0.5
+
 
 class Distribution(ProbabilitySpace):
     """Base class for all probability distributions in Symbulate.
@@ -164,16 +173,26 @@ class Distribution(ProbabilitySpace):
 
     Notes
     -----
-    The default window follows one rule, applied to each end of the support
-    independently: **a fixed bound is used as-is; an unbounded side is cut at
-    a quantile** (``_PLOT_TAIL`` / ``1 - _PLOT_TAIL``). So:
+    The default window is built in two steps. First, one rule applied to each
+    end of the support independently: **a fixed bound is used as-is; an
+    unbounded side is cut at a quantile** (``_PLOT_TAIL`` /
+    ``1 - _PLOT_TAIL``). So:
 
     - bounded both ends (``Binomial``, ``Uniform``) -> the full support, e.g.
-      ``Binomial(1000, 0.5)`` gives ``(0, 1000)``;
+      ``Binomial(10, 0.5)`` gives ``(0, 10)``;
     - fixed lower bound only (``Poisson``, ``Exponential``) -> ``(lower,
       quantile(0.999))``, and symmetrically for a fixed upper bound only;
     - unbounded both ends (``Normal``) -> ``(quantile(0.001),
       quantile(0.999))``.
+
+    Second, that window is **zoomed automatically when the probability fills
+    too little of it**: if the quantile window (both ends cut, i.e. the
+    distribution framed as if it had no fixed bounds) covers less than
+    ``_ZOOM_FRACTION`` of it, the quantile window is used instead. So
+    ``Binomial(1000, 0.5)`` frames ``(451, 549)`` rather than drawing a narrow
+    spike in the middle of ``(0, 1000)``, while ``Binomial(10, 0.5)`` still
+    shows all of ``(0, 10)``, tails included. Nothing has to be passed to
+    ``plot`` to get this; an exact ``xlim=(low, high)`` overrides it.
 
     The bounds come from ``scipy``'s own ``support()``, so a subclass gets the
     right window with no per-distribution code. Set ``self.xlim = (low, high)``
@@ -257,8 +276,9 @@ class Distribution(ProbabilitySpace):
         """Derive the default plotting window from the true support.
 
         Each end is handled independently: a fixed bound is used as-is, and an
-        unbounded side is cut at a quantile. See the class ``Notes`` for the
-        three resulting cases.
+        unbounded side is cut at a quantile -- and the result is then zoomed
+        automatically if the probability fills too little of it. See the class
+        ``Notes`` for both steps.
 
         Returns
         -------
@@ -284,27 +304,66 @@ class Distribution(ProbabilitySpace):
             )
         low, high = self._support()
         bounded_low, bounded_high = np.isfinite(low), np.isfinite(high)
+        # The quantile window is needed either way: it fills in an unbounded
+        # side, and it is what a fixed bound is judged against below.
+        zoom_low, zoom_high = self._zoom_xlim()
         if not bounded_low:
-            low = float(self.quantile(_PLOT_TAIL))
+            low = zoom_low
         if not bounded_high:
-            high = float(self.quantile(1 - _PLOT_TAIL))
+            high = zoom_high
         # For a degenerate parameter value scipy can return a quantile outside
         # its own support -- `geom.ppf(0.999, p=1)` is 0.0 though the support
         # starts at 1 -- which would invert the window. The support bound is
         # the exact one, so collapse onto it rather than trust the quantile.
         if high < low:
             return (low, low) if bounded_low else (high, high)
-        return (low, high)
+        if self._fills_window(low, high, zoom_low, zoom_high):
+            return (low, high)
+        return (zoom_low, zoom_high)
+
+    def _fills_window(self, low, high, zoom_low, zoom_high):
+        """Whether the probability fills enough of ``(low, high)`` to keep it.
+
+        The test for step two of the default window (see the class ``Notes``):
+        a fixed bound earns its place only while the region the probability
+        actually occupies is a decent share of the window that bound gives.
+        Below ``_ZOOM_FRACTION`` of it, the plot is mostly empty axis and the
+        tighter quantile window is used instead.
+
+        Parameters
+        ----------
+        low, high : float
+            The window derived from the support, either end of which may be a
+            quantile already if the support is unbounded there.
+        zoom_low, zoom_high : float
+            The quantile window, i.e. ``_zoom_xlim()``.
+
+        Returns
+        -------
+        bool
+            ``True`` to keep ``(low, high)``, ``False`` to zoom.
+        """
+        width = high - low
+        zoom_width = zoom_high - zoom_low
+        # A window with no width at all (one outcome carries all the
+        # probability) has nothing to zoom into, and neither does a quantile
+        # window that is somehow the wider of the two. Keep what the support
+        # gave, which is the exact bound.
+        if not np.isfinite(width) or width <= 0 or zoom_width >= width:
+            return True
+        return zoom_width >= _ZOOM_FRACTION * width
 
     def _zoom_xlim(self):
-        """The window used by ``plot(xlim="zoom")``: both ends cut at a quantile.
+        """The zoomed window: both ends cut at a quantile.
 
         Frames the region where the probability actually lives by ignoring
         fixed bounds -- treating the distribution as if it had none. For an
-        already-unbounded distribution this is the default window; for a
-        bounded one it zooms in, so ``Binomial(1000, 0.5)`` frames roughly
-        ``(451, 549)`` instead of its full ``(0, 1000)`` support, without the
-        student having to work out the endpoints.
+        already-unbounded distribution this is the whole story; for a bounded
+        one it zooms in, so ``Binomial(1000, 0.5)`` frames roughly
+        ``(451, 549)`` instead of its full ``(0, 1000)`` support. It is used
+        automatically by :meth:`_compute_xlim` whenever the probability fills
+        too little of the support-derived window, so a student never has to
+        ask for it or work out the endpoints.
 
         Returns
         -------
@@ -390,7 +449,7 @@ class Distribution(ProbabilitySpace):
 
         return ProbabilitySpace(draw)
 
-    def plot(self, xlim=None, alpha=None, ax=None, cdf=False, **kwargs):
+    def plot(self, alpha=None, ax=None, cdf=False, **kwargs):
         """Plot the probability function or the cumulative distribution function.
 
         By default (``cdf=False``), plots the probability density function
@@ -410,22 +469,19 @@ class Distribution(ProbabilitySpace):
         and for the default view "PDF Plot" (continuous) or "PMF Plot"
         (discrete).
 
+        **The x-axis frames itself, and there is no window argument.** The
+        distribution's own :attr:`xlim` is used, and it zooms in whenever the
+        probability fills too little of the range its fixed bounds give:
+        ``Binomial(10, 0.5)`` shows all of ``(0, 10)``, ``Binomial(1000,
+        0.5)`` frames roughly ``(451, 549)`` rather than a spike in the middle
+        of ``(0, 1000)``, ``Poisson(3)`` and ``Exponential`` start at their
+        true lower bound 0, and ``Normal`` is cut at both ends. To choose a
+        range by hand instead, set it on the distribution before plotting
+        (``X.xlim = (2, 8)``), or move the axis afterwards with
+        ``xlim(2, 8)``.
+
         Parameters
         ----------
-        xlim : tuple of float or "zoom", optional
-            x-axis range. ``None`` (default) uses the distribution's own
-            window: the full support where a bound is fixed, and a quantile
-            cut where a side is unbounded. So ``Binomial(1000, 0.5)`` shows
-            all of ``(0, 1000)``, ``Poisson`` and ``Exponential`` start at
-            their true lower bound 0, and ``Normal`` is cut at both ends.
-            A ``(min, max)`` tuple sets an exact range. ``"zoom"`` cuts
-            *both* ends at a quantile -- framing the distribution as if it
-            had no fixed bounds -- so a bounded distribution zooms in on
-            where the probability actually is: ``Binomial(1000, 0.5)``
-            frames roughly ``(451, 549)`` instead of ``(0, 1000)``, with no
-            need to work out the endpoints by hand. Also handy for lining a
-            theoretical curve up against simulated data, which occupies
-            only the high-probability part of the support.
         cdf : bool, default False
             Which function to plot. ``False`` (the default) draws the
             probability density/mass function; ``True`` draws the
@@ -451,7 +507,7 @@ class Distribution(ProbabilitySpace):
         --------
         >>> from symbulate import *
         >>> Normal(0, 1).plot()  # doctest: +SKIP
-        >>> Binomial(100, 0.5).plot(xlim="zoom")  # tight window, not (0, 100)  # doctest: +SKIP
+        >>> Binomial(100, 0.5).plot()  # zooms itself, not (0, 100)  # doctest: +SKIP
         >>> Poisson(3).plot(cdf=True)  # step function  # doctest: +SKIP
         >>> Normal(0, 1).plot(cdf=True)  # smooth S-curve  # doctest: +SKIP
         """
@@ -468,24 +524,24 @@ class Distribution(ProbabilitySpace):
                 "among the many ways of drawing simulated data; a theoretical "
                 "distribution has only these two curves to show.)"
             )
-        # Resolve the x-axis range:
-        #   None        -> the distribution's default window (a fixed bound
-        #                  used as-is, a quantile cut where unbounded);
-        #   "zoom"      -> a quantile cut at *both* ends, i.e. the same
-        #                  framing an unbounded distribution already gets,
-        #                  which zooms in on a bounded default;
-        #   (low, high) -> those exact limits, used as given.
-        if xlim is None:
-            xlim = self.xlim
-        elif isinstance(xlim, str):
-            if xlim != "zoom":
-                raise ValueError(
-                    'The only text value `xlim` accepts is "zoom" (frame the '
-                    "region holding most of the probability). You passed "
-                    f"xlim={xlim!r}. Otherwise pass xlim=(low, high) for an "
-                    "exact range, or leave it out for the default range."
-                )
-            xlim = self._zoom_xlim()
+        # `xlim=` used to select the window here, including the string
+        # "zoom" for a tight one. The window now chooses itself (see
+        # `_compute_xlim`), so the argument is gone rather than left as a
+        # near-no-op -- and a stray one is caught here instead of slipping
+        # through **kwargs into an opaque matplotlib error.
+        if "xlim" in kwargs:
+            raise ValueError(
+                "`Distribution.plot()` does not take an `xlim=` argument. The "
+                "x-axis frames itself: a distribution whose probability sits "
+                "in a small part of its support is zoomed in on automatically "
+                "(Binomial(1000, 0.5) shows about (451, 549), not (0, 1000)). "
+                "To choose the range yourself, set it on the distribution "
+                "before plotting -- X = Binomial(10, 0.5); X.xlim = (2, 8); "
+                "X.plot() -- or move the axis after plotting with xlim(2, 8)."
+            )
+        # The window the distribution chose for itself: a fixed bound where the
+        # probability fills it, a quantile cut where it does not.
+        xlim = self.xlim
 
         # get the x and y values. The x-window is chosen the same way for
         # both plot types (it only picks x-values); `cdf` decides which
@@ -526,7 +582,8 @@ class Distribution(ProbabilitySpace):
         if xlim[0] == xlim[1]:
             # A window can collapse onto a single value when one outcome
             # carries essentially all the probability (e.g. Geometric(0.99),
-            # or a bounded distribution under xlim="zoom"). Give the lone point
+            # or a bounded distribution that zoomed onto one value, or an
+            # explicit xlim of (a, a)). Give the lone point
             # room so the axis stays well-formed instead of singular.
             xlim = (xlim[0] - 0.5, xlim[1] + 0.5)
         ax.set_xlim(*xlim)
@@ -2529,9 +2586,10 @@ class ExponentiallyModifiedGaussian(Distribution):
         params = {"K": 1.0 / (rate * sd), "loc": mean, "scale": sd}
         super().__init__(params, stats.exponnorm, False)
         # Unbounded on both sides, like Laplace and Gumbel, so both ends of
-        # the default window are quantile cuts. A small rate makes the right
-        # tail long enough that the window looks lopsided -- pass xlim="zoom"
-        # to plot() to frame the bulk of the probability instead.
+        # the default window are quantile cuts, and the automatic zoom has
+        # nothing further to give up. A small rate makes the right tail long
+        # enough that the window looks lopsided -- pass an explicit
+        # xlim=(low, high) to plot() to frame the bulk of the probability.
 
 
 class Gamma(Distribution):
@@ -5251,6 +5309,31 @@ class MultivariateDistribution(Distribution):
         """
         return self._marginal_1d(i).xlim
 
+    def _marginal_framed(self, i):
+        """Return component ``i``'s own distribution, framed like this plot.
+
+        A marginal strip and a diagonal panel are both drawn by the univariate
+        :meth:`Distribution.plot`, which picks its own window -- but here the
+        window has to be the one the joint panels use, so the two line up.
+        ``plot`` takes no window argument (it frames itself), so the window is
+        pinned on the distribution instead. ``_marginal_1d`` builds a fresh
+        distribution on every call, so pinning it affects nothing else.
+
+        Parameters
+        ----------
+        i : int
+            Index of the component, counting from 0.
+
+        Returns
+        -------
+        Distribution
+            That component's one-dimensional distribution, with its ``xlim``
+            set to :meth:`_plot_window`.
+        """
+        marginal = self._marginal_1d(i)
+        marginal.xlim = self._plot_window(i)
+        return marginal
+
     def _plot_values(self, i):
         """Return the values of a discrete component ``i`` to draw cells for.
 
@@ -5503,7 +5586,7 @@ class MultivariateDistribution(Distribution):
         """
         # Framed on the same window the joint panel uses, so the strip covers
         # the variable over exactly the range the joint panel shows it over.
-        self._marginal_1d(i).plot(xlim=self._plot_window(i), ax=ax, alpha=alpha)
+        self._marginal_framed(i).plot(ax=ax, alpha=alpha)
         # Each strip is one variable's distribution, not a plot in its own
         # right -- the figure's title names what the whole thing is.
         ax.set_title("")
@@ -5614,9 +5697,7 @@ class MultivariateDistribution(Distribution):
                     # cover the variable over the same range -- which is
                     # what makes hiding the inner x tick labels below safe.
                     advance_pairs_diagonal_color(ax, row)
-                    self._marginal_1d(variables[row]).plot(
-                        xlim=self._plot_window(variables[row]), ax=ax, alpha=alpha
-                    )
+                    self._marginal_framed(variables[row]).plot(ax=ax, alpha=alpha)
                     ax.set_title("")
                     # Whatever the univariate plot called its own frequency
                     # axis -- "Density" for a continuous family, "Probability"
@@ -7051,9 +7132,10 @@ class Multinomial(MultivariateDistribution):
         visible (two counts can't add up to more than ``n``). But a joint
         plot draws one cell per pair of counts, so the full range only fits
         while ``n`` is small: past that, this falls back to the window
-        holding most of the probability -- the same window ``xlim="zoom"``
-        gives a one-dimensional plot -- so a distribution with many trials
-        still plots, showing the region the counts actually land in.
+        holding most of the probability -- the same zoomed window a
+        one-dimensional plot uses when its bounds stop being informative --
+        so a distribution with many trials still plots, showing the region
+        the counts actually land in.
 
         Parameters
         ----------

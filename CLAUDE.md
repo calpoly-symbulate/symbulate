@@ -221,21 +221,38 @@ window is only needed for plotting, but `__init__` runs once per *draw* inside
 `Exponential` every draw), so eager computation charges every simulated value
 for a plot nobody asked for. This was a real 26-second bug.
 
-One rule, applied to each end of the support independently — **a fixed bound is
-used as-is, an unbounded side is cut at a quantile** (`_PLOT_TAIL = 0.001`):
+The window is built in **two steps**. Step one, applied to each end of the
+support independently — **a fixed bound is used as-is, an unbounded side is cut
+at a quantile** (`_PLOT_TAIL = 0.001`):
 
-| Support | Default `xlim` | Example |
+| Support | Step-one window | Example |
 |---|---|---|
-| bounded both ends | full support | `Binomial(1000, 0.5)` → `(0, 1000)` |
-| fixed lower only | `(lower, quantile(0.999))` | `Poisson`, `Exponential` start at 0 |
+| bounded both ends | full support | `Binomial(10, 0.5)` → `(0, 10)` |
+| fixed lower only | `(lower, quantile(0.999))` | `Poisson(3)`, `Exponential` start at 0 |
 | fixed upper only | `(quantile(0.001), upper)` | none currently |
 | unbounded both ends | `(quantile(0.001), quantile(0.999))` | `Normal` |
 
 Bounds are read from scipy's own `support()` via `Distribution._scipy`, so a new
-distribution gets the right window with **no per-distribution code**. In
-`plot(xlim=)`: `None` applies the rule, `(a, b)` sets exact limits, and
-`"zoom"` cuts both ends at a quantile — framing the distribution as if it had
-no fixed bounds, so `Binomial(1000, 0.5)` zooms to ~`(451, 549)`.
+distribution gets the right window with **no per-distribution code**.
+
+Step two — **it zooms itself**. If the quantile window (`_zoom_xlim`, both ends
+cut, i.e. the distribution framed as if it had no fixed bounds) covers less than
+`_ZOOM_FRACTION = 0.5` of the step-one window, the quantile window is used
+instead (`Distribution._fills_window` is the test). So `Binomial(1000, 0.5)` →
+`(451, 549)` rather than a spike in the middle of `(0, 1000)`, `Beta(2, 200)` →
+about `(0.0002, 0.045)`, and `Poisson(1000)` gives up its true lower bound of 0
+— while `Binomial(10, 0.5)`, `Uniform`, `Beta(2, 5)` and `Poisson(3)` keep every
+bound, tails included. Half is the crossover because at that point a plot is
+showing as much empty axis as distribution.
+
+**`plot()` takes no window argument.** `xlim=` (and its `"zoom"` value) is
+**gone** — a stray one raises rather than reaching matplotlib. A window chosen
+by hand is set on the distribution (`X.xlim = (2, 8)`, the setter that already
+existed) or applied to the axes afterwards (`xlim(2, 8)`, the pyplot passthrough
+exported from `plot.py`). Internally, a marginal strip or pairs-matrix diagonal
+gets its column's window through `MultivariateDistribution._marginal_framed(i)`,
+which pins `xlim` on the fresh marginal — do not add a private window parameter
+back to `plot()`.
 
 A highest-density interval (HDI) used to set this window. It was **removed** —
 it cost a root-find per distribution to buy a window only 5–26% narrower on
@@ -908,6 +925,7 @@ pytest tests/
 - Do not hardcode the discreteness thresholds — use `B_1D` (1-D) and `K_2D` (2-D per axis) from `plot.py`, passed into `classify_data()` at the `results.py` dispatch (`B_1D` for 1-D, `K_2D` per axis for 2-D). Values are provisional (see `DECISIONS.md`).
 - Do not set `self.xlim` in a new distribution's `__init__`, and do not compute a window there — `Distribution._compute_xlim` derives it from scipy's `support()` on first read (see "Distribution Plotting Window"). The only exception is a degenerate branch that skips `Distribution.__init__` and so has no scipy object.
 - Do not reintroduce the highest-density interval (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, `_PLOT_COVERAGE`, `_hdi_window`) — removed by team decision; there are tests asserting it stays gone.
+- Do not add an `xlim=` parameter (or a `"zoom"` value) back to `Distribution.plot()` — the window zooms itself now, and a window chosen by hand goes on the distribution (`X.xlim = (a, b)`) or on the axes (`xlim(a, b)`). Internal callers use `_marginal_framed` (see "Distribution Plotting Window").
 - Do not add a nonnegativity check to `CompoundPoissonProcess`'s `jump_dist` — negative jumps are intentional (see "Compound Poisson Process")
 - Do not add separate `MixedPoissonProcess` or `MarkovModulatedPoissonProcess` classes — both are `CoxProcess` with a different `intensity` (see "Cox Process")
 - Do not add interpolation, a `step` scan, or an equality test to `hitting_time`'s jump/discrete-time branches — they are exact, and a jump path reaching a level means reaching *or passing* it (see "Hitting Times")
