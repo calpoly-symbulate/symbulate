@@ -1621,6 +1621,113 @@ class Zeta(Distribution):
         super().__init__(params, stats.zipf, True)
 
 
+class _benford_gen(stats.rv_discrete):
+    """scipy generator for Benford's law (the leading-digit law).
+
+    Supported on the leading digits ``1, ..., base - 1``, with
+    ``pmf(d) = log_base(1 + 1/d)``. Written with ``log1p`` and a change of
+    base rather than ``log(1 + 1/d) / log(base)`` spelled out, so the small
+    ``1/d`` at the top of the range keeps its precision. scipy has no
+    Benford's law built in, so it is defined here; every other case in this
+    module wraps an existing scipy distribution directly.
+    """
+
+    def _argcheck(self, base):
+        return (base == np.floor(base)) & (base >= 2)
+
+    def _get_support(self, base):
+        return 1, base - 1
+
+    def _pmf(self, d, base):
+        return np.log1p(1.0 / d) / np.log(base)
+
+
+_benford = _benford_gen(name="benford")
+
+
+class Benford(Distribution):
+    """Probability space for Benford's law, the leading-digit law.
+
+    A discrete distribution on the possible leading digits
+    ``1, 2, ..., base - 1``, giving the digit ``d`` probability
+    ``log_base(1 + 1/d)``. In base 10 that makes a leading 1 about six
+    times as likely as a leading 9 -- roughly 30.1% against 4.6% -- which
+    is nothing like the 1-in-9 a person would guess.
+
+    The law describes the first digit of many real collections of numbers:
+    street addresses, populations, physical constants, invoice amounts,
+    file sizes. It tends to appear when the values span several orders of
+    magnitude and are not pinned to a particular scale. That is also what
+    makes it a fraud-detection tool -- figures invented by a person usually
+    do not follow it, so an audited ledger whose leading digits are close
+    to uniform is worth a second look.
+
+    Parameters
+    ----------
+    base : int, optional
+        The number base the digits are written in. Must be an integer
+        that is at least 2. Default is 10, the everyday case.
+
+    Attributes
+    ----------
+    base : int
+        The number base the digits are written in.
+
+    Notes
+    -----
+    The probabilities come from assuming the *logarithm* of the underlying
+    quantity is spread evenly: the digit ``d`` leads exactly when the value
+    falls in ``[d, d + 1)`` after scaling, and that interval takes up
+    ``log_base(d + 1) - log_base(d) = log_base(1 + 1/d)`` of each cycle of
+    the log scale. They add to 1 by telescoping, whatever the base.
+
+    ``base = 2`` is a legitimate but degenerate edge case: the only
+    possible leading digit in binary is 1, so the distribution is a point
+    mass there.
+
+    scipy has no Benford's law, so this one is defined in this module (see
+    ``_benford_gen``) rather than wrapping an existing scipy distribution.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = Benford()
+    >>> round(float(X.pmf(1)), 4)  # a leading 1, about 30% of the time
+    0.301
+    >>> round(float(X.pmf(9)), 4)  # a leading 9, about 4.6%
+    0.0458
+    >>> round(float(X.mean()), 4)
+    3.4402
+    >>> float(Benford(base=2).pmf(1))  # in binary every number leads with 1
+    1.0
+    >>> X.draw()  # doctest: +SKIP
+    1
+    """
+
+    def __init__(self, base=10):
+        """Initialize a Benford distribution.
+
+        Raises
+        ------
+        Exception
+            If ``base`` is not an integer greater than or equal to 2.
+        """
+        # A whole-valued float (10.0, or anything arriving from numpy or a
+        # division) is accepted, as elsewhere in this module; only a
+        # genuinely fractional base is rejected. The range check is guarded
+        # by the type check so a non-number short-circuits before the
+        # comparison, per _validate's documented convention.
+        whole_base = _is_whole_number(base)
+        _validate(
+            (not whole_base, "base must be an integer"),
+            (whole_base and base < 2, "base must be an integer greater than 1"),
+        )
+        self.base = int(base)
+
+        params = {"base": self.base}
+        super().__init__(params, _benford, True)
+
+
 ## Continuous Distributions
 
 
