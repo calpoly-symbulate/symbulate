@@ -2397,6 +2397,22 @@ class RVResults(Results):
                 "variable by itself."
             )
 
+        # This has to run before the self.dim > 2 branch below, not after
+        # it: that branch can return early (the "pairs" case), building a
+        # GridSpec, resizing the figure, and adding a subplot before this
+        # check would otherwise ever run for that path -- so a call like
+        # (X**3).sim(50).plot(dims=[0, 1]) used to raise only after a
+        # figure was already half-built, from a re-entrant inner call
+        # rather than this intended check.
+        if "dims" in kwargs:
+            raise ValueError(
+                "dims= is not a plotting argument for simulated results: "
+                "choose the variables when you simulate them instead, by "
+                "indexing the random variable -- X[[0, 2]].sim(1000).plot() "
+                "for the 1st and 3rd. (A distribution's own .plot() does take "
+                "variables=, since there is nothing to simulate.)"
+            )
+
         # Three or more variables have no single joint plot, so the default is
         # the matrix of every pair. type="path" asks for the old behavior: each
         # realization drawn against its index. Gated on a known dimension, so
@@ -2430,14 +2446,6 @@ class RVResults(Results):
                 )
             # Fall through to the path branch, with the note it should print.
             _suggestion = (type[0], default, alternatives)
-        if "dims" in kwargs:
-            raise ValueError(
-                "dims= is not a plotting argument for simulated results: "
-                "choose the variables when you simulate them instead, by "
-                "indexing the random variable -- X[[0, 2]].sim(1000).plot() "
-                "for the 1st and 3rd. (A distribution's own .plot() does take "
-                "variables=, since there is nothing to simulate.)"
-            )
 
         if self.dim == 1:
             # make sure self.array, a Numpy array, has been set
