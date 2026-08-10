@@ -1643,8 +1643,9 @@ class Zeta(Distribution):
     first hundred values carry only about 40% of it. So :attr:`xlim`
     deliberately shows just the first 20 values, which is where the
     power-law shape is visible, rather than stretching out along a tail
-    that never really ends. Pass an explicit ``xlim=(1, high)`` to
-    :meth:`plot` to look further out.
+    that never really ends. To look further out, set the window on the
+    distribution before plotting -- ``X = Zeta(shape=1.1); X.xlim = (1,
+    100); X.plot()`` -- or move the axis afterwards with ``xlim(1, 100)``.
 
     **A naming warning about scipy.** ``scipy.stats.zipf`` is this
     distribution, the zeta -- *not* the finite Zipf, which scipy calls
@@ -2753,8 +2754,8 @@ class ExponentiallyModifiedGaussian(Distribution):
         # Unbounded on both sides, like Laplace and Gumbel, so both ends of
         # the default window are quantile cuts, and the automatic zoom has
         # nothing further to give up. A small rate makes the right tail long
-        # enough that the window looks lopsided -- pass an explicit
-        # xlim=(low, high) to plot() to frame the bulk of the probability.
+        # enough that the window looks lopsided -- assign X.xlim = (low, high)
+        # before plotting to frame the bulk of the probability.
 
 
 class Gamma(Distribution):
@@ -3106,6 +3107,104 @@ class LogGamma(Distribution):
         # Unbounded in both directions, so both ends of the default window
         # are quantile cuts -- the same treatment GEV gets.
         super().__init__(params, stats.loggamma, False)
+
+
+class InverseGaussian(Distribution):
+    """Probability space for an inverse Gaussian (Wald) distribution.
+
+    A right-skewed distribution over the positive numbers. It arises as a
+    *first passage time*: if a Brownian motion drifts steadily upward, the
+    time it first reaches a fixed level has this distribution. That makes it
+    a natural model for a duration or a waiting time -- how long a repair
+    takes, how long a customer stays -- where most values cluster near a
+    typical length but a few run much longer.
+
+    Parameters
+    ----------
+    mean : float, optional
+        Expected value of the distribution. Must be positive. Default is 1.0.
+    shape : float, optional
+        Shape parameter (often written λ). Must be positive. Larger values
+        concentrate the distribution around ``mean`` and make it less skewed.
+        Default is 1.0.
+
+    Attributes
+    ----------
+    mean_param : float
+        Expected value of the distribution, as passed in.
+    shape : float
+        Shape parameter (λ).
+
+    Notes
+    -----
+    **Despite the name, it is unrelated to the reciprocal of a normal random
+    variable.** "Inverse" refers to a relationship between two functions
+    describing Brownian motion, not to dividing anything by anything. It is
+    also called the Wald distribution.
+
+    The variance is ``mean ** 3 / shape``, so spread grows quickly with the
+    mean and shrinks as the shape grows. As ``shape`` goes to infinity with
+    ``mean`` held fixed, the distribution approaches
+    ``Normal(mean, mean ** 3 / shape)`` -- that is, a normal distribution
+    with the same mean and variance, the skewness washing out as the
+    variance shrinks.
+
+    The expected value is stored as ``mean_param`` rather than ``mean``,
+    because :class:`Distribution` gives every distribution a ``mean()``
+    *method* returning the expected value. Storing the parameter under its
+    own name would overwrite that method, so ``X.mean()`` calls the method
+    and ``X.mean_param`` reads the number that was passed in. They agree:
+    ``X.mean() == X.mean_param``.
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> X = InverseGaussian(mean=2, shape=3)
+    >>> round(float(X.mean()), 4)
+    2.0
+    >>> round(float(X.var()), 4)
+    2.6667
+    >>> round(float(X.pdf(2)), 4)
+    0.2443
+    >>> X.draw()  # doctest: +SKIP
+    1.37
+    """
+
+    def __init__(self, mean=1.0, shape=1.0):
+        """Initialize an inverse Gaussian distribution.
+
+        Raises
+        ------
+        Exception
+            If ``mean`` or ``shape`` is not a positive number.
+        """
+        _validate(
+            (
+                not isinstance(mean, numbers.Real) or mean <= 0,
+                "mean must be a positive number",
+            ),
+            (
+                not isinstance(shape, numbers.Real) or shape <= 0,
+                "shape must be a positive number",
+            ),
+        )
+        # Stored as `mean_param`, not `mean`: `Distribution.__init__` assigns
+        # `self.mean` the callable that returns the expected value, so a
+        # `self.mean` here would be silently replaced by that method.
+        self.mean_param = mean
+        self.shape = shape
+
+        # scipy's invgauss is parameterized by `mu` and `scale`, with
+        # mean = mu * scale and variance = mu ** 3 * scale ** 2. Setting
+        # scale = shape and mu = mean / shape gives back the textbook
+        # (mean, shape) convention used here:
+        #     mean:      (mean / shape) * shape           = mean
+        #     variance:  (mean / shape) ** 3 * shape ** 2 = mean ** 3 / shape
+        params = {"mu": mean / shape, "scale": shape}
+        # Support is (0, inf), so the default window is (0, quantile(0.999)) --
+        # the fixed lower bound kept as-is, the unbounded upper end cut at a
+        # quantile. No per-distribution window code is needed.
+        super().__init__(params, stats.invgauss, False)
 
 
 class Beta(Distribution):
@@ -4601,9 +4700,10 @@ class HalfCauchy(Distribution):
 
     That same heavy tail makes the default plotting window wide -- covering
     most of the probability genuinely requires reaching far out along the
-    tail -- so the density can look like a spike at 0. Pass an explicit
-    ``xlim=(0, high)`` to :meth:`plot` to inspect the bulk of the
-    distribution.
+    tail -- so the density can look like a spike at 0. To inspect the bulk
+    of the distribution, set the window on the distribution before plotting
+    -- ``X = HalfCauchy(scale=1); X.xlim = (0, 10); X.plot()`` -- or move
+    the axis afterwards with ``xlim(0, 10)``.
 
     Examples
     --------

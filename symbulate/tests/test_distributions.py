@@ -21,6 +21,10 @@ from symbulate import distributions
 # module directly rather than coming in through the star import above.
 from symbulate.distributions import Benford
 
+# InverseGaussian is likewise not exported yet -- awaiting team sign-off on the
+# public-API addition -- so it too is imported straight from its module.
+from symbulate.distributions import InverseGaussian
+
 Nsim = 10000
 
 
@@ -2437,6 +2441,113 @@ class TestLogGamma(unittest.TestCase):
         RV(LogGamma(shape=2)).sim(100).plot()
         LogGamma(shape=2).plot()
         LogGamma(shape=2).plot(cdf=True)
+        plt.close("all")
+
+
+class TestInverseGaussian(unittest.TestCase):
+
+    # The (mean, shape) pairs the formula checks sweep over.
+    PAIRS = [(1.0, 1.0), (2.0, 3.0), (0.5, 4.0), (5.0, 0.5), (3.0, 10.0)]
+
+    def test_InverseGaussian_distributional(self):
+        distributions.rng = np.random.default_rng(42)
+        X = RV(InverseGaussian(mean=2, shape=3))
+        sims = X.sim(Nsim)
+        # scipy's own parameters, translated: mu = mean / shape, scale = shape.
+        cdf = stats.invgauss(mu=2 / 3, scale=3).cdf
+        pval = stats.kstest(sims, cdf).pvalue
+        self.assertTrue(pval > 0.01)
+
+    def test_InverseGaussian_mean_matches_parameter(self):
+        for mean, shape in self.PAIRS:
+            X = InverseGaussian(mean=mean, shape=shape)
+            self.assertAlmostEqual(float(X.mean()), mean, places=8)
+
+    def test_InverseGaussian_variance_is_mean_cubed_over_shape(self):
+        for mean, shape in self.PAIRS:
+            X = InverseGaussian(mean=mean, shape=shape)
+            self.assertAlmostEqual(float(X.var()), mean**3 / shape, places=8)
+
+    def test_InverseGaussian_mean_param_agrees_with_mean_method(self):
+        # `mean` is the method inherited from Distribution; the parameter is
+        # kept under `mean_param` so the two do not collide.
+        X = InverseGaussian(mean=2, shape=3)
+        self.assertEqual(X.mean_param, 2)
+        self.assertAlmostEqual(float(X.mean()), X.mean_param, places=8)
+
+    def test_InverseGaussian_pdf_matches_scipy(self):
+        for mean, shape in self.PAIRS:
+            X = InverseGaussian(mean=mean, shape=shape)
+            ref = stats.invgauss(mu=mean / shape, scale=shape)
+            for x in [0.1, 0.5, 1.0, 2.0, 5.0]:
+                self.assertAlmostEqual(float(X.pdf(x)), float(ref.pdf(x)), places=8)
+
+    @staticmethod
+    def _max_normal_gap(mean, shape):
+        """Largest cdf gap to Normal(mean, mean ** 3 / shape), over +/- 2 sd."""
+        X = InverseGaussian(mean=mean, shape=shape)
+        sd = (mean**3 / shape) ** 0.5
+        normal = Normal(mean=mean, sd=sd)
+        return max(
+            abs(float(X.cdf(mean + z * sd)) - float(normal.cdf(mean + z * sd)))
+            for z in [-2, -1, 0, 1, 2]
+        )
+
+    def test_InverseGaussian_approaches_normal_as_shape_grows(self):
+        # With the mean fixed, a large shape shrinks the variance and the skew
+        # washes out, leaving Normal(mean, mean ** 3 / shape). This is exact
+        # arithmetic, not a simulation, so the gap below is reproducible: it is
+        # about 2.8e-4 at shape = 1e6, comfortably inside the tolerance.
+        self.assertLess(self._max_normal_gap(2.0, 1_000_000), 1e-3)
+
+    def test_InverseGaussian_normal_gap_shrinks_with_shape(self):
+        # The limit itself, not just one point on the way to it: the gap has to
+        # keep closing as the shape grows.
+        gaps = [self._max_normal_gap(2.0, s) for s in [1e3, 1e4, 1e5, 1e6, 1e7]]
+        for earlier, later in zip(gaps, gaps[1:]):
+            self.assertLess(later, earlier)
+
+    def test_InverseGaussian_defaults(self):
+        X = InverseGaussian()
+        self.assertEqual(X.mean_param, 1.0)
+        self.assertEqual(X.shape, 1.0)
+
+    def test_InverseGaussian_is_positive(self):
+        X = InverseGaussian(mean=2, shape=3)
+        self.assertEqual(float(X.cdf(0)), 0.0)
+        self.assertGreater(float(X.quantile(0.001)), 0.0)
+
+    def test_InverseGaussian_is_right_skewed(self):
+        for mean, shape in self.PAIRS:
+            sk = float(stats.invgauss(mu=mean / shape, scale=shape).stats(moments="s"))
+            self.assertGreater(sk, 0.0)
+
+    def test_InverseGaussian_xlim_starts_at_zero(self):
+        # Support is (0, inf): the fixed lower bound is kept, the unbounded
+        # upper end is cut at the 0.999 quantile. No per-distribution code.
+        X = InverseGaussian(mean=2, shape=3)
+        low, high = X.xlim
+        self.assertEqual(low, 0.0)
+        self.assertAlmostEqual(high, float(X.quantile(0.999)), places=8)
+
+    def test_InverseGaussian_draw_is_scalar(self):
+        distributions.rng = np.random.default_rng(0)
+        self.assertIsInstance(InverseGaussian(mean=2, shape=3).draw(), Scalar)
+
+    def test_InverseGaussian_invalid_mean_raises(self):
+        for bad in [-1, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: InverseGaussian(mean=b))
+
+    def test_InverseGaussian_invalid_shape_raises(self):
+        for bad in [-2, 0, "a"]:
+            self.assertRaises(Exception, lambda b=bad: InverseGaussian(shape=b))
+
+    def test_InverseGaussian_plots_without_error(self):
+        # draw / RV / sim / plot all wired through the base class.
+        InverseGaussian(mean=2, shape=3).draw()
+        RV(InverseGaussian(mean=2, shape=3)).sim(100).plot()
+        InverseGaussian(mean=2, shape=3).plot()
+        InverseGaussian(mean=2, shape=3).plot(cdf=True)
         plt.close("all")
 
 
