@@ -93,6 +93,53 @@ from .table import Table
 # Standards".
 
 
+def _call_plot_helper(func, *args, **kwargs):
+    """Call a plot-drawing helper (a ``make_*`` function in ``plot.py``),
+    turning a mistyped keyword argument into a message a student can act
+    on instead of a raw traceback from deep inside matplotlib.
+
+    A bad keyword aimed at the underlying matplotlib call surfaces two
+    different ways depending on which matplotlib function ends up
+    handling it: a function that forwards leftover kwargs to a
+    matplotlib Artist's ``.set()`` (``ax.hist``, ``ax.vlines``,
+    ``ax.scatter``, ...) raises ``AttributeError``; a function that
+    checks its own signature directly (``ax.boxplot``, ``ax.violinplot``)
+    raises ``TypeError``. Both are caught here; anything else -- a
+    genuine bug inside the ``make_*`` helper itself, unrelated to a bad
+    kwarg -- is left to propagate as-is rather than being mislabeled.
+
+    Parameters
+    ----------
+    func : callable
+        The ``make_*`` plot-drawing helper to call.
+    *args, **kwargs
+        Passed through to ``func`` unchanged.
+
+    Returns
+    -------
+    object
+        Whatever ``func`` returns.
+
+    Raises
+    ------
+    TypeError
+        If ``func`` raised because of an unexpected keyword argument,
+        re-raised with a message that names the plot type and points at
+        `.plot()`'s keyword arguments as the likely cause.
+    """
+    try:
+        return func(*args, **kwargs)
+    except (TypeError, AttributeError) as e:
+        message = str(e)
+        if "unexpected keyword argument" in message:
+            raise TypeError(
+                f"plot() got a keyword argument that isn't valid for this "
+                f"plot type ({message}). Check the spelling -- some keyword "
+                f"arguments only apply to certain plot types."
+            ) from None
+        raise
+
+
 def _is_hashable(obj):
     """Check whether an object is hashable.
 
@@ -2463,7 +2510,8 @@ class RVResults(Results):
             color = get_next_color(ax)
 
             if "dotplot" in type:
-                make_dotplot(
+                _call_plot_helper(
+                    make_dotplot,
                     _plot_array,
                     ax,
                     color,
@@ -2480,7 +2528,8 @@ class RVResults(Results):
                 else:
                     # bandwidth is popped here so it never leaks into the
                     # hist/impulse branches of a combined type.
-                    make_density(
+                    _call_plot_helper(
+                        make_density,
                         _plot_array,
                         ax,
                         color,
@@ -2488,7 +2537,8 @@ class RVResults(Results):
                         alpha=alpha,
                     )
             if "hist" in type:
-                make_hist(
+                _call_plot_helper(
+                    make_hist,
                     _plot_array,
                     ax,
                     color,
@@ -2498,7 +2548,8 @@ class RVResults(Results):
                     **kwargs,
                 )
             elif "bar" in type:
-                make_bar(
+                _call_plot_helper(
+                    make_bar,
                     _plot_array,
                     ax,
                     color,
@@ -2507,7 +2558,8 @@ class RVResults(Results):
                     **kwargs,
                 )
             elif "impulse" in type:
-                make_impulse(
+                _call_plot_helper(
+                    make_impulse,
                     _plot_array,
                     ax,
                     color,
@@ -2516,13 +2568,24 @@ class RVResults(Results):
                     **kwargs,
                 )
             elif "box" in type or "boxplot" in type:
-                make_boxplot(_plot_array, ax, color, alpha=alpha, **kwargs)
+                _call_plot_helper(
+                    make_boxplot, _plot_array, ax, color, alpha=alpha, **kwargs
+                )
             elif "violin" in type:
-                make_violinplot(_plot_array, ax, color, alpha=alpha, **kwargs)
+                _call_plot_helper(
+                    make_violinplot, _plot_array, ax, color, alpha=alpha, **kwargs
+                )
             if "rug" in type:
-                make_rug(_plot_array, ax, color, alpha=alpha)
+                # Previously missing **kwargs here (unlike every sibling
+                # branch above), so e.g. plot(type='rug', linewidth=10)
+                # silently ignored linewidth instead of applying it or
+                # raising like the other plot types do.
+                _call_plot_helper(
+                    make_rug, _plot_array, ax, color, alpha=alpha, **kwargs
+                )
             if "ecdf" in type:
-                make_ecdf(
+                _call_plot_helper(
+                    make_ecdf,
                     _plot_array,
                     ax,
                     color,
@@ -2671,7 +2734,8 @@ class RVResults(Results):
                     scatter_jitter = (
                         auto_jitter_mode(x, y) if discrete_x and discrete_y else False
                     )
-                make_scatter(
+                _call_plot_helper(
+                    make_scatter,
                     x,
                     y,
                     ax,
@@ -2689,7 +2753,8 @@ class RVResults(Results):
                 # On mixed data the short name "hist" means the segmented
                 # histogram; "hist2d" always forces the 2D mesh.
                 if configuration == "2D_mixed" and "hist2d" not in type:
-                    make_segmented_hist(
+                    _call_plot_helper(
+                        make_segmented_hist,
                         x,
                         y,
                         ax,
@@ -2703,7 +2768,8 @@ class RVResults(Results):
                     )
                     _resolved_main_type_x = _resolved_main_type_y = "segmented_hist"
                 elif marginal:
-                    histo = make_hist2d(
+                    histo = _call_plot_helper(
+                        make_hist2d,
                         x,
                         y,
                         ax,
@@ -2720,9 +2786,12 @@ class RVResults(Results):
                     if isinstance(histo, tuple):
                         _marginal_hist_edges = (histo[1], histo[2])
                 else:
-                    make_hist2d(x, y, ax, bins=bins, normalize=normalize, **kwargs)
+                    _call_plot_helper(
+                        make_hist2d, x, y, ax, bins=bins, normalize=normalize, **kwargs
+                    )
             elif "segmented_hist" in type:
-                make_segmented_hist(
+                _call_plot_helper(
+                    make_segmented_hist,
                     x,
                     y,
                     ax,
@@ -2736,7 +2805,8 @@ class RVResults(Results):
                 )
                 _resolved_main_type_x = _resolved_main_type_y = "segmented_hist"
             elif "tile" in type:
-                hm = make_tile(
+                hm = _call_plot_helper(
+                    make_tile,
                     x,
                     y,
                     ax,
@@ -2779,16 +2849,20 @@ class RVResults(Results):
                         _resolved_main_type_y = None
                     _marginal_hist_edges = (tile_x_edges, tile_y_edges)
             elif "mosaic" in type or "stackedbar" in type:
-                _resolved_main_type_x = _resolved_main_type_y = _draw_mosaic_family(
-                    x, y, ax, type, **kwargs
+                _resolved_main_type_x = _resolved_main_type_y = _call_plot_helper(
+                    _draw_mosaic_family, x, y, ax, type, **kwargs
                 )
             elif "violin" in type:
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))
-                    make_violin(self.array, positions, ax, color, "x", legacy_alpha)
+                    _call_plot_helper(
+                        make_violin, self.array, positions, ax, color, "x", legacy_alpha
+                    )
                 elif not discrete_x and discrete_y:
                     positions = sorted(list(y_count.keys()))
-                    make_violin(self.array, positions, ax, color, "y", legacy_alpha)
+                    _call_plot_helper(
+                        make_violin, self.array, positions, ax, color, "y", legacy_alpha
+                    )
                 elif discrete_x:
                     raise ValueError(
                         "A violin plot needs one discrete variable and one "
@@ -2805,7 +2879,8 @@ class RVResults(Results):
                     )
                 _resolved_main_type_x = _resolved_main_type_y = "violin"
             elif "box" in type or "boxplot" in type:
-                make_grouped_boxplot(
+                _call_plot_helper(
+                    make_grouped_boxplot,
                     x,
                     y,
                     ax,
@@ -2840,7 +2915,8 @@ class RVResults(Results):
                 if "segmented_density" in type or (
                     configuration == "2D_mixed" and "density2d" not in type
                 ):
-                    make_segmented_density(
+                    _call_plot_helper(
+                        make_segmented_density,
                         x,
                         y,
                         ax,
@@ -2856,14 +2932,21 @@ class RVResults(Results):
                             "segmented_density"
                         )
                 elif marginal:
-                    den = make_density2D(x, y, ax, colorbar=False, **kwargs)
+                    den = _call_plot_helper(
+                        make_density2D, x, y, ax, colorbar=False, **kwargs
+                    )
                     add_colorbar(fig, marginal, den, "Density")
                     if not drew_main:
                         _resolved_main_type_x = _resolved_main_type_y = "density2d"
                 else:
-                    make_density2D(x, y, ax, **kwargs)
+                    _call_plot_helper(make_density2D, x, y, ax, **kwargs)
             if wants_rug:
-                make_segmented_rug(
+                # Previously missing **kwargs here, the same gap as the 1D
+                # rug branch above -- a bad or custom kwarg was silently
+                # dropped instead of applied or raising like its sibling
+                # 2D branches (hist2d, density2d) do.
+                _call_plot_helper(
+                    make_segmented_rug,
                     x,
                     y,
                     ax,
@@ -2871,6 +2954,7 @@ class RVResults(Results):
                     alpha=alpha,
                     discrete_x=discrete_x,
                     discrete_y=discrete_y,
+                    **kwargs,
                 )
                 if not drew_main:
                     _resolved_main_type_x = _resolved_main_type_y = "segmented_rug"
@@ -2978,9 +3062,10 @@ class RVResults(Results):
             ax = plt.gca()
             get_next_color(ax)
             if "mosaic" in type or "stackedbar" in type:
-                _draw_mosaic_family(x, y, ax, type, **kwargs)
+                _call_plot_helper(_draw_mosaic_family, x, y, ax, type, **kwargs)
             elif "tile" in type:
-                make_tile(
+                _call_plot_helper(
+                    make_tile,
                     x,
                     y,
                     ax,
@@ -3021,12 +3106,20 @@ class RVResults(Results):
             ax = plt.gca()
             color = get_next_color(ax)
             if "bar" in type:
-                make_bar(values, ax, color, normalize=normalize, alpha=alpha, **kwargs)
+                _call_plot_helper(
+                    make_bar, values, ax, color, normalize=normalize, alpha=alpha, **kwargs
+                )
             elif "dotplot" in type:
-                make_dotplot(values, ax, color, alpha=alpha, **kwargs)
+                _call_plot_helper(make_dotplot, values, ax, color, alpha=alpha, **kwargs)
             elif "impulse" in type:
-                make_impulse(
-                    values, ax, color, normalize=normalize, alpha=alpha, **kwargs
+                _call_plot_helper(
+                    make_impulse,
+                    values,
+                    ax,
+                    color,
+                    normalize=normalize,
+                    alpha=alpha,
+                    **kwargs,
                 )
             else:
                 raise ValueError(
