@@ -71,7 +71,7 @@ from .plot import (
     make_impulse,
     make_mosaic,
     make_stackedbar,
-    mosaic_type_suggestion,
+    resolve_mosaic_type,
     make_segmented_density,
     make_segmented_hist,
     make_rug,
@@ -198,12 +198,16 @@ def _is_categorical_2d(results):
 
 
 def _draw_mosaic_family(x, y, ax, type, **kwargs):
-    """Draw whichever of mosaic / stacked bar ``type`` asks for.
+    """Draw whichever of mosaic / stacked bar suits this data.
 
     Both the numeric two-variable branch and the two-categorical branch of
     ``RVResults.plot()`` offer these two types, so the choice, the draw,
-    and the "try the other one" nudge live here once rather than being
-    written out at each call site where they could drift apart.
+    and the message live here once rather than being written out at each
+    call site where they could drift apart.
+
+    A mosaic asked for on too many categories is drawn as a stacked bar
+    instead -- see ``resolve_mosaic_type`` for why that one direction
+    overrides the request rather than just suggesting.
 
     Parameters
     ----------
@@ -213,20 +217,21 @@ def _draw_mosaic_family(x, y, ax, type, **kwargs):
         The axes to draw on.
     type : tuple of str
         The requested plot type(s). ``"stackedbar"`` wins if present;
-        otherwise a mosaic is drawn.
+        otherwise a mosaic is asked for.
     **kwargs
         Passed through to ``make_mosaic`` / ``make_stackedbar``.
 
     Returns
     -------
     str
-        ``"mosaic"`` or ``"stackedbar"`` -- whichever was drawn, for the
-        caller to record as the resolved type.
+        ``"mosaic"`` or ``"stackedbar"`` -- whichever was actually
+        drawn, so the caller can record it and name it in the
+        suggestion note.
     """
-    resolved = "stackedbar" if "stackedbar" in type else "mosaic"
+    asked = "stackedbar" if "stackedbar" in type else "mosaic"
+    resolved, note = resolve_mosaic_type(x, y, asked)
     draw = make_stackedbar if resolved == "stackedbar" else make_mosaic
     draw(x, y, ax, **kwargs)
-    note = mosaic_type_suggestion(x, y, resolved)
     if note is not None:
         print(note)
     return resolved
@@ -2184,11 +2189,13 @@ class RVResults(Results):
             ``gaussian_kde``), ``ridge=True`` (fill under each
             segmented density curve for the classic ridgeline look),
             ``contour`` and ``levels`` (2D density), ``hex=True``
-            (hexagonal bins for a 2D histogram), ``outliers`` (box
-            plots: ``True``, the default, stops the whiskers at 1.5
-            times the interquartile range and draws more extreme
-            points individually as outliers; ``False`` extends the
-            whiskers to the minimum and maximum values instead),
+            (hexagonal bins for a 2D histogram), ``outliers`` (box and
+            violin plots: ``False``, the default, extends the whiskers
+            to the minimum and maximum values, so every simulated value
+            falls inside them; ``True`` stops them at 1.5 times the
+            interquartile range and draws more extreme points
+            individually as outliers -- for a violin this controls its
+            inner box, since the body always shows every value),
             and ``label`` (legend name for hist, impulse, dot, scatter,
             segmented density, and segmented histogram plots).
 
@@ -2779,16 +2786,39 @@ class RVResults(Results):
                         _resolved_main_type_y = None
                     _marginal_hist_edges = (tile_x_edges, tile_y_edges)
             elif "mosaic" in type or "stackedbar" in type:
-                _resolved_main_type_x = _resolved_main_type_y = _draw_mosaic_family(
-                    x, y, ax, type, **kwargs
-                )
+                _drawn = _draw_mosaic_family(x, y, ax, type, **kwargs)
+                _resolved_main_type_x = _resolved_main_type_y = _drawn
+                # A crowded mosaic is drawn as a stacked bar instead, so
+                # the note has to name what is on screen rather than what
+                # was asked for.
+                _suggestion = (_drawn, default, alternatives)
             elif "violin" in type:
+                # outliers= is consumed here rather than left in kwargs:
+                # make_violin takes it directly, and the rest of kwargs
+                # goes to matplotlib.
+                _violin_outliers = kwargs.pop("outliers", False)
                 if discrete_x and not discrete_y:
                     positions = sorted(list(x_count.keys()))
-                    make_violin(self.array, positions, ax, color, "x", legacy_alpha)
+                    make_violin(
+                        self.array,
+                        positions,
+                        ax,
+                        color,
+                        "x",
+                        legacy_alpha,
+                        outliers=_violin_outliers,
+                    )
                 elif not discrete_x and discrete_y:
                     positions = sorted(list(y_count.keys()))
-                    make_violin(self.array, positions, ax, color, "y", legacy_alpha)
+                    make_violin(
+                        self.array,
+                        positions,
+                        ax,
+                        color,
+                        "y",
+                        legacy_alpha,
+                        outliers=_violin_outliers,
+                    )
                 elif discrete_x:
                     raise ValueError(
                         "A violin plot needs one discrete variable and one "
@@ -2978,7 +3008,11 @@ class RVResults(Results):
             ax = plt.gca()
             get_next_color(ax)
             if "mosaic" in type or "stackedbar" in type:
-                _draw_mosaic_family(x, y, ax, type, **kwargs)
+                _drawn = _draw_mosaic_family(x, y, ax, type, **kwargs)
+                # A crowded mosaic is drawn as a stacked bar instead, so
+                # the note has to name what is on screen rather than what
+                # was asked for.
+                _suggestion = (_drawn, default, alternatives)
             elif "tile" in type:
                 make_tile(
                     x,

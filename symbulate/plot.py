@@ -129,6 +129,86 @@ xlim = plt.xlim
 ylim = plt.ylim
 
 
+# ---------------------------------------------------------------------------
+# Title and axis labels: the first plot on an axes names it.
+#
+# Overlays are the reason. Two .plot() calls in one cell share one axes, and
+# every plot type used to set its own title and labels unconditionally -- so
+# the *last* call won, and the finished figure was named after the thing
+# drawn on top. Simulating and then overlaying the true distribution left a
+# plot of simulated values titled "Probability Density Function"; a count
+# histogram with a density curve over it ended up with its y-axis labeled
+# "Density" even though the bars were counts.
+#
+# The rule is first-non-empty-wins, read straight off the axes rather than
+# tracked in a flag: whatever is already there stays. That makes the base
+# plot name the figure, and makes these helpers idempotent, which matters
+# for the dot plot (`_dotplot_relayout` re-decorates on every draw).
+#
+# Deliberate overrides -- the pairs matrix clearing a panel's title, the
+# marginal layout clearing the joint panel's -- call ax.set_title("")
+# directly instead, and are unaffected. Keep it that way: routing those
+# through these helpers would silently turn a clear into a no-op.
+# ---------------------------------------------------------------------------
+
+
+def set_plot_title(ax, title, **kwargs):
+    """Title ``ax``, unless an earlier plot already titled it.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to title.
+    title : str
+        The title to use if the axes has none yet.
+    **kwargs
+        Passed to ``ax.set_title``.
+
+    Examples
+    --------
+    >>> import matplotlib.pyplot as plt
+    >>> ax = plt.figure().gca()
+    >>> set_plot_title(ax, "Histogram")
+    >>> set_plot_title(ax, "Density (Estimated)")  # overlay; first one keeps it
+    >>> ax.get_title()
+    'Histogram'
+    """
+    if not ax.get_title():
+        ax.set_title(title, **kwargs)
+
+
+def set_plot_xlabel(ax, label, **kwargs):
+    """Label ``ax``'s x-axis, unless an earlier plot already labeled it.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to label.
+    label : str
+        The label to use if the x-axis has none yet.
+    **kwargs
+        Passed to ``ax.set_xlabel``.
+    """
+    if not ax.get_xlabel():
+        ax.set_xlabel(label, **kwargs)
+
+
+def set_plot_ylabel(ax, label, **kwargs):
+    """Label ``ax``'s y-axis, unless an earlier plot already labeled it.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axes to label.
+    label : str
+        The label to use if the y-axis has none yet.
+    **kwargs
+        Passed to ``ax.set_ylabel``.
+    """
+    if not ax.get_ylabel():
+        ax.set_ylabel(label, **kwargs)
+
+
 def get_next_color(axes):
     if not hasattr(axes, "_color_cycle"):
         prop_cycle = plt.rcParams["axes.prop_cycle"]
@@ -541,12 +621,15 @@ MOSAIC_SUGGEST_MAX_CATEGORIES = 4  # a mosaic's proportional column
 # the first -- there is no version of that anyone can read. This is the
 # hard-error tier of the overlay policy, not the readability-warning
 # tier that tile and hist2d use.
+#
+# Only a second mosaic/stacked bar is caught (ax._mosaic_count). Mixing
+# one with a *different* plot type is just as unreadable but currently
+# still draws -- see the note in CLAUDE.md.
 MOSAIC_OVERLAY_ERROR = (
-    "You can't draw a second mosaic or stacked bar plot on the same "
-    "axes. Each one divides the whole plot area up for its own data, so "
-    "the second would completely cover the first. Draw them as two "
-    "separate plots instead -- in Jupyter, put each .plot() call in its "
-    "own cell."
+    "Overlaying a mosaic or stacked bar plot with another plot won't "
+    "work -- each one fills the whole plot area, so they would cover "
+    "each other up. Please run them separately (one .plot() per cell), "
+    "or try a different plot type."
 )
 
 # Box plot.
@@ -1243,7 +1326,7 @@ PLOT_DISPLAY_NAME = {
     "bar": "Bar Chart",
     "impulse": "Impulse Plot",
     "hist": "Histogram",
-    "density": "Density Plot",
+    "density": "Density (Estimated)",
     "ecdf": "ECDF Plot",
     "rug": "Rug Plot",
     "dotplot": "Dot Plot",
@@ -2310,7 +2393,7 @@ def make_tile(
     # Only both-discrete data actually tiles one cell per value pair; a
     # mixed axis has been binned like a histogram, so the title should
     # read that way instead of claiming a discreteness the data doesn't have.
-    ax.set_title("Tile Plot" if discrete_x and discrete_y else "Joint Histogram")
+    set_plot_title(ax, "Tile Plot" if discrete_x and discrete_y else "Joint Histogram")
     # On mixed data (exactly one discrete axis), draw separator lines on
     # the discrete axis' cell boundaries -- every integer position between
     # the axis's own extent endpoints, which are always half a cell-width
@@ -2577,7 +2660,7 @@ def _draw_mosaic(x, y, ax, equal_width, legend, xlabel, ylabel, **kwargs):
     ax.yaxis.set_visible(True)
     ax.set_yticks(MOSAIC_YAXIS_TICKS)
     ax.set_yticklabels([f"{t:.2f}" for t in MOSAIC_YAXIS_TICKS])
-    ax.set_title("Stacked Bar Plot" if equal_width else "Mosaic Plot")
+    set_plot_title(ax, "Stacked Bar Plot" if equal_width else "Mosaic Plot")
     # A filled plot covers the whole axes, so the reference grid has
     # nothing to sit on -- turn it off rather than let fragments show
     # at the edges (the same reasoning make_tile / make_hist2d use).
@@ -2808,8 +2891,8 @@ def make_stackedbar(
     )
 
 
-def mosaic_type_suggestion(x, y, plot_type):
-    """Suggest the other of mosaic / stacked bar when it would read better.
+def resolve_mosaic_type(x, y, plot_type):
+    """Pick between mosaic and stacked bar for this many categories.
 
     A mosaic's proportional column widths are informative while the
     table is small, but past a handful of categories on either axis the
@@ -2818,51 +2901,58 @@ def mosaic_type_suggestion(x, y, plot_type):
     proportional widths are worth having, since they also show how
     common each ``x`` category is.
 
-    Neither type is ever refused; this only produces a message.
+    **The number of categories decides, in both directions.** Ask for a
+    mosaic of too many categories and a stacked bar is drawn instead; ask
+    for a stacked bar of few enough and a mosaic is drawn instead. Either
+    way the plot says what it did and why. The cutoff is
+    ``MOSAIC_SUGGEST_MAX_CATEGORIES`` on *either* axis.
+
+    So ``type=`` here says which of the pair you had in mind, not which
+    one you get -- the data has the final say, which is the point: a
+    student should not have to count categories to get a readable plot.
 
     Parameters
     ----------
     x, y : array-like
         The paired simulated values about to be plotted.
     plot_type : str
-        Which of ``"mosaic"`` / ``"stackedbar"`` is being drawn. Any
-        other value returns ``None``.
+        Which of ``"mosaic"`` / ``"stackedbar"`` was asked for. Any
+        other value is returned unchanged with no message.
 
     Returns
     -------
-    str or None
-        The suggestion to print, or ``None`` if the chosen type already
-        suits the number of categories.
+    tuple of (str, str or None)
+        The type to actually draw, and the message to print (or
+        ``None`` when the type asked for already suits the data).
 
     Examples
     --------
     >>> x = ["a", "b"] * 10
     >>> y = ["yes", "no"] * 10
-    >>> mosaic_type_suggestion(x, y, "mosaic") is None
-    True
+    >>> resolve_mosaic_type(x, y, "mosaic")
+    ('mosaic', None)
+    >>> crowded_x = [f"x{i}" for i in range(6)] * 5
+    >>> crowded_y = ["yes", "no"] * 15
+    >>> resolve_mosaic_type(crowded_x, crowded_y, "mosaic")[0]
+    'stackedbar'
+    >>> resolve_mosaic_type(x, y, "stackedbar")[0]
+    'mosaic'
     """
+    if plot_type not in ("mosaic", "stackedbar"):
+        return plot_type, None
     n_x = len(np.unique(np.asarray(x)))
     n_y = len(np.unique(np.asarray(y)))
     crowded = max(n_x, n_y) > MOSAIC_SUGGEST_MAX_CATEGORIES
-    if plot_type == "mosaic" and crowded:
-        return (
-            f"This mosaic plot has {n_x} x-categories and {n_y} "
-            "y-categories. With this many, the rarer columns get too "
-            "thin to compare -- try type='stackedbar', which draws "
-            "every column the same width."
-        )
-    if plot_type == "stackedbar" and not crowded:
-        return (
-            f"This stacked bar plot has only {n_x} x-categories and "
-            f"{n_y} y-categories. With this few, try type='mosaic' -- "
-            "it draws each column's width in proportion to how often "
-            "that category occurred, so the plot also shows which "
-            "categories are common."
-        )
-    return None
+    fits = "stackedbar" if crowded else "mosaic"
+    if plot_type == fits:
+        return fits, None
+    return fits, (
+        f"Your data has {n_x}x{n_y} categories, so the appropriate plot "
+        f"would be a {PLOT_DISPLAY_NAME[fits]}. Showing that instead."
+    )
 
 
-def make_violin(data, positions, ax, color, axis, alpha):
+def make_violin(data, positions, ax, color, axis, alpha, outliers=False):
     """Draw a violin plot of simulated values grouped by one discrete axis.
 
     One violin per distinct value in ``positions``, along whichever of
@@ -2870,6 +2960,10 @@ def make_violin(data, positions, ax, color, axis, alpha):
     continuous values. Every violin carries a narrow inner boxplot
     (pale ivory box, black median line and whiskers) so the median and
     IQR stay readable underneath the density shape.
+
+    ``outliers`` controls those inner boxes' whiskers exactly as it
+    does for ``make_grouped_boxplot``, so the two views of the same
+    data answer the same question the same way.
 
     A second call on the same axes still draws, but two overlapping
     sets of violin shapes are hard to tell apart, so a warning prints
@@ -2899,6 +2993,14 @@ def make_violin(data, positions, ax, color, axis, alpha):
         axis.
     alpha : float
         Violin body transparency between 0 and 1.
+    outliers : bool, optional
+        Controls each inner box's whiskers. If False (default), they
+        extend to that group's minimum and maximum values, so every
+        simulated value falls inside them. If True, they stop at the
+        most extreme value within 1.5 times the interquartile range,
+        and any points beyond that are drawn individually as outliers.
+        The violin bodies are kernel densities of every value either
+        way -- only the inner boxes change.
 
     Returns
     -------
@@ -2966,7 +3068,14 @@ def make_violin(data, positions, ax, color, axis, alpha):
         widths=box_width,
         orientation=orientation,
         patch_artist=True,
-        showfliers=False,
+        whis=(1.5 if outliers else (0, 100)),
+        showfliers=outliers,
+        flierprops=dict(
+            marker=BOXPLOT_FLIER_MARKER,
+            markersize=BOXPLOT_FLIER_SIZE,
+            markerfacecolor=color,
+            markeredgecolor=VIOLIN_EDGECOLOR,
+        ),
         manage_ticks=False,
         boxprops=dict(
             facecolor=VIOLIN_BOX_FACECOLOR,
@@ -2984,7 +3093,7 @@ def make_violin(data, positions, ax, color, axis, alpha):
 
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Violin Plot")
+    set_plot_title(ax, "Violin Plot")
 
     # Count the violin plots drawn on these axes, stored on the axes
     # object itself (the same pattern get_next_color uses for the
@@ -3223,7 +3332,7 @@ def make_impulse(
             ax.set_yticks(range(len(categories)))
             ax.set_yticklabels([str(c) for c in categories])
 
-    ax.set_title("Impulse Plot")
+    set_plot_title(ax, "Impulse Plot")
     _refresh_legend(ax)
     return xs, freqs
 
@@ -3341,7 +3450,7 @@ def make_hist(
     else:
         ax.set_ylabel(value_label)
         ax.set_xlabel(freq_label)
-    ax.set_title("Histogram")
+    set_plot_title(ax, "Histogram")
     # A legend only helps once there is more than one labeled artist to
     # tell apart -- another histogram, or a true-distribution overlay.
     _refresh_legend(ax, loc=HIST_LEGEND_LOC)
@@ -3555,7 +3664,7 @@ def make_bar(values, ax, color, normalize=True, alpha=None, label=None, **kwargs
     _bar_relayout(ax)
     ax.set_xlabel("Value")
     ax.set_ylabel("Relative Frequency" if normalize else "Count")
-    ax.set_title("Bar Chart")
+    set_plot_title(ax, "Bar Chart")
     # A legend only helps once there is more than one bar chart to tell
     # apart; a lone bar chart stays legend-free.
     if len(state["series"]) > 1:
@@ -3563,16 +3672,17 @@ def make_bar(values, ax, color, normalize=True, alpha=None, label=None, **kwargs
     return state["series"][-1]["container"]
 
 
-def make_boxplot(values, ax, color, alpha=None, label=None, outliers=True, **kwargs):
+def make_boxplot(values, ax, color, alpha=None, label=None, outliers=False, **kwargs):
     """Draw a box plot of simulated values on the given axes.
 
     A single box: edges at the first and third quartiles, a black
-    median line, whiskers to the most extreme value within 1.5 times
-    the interquartile range, and individual points beyond that drawn
-    as outliers. Pass ``outliers=False`` to instead extend the
-    whiskers all the way to the minimum and maximum values, with no
-    individual outlier points. Non-finite values (e.g. NaN) are
-    dropped before plotting.
+    median line, and whiskers extending all the way to the minimum and
+    maximum values, so every simulated value falls inside the whiskers.
+    Pass ``outliers=True`` for the classical convention instead: the
+    whiskers stop at the most extreme value within 1.5 times the
+    interquartile range, and points beyond that are drawn individually
+    as outliers. Non-finite values (e.g. NaN) are dropped before
+    plotting.
 
     Box plots overlay naturally: a second call on the same axes adds
     another box at the next position, and both boxes' x-ticks are
@@ -3602,12 +3712,12 @@ def make_boxplot(values, ax, color, alpha=None, label=None, outliers=True, **kwa
         "Variable k", where k counts the boxes drawn on these axes so
         far.
     outliers : bool, optional
-        If True (default), the whiskers stop at the most extreme
-        value within 1.5 times the interquartile range, and any
-        points beyond that are drawn individually as outliers. If
-        False, the whiskers extend to the minimum and maximum
-        values, so every point falls inside the whiskers and no
-        individual outlier points are drawn.
+        If False (default), the whiskers extend to the minimum and
+        maximum values, so every simulated value falls inside the
+        whiskers and no individual outlier points are drawn. If True,
+        the whiskers stop at the most extreme value within 1.5 times
+        the interquartile range, and any points beyond that are drawn
+        individually as outliers -- the classical convention.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.boxplot``.
@@ -3690,11 +3800,13 @@ def make_boxplot(values, ax, color, alpha=None, label=None, outliers=True, **kwa
     ax._boxplot_count = position
     box = ax.boxplot(values, positions=[position], tick_labels=[label], **kwargs)
     ax.set_ylabel("Value")
-    ax.set_title("Box Plot")
+    set_plot_title(ax, "Box Plot")
     return box
 
 
-def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
+def make_violinplot(
+    values, ax, color, alpha=None, label=None, outliers=False, **kwargs
+):
     """Draw a single violin plot of 1D simulated values on the given axes.
 
     One violin: a mirrored kernel density of the values, with a narrow
@@ -3704,6 +3816,10 @@ def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
     discrete grouping variable for 2D data), the same way ``make_boxplot``
     is the single-box counterpart of ``make_grouped_boxplot``. Non-finite
     values (e.g. NaN) are dropped before plotting.
+
+    ``outliers`` controls the inner box plot's whiskers exactly as it
+    does for ``make_boxplot``, so the two plot types answer the same
+    question the same way.
 
     Violin plots overlay side by side: a second call on the same axes adds
     another violin at the next position, and both violins' x-ticks are
@@ -3733,6 +3849,15 @@ def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
         Name for this violin, shown as its x-tick label. Defaults to
         "Variable k", where k counts the violins drawn on these axes so
         far.
+    outliers : bool, optional
+        Controls the inner box plot's whiskers, the same way it does
+        for ``make_boxplot``. If False (default), they extend to the
+        minimum and maximum values, so every simulated value falls
+        inside them. If True, they stop at the most extreme value
+        within 1.5 times the interquartile range, and any points
+        beyond that are drawn individually as outliers. The violin
+        body itself is a kernel density of every value either way --
+        only the inner box changes.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.violinplot``.
@@ -3790,13 +3915,23 @@ def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
     # The inner box plot marks the median and IQR on top of the density
     # shape. manage_ticks=False so it doesn't clobber the tick labels set
     # below (the same approach make_violin uses for its inner boxes).
+    # outliers= reaches the whiskers the same way it does in
+    # make_boxplot: False stretches them to the 0th and 100th
+    # percentiles, leaving nothing beyond them to draw as a flier.
     box_width = VIOLIN_WIDTH * VIOLIN_BOX_WIDTH_RATIO
     boxplot = ax.boxplot(
         values,
         positions=[position],
         widths=box_width,
         patch_artist=True,
-        showfliers=False,
+        whis=(1.5 if outliers else (0, 100)),
+        showfliers=outliers,
+        flierprops=dict(
+            marker=BOXPLOT_FLIER_MARKER,
+            markersize=BOXPLOT_FLIER_SIZE,
+            markerfacecolor=color,
+            markeredgecolor=VIOLIN_EDGECOLOR,
+        ),
         manage_ticks=False,
         boxprops=dict(
             facecolor=VIOLIN_BOX_FACECOLOR,
@@ -3819,7 +3954,7 @@ def make_violinplot(values, ax, color, alpha=None, label=None, **kwargs):
     ax.set_xticks([pos for pos, _ in labels])
     ax.set_xticklabels([lab for _, lab in labels])
     ax.set_ylabel("Value")
-    ax.set_title("Violin Plot")
+    set_plot_title(ax, "Violin Plot")
     return violins
 
 
@@ -3952,7 +4087,7 @@ def make_density(
         ax.set_ylabel("Value")
         ax.set_xlabel("Density")
         ax.set_xlim(left=0)
-    ax.set_title("Density (Estimated)")
+    set_plot_title(ax, "Density (Estimated)")
     # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
     # y), but the approved density prototype shows both horizontal and
     # vertical reference lines, so this overrides it for this plot type
@@ -4232,7 +4367,7 @@ def make_ecdf(values, ax, color, normalize=True, alpha=None, label=None, **kwarg
     )
     ax.set_xlabel("Value")
     ax.set_ylabel("Cumulative Relative Frequency" if normalize else "Cumulative Count")
-    ax.set_title("ECDF Plot")
+    set_plot_title(ax, "ECDF Plot")
     ax.set_ylim(bottom=0)
     # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
     # y), but the approved ECDF prototype shows both horizontal and
@@ -4363,7 +4498,7 @@ def make_sample_path(
 
     ax.set_xlabel("Time" if xlabel is None else xlabel)
     ax.set_ylabel("Value" if ylabel is None else ylabel)
-    ax.set_title("Sample Path")
+    set_plot_title(ax, "Sample Path")
     _refresh_legend(ax, loc=SAMPLE_PATH_LEGEND_LOC)
 
     return line
@@ -4551,7 +4686,7 @@ def make_segmented_rug(
         ax.set_xlim(-0.5, len(levels) - 0.5)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Rug Plot")
+    set_plot_title(ax, "Rug Plot")
     # Reference gridlines run along the discrete axis only -- one line per
     # level (band), so every distinct rug reads as its own group, even the
     # ones whose tick label was thinned out to avoid crowding. which="both"
@@ -4899,7 +5034,7 @@ def make_segmented_density(
         ax.set_xlim(lo, hi)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Conditional Density (Estimated)")
+    set_plot_title(ax, "Conditional Density (Estimated)")
     # A light reference grid along the continuous axis only, for reading
     # values off the curves. The discrete axis needs no grid line: each
     # level's baseline (the full-width grey line drawn on top above)
@@ -5235,7 +5370,7 @@ def make_segmented_hist(
         ax.set_xlim(lo, hi)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Conditional Histogram")
+    set_plot_title(ax, "Conditional Histogram")
     # A light reference grid along the continuous axis only, for reading
     # values off the bars. The discrete axis needs no grid line: each
     # level's baseline (the full-width grey line drawn on top above)
@@ -5260,7 +5395,7 @@ def make_grouped_boxplot(
     alpha=None,
     discrete_x=None,
     discrete_y=None,
-    outliers=True,
+    outliers=False,
     **kwargs,
 ):
     """Draw a box plot for mixed discrete/continuous data.
@@ -5268,10 +5403,11 @@ def make_grouped_boxplot(
     One box per distinct value of whichever variable is discrete, using
     the other (continuous) variable as the value axis -- the box-plot
     counterpart of ``make_violin`` for this same data configuration.
-    Each box's whiskers stop at the most extreme value within 1.5
-    times the interquartile range, with more extreme points drawn
-    individually as outliers; pass ``outliers=False`` to instead
-    extend the whiskers to each group's minimum and maximum values.
+    Each box's whiskers extend to that group's minimum and maximum
+    values, so every simulated value falls inside them; pass
+    ``outliers=True`` for the classical convention instead, where the
+    whiskers stop at 1.5 times the interquartile range and more extreme
+    points are drawn individually as outliers.
 
     The orientation follows which variable is discrete, mirroring
     ``make_segmented_rug`` and the mixed tile plot so the different
@@ -5313,12 +5449,12 @@ def make_grouped_boxplot(
     discrete_y : bool, optional
         Same as ``discrete_x`` for the y-axis.
     outliers : bool, optional
-        If True (default), each box's whiskers stop at the most
-        extreme value within 1.5 times the interquartile range, and
-        any points beyond that are drawn individually as outliers.
-        If False, the whiskers extend to each group's minimum and
-        maximum values, so every point falls inside the whiskers and
-        no individual outlier points are drawn.
+        If False (default), the whiskers extend to each group's
+        minimum and maximum values, so every simulated value falls
+        inside the whiskers and no individual outlier points are
+        drawn. If True, each box's whiskers stop at the most extreme
+        value within 1.5 times the interquartile range, and any points
+        beyond that are drawn individually as outliers.
     **kwargs
         Additional keyword arguments passed to
         ``matplotlib.axes.Axes.boxplot``.
@@ -5439,7 +5575,7 @@ def make_grouped_boxplot(
         ax.set_xticklabels(_discrete_tick_labels(tick_lab))
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Box Plot")
+    set_plot_title(ax, "Box Plot")
     return boxes
 
 
@@ -5693,7 +5829,7 @@ def _dotplot_boundary_lines(ax, state):
 
 def _dotplot_decorate(ax, state):
     """Apply the title, labels, fonts, and (for overlays) the legend."""
-    ax.set_title(DOTPLOT_TITLE)
+    set_plot_title(ax, DOTPLOT_TITLE)
     if state["orientation"] == "vertical":
         ax.set_ylabel("Count")
     else:
@@ -6252,7 +6388,7 @@ def make_scatter(
 
     ax.set_xlabel("Variable 1" if xlabel is None else xlabel)
     ax.set_ylabel("Variable 2" if ylabel is None else ylabel)
-    ax.set_title("2D Scatter Plot")
+    set_plot_title(ax, "2D Scatter Plot")
     _refresh_legend(ax, loc=SCATTER_LEGEND_LOC)
 
     if jitter in ("spiral", "bins"):
@@ -6389,7 +6525,7 @@ def make_hist2d(
     ax.grid(False)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Hexbin Plot" if hex else "Joint Histogram")
+    set_plot_title(ax, "Hexbin Plot" if hex else "Joint Histogram")
     if colorbar:
         # Colorbar on the right, sized relative to the axes so it
         # tracks figure resizing (the approved replacement for the old
@@ -6603,7 +6739,7 @@ def make_density2D(x, y, ax, contour=True, levels=None, colorbar=True, **kwargs)
     ax.set_ylim(ymin, ymax)
     ax.set_xlabel("Variable 1")
     ax.set_ylabel("Variable 2")
-    ax.set_title("Joint Density (Estimated)")
+    set_plot_title(ax, "Joint Density (Estimated)")
     # symbulate.mplstyle's global grid is horizontal-only
     # (axes.grid.axis: y); the approved prototypes call for both
     # horizontal and vertical reference lines, so this overrides it for
@@ -6838,7 +6974,9 @@ def make_joint_pdf(
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if title:
-        ax.set_title("Joint Contour Plot" if contour else "Joint PDF Plot")
+        # One name either way: contour= only changes the shading, not what
+        # is being shown, so the title should not imply two different plots.
+        set_plot_title(ax, "Joint Probability Density Function")
     # symbulate.mplstyle's global grid is horizontal-only (axes.grid.axis:
     # y); like the 1-D and 2-D density plots, this one reads better with
     # both directions, so override it for this plot type.
@@ -6974,7 +7112,7 @@ def make_joint_pmf(
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if title:
-        ax.set_title("Joint PMF Plot")
+        set_plot_title(ax, "Joint Probability Mass Function")
     # Counts are whole numbers, so only whole-number ticks make sense; cap
     # how many appear so the labels can't crowd into each other.
     ax.xaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))

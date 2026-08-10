@@ -103,11 +103,14 @@ places, not scattered inline.
 `type="density2d"`, a theoretical joint pdf, and every continuous joint panel of a
 pairs matrix) is drawn as `DENSITY2D_LEVELS`/`JOINT_PDF_LEVELS` discrete bands with
 thin white outlines, which can be read against the colorbar. `contour=False` gives
-the old smooth gradient (`*_CONTINUOUS_LEVELS` bands). Note the panel title follows
-the mode — "Contour Plot" / "Joint Contour Plot" by default, "2D Density Plot" /
-"Joint PDF Plot" with `contour=False` — while `PLOT_DISPLAY_NAME["density2d"]` in
-the suggestion note still reads "2D Density Plot", since that names the `type=`
-token rather than the shading.
+the old smooth gradient (`*_CONTINUOUS_LEVELS` bands). **The title does not follow
+the mode** — `contour=` changes only the shading, not what is being shown, so both
+settings give one name: **"Joint Density (Estimated)"** simulated, **"Joint
+Probability Density Function"** theoretical (and "Joint Probability Mass Function"
+for a discrete joint). `PLOT_DISPLAY_NAME["density2d"]` matches the simulated one.
+The earlier mode-dependent names ("Contour Plot" / "Joint Contour Plot" / "2D
+Density Plot" / "Joint PDF Plot") are gone — don't reintroduce a title that reports
+the shading.
 
 **Color palette:** categorical palette is **Okabe-Ito** (7 hues, excluding
 black) — colorblind-safe and print-friendly. Do not substitute other colors.
@@ -593,6 +596,29 @@ Tier A Only" and "Decision: Upcrossings — a Reset Level for Continuous Paths."
 - Exhaustion is recorded on `_UpcrossingWalk.finished`, so a sequence that has
   run past `max_time` does not re-walk the path for every later index.
 
+## Box and Violin Whiskers
+
+`outliers` defaults to **`False`** on every box and violin plot, which is
+*not* the classical convention: the whiskers run all the way to the minimum
+and maximum simulated values, so every value sits inside them and no
+individual outlier points are drawn. `outliers=True` restores the 1.5×IQR
+rule with fliers.
+
+The reason is that Symbulate plots simulated data, where a long tail is
+usually the thing being studied rather than contamination — and "the whiskers
+reach the smallest and largest value" needs no vocabulary a student doesn't
+have yet. See `DECISIONS.md`, "Box and Violin Whiskers Reach the Extremes by
+Default."
+
+**Violins take the same argument**, where it controls their **inner box
+plot**. The violin body is a kernel density of every value either way; only
+the inner box changes. All four helpers carry it — `make_boxplot`,
+`make_grouped_boxplot`, `make_violinplot`, `make_violin` — so a box and a
+violin of the same data never disagree about where the whiskers end. Note
+`make_violin` is called positionally by the 2-D dispatch, so `RVResults.plot()`
+**pops `outliers` out of `kwargs`** and passes it explicitly; the other three
+receive it through `**kwargs`.
+
 ## Mosaic and Stacked Bar
 
 Two discrete-or-categorical variables, drawn as columns of stacked segments:
@@ -629,11 +655,30 @@ Four things to respect:
 - **Overlay is a hard `ValueError`, checked before anything is drawn** so a
   refused second plot leaves the first intact. Both types share the one
   `ax._mosaic_count` counter, so mixing them is still an overlay.
-- **The 4-category nudge is a suggestion, never a refusal.**
-  `mosaic_type_suggestion(x, y, plot_type)` returns a message (or `None`)
-  when the other type would read better: past `MOSAIC_SUGGEST_MAX_CATEGORIES`
-  on *either* axis a mosaic's rare columns get too thin, and below it a
-  stacked bar is throwing away the width information a mosaic would show.
+- **The number of categories picks which of the two is drawn, in both
+  directions.** `resolve_mosaic_type(x, y, plot_type)` returns
+  `(type_to_draw, message_or_None)`. Over `MOSAIC_SUGGEST_MAX_CATEGORIES`
+  on *either* axis a stacked bar is drawn; at or under it, a mosaic — and
+  whichever the caller asked for, the plot says what it did:
+
+  > `Your data has 7x2 categories, so the appropriate plot would be a
+  > Stacked Bar Plot. Showing that instead.`
+
+  So on these two types **`type=` says which one you had in mind, not
+  which one you get.** That is deliberate: a student shouldn't have to
+  count categories to get a readable plot. Keep the two directions
+  symmetric — an earlier draft switched only the crowded one and merely
+  nudged the other, and the asymmetry was the thing that got rejected.
+- **The switch means the note has to name what was drawn, not what was
+  asked for.** Both dispatch branches reassign `_suggestion` from
+  `_draw_mosaic_family`'s return value, so `Currently Showing:` reads
+  "Stacked Bar Plot" after an override. A test pins this.
+- **A cutoff of 4 catches more numeric data than you might expect, and
+  test fixtures have to sit on the right side of it.** `Binomial(5, p)`
+  has 6 distinct values, so `Binomial(5, p) ** 2` is 6x6 and draws a
+  stacked bar. Mosaic tests use `Binomial(3, p)` (4 values, exactly at the
+  cutoff — the test is `>`, not `>=`); stacked bar tests use
+  `Binomial(6, p)` (7 values).
 
 **Two categorical variables default to `mosaic`.** A pair of strings is not a
 numeric vector, so `RVResults.dim` is `None` and the numeric `dim == 2` branch
@@ -1002,6 +1047,7 @@ pytest tests/
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
 - Do not use `viridis_r` (reversed) for 2D density/tile/hist2d — plain `viridis`, 0 = dark.
 - Do not bring back `equal_width=`, `marginal_column=`, `annotate=`, or in-cell labels on mosaic/stacked bar plots, and do not soften their overlay back to a warning — all were removed by request (see "Mosaic and Stacked Bar")
+- Do not flip `outliers` back to `True` on box or violin plots, and do not add a box/violin whisker setting that only one of the two honors — the extremes-by-default convention was requested, and the point is that both plot types agree (see "Box and Violin Whiskers")
 - Do not reserve a gap for a zero-weight segment in `_mosaic_spans` — that was the bug that stopped columns short of 0 and 1, and there are tests pinning both ends
 - Do not push directly to `main` or `dev`
 - Do not change the public API without team discussion

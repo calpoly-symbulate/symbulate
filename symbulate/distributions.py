@@ -14,6 +14,7 @@ from matplotlib.ticker import MaxNLocator
 
 from .plot import (
     get_next_color,
+    set_plot_title,
     DistributionPlot,
     JointDistributionPlot,
     make_joint_pdf,
@@ -682,12 +683,15 @@ class Distribution(ProbabilitySpace):
         # Title the plot by what it shows: the cumulative distribution
         # function, or -- for the default view -- the probability density
         # function (continuous) or probability mass function (discrete).
+        # set_plot_title, not ax.set_title: overlaying the true distribution
+        # on a plot of simulated values should leave the simulated plot's
+        # title in place, since that is what the figure is mainly showing.
         if cdf:
-            ax.set_title("Cumulative Distribution Function")
+            set_plot_title(ax, "Cumulative Distribution Function")
         elif self.discrete:
-            ax.set_title("Probability Mass Function")
+            set_plot_title(ax, "Probability Mass Function")
         else:
-            ax.set_title("Probability Density Function")
+            set_plot_title(ax, "Probability Density Function")
 
         # Label the axes for context: the x-axis shows the possible values of
         # the variable, and the y-axis names what its height means for this
@@ -6228,8 +6232,9 @@ class MultivariateDistribution(Distribution):
         plt.setp(ax_marg_x.get_xticklabels(), visible=False)
         plt.setp(ax_marg_y.get_yticklabels(), visible=False)
         # There is no room for the joint panel's own title -- it would collide
-        # with the strip above it -- but what the plot is ("Joint Contour
-        # Plot", "Joint PMF Plot") is worth keeping, so it moves to the figure,
+        # with the strip above it -- but what the plot is ("Joint Probability
+        # Density Function", "Joint Probability Mass Function") is worth
+        # keeping, so it moves to the figure,
         # above all three panels. Read back from the panel rather than
         # re-derived, so it stays whatever the joint plot titled itself.
         fig.suptitle(ax.get_title())

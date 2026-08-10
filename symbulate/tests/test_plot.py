@@ -81,7 +81,7 @@ from symbulate.plot import (
     make_ecdf,
     make_mosaic,
     make_stackedbar,
-    mosaic_type_suggestion,
+    resolve_mosaic_type,
     MOSAIC_SUGGEST_MAX_CATEGORIES,
     MOSAIC_YAXIS_TICKS,
     _mosaic_spans,
@@ -919,6 +919,34 @@ class TestPlot2DViolin(PlotTestCase):
             sims.plot(type="violin")
         self.assertGreater(len(plt.gca().collections), 0)
 
+    def test_grouped_violin_accepts_outliers_argument(self):
+        """make_violin takes outliers= like make_grouped_boxplot does."""
+        import inspect
+
+        from symbulate.plot import make_violin
+
+        params = inspect.signature(make_violin).parameters
+        self.assertIn("outliers", params)
+        self.assertIs(params["outliers"].default, False)
+
+    def test_grouped_violin_outliers_kwarg_flows_through_plot(self):
+        def n_flier_points():
+            return sum(
+                len(line.get_xdata())
+                for line in plt.gca().lines
+                if line.get_linestyle() == "None"
+            )
+
+        X, Y = RV(Binomial(5, 0.4) * Exponential(1))
+        sims = (X & Y).sim(600)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PendingDeprecationWarning)
+            sims.plot(type="violin", suggest=False)
+            self.assertEqual(n_flier_points(), 0, "default should be outliers=False")
+            plt.close("all")
+            sims.plot(type="violin", suggest=False, outliers=True)
+            self.assertGreater(n_flier_points(), 0)
+
     def test_violin_continuous_x_discrete_y(self):
         X, Y = RV(Normal(0, 1) * Binomial(5, 0.4))
         sims = (X & Y).sim(500)
@@ -1235,6 +1263,78 @@ class TestPlot1DViolin(PlotTestCase):
         # A violin body is a PolyCollection; the inner box adds patches/lines.
         self.assertGreater(len(ax.collections), 0)
 
+    # ---- outliers=, mirroring make_boxplot ----
+
+    def test_violin_accepts_outliers_argument(self):
+        """A violin takes outliers= the same way a box plot does."""
+        import inspect
+
+        from symbulate.plot import make_violinplot
+
+        params = inspect.signature(make_violinplot).parameters
+        self.assertIn("outliers", params)
+        self.assertIs(params["outliers"].default, False)
+
+    def test_violin_outliers_default_is_false_no_flier_points(self):
+        from symbulate.plot import make_violinplot, get_next_color
+
+        values = np.append(np.random.normal(0, 1, 200), 25.0)
+        ax = plt.gca()
+        make_violinplot(values, ax, get_next_color(ax))
+        fliers = [
+            y
+            for line in ax.lines
+            if line.get_linestyle() == "None"
+            for y in line.get_ydata()
+        ]
+        self.assertEqual(len(fliers), 0)
+
+    def test_violin_outliers_true_draws_flier_points(self):
+        from symbulate.plot import make_violinplot, get_next_color
+
+        values = np.append(np.random.normal(0, 1, 200), 25.0)
+        ax = plt.gca()
+        make_violinplot(values, ax, get_next_color(ax), outliers=True)
+        fliers = [
+            y
+            for line in ax.lines
+            if line.get_linestyle() == "None"
+            for y in line.get_ydata()
+        ]
+        self.assertIn(25.0, fliers)
+
+    def test_violin_outliers_kwarg_flows_through_plot(self):
+        """outliers= passed to .plot() reaches the violin helper."""
+
+        def n_flier_points():
+            return sum(
+                len(line.get_xdata())
+                for line in plt.gca().lines
+                if line.get_linestyle() == "None"
+            )
+
+        planted = RVResults(np.append(np.random.normal(0, 1, 200), 25.0))
+        planted.plot(type="violin", suggest=False)
+        self.assertEqual(n_flier_points(), 0, "default should be outliers=False")
+        plt.close("all")
+        planted.plot(type="violin", suggest=False, outliers=True)
+        self.assertGreater(n_flier_points(), 0)
+
+    def test_violin_body_shows_every_value_regardless_of_outliers(self):
+        """outliers= only changes the inner box; the density body is
+        always built from all the data."""
+        from symbulate.plot import make_violinplot, get_next_color
+
+        values = np.append(np.random.normal(0, 1, 200), 25.0)
+        extents = []
+        for flag in (False, True):
+            plt.close("all")
+            ax = plt.gca()
+            make_violinplot(values, ax, get_next_color(ax), outliers=flag)
+            body = ax.collections[0].get_paths()[0].vertices
+            extents.append(round(body[:, 1].max(), 6))
+        self.assertEqual(extents[0], extents[1])
+
     def test_violin_default_alpha(self):
         ax = plt.gca()
         make_violinplot(np.random.normal(0, 1, 200), ax, get_next_color(ax))
@@ -1392,8 +1492,20 @@ class TestPlotCategorical2D(PlotTestCase):
         self.assertEqual(default, "mosaic")
         self.assertEqual(alternatives, ["stackedbar", "tile"])
 
-    def test_stackedbar_is_available(self):
+    def test_stackedbar_on_two_categories_is_drawn_as_a_mosaic(self):
+        """event_sim is 2x2, so the category count picks the mosaic even
+        though a stacked bar was asked for."""
         self.sims.plot(type="stackedbar", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
+
+    def test_many_categories_are_drawn_as_a_stacked_bar(self):
+        def many_sim():
+            a = BoxModel([f"g{i}" for i in range(6)]).draw()
+            b = BoxModel(["yes", "no"]).draw()
+            return a, b
+
+        X, Y = RV(ProbabilitySpace(many_sim))
+        (X & Y).sim(600).plot(suggest=False)
         self.assertEqual(plt.gca().get_title(), "Stacked Bar Plot")
 
     def test_tile_is_available(self):
@@ -1723,13 +1835,25 @@ class TestPlot1DBoxStyling(PlotTestCase):
             make_boxplot(np.array([np.nan, np.nan]), ax, get_next_color(ax))
         self.assertIn("no values", str(cm.exception))
 
-    def test_box_outliers_default_draws_outlier_points(self):
-        """With outliers=True (default), extreme points become fliers."""
+    def test_box_outliers_default_is_false_no_flier_points(self):
+        """The default extends the whiskers to min/max, so nothing is
+        left over to draw as an individual outlier point."""
         from symbulate.plot import make_boxplot, get_next_color
 
         values = np.append(np.random.normal(0, 1, 50), 25.0)
         ax = plt.gca()
         box = make_boxplot(values, ax, get_next_color(ax))
+        self.assertEqual(len(box["fliers"][0].get_ydata()), 0)
+        whisker_ends = [w.get_ydata()[1] for w in box["whiskers"]]
+        self.assertAlmostEqual(max(whisker_ends), 25.0)
+
+    def test_box_outliers_true_draws_outlier_points(self):
+        """outliers=True opts back into the classical 1.5*IQR convention."""
+        from symbulate.plot import make_boxplot, get_next_color
+
+        values = np.append(np.random.normal(0, 1, 50), 25.0)
+        ax = plt.gca()
+        box = make_boxplot(values, ax, get_next_color(ax), outliers=True)
         self.assertIn(25.0, box["fliers"][0].get_ydata())
 
     def test_box_outliers_false_extends_whiskers_to_extremes(self):
@@ -1754,17 +1878,17 @@ class TestPlot1DBoxStyling(PlotTestCase):
                 if line.get_linestyle() == "None"
             )
 
-        # A planted extreme value is always a flier under the default
-        # 1.5-IQR rule, so the assertion does not depend on a random draw
+        # A planted extreme value is always a flier under the 1.5-IQR
+        # rule, so the assertion does not depend on a random draw
         # happening to contain an outlier (Normal(0, 1) sometimes has
         # none). self.sims uses the package RNG, which np.random.seed does
         # not control, so plotting it directly made this test flaky.
         planted = RVResults(np.append(np.random.normal(0, 1, 200), 25.0))
         planted.plot(type="box")
-        self.assertGreater(n_flier_points(), 0)
+        self.assertEqual(n_flier_points(), 0, "default should be outliers=False")
         plt.close("all")
-        planted.plot(type="box", outliers=False)
-        self.assertEqual(n_flier_points(), 0)
+        planted.plot(type="box", outliers=True)
+        self.assertGreater(n_flier_points(), 0)
 
     def test_box_returns_wrapper(self):
         p = self.sims.plot(type="box")
@@ -2071,8 +2195,17 @@ class TestPlot2DMosaic(PlotTestCase):
 
     def setUp(self):
         np.random.seed(42)
-        Xd, Yd = RV(Binomial(5, 0.4) ** 2)
+        # The category count decides which of the two is drawn, so the
+        # fixtures have to sit on the right side of the cutoff.
+        # Binomial(3, .) has 4 distinct values, right at
+        # MOSAIC_SUGGEST_MAX_CATEGORIES, so this stays a mosaic (the test
+        # is > , not >=).
+        Xd, Yd = RV(Binomial(3, 0.4) ** 2)
         self.discrete_sims = (Xd & Yd).sim(500)
+        # Binomial(6, .) has 7 distinct values -- over the cutoff, so this
+        # is what actually draws a stacked bar.
+        Xc, Yc = RV(Binomial(6, 0.3) ** 2)
+        self.crowded_sims = (Xc & Yc).sim(500)
 
     def test_mosaic_produces_bars(self):
         self.discrete_sims.plot(type="mosaic")
@@ -2190,7 +2323,7 @@ class TestPlot2DMosaic(PlotTestCase):
         self.discrete_sims.plot(type="mosaic")
         with self.assertRaises(ValueError) as cm:
             self.discrete_sims.plot(type="mosaic")
-        self.assertIn("second mosaic or stacked bar plot", str(cm.exception))
+        self.assertIn("Overlaying a mosaic or stacked bar plot", str(cm.exception))
 
     def test_stackedbar_over_mosaic_raises(self):
         """The two share one axes counter -- mixing them is still an
@@ -2210,14 +2343,14 @@ class TestPlot2DMosaic(PlotTestCase):
     # ---- mosaic vs stackedbar as two plot types (requested change) ----
 
     def test_stackedbar_title(self):
-        self.discrete_sims.plot(type="stackedbar")
+        self.crowded_sims.plot(type="stackedbar")
         self.assertEqual(plt.gca().get_title(), "Stacked Bar Plot")
 
     def test_stackedbar_display_name(self):
         self.assertEqual(PLOT_DISPLAY_NAME["stackedbar"], "Stacked Bar Plot")
 
     def test_stackedbar_produces_uniform_column_widths(self):
-        self.discrete_sims.plot(type="stackedbar")
+        self.crowded_sims.plot(type="stackedbar")
         widths = {round(b.get_width(), 6) for b in plt.gca().patches}
         self.assertEqual(len(widths), 1)
 
@@ -2263,50 +2396,82 @@ class TestPlot2DMosaic(PlotTestCase):
         make_mosaic(["a", "b"], ["x", "y"], plt.gca(), legend=False)
         self.assertIsNone(plt.gca().get_legend())
 
-    # ---- the 4x4 suggestion nudge (requested change) ----
+    # ---- too many categories switches a mosaic to a stacked bar ----
 
-    def test_suggestion_none_when_type_suits_category_count(self):
-        """A small table suits a mosaic, so a mosaic gets no nudge -- but a
-        stacked bar on the same data does (see the companion test)."""
-        x = ["a", "b"] * 10
-        y = ["p", "q"] * 10
-        self.assertIsNone(mosaic_type_suggestion(x, y, "mosaic"))
+    SMALL_X = ["a", "b"] * 10
+    SMALL_Y = ["p", "q"] * 10
+    BIG_X = [f"x{i}" for i in range(6)] * 5
+    BIG_Y = ["p", "q"] * 15
 
-        big_x = [f"x{i}" for i in range(6)] * 5
-        big_y = ["p", "q"] * 15
-        self.assertIsNone(mosaic_type_suggestion(big_x, big_y, "stackedbar"))
+    def test_small_mosaic_is_left_alone(self):
+        drawn, note = resolve_mosaic_type(self.SMALL_X, self.SMALL_Y, "mosaic")
+        self.assertEqual(drawn, "mosaic")
+        self.assertIsNone(note)
 
-    def test_crowded_mosaic_suggests_stackedbar(self):
-        x = [f"x{i}" for i in range(6)] * 5
-        y = ["p", "q"] * 15
-        note = mosaic_type_suggestion(x, y, "mosaic")
-        self.assertIsNotNone(note)
-        self.assertIn("type='stackedbar'", note)
+    def test_crowded_mosaic_becomes_a_stacked_bar(self):
+        """Past the cutoff a mosaic's columns are unreadable, so the
+        request is overridden rather than merely questioned."""
+        drawn, note = resolve_mosaic_type(self.BIG_X, self.BIG_Y, "mosaic")
+        self.assertEqual(drawn, "stackedbar")
+        self.assertIn("6x2 categories", note)
+        self.assertIn("Stacked Bar Plot", note)
 
-    def test_small_stackedbar_suggests_mosaic(self):
-        x = ["a", "b"] * 10
-        y = ["p", "q"] * 10
-        note = mosaic_type_suggestion(x, y, "stackedbar")
-        self.assertIsNotNone(note)
-        self.assertIn("type='mosaic'", note)
+    def test_crowded_stackedbar_is_left_alone(self):
+        drawn, note = resolve_mosaic_type(self.BIG_X, self.BIG_Y, "stackedbar")
+        self.assertEqual(drawn, "stackedbar")
+        self.assertIsNone(note)
 
-    def test_suggestion_triggers_on_either_axis(self):
+    def test_small_stackedbar_becomes_a_mosaic(self):
+        """The switch runs both ways: few enough categories and a stacked
+        bar is drawn as a mosaic, with the same shape of message."""
+        drawn, note = resolve_mosaic_type(self.SMALL_X, self.SMALL_Y, "stackedbar")
+        self.assertEqual(drawn, "mosaic")
+        self.assertIn("2x2 categories", note)
+        self.assertIn("Mosaic Plot", note)
+
+    def test_small_stackedbar_through_plot_draws_a_mosaic(self):
+        self.discrete_sims.plot(type="stackedbar", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
+
+    def test_switch_triggers_on_either_axis(self):
         """More than MOSAIC_SUGGEST_MAX_CATEGORIES on y alone is enough."""
         x = ["a", "b"] * 15
         y = [f"y{i}" for i in range(6)] * 5
-        self.assertIsNotNone(mosaic_type_suggestion(x, y, "mosaic"))
+        drawn, _ = resolve_mosaic_type(x, y, "mosaic")
+        self.assertEqual(drawn, "stackedbar")
 
-    def test_suggestion_boundary_is_max_categories(self):
+    def test_switch_boundary_is_max_categories(self):
         n = MOSAIC_SUGGEST_MAX_CATEGORIES
         at = [f"x{i}" for i in range(n)] * 4
         over = [f"x{i}" for i in range(n + 1)] * 4
         y_at = ["p", "q"] * (len(at) // 2)
         y_over = ["p", "q"] * (len(over) // 2)
-        self.assertIsNone(mosaic_type_suggestion(at, y_at, "mosaic"))
-        self.assertIsNotNone(mosaic_type_suggestion(over, y_over, "mosaic"))
+        self.assertEqual(resolve_mosaic_type(at, y_at, "mosaic")[0], "mosaic")
+        self.assertEqual(resolve_mosaic_type(over, y_over, "mosaic")[0], "stackedbar")
 
-    def test_suggestion_ignores_other_plot_types(self):
-        self.assertIsNone(mosaic_type_suggestion(["a"], ["b"], "tile"))
+    def test_resolve_ignores_other_plot_types(self):
+        drawn, note = resolve_mosaic_type(["a"], ["b"], "tile")
+        self.assertEqual(drawn, "tile")
+        self.assertIsNone(note)
+
+    def test_crowded_mosaic_through_plot_draws_a_stacked_bar(self):
+        """End to end: type='mosaic' on crowded data renders a stacked bar
+        and titles itself accordingly."""
+        X, Y = RV(Binomial(n=6, p=0.3) * Binomial(n=6, p=0.5))
+        (X & Y).sim(800).plot(type="mosaic", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Stacked Bar Plot")
+
+    def test_crowded_mosaic_note_names_what_was_drawn(self):
+        """The 'Currently Showing' note must say Stacked Bar Plot, not the
+        mosaic that was asked for and not drawn."""
+        import io
+        import contextlib
+
+        X, Y = RV(Binomial(n=6, p=0.3) * Binomial(n=6, p=0.5))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            (X & Y).sim(800).plot(type="mosaic", suggest=True)
+        self.assertIn("Currently Showing: Stacked Bar Plot", buf.getvalue())
 
 
 class TestPlot2DBox(PlotTestCase):
@@ -2374,10 +2539,10 @@ class TestPlot2DBox(PlotTestCase):
         X, Y = RV(Binomial(5, 0.4) * Normal(0, 1))
         sims = (X & Y).sim(500)
         sims.plot(type="box")
-        self.assertGreater(n_flier_points(), 0)
+        self.assertEqual(n_flier_points(), 0, "default should be outliers=False")
         plt.close("all")
-        sims.plot(type="box", outliers=False)
-        self.assertEqual(n_flier_points(), 0)
+        sims.plot(type="box", outliers=True)
+        self.assertGreater(n_flier_points(), 0)
 
 
 class TestPlot2DCombinedTypes(PlotTestCase):
@@ -3433,6 +3598,90 @@ class TestDefaultLookupDispatch(PlotTestCase):
                 plt.close("all")
 
 
+class TestOverlayTitle(PlotTestCase):
+    """On an overlay, the first plot names the figure.
+
+    Every plot type used to set its title unconditionally, so the last
+    .plot() call won and the figure ended up named after whatever was drawn
+    on top -- a plot of simulated values titled "Probability Density
+    Function" once the true curve was overlaid.
+    """
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(Normal(0, 1)).sim(500)
+
+    def test_true_distribution_overlay_keeps_simulated_title(self):
+        """The reported case: simulate, then overlay the true pdf."""
+        self.sims.plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Histogram")
+        Normal(0, 1).plot()
+        self.assertEqual(plt.gca().get_title(), "Histogram")
+
+    def test_simulated_overlay_keeps_theoretical_title(self):
+        """The rule is first-wins, not simulated-wins: drawing the true
+        curve first means it names the figure."""
+        Normal(0, 1).plot()
+        self.assertEqual(plt.gca().get_title(), "Probability Density Function")
+        self.sims.plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Probability Density Function")
+
+    def test_second_simulated_type_keeps_first_title(self):
+        self.sims.plot(suggest=False)
+        self.sims.plot(type="density", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Histogram")
+
+    def test_discrete_overlay_keeps_first_title(self):
+        d = RV(Binomial(10, 0.4)).sim(500)
+        d.plot(suggest=False)
+        first = plt.gca().get_title()
+        d.plot(type="dotplot", suggest=False)
+        self.assertEqual(plt.gca().get_title(), first)
+
+    def test_a_plot_on_a_fresh_axes_still_gets_its_own_title(self):
+        """First-wins must not mean no-one-wins."""
+        self.sims.plot(type="ecdf", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "ECDF Plot")
+
+    def test_title_survives_repeated_draws(self):
+        """A dot plot re-decorates itself on every render
+        (_dotplot_relayout), so the helper has to be idempotent."""
+        import io
+
+        RV(Binomial(10, 0.4)).sim(60).plot(type="dotplot", suggest=False)
+        ax = plt.gca()
+        for _ in range(3):
+            plt.gcf().savefig(io.BytesIO(), format="png")
+        self.assertEqual(ax.get_title(), "Dot Plot")
+
+    def test_set_plot_title_helper_is_first_wins(self):
+        from symbulate.plot import set_plot_title
+
+        ax = plt.gca()
+        set_plot_title(ax, "First")
+        set_plot_title(ax, "Second")
+        self.assertEqual(ax.get_title(), "First")
+
+    def test_explicit_clear_still_works(self):
+        """The pairs matrix and the marginal layout clear a panel's title
+        with a raw ax.set_title("") -- that must stay a real clear, not
+        become a no-op."""
+        self.sims.plot(suggest=False)
+        ax = plt.gca()
+        ax.set_title("")
+        self.assertEqual(ax.get_title(), "")
+
+    def test_pairs_panels_have_no_titles(self):
+        """Regression guard: the matrix clears each panel's own type title
+        and carries one suptitle instead."""
+        X = RV(MultivariateNormal([0, 0, 0], np.eye(3).tolist()))
+        X.sim(300).plot(suggest=False)
+        fig = plt.gcf()
+        panels = [a for a in fig.axes if a.get_subplotspec() is not None]
+        self.assertGreater(len(panels), 0)
+        self.assertTrue(all(a.get_title() == "" for a in panels))
+
+
 class TestSuggestionNote(PlotTestCase):
     """The 'Currently Showing / Alternative Plots' note under plots."""
 
@@ -3460,7 +3709,7 @@ class TestSuggestionNote(PlotTestCase):
 
     def test_explicit_type_marks_the_default_alternative(self):
         out = self._plot_output(type="density", suggest=True)
-        self.assertIn("Currently Showing: Density Plot", out)
+        self.assertIn("Currently Showing: Density (Estimated)", out)
         self.assertIn("Histogram (Default)", out)
 
     def test_suggest_none_shows_once_per_session(self):
@@ -3497,11 +3746,14 @@ class TestSuggestionNote(PlotTestCase):
             (X & Y).sim(500).plot(type="stackedbar", suggest=True)
         self.assertIn("Currently Showing: Stacked Bar Plot", buf.getvalue())
 
-    def test_mosaic_without_equal_width_note_still_says_mosaic_plot(self):
+    def test_mosaic_note_says_mosaic_plot(self):
         import io
         import contextlib
 
-        X, Y = RV(Binomial(5, 0.4) ** 2)
+        # Few enough categories that the mosaic is kept as asked for; a
+        # crowded one is switched to a stacked bar and says so instead
+        # (see TestPlot2DMosaic).
+        X, Y = RV(Binomial(3, 0.4) ** 2)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             (X & Y).sim(500).plot(type="mosaic", suggest=True)
@@ -3688,12 +3940,12 @@ class TestDistributionPlotDiscrete(PlotTestCase):
     def test_multivariate_normal_plots_joint_density(self):
         """MultivariateNormal.plot() draws the joint density of two variables."""
         MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Contour Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
 
     def test_multinomial_plots_joint_pmf(self):
         """Multinomial.plot() draws a probability per pair of counts."""
         Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint PMF Plot")
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Mass Function")
 
 
 # ===========================================================================
@@ -4313,7 +4565,7 @@ class TestSuggestionMessage(unittest.TestCase):
     def test_non_default_alternatives_use_type_syntax(self):
         msg = suggestion_message("impulse", "impulse", ["hist", "density"])
         self.assertIn('Histogram (type = "hist")', msg)
-        self.assertIn('Density Plot (type = "density")', msg)
+        self.assertIn('Density (Estimated) (type = "density")', msg)
 
     def test_mixed_suggestion_uses_short_type_names(self):
         """On mixed data the lookup table and suggestion note use the short
@@ -4322,7 +4574,7 @@ class TestSuggestionMessage(unittest.TestCase):
         msg = suggestion_message(default, default, alts)
         self.assertNotIn("segmented_", msg)
         self.assertIn('Histogram (type = "hist")', msg)
-        self.assertIn('Density Plot (type = "density")', msg)
+        self.assertIn('Density (Estimated) (type = "density")', msg)
 
 
 # ===========================================================================
@@ -4382,9 +4634,9 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
         for dist, title in [
             (
                 MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]),
-                "Joint Contour Plot",
+                "Joint Probability Density Function",
             ),
-            (Multinomial(n=10, p=[0.2, 0.3, 0.5]), "Joint PMF Plot"),
+            (Multinomial(n=10, p=[0.2, 0.3, 0.5]), "Joint Probability Mass Function"),
         ]:
             with self.subTest(dist=type(dist).__name__):
                 plt.close("all")
@@ -4444,7 +4696,7 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
         MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot(ax=ax)
         self.assertEqual(len(self._panels()), 1)
         # Its own title stays on it, since nothing sits above it.
-        self.assertEqual(ax.get_title(), "Joint Contour Plot")
+        self.assertEqual(ax.get_title(), "Joint Probability Density Function")
         self.assertEqual(fig.get_suptitle(), "")
 
     def test_a_pairs_matrix_is_unaffected(self):
@@ -4472,13 +4724,13 @@ class TestJointTheoreticalPlots(PlotTestCase):
         self.assertEqual(seen["n"], JOINT_PDF_GRID_POINTS**2)
         self.assertEqual(ax.get_xlim(), (-3, 3))
         self.assertEqual(ax.get_ylim(), (-3, 3))
-        self.assertEqual(ax.get_title(), "Joint Contour Plot")
+        self.assertEqual(ax.get_title(), "Joint Probability Density Function")
 
     def test_make_joint_pdf_contour_titles_and_bands(self):
         pdf = lambda x, y: np.exp(-(x**2 + y**2) / 2)
         ax = plt.gca()
         make_joint_pdf(pdf, (-3, 3), (-3, 3), ax, contour=True)
-        self.assertEqual(ax.get_title(), "Joint Contour Plot")
+        self.assertEqual(ax.get_title(), "Joint Probability Density Function")
 
     def test_make_joint_pdf_survives_an_unbounded_density(self):
         # A density that runs to infinity at the edge of its support is
@@ -4521,7 +4773,7 @@ class TestJointTheoreticalPlots(PlotTestCase):
         self.assertEqual(mesh.get_array().shape, (4, 4))
         self.assertEqual(ax.get_xlim(), (-0.5, 3.5))
         self.assertEqual(ax.get_ylim(), (-0.5, 3.5))
-        self.assertEqual(ax.get_title(), "Joint PMF Plot")
+        self.assertEqual(ax.get_title(), "Joint Probability Mass Function")
 
     def test_second_joint_plot_warns_and_keeps_one_colorbar(self):
         # The "warn but still draw" tier of the overlay policy, the same one
