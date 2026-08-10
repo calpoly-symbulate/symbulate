@@ -4263,6 +4263,7 @@ def make_sample_path(
     values,
     ax,
     color,
+    style="line",
     linewidth=None,
     alpha=None,
     label=None,
@@ -4270,15 +4271,35 @@ def make_sample_path(
     ylabel=None,
     **kwargs,
 ):
-    """Draw one simulated sample path as a plain connected line.
+    """Draw one simulated sample path.
 
     This replaces the ``plt.plot(ts, ys, ".--", **kwargs)`` calls
     previously duplicated across ``Tuple.plot()``,
     ``InfiniteVector.plot()``, ``DiscreteTimeFunction.plot()``, and
-    ``ContinuousTimeFunction.plot()`` in ``result.py``: the dot-dash
-    marker is dropped in favor of a plain solid line (readable whether
-    the path has 10 points or 1000), and the package's color cycle,
-    axis labels, and title are added.
+    ``ContinuousTimeFunction.plot()`` in ``result.py``, and adds the
+    package's color cycle, axis labels, and title. The ``style``
+    argument controls how the points are connected, since a discrete
+    sequence of values, an exact jump process, and a densely-sampled
+    continuous path each read best with a different line style:
+
+    - ``"line"`` (default): a plain solid line connecting every point.
+      Readable whether the path has 10 points or 1000, and the right
+      choice for a continuous process sampled on a fine time grid
+      (e.g. Brownian motion), where the fine grid itself makes the
+      line look smooth.
+    - ``"dots"``: a marker at every point joined by a dashed line
+      (matplotlib's ``".--"`` style). Meant for a discrete sequence of
+      values, e.g. a ``Tuple``, an ``InfiniteVector``, or a
+      ``DiscreteTimeFunction`` -- there is nothing "between" one index
+      and the next, so marking each one and dashing the segments
+      between them keeps the plot from implying values exist there.
+    - ``"steps"``: a solid line held flat at the current value until
+      it jumps to the next one (matplotlib's ``drawstyle="steps-post"``).
+      Meant for a continuous-time jump process (e.g. a Poisson
+      process, a continuous-time Markov chain, a queue's customer
+      count) drawn from its exact arrival times and states, rather
+      than the fine time grid used for smooth processes -- the
+      flat-then-jump shape matches how the process actually moves.
 
     Sample paths overlay naturally: a second call on the same axes
     draws on top of the first, and a legend appears automatically in
@@ -4305,6 +4326,9 @@ def make_sample_path(
         The axes to draw on.
     color : color
         Line color, from ``get_next_color(ax)``.
+    style : str, optional
+        How to connect the points: ``"line"`` (default), ``"dots"``,
+        or ``"steps"``. See above.
     linewidth : float, optional
         Line width. Defaults to the package standard for sample paths
         (``SAMPLE_PATH_LINEWIDTH``, 1.5 -- unchanged from matplotlib's
@@ -4329,6 +4353,11 @@ def make_sample_path(
         The line drawn by ``ax.plot``, so the caller can inspect or
         further style it.
 
+    Raises
+    ------
+    ValueError
+        If ``style`` is not ``"line"``, ``"dots"``, or ``"steps"``.
+
     Examples
     --------
     >>> import matplotlib.pyplot as plt
@@ -4339,6 +4368,13 @@ def make_sample_path(
     >>> ax = plt.gca()
     >>> make_sample_path(times, values, ax, get_next_color(ax))  # doctest: +SKIP
     """
+    if style not in ("line", "dots", "steps"):
+        raise ValueError(
+            f"style={style!r} is not a valid sample path style. "
+            'Use style="line" for a plain connected line, style="dots" for a '
+            'marker at each point joined by a dashed line, or style="steps" '
+            "for a line that holds flat until the next jump."
+        )
     if linewidth is None:
         linewidth = SAMPLE_PATH_LINEWIDTH
     if alpha is None:
@@ -4352,6 +4388,16 @@ def make_sample_path(
         label = f"Path {n_prior_paths + 1}"
     ax._sample_path_count = n_prior_paths + 1
 
+    # Turn the style name into the matplotlib line arguments that draw it.
+    # An explicit keyword argument wins, so a caller can still hand-tune any
+    # single piece (e.g. marker=) of a style they mostly want.
+    style_kwargs = {}
+    if style == "dots":
+        style_kwargs = dict(marker=".", linestyle="--")
+    elif style == "steps":
+        style_kwargs = dict(drawstyle="steps-post")
+    style_kwargs.update(kwargs)
+
     (line,) = ax.plot(
         times,
         values,
@@ -4359,7 +4405,7 @@ def make_sample_path(
         linewidth=linewidth,
         alpha=alpha,
         label=label,
-        **kwargs,
+        **style_kwargs,
     )
 
     # Whole-number times get whole-number ticks, the same rule the impulse
