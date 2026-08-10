@@ -220,8 +220,8 @@ class Distribution(ProbabilitySpace):
     # multivariate distributions, which have no window at all).
     _xlim = None  # the window, once computed or set outright
     _scipy = None  # the scipy distribution the support is read from
-    # Whether a discrete plot gets half a step of air at each end (see
-    # `plot`). A window the distribution worked out for itself does; one
+    # Whether a discrete plot gets one whole-number slot of air at each end
+    # (see `plot`). A window the distribution worked out for itself does; one
     # assigned through the `xlim` setter is used exactly as given, since
     # someone chose those numbers. A subclass that presets its own default
     # assigns `_xlim` directly, which leaves this True.
@@ -275,8 +275,8 @@ class Distribution(ProbabilitySpace):
 
         This is how a window is chosen by hand, since :meth:`plot` takes no
         window argument. It is used *exactly* as given: a discrete plot skips
-        the half step of padding a self-chosen window gets, because these are
-        someone's own numbers.
+        the whole-number slot of padding a self-chosen window gets, because
+        these are someone's own numbers.
         """
         self._xlim = value
         self._xlim_padded = False
@@ -544,10 +544,10 @@ class Distribution(ProbabilitySpace):
         ``xlim(2, 8)``.
 
         For a discrete distribution, a window the distribution chose for
-        itself gets half a step of padding on each end, so the boundary
-        value isn't drawn right on the axis spine. A window assigned by hand
-        is used exactly as given, with no padding added -- those are
-        someone's own numbers.
+        itself gets one whole-number slot of padding on each end, so the
+        boundary value isn't drawn right on the axis spine. A window
+        assigned by hand is used exactly as given, with no padding added --
+        those are someone's own numbers.
 
         Parameters
         ----------
@@ -650,15 +650,11 @@ class Distribution(ProbabilitySpace):
         # both plot types (it only picks x-values); `cdf` decides which
         # function is evaluated there.
         if self.discrete:
+            # xs is drawn from the *true*, unpadded window -- the view
+            # padding added near the end of this method (see
+            # `_symbulate_true_xlim` below) only ever widens the axes, and
+            # must never change which values are actually evaluated/drawn.
             xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
-            # Half a step of air on each end, so the dot/step at the
-            # boundary value doesn't sit right on the axis spine -- same
-            # convention as the single-point collapse case below, just
-            # applied whenever the window is one the distribution worked out
-            # for itself rather than one assigned by hand (the docstring
-            # promises `X.xlim = (low, high)` is used as given).
-            if self._xlim_padded:
-                xlim = (xlim[0] - 0.5, xlim[1] + 0.5)
         else:
             xs = np.linspace(xlim[0], xlim[1], 200)
         ys = self.cdf(xs) if cdf else self.pdf(xs)
@@ -713,14 +709,22 @@ class Distribution(ProbabilitySpace):
             )
 
         # If the axes already has a plot on it, widen the window to the union
-        # of both, so overlaying a second curve doesn't crop the first. An
-        # axes with nothing drawn on it yet has placeholder limits of (0, 1),
-        # which are not a plot to make room for -- unioning with those would
-        # stretch the window and squash the curve into part of the panel (as
-        # happens when a caller passes in a fresh, empty axes, e.g. one panel
-        # of a pairs matrix).
+        # of both, so overlaying a second curve doesn't crop the first. Uses
+        # the *true* (unpadded) window from any prior symbulate distribution
+        # plot on this axes -- stored below as `_symbulate_true_xlim` --
+        # rather than the axes' current view limits: for a discrete
+        # distribution those view limits already include the one-slot
+        # cosmetic padding added below, and reading them back here would add
+        # another slot on every subsequent overlay, growing without bound.
+        # Falls back to the axes' actual limits when nothing has tagged them
+        # yet (e.g. overlaying onto a simulated plot's axes). An axes with
+        # nothing drawn on it yet has placeholder limits of (0, 1), which are
+        # not a plot to make room for -- unioning with those would stretch
+        # the window and squash the curve into part of the panel (as happens
+        # when a caller passes in a fresh, empty axes, e.g. one panel of a
+        # pairs matrix).
         if ax.has_data():
-            xlower, xupper = ax.get_xlim()
+            xlower, xupper = getattr(ax, "_symbulate_true_xlim", ax.get_xlim())
             xlim = min(xlim[0], xlower), max(xlim[1], xupper)
             ylower, yupper = ax.get_ylim()
             ylim = min(ylim[0], ylower), max(ylim[1], yupper)
@@ -730,10 +734,33 @@ class Distribution(ProbabilitySpace):
             # A window can collapse onto a single value when one outcome
             # carries essentially all the probability (e.g. Geometric(0.99),
             # or a bounded distribution that zoomed onto one value, or an
-            # explicit xlim of (a, a)). Give the lone point
-            # room so the axis stays well-formed instead of singular.
-            xlim = (xlim[0] - 0.5, xlim[1] + 0.5)
-        ax.set_xlim(*xlim)
+            # explicit xlim of (a, a)). Give the lone point room so the axis
+            # stays well-formed instead of singular -- a full unit for a
+            # discrete distribution (there's no second value here to measure
+            # a "slot" from, so this matches the one-slot convention below),
+            # half a unit otherwise.
+            pad = 1.0 if self.discrete else 0.5
+            xlim = (xlim[0] - pad, xlim[1] + pad)
+        # Recorded before the discrete padding below is added, so a later
+        # overlay's union (above) compares against the real data window
+        # rather than this cosmetic padding.
+        ax._symbulate_true_xlim = xlim
+        if self.discrete and self._xlim_padded:
+            # A discrete pmf/cdf is drawn at whole-number x-values one unit
+            # apart (see `xs` above), so without padding the outermost dot or
+            # step sits exactly on the left/right spine -- flush against it
+            # with no visual room to tell it isn't cut off. Add one slot of
+            # air beyond each end, the same "one slot" convention
+            # `configure_axes` uses for impulse/dot plots of simulated data
+            # (see plot.py), so a discrete theoretical plot frames the same
+            # way a discrete simulated one does. This only widens the
+            # *view*: xs (and so the drawn values) are unaffected. Skipped
+            # when the window was assigned by hand (`X.xlim = (low, high)`,
+            # which sets `_xlim_padded = False`) -- those are someone's own
+            # numbers, used exactly as given.
+            ax.set_xlim(xlim[0] - 1, xlim[1] + 1)
+        else:
+            ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
 
         # get next color in cycle
@@ -1834,8 +1861,9 @@ class Zeta(Distribution):
         # Setting it here, before calling up, is safe: `Distribution.__init__`
         # deliberately does not reset the window, so either ordering works.
         # `_xlim` rather than the `xlim` setter, because this is still a
-        # window the distribution chose for itself -- it keeps the half step
-        # of discrete padding that the setter's hand-chosen numbers give up.
+        # window the distribution chose for itself -- it keeps the
+        # whole-number slot of discrete padding that the setter's
+        # hand-chosen numbers give up.
         self._xlim = (1, 20)
 
         # scipy's `zipf` is the zeta distribution (its `a` is our shape);
