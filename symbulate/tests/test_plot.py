@@ -65,6 +65,7 @@ from symbulate.plot import (
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
     MARGINAL_FREQ_TICKS,
+    MARGINAL_FREQ_TICK_ROTATION,
     PAIRS_SUPTITLE,
     JOINT_PAIRS_COLORBAR_TITLE_SIZE,
     classify_values,
@@ -840,6 +841,55 @@ class TestMarginalLayoutIsOptIn(PlotTestCase):
                     axis = strip.yaxis if vertical else strip.xaxis
                     labels = [t for t in axis.get_ticklabels() if t.get_text()]
                     self.assertLessEqual(len(labels), MARGINAL_FREQ_TICKS + 2)
+
+    def _top_and_right_strips(self, joint):
+        """The strip above the joint panel, and the one to its right.
+
+        Picked by position: the top strip is the highest, the right strip the
+        furthest right. Selecting the top one by *lowest* y0 would return the
+        right strip instead -- it sits level with the joint panel -- which
+        would make an assertion about the top strip quietly vacuous.
+        """
+        strips = [a for a in self._panels() if a is not joint]
+        return (
+            max(strips, key=lambda a: a.get_position().y0),
+            max(strips, key=lambda a: a.get_position().x0),
+        )
+
+    def test_right_strips_frequency_labels_are_rotated_to_avoid_overlap(self):
+        """Regression: the right-hand strip is narrow, so its frequency
+        axis's decimal tick labels ("0.00", "0.15", "0.30") laid out
+        horizontally ran into each other -- rotating them fits the same
+        tick count in the strip's width. The strip above the joint panel
+        is wide, not narrow, so its labels stay horizontal."""
+        A, B = RV(Normal(0, 1) ** 2)
+        p = (A & B).sim(500).plot(marginal=True, suggest=False)
+        plt.gcf().canvas.draw()
+        top, right = self._top_and_right_strips(p.ax)
+        rotated = [t.get_rotation() for t in right.get_xticklabels() if t.get_text()]
+        self.assertTrue(rotated, "right strip had no frequency tick labels")
+        for angle in rotated:
+            self.assertEqual(angle, MARGINAL_FREQ_TICK_ROTATION)
+        upright = [t.get_rotation() for t in top.get_yticklabels() if t.get_text()]
+        self.assertTrue(upright, "top strip had no frequency tick labels")
+        for angle in upright:
+            self.assertEqual(angle, 0)
+
+    def test_no_bounding_box_overlap_between_strip_frequency_labels(self):
+        """The within-strip crowding this rotation fixes, checked directly
+        via rendered bounding boxes rather than just the rotation angle."""
+        A, B = RV(Normal(0, 1) ** 2)
+        p = (A & B).sim(500).plot(marginal=True, suggest=False)
+        fig = plt.gcf()
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        _, right = self._top_and_right_strips(p.ax)
+        labels = [t for t in right.get_xticklabels() if t.get_text()]
+        self.assertGreater(len(labels), 1)
+        boxes = [t.get_window_extent(renderer=renderer) for t in labels]
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                self.assertFalse(boxes[i].overlaps(boxes[j]))
 
     def test_a_count_axis_stays_whole_numbers(self):
         """Half a simulated value doesn't exist, so thinning a count axis
@@ -4414,6 +4464,30 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
         xdata, ydata = curve.get_data()
         self.assertTrue(np.all(np.asarray(xdata) >= 0))
         self.assertAlmostEqual(min(ydata), p.ax.get_ylim()[0], places=6)
+
+    def test_right_strips_frequency_labels_are_rotated_to_avoid_overlap(self):
+        """Regression: the right-hand strip is narrow, so its density-axis
+        decimal tick labels ran into each other laid out horizontally --
+        rotating them fits the same tick count. Same fix as the simulated
+        side (setup_marginal_axes/thin_marginal_frequency_ticks are
+        shared), checked here too since the theoretical side hits it
+        independently through MultivariateDistribution.plot()."""
+        p = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
+        marg_x, marg_y = self._strips(p.ax)
+        plt.gcf().canvas.draw()
+        labels = [t for t in marg_y.get_xticklabels() if t.get_text()]
+        self.assertGreater(len(labels), 1)
+        for label in labels:
+            self.assertEqual(label.get_rotation(), MARGINAL_FREQ_TICK_ROTATION)
+        # The top strip is wide, so it keeps upright labels.
+        for label in marg_x.get_yticklabels():
+            if label.get_text():
+                self.assertEqual(label.get_rotation(), 0)
+        renderer = plt.gcf().canvas.get_renderer()
+        boxes = [t.get_window_extent(renderer=renderer) for t in labels]
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                self.assertFalse(boxes[i].overlaps(boxes[j]))
 
     def test_a_discrete_strip_keeps_its_masses(self):
         """A pmf strip is dots plus a dashed connector, transposed the same

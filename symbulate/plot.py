@@ -620,6 +620,11 @@ MARGINAL_COLORBAR_RECT = (0.80, 0.11, 0.03, 0.52)
 # itself there -- 0, 2, 4, 6, 8 running together. The value axis is left
 # alone: it is shared with the joint panel, which sets the ticks there.
 MARGINAL_FREQ_TICKS = 3
+MARGINAL_FREQ_TICK_ROTATION = 90  # degrees. The right-hand strip's
+# frequency-axis tick labels are rotated by this much so decimal labels
+# ("0.00", "0.15", "0.30") fit in the strip's narrow width without running
+# into each other (see thin_marginal_frequency_ticks). The strip above the
+# joint panel is wide, not narrow, so its tick labels are left horizontal.
 
 
 class SymbulatePlot:
@@ -1677,7 +1682,10 @@ def thin_marginal_frequency_ticks(marg_ax, orientation, integer=False):
     orientation : {"vertical", "horizontal"}
         How the strip was drawn. ``"vertical"`` (the strip above the joint
         panel) has its frequency on the y-axis; ``"horizontal"`` (the strip
-        to the right) has it on the x-axis.
+        to the right) has it on the x-axis. The horizontal one is also the
+        narrow one, so its frequency tick labels are rotated by
+        ``MARGINAL_FREQ_TICK_ROTATION`` to fit; the vertical one's are left
+        upright.
     integer : bool, default False
         Whether the frequency is a whole number, i.e. a count. Counts get
         whole-number ticks, since half a simulated value doesn't exist.
@@ -1688,6 +1696,22 @@ def thin_marginal_frequency_ticks(marg_ax, orientation, integer=False):
     # (_dotplot_relayout, which runs on draw), so setting the locator here is
     # not enough on its own -- record the cap where that rebuild can find it.
     marg_ax._symbulate_freq_ticks = MARGINAL_FREQ_TICKS
+    if orientation == "horizontal":
+        # The right-hand strip is narrow (a fraction of the joint panel's
+        # width), and its frequency axis's decimal tick labels ("0.00",
+        # "0.15", "0.30") are wide enough that even MARGINAL_FREQ_TICKS (3)
+        # of them run into each other laid out horizontally -- unlike the
+        # strip above the joint panel, which is wide and short, so the same
+        # 3 labels have plenty of room stacked side by side there. Rotating
+        # keeps the same tick count and precision while fitting the width.
+        # Set here (on this axis object) rather than after the caller's
+        # later value/frequency transpose: rotation is a tick-label display
+        # property, not tied to which values are currently on this axis, so
+        # it survives that transpose unchanged.
+        axis.set_tick_params(rotation=MARGINAL_FREQ_TICK_ROTATION)
+        for label in axis.get_ticklabels():
+            label.set_horizontalalignment("center")
+            label.set_verticalalignment("top")
 
 
 def marginal_rug_tick_height(main_ax, marg_ax, orientation):
