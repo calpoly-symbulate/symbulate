@@ -577,6 +577,26 @@ class TestRVResultsPlot(unittest.TestCase):
         with self.assertRaises(Exception):
             rvr.plot(type=42)
 
+    def test_dims_kwarg_on_3plus_variables_raises_before_drawing(self):
+        # Regression test: dims= on 3+ variables used to be validated
+        # *after* the "pairs" branch had already built a GridSpec, resized
+        # the figure, and added a subplot -- so the figure was left
+        # half-built even though the call correctly raised in the end.
+        # Confirm the check now runs before any of that drawing happens.
+        rvr = RVResults(
+            [
+                Vector([1.0, 2.0, 3.0]),
+                Vector([4.0, 5.0, 6.0]),
+                Vector([7.0, 8.0, 9.0]),
+            ]
+        )
+        plt.close("all")
+        with self.assertRaisesRegex(ValueError, "dims="):
+            rvr.plot(dims=[0, 1])
+        # No figure should have been created/modified by the failed call.
+        self.assertEqual(plt.gcf().get_axes(), [])
+        plt.close("all")
+
     def test_rug_forwards_kwargs(self):
         # Regression test: type='rug' used to silently drop every keyword
         # argument (unlike every other 1D plot type), so linewidth=10 had
