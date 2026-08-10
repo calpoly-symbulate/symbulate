@@ -55,7 +55,7 @@ def seed(value=None):
 # `import symbulate` fails outright with "cannot import name 'rng' from
 # partially initialized module".
 from .base import Logical
-from .result import Vector, InfiniteVector, join
+from .result import Vector, InfiniteVector, join, Scalar
 from .results import Results, _sim_with_progress
 
 
@@ -123,6 +123,14 @@ class ProbabilitySpace:
         """
         if not isinstance(n, int) or n < 1:
             raise ValueError(f"n must be a positive integer, got {n!r}.")
+        # A few distributions can draw every sample in one batched scipy call
+        # far more cheaply than n separate ones. Distribution._fast_sim
+        # returns None for all but those, so everything else falls straight
+        # through to the loop below, unchanged. The hasattr guard is for
+        # probability spaces that are not Distributions and so have no hook.
+        batch = self._fast_sim(n) if hasattr(self, "_fast_sim") else None
+        if batch is not None:
+            return Results([Scalar(v) for v in batch])
         return Results(_sim_with_progress(self.draw, n))
 
     def check_same(self, other):

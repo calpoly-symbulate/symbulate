@@ -12,9 +12,11 @@ the same trio a Poisson process path supports -- for the continuous-time
 chain, the birth-death wrapper, and the Yule process, including that the
 holding times come out Exponential with the right rate.
 
-Reproducibility: the discrete chain draws through ``markov_chains.rng``
-and the continuous chain additionally draws interarrival times through
-``distributions.rng``, so the ``seed`` helper reseeds both.
+Reproducibility: the discrete chain and the continuous chain's interarrival
+times both draw through the one generator every module shares, so a single
+``seed(value)`` covers them. This file used to reseed ``markov_chains.rng``
+and ``distributions.rng`` separately, back when those were two unconnected
+generators.
 """
 
 import unittest
@@ -47,21 +49,13 @@ from symbulate.result import (
 
 Nsim = 10000
 
-# These tests reseed the module-level generators that the chains draw
-# through. Save and restore them around the module so this file is
-# hermetic and does not leak rng state to other test files.
-_saved_rng = {}
-
-
-def setUpModule():
-    _saved_rng["mc"] = mc.rng
-    _saved_rng["dist"] = distributions.rng
-
-
-def tearDownModule():
-    mc.rng = _saved_rng["mc"]
-    distributions.rng = _saved_rng["dist"]
-
+# There is nothing to save and restore around this module any more. These
+# tests used to rebind two separate module-level generators, so they had to
+# put the originals back to stay hermetic; now every module shares the one
+# generator that seed() reseeds in place, so there is no per-module state to
+# leak. Do not reintroduce a `<module>.rng = ...` rebind here -- that would
+# detach that module from the shared generator and silently stop seed() from
+# reaching it (see symbulate/probability_space.py's seed()).
 
 # Deterministic 2-state matrices for assertions that don't need a seed.
 STAY = [[1.0, 0.0], [0.0, 1.0]]  # identity: never leaves its start state

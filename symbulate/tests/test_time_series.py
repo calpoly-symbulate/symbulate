@@ -449,9 +449,7 @@ class TestARMATheory(unittest.TestCase):
             mean=5,
         )
         expected = 5 + noise_mean * (1 + ma_coef) / (1 - ar_coef)
-        self.assertAlmostEqual(
-            float(X[30].sim(5000).mean()), expected, delta=0.3
-        )
+        self.assertAlmostEqual(float(X[30].sim(5000).mean()), expected, delta=0.3)
 
     def test_unit_coefficient_is_a_random_walk(self):
         # phi = 1 removes the pull home, so the variance grows with n.
@@ -798,8 +796,10 @@ class TestGARCHTheory(unittest.TestCase):
         omega, a, b = 0.7, 0.05, 0.1
         noise_var = 4
         X = GARCH(
-            omega=omega, arch_coefs=[a], garch_coefs=[b],
-            noise_dist=Normal(0, noise_var ** 0.5),
+            omega=omega,
+            arch_coefs=[a],
+            garch_coefs=[b],
+            noise_dist=Normal(0, noise_var**0.5),
         )
         expected = (omega / (1 - a * noise_var - b)) * noise_var
         for n in [20, 40]:
@@ -812,8 +812,11 @@ class TestGARCHTheory(unittest.TestCase):
             ValueError,
             'initial="stationary" is impossible',
             lambda: GARCH(
-                omega=0.2, arch_coefs=[0.1], garch_coefs=[0.85],
-                noise_dist=Normal(0, 2), initial="stationary",
+                omega=0.2,
+                arch_coefs=[0.1],
+                garch_coefs=[0.85],
+                noise_dist=Normal(0, 2),
+                initial="stationary",
             ),
         )
 

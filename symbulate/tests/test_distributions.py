@@ -1,6 +1,7 @@
 import inspect
 import math
 import re
+import time
 import unittest
 import numpy as np
 import scipy.stats as stats
@@ -24,6 +25,13 @@ from symbulate.distributions import Benford
 # InverseGaussian is likewise not exported yet -- awaiting team sign-off on the
 # public-API addition -- so it too is imported straight from its module.
 from symbulate.distributions import InverseGaussian
+
+# The sentinel RV.sim() compares `func` against to decide whether anything has
+# been composed on top of the distribution (see TestFastSim). Private, so it
+# comes from its module rather than the public API.
+from symbulate.random_variables import _IDENTITY
+from symbulate.result import Scalar
+from symbulate.results import RVResults
 
 Nsim = 10000
 
@@ -2450,7 +2458,7 @@ class TestInverseGaussian(unittest.TestCase):
     PAIRS = [(1.0, 1.0), (2.0, 3.0), (0.5, 4.0), (5.0, 0.5), (3.0, 10.0)]
 
     def test_InverseGaussian_distributional(self):
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         X = RV(InverseGaussian(mean=2, shape=3))
         sims = X.sim(Nsim)
         # scipy's own parameters, translated: mu = mean / shape, scale = shape.
@@ -2531,7 +2539,7 @@ class TestInverseGaussian(unittest.TestCase):
         self.assertAlmostEqual(high, float(X.quantile(0.999)), places=8)
 
     def test_InverseGaussian_draw_is_scalar(self):
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         self.assertIsInstance(InverseGaussian(mean=2, shape=3).draw(), Scalar)
 
     def test_InverseGaussian_invalid_mean_raises(self):
@@ -2620,7 +2628,7 @@ class TestBeta(unittest.TestCase):
         # distribution. Compared against a stretched RV, not against scipy, so
         # the test states the identity rather than restating the loc/scale call.
         xmin, xmax = 10, 20
-        distributions.rng = np.random.default_rng(42)
+        seed(42)
         stretched = (xmin + (xmax - xmin) * RV(Beta(shape1=2, shape2=5))).sim(Nsim)
         cdf = Beta(shape1=2, shape2=5, xmin=xmin, xmax=xmax).cdf
         pval = stats.kstest(stretched, cdf).pvalue
@@ -2685,7 +2693,7 @@ class TestBeta(unittest.TestCase):
         self.assertAlmostEqual(float(X.mean()), xmin + width * 2 / 7, places=12)
         self.assertFalse(math.isnan(float(X.var())))
         self.assertGreater(float(X.var()), 0.0)
-        distributions.rng = np.random.default_rng(0)
+        seed(0)
         sims = np.array(RV(X).sim(1000), dtype=float)
         self.assertFalse(np.isnan(sims).any())
         self.assertTrue(((sims >= xmin) & (sims <= xmin + width)).all())
@@ -7748,3 +7756,143 @@ class TestDistributionShade(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             Normal(0, 1).plot().shade(gt=5, lt=3)
         self.assertIn("less than", str(cm.exception))
+
+
+class TestFastSim(unittest.TestCase):
+    """The batched ``.sim(n)`` fast path.
+
+    ``NegativeHypergeometric`` and ``TruncatedNormal`` are backed by scipy
+    samplers with a large per-call setup cost that does not shrink when
+    fewer samples are asked for -- nhypergeom rebuilds a CDF table and an
+    inverse-CDF interpolator every call. Drawing n samples in one batched
+    call instead of n single ones is worth ~850x and ~80x respectively.
+    These tests pin the scope of that optimization: exactly two
+    distributions, only ``.sim()``, and only on an untransformed RV.
+    """
+
+    def test_only_two_distributions_override_the_hook(self):
+        # The whole design rests on _fast_sim being None everywhere else, so
+        # every other distribution keeps its existing one-draw-at-a-time
+        # loop. A new override should be a deliberate, reviewed addition.
+        overriders = sorted(
+            cls.__name__
+            for cls in distributions.Distribution.__subclasses__()
+            if cls._fast_sim is not distributions.Distribution._fast_sim
+        )
+        self.assertEqual(overriders, ["NegativeHypergeometric", "TruncatedNormal"])
+
+    def test_base_hook_returns_none(self):
+        for dist in [Normal(0, 1), Binomial(10, 0.5), Poisson(3), Uniform(a=0, b=1)]:
+            with self.subTest(dist=type(dist).__name__):
+                self.assertIsNone(dist._fast_sim(5))
+
+    def test_overrides_return_n_samples(self):
+        for dist in [
+            NegativeHypergeometric(r=3, N0=10, N1=8),
+            TruncatedNormal(mean=0, sd=1, a=-1, b=2),
+        ]:
+            with self.subTest(dist=type(dist).__name__):
+                batch = dist._fast_sim(17)
+                self.assertIsNotNone(batch)
+                self.assertEqual(len(batch), 17)
+
+    def test_batched_negative_hypergeometric_matches_the_theoretical_pmf(self):
+        # The point of the change is speed, not a different distribution, so
+        # check the batched output against the exact pmf with a chi-square.
+        seed(42)
+        r, N0, N1 = 3, 10, 8
+        X = NegativeHypergeometric(r=r, N0=N0, N1=N1)
+        values = np.array(list(RV(X).sim(Nsim)), dtype=int)
+        support = list(range(0, N1 + 1))
+        observed = [int((values == k).sum()) for k in support]
+        expected = [Nsim * float(X.pmf(k)) for k in support]
+        # Lump any sparse bins together so every expected count is big enough
+        # for a chi-square -- but only add the lumped bin if it is non-empty,
+        # since an all-zero bin makes the statistic nan.
+        keep = [i for i, e in enumerate(expected) if e >= 5]
+        drop = [i for i in range(len(expected)) if i not in keep]
+        obs = [observed[i] for i in keep]
+        exp = [expected[i] for i in keep]
+        if drop:
+            obs.append(sum(observed[i] for i in drop))
+            exp.append(sum(expected[i] for i in drop))
+        # Rescale so the two sum identically -- dropping nothing leaves them
+        # equal already, but lumping can leave a rounding gap.
+        exp = [e * sum(obs) / sum(exp) for e in exp]
+        pval = stats.chisquare(obs, exp).pvalue
+        self.assertTrue(pval > 0.01, f"chi-square p={pval}")
+
+    def test_batched_truncated_normal_matches_the_theoretical_cdf(self):
+        seed(42)
+        X = TruncatedNormal(mean=0, sd=1, a=-1, b=2)
+        values = list(RV(X).sim(Nsim))
+        pval = stats.kstest(values, lambda q: [float(X.cdf(v)) for v in q]).pvalue
+        self.assertTrue(pval > 0.01, f"KS p={pval}")
+        # And it really is inside the truncation bounds.
+        self.assertTrue(all(-1 <= v <= 2 for v in values))
+
+    def test_batched_and_looped_paths_agree_distributionally(self):
+        # Same distribution either way -- compared with a two-sample KS test,
+        # since the two paths draw different underlying bits (see the notes:
+        # scipy's batched rvs does not consume the stream in the same order).
+        seed(42)
+        X = TruncatedNormal(mean=0, sd=1, a=-1, b=2)
+        batched = list(RV(X).sim(4000))
+        looped = [X.draw() for _ in range(4000)]
+        pval = stats.ks_2samp(batched, looped).pvalue
+        self.assertTrue(pval > 0.01, f"two-sample KS p={pval}")
+
+    def test_apply_identity_still_takes_the_slow_path(self):
+        # A hand-written `lambda x: x` is a different object than the
+        # _IDENTITY sentinel, so `is` correctly fails and the ordinary
+        # per-draw loop runs. If this ever passed, .apply() transformations
+        # would be silently skipped.
+        X = RV(NegativeHypergeometric(r=3, N0=10, N1=8))
+        self.assertIs(X.func, _IDENTITY)
+        self.assertIsNot(X.apply(lambda x: x).func, _IDENTITY)
+        # A real transformation must still be applied to every value.
+        seed(42)
+        doubled = list(X.apply(lambda x: 2 * x).sim(200))
+        self.assertTrue(all(v % 2 == 0 for v in doubled))
+
+    def test_fast_path_does_not_change_pdf_cdf_or_mean(self):
+        # Only .sim() is affected; every other method must be untouched.
+        nh = NegativeHypergeometric(r=3, N0=10, N1=8)
+        ref = stats.nhypergeom(M=18, n=8, r=3)
+        self.assertAlmostEqual(float(nh.pmf(2)), float(ref.pmf(2)), places=12)
+        self.assertAlmostEqual(float(nh.cdf(4)), float(ref.cdf(4)), places=12)
+        self.assertAlmostEqual(float(nh.mean()), float(ref.mean()), places=12)
+        tn = TruncatedNormal(mean=0, sd=1, a=-1, b=2)
+        ref2 = stats.truncnorm(a=-1.0, b=2.0, loc=0, scale=1)
+        self.assertAlmostEqual(float(tn.pdf(0.5)), float(ref2.pdf(0.5)), places=12)
+        self.assertAlmostEqual(float(tn.cdf(0.5)), float(ref2.cdf(0.5)), places=12)
+        self.assertAlmostEqual(float(tn.mean()), float(ref2.mean()), places=12)
+
+    def test_sim_returns_the_usual_result_types(self):
+        # The fast path builds its own Results/RVResults, so check it did not
+        # quietly change what .sim() hands back.
+        X = NegativeHypergeometric(r=3, N0=10, N1=8)
+        space_sims = X.sim(50)
+        self.assertIsInstance(space_sims, Results)
+        self.assertEqual(len(space_sims), 50)
+        rv_sims = RV(X).sim(50)
+        self.assertIsInstance(rv_sims, RVResults)
+        self.assertEqual(len(rv_sims), 50)
+        self.assertTrue(all(isinstance(v, Scalar) for v in rv_sims))
+
+    def test_sim_still_validates_n(self):
+        X = NegativeHypergeometric(r=3, N0=10, N1=8)
+        for bad in [0, -1, 2.5]:
+            with self.subTest(n=bad):
+                self.assertRaises(ValueError, lambda b=bad: X.sim(b))
+                self.assertRaises(ValueError, lambda b=bad: RV(X).sim(b))
+
+    def test_timing_regression_generous_margin(self):
+        # Not a benchmark -- a tripwire. Before batching this took upwards of
+        # ten seconds; batched it is ~0.03s. A one-second ceiling catches a
+        # future change that reinstates the per-draw loop without being
+        # sensitive to how busy the machine is.
+        X = NegativeHypergeometric(r=3, N0=10, N1=8)
+        start = time.perf_counter()
+        RV(X).sim(10000)
+        self.assertLess(time.perf_counter() - start, 1.0)

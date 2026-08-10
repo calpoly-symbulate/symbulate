@@ -280,6 +280,43 @@ class Distribution(ProbabilitySpace):
         self._xlim = value
         self._xlim_padded = False
 
+    def _fast_sim(self, n):
+        """Optional fast path for ``.sim(n)``: draw all ``n`` samples at once.
+
+        Returns ``None`` -- the default, and the answer for every
+        distribution unless it overrides this. A ``None`` here means
+        ``.sim(n)`` runs its ordinary one-draw-at-a-time loop, exactly as
+        it always has.
+
+        Override it only when the underlying scipy sampler carries a large
+        per-call setup cost that does *not* grow with the number of samples
+        requested, so that paying it once per ``.sim(n)`` instead of ``n``
+        times is a real saving. As of this change that is
+        :class:`NegativeHypergeometric` and :class:`TruncatedNormal`; see
+        ``team/final-tasks/audit/fast_sim_notes.md`` for how those two were
+        identified and why the list stops there. Adding another is a
+        one-line override here, with no change at either call site.
+
+        Deliberately takes no ``random_state`` argument. An override draws
+        from this module's own ``rng`` -- the same generator ``draw()``
+        uses -- rather than accepting one from whoever called ``.sim()``,
+        which lives in a different module. Passing a generator across that
+        boundary would make it possible to advance a different stream than
+        ``draw()`` does, and the two would silently disagree.
+
+        Parameters
+        ----------
+        n : int
+            How many samples ``.sim()`` was asked for.
+
+        Returns
+        -------
+        array-like or None
+            ``n`` samples drawn in one batched call, or ``None`` to mean
+            "no batched path -- use the ordinary loop."
+        """
+        return None
+
     def _support(self):
         """The distribution's true support bounds, either of which may be infinite.
 
@@ -1195,6 +1232,22 @@ class NegativeHypergeometric(Distribution):
         # So M is the whole collection, its n is our N1, and its r is ours.
         params = {"M": N0 + N1, "n": N1, "r": r}
         super().__init__(params, stats.nhypergeom, True)
+
+    def _fast_sim(self, n):
+        """Draw all ``n`` samples in one vectorized call.
+
+        A plain ``draw()`` goes through
+        ``self.sim_func(**self.params, random_state=rng)``, and scipy's
+        ``nhypergeom_gen._rvs`` rebuilds an entire CDF table and an
+        inverse-CDF interpolator from scratch on *every* call, however few
+        samples are asked for. Paying that once per ``.sim(n)`` rather than
+        ``n`` times is the whole saving: roughly 1.1 ms per sample looped
+        against about a microsecond per sample batched (~850x).
+
+        See :meth:`Distribution._fast_sim` for why no generator is passed
+        in.
+        """
+        return self.sim_func(**self.params, size=n, random_state=rng)
 
 
 class Geometric(Distribution):
@@ -2411,6 +2464,19 @@ class TruncatedNormal(Distribution):
         # a far quantile on any side left unbounded.
         lower = a if np.isfinite(a) else self.quantile(0.001)
         upper = b if np.isfinite(b) else self.quantile(0.999)
+
+    def _fast_sim(self, n):
+        """Draw all ``n`` samples in one vectorized call.
+
+        The same idea as :meth:`NegativeHypergeometric._fast_sim`, less
+        extreme: scipy's ``truncnorm._rvs`` inverts a uniform through
+        ``_ppf``, which is real per-call work rather than a table rebuild,
+        but still work that batching amortizes -- about 80x in testing.
+
+        See :meth:`Distribution._fast_sim` for why no generator is passed
+        in.
+        """
+        return self.sim_func(**self.params, size=n, random_state=rng)
 
 
 class SkewNormal(Distribution):
