@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
 from .probability_space import ProbabilitySpace
+from matplotlib.ticker import MaxNLocator
+
 from .plot import (
     get_next_color,
     DistributionPlot,
@@ -19,6 +21,7 @@ from .plot import (
     ECDF_LINEWIDTH,
     JOINT_CBAR_DECIMALS,
     JOINT_PAIRS_MAX_DIM,
+    PAIRS_MAX_DISCRETE_TICKS,
     setup_marginal_axes,
     pairs_colorbar_pair_label,
     advance_pairs_diagonal_color,
@@ -5385,7 +5388,16 @@ class MultivariateDistribution(Distribution):
         return tuple(int(d) for d in variables), pairs
 
     def _plot_joint(
-        self, i, j, ax, contour, colorbar=True, title=True, alpha=None, **kwargs
+        self,
+        i,
+        j,
+        ax,
+        contour,
+        colorbar=True,
+        title=True,
+        alpha=None,
+        max_discrete_ticks=None,
+        **kwargs,
     ):
         """Draw the joint distribution of components ``i`` and ``j`` on one axes.
 
@@ -5413,6 +5425,13 @@ class MultivariateDistribution(Distribution):
             False, since the figure carries one title instead.
         alpha : float, optional
             Transparency of the surface, from 0 (invisible) to 1 (opaque).
+        max_discrete_ticks : int, optional
+            Cap on how many ticks a discrete axis shows, forwarded to
+            ``make_joint_pmf``. ``None`` (default) leaves that function's
+            own default in place; a panel of a pairs matrix passes
+            ``PAIRS_MAX_DISCRETE_TICKS``, since its panel is a fraction of
+            a full-size plot's width. Has no effect on a continuous
+            distribution's density surface.
         **kwargs
             Additional keyword arguments forwarded to matplotlib.
 
@@ -5425,6 +5444,8 @@ class MultivariateDistribution(Distribution):
         xlabel = self._variable_label(i)
         ylabel = self._variable_label(j)
         if self.discrete:
+            if max_discrete_ticks is not None:
+                kwargs["max_discrete_ticks"] = max_discrete_ticks
             return make_joint_pmf(
                 func,
                 self._plot_values(i),
@@ -5592,6 +5613,15 @@ class MultivariateDistribution(Distribution):
                         xlim=self._plot_window(variables[row]), ax=ax, alpha=alpha
                     )
                     ax.set_title("")
+                    # A discrete marginal's value axis otherwise keeps
+                    # matplotlib's default locator, sized for a full-size
+                    # plot -- too many ticks for this panel's fraction of
+                    # the width. Not re-laid-out later (unlike a simulated
+                    # dot plot), so setting it directly here is enough.
+                    if self.discrete:
+                        ax.xaxis.set_major_locator(
+                            MaxNLocator(nbins=PAIRS_MAX_DISCRETE_TICKS, integer=True)
+                        )
                 else:
                     joint_panels.append(
                         (
@@ -5603,6 +5633,7 @@ class MultivariateDistribution(Distribution):
                                 colorbar=False,
                                 title=False,
                                 alpha=alpha,
+                                max_discrete_ticks=PAIRS_MAX_DISCRETE_TICKS,
                                 **kwargs,
                             ),
                             row,

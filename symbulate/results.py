@@ -25,6 +25,8 @@ from .base import (
     Transformable,
     _build_mv_filter,
 )
+from matplotlib.ticker import MaxNLocator
+
 from .plot import (
     B_1D,
     K_2D,
@@ -33,7 +35,9 @@ from .plot import (
     DOTPLOT_MAX_STACK,
     JOINT_PAIRS_MAX_DIM,
     JOINT_PAIRS_OVERLAY_ERROR,
+    _thin_discrete_ticks,
     JOINT_PAIRS_PANEL_SIZE,
+    PAIRS_MAX_DISCRETE_TICKS,
     add_pairs_panel_colorbar,
     MARGINAL_OVERLAY_ERROR,
     setup_marginal_axes,
@@ -1713,13 +1717,86 @@ class RVResults(Results):
                         # bins: the others draw every value where it falls and
                         # warn if handed a bin count.
                         diagonal_kwargs["bins"] = panel_bins
-                    self._pairs_subset((chosen[row],)).plot(
-                        type=diagonal_type,
-                        alpha=alpha,
-                        normalize=normalize,
-                        suggest=False,
-                        **diagonal_kwargs,
+
+                    column_values = np.asarray(self._pairs_column(chosen[row]))
+                    is_numeric = column_values.dtype.kind not in "USO"
+                    # A large-n discrete diagonal's column is always tiled
+                    # below it (never scatter, which is small-n only), so
+                    # checking one neighboring pair's resolved type is enough
+                    # to know how *this* column lays this axis out --
+                    # setup_tile_axis's real-value-vs-rank-index choice for
+                    # an axis depends only on that axis's own values, so
+                    # every tile panel in the column already agrees (the same
+                    # assumption align_pairs_columns makes).
+                    neighbor = (row + 1) % k if k > 1 else row
+                    uses_tile = (
+                        is_numeric
+                        and diagonal_type == "impulse"
+                        and self._pairs_joint_type(chosen[row], chosen[neighbor])
+                        == "tile"
                     )
+                    rank_ticks = (
+                        setup_tile_axis(column_values, True, panel_bins)[3]
+                        if uses_tile
+                        else None
+                    )
+                    if rank_ticks is not None:
+                        # This column's tile panels laid this axis out on
+                        # compacted rank-index cells rather than real values
+                        # -- setup_tile_axis does that for non-whole-number
+                        # discrete data (e.g. values 0.7 apart), which has no
+                        # "possible value in between" to fill on a real
+                        # number line. Draw the diagonal on the matching rank
+                        # codes instead of real values, so its stems land
+                        # under the correct tile column/row rather than on an
+                        # unrelated scale -- the same tile/marginal
+                        # coordinate mismatch DECISIONS.md already fixed once
+                        # for the marginal=True layout (DISCRETE_INDEX_OFFSET).
+                        positions, labels = rank_ticks
+                        rank_codes = np.searchsorted(labels, column_values)
+                        RVResults(list(rank_codes)).plot(
+                            type=diagonal_type,
+                            alpha=alpha,
+                            normalize=normalize,
+                            suggest=False,
+                            **diagonal_kwargs,
+                        )
+                        tick_pos, tick_lab = _thin_discrete_ticks(
+                            positions, labels, PAIRS_MAX_DISCRETE_TICKS
+                        )
+                        ax.set_xticks(tick_pos)
+                        ax.set_xticklabels([str(v) for v in tick_lab])
+                    else:
+                        self._pairs_subset((chosen[row],)).plot(
+                            type=diagonal_type,
+                            alpha=alpha,
+                            normalize=normalize,
+                            suggest=False,
+                            **diagonal_kwargs,
+                        )
+                        # A discrete diagonal's value axis otherwise inherits
+                        # whichever tick count its own plot type picked for a
+                        # full-size figure -- too many for this panel's
+                        # fraction of the width. ``integer=True`` is only
+                        # correct for a whole-number axis -- forcing it on a
+                        # non-whole-number discrete axis would snap ticks
+                        # onto values the variable never takes. An impulse
+                        # plot's value axis keeps its locator as drawn, so
+                        # cap it directly; a dot plot re-frames its value
+                        # axis on every draw (_dotplot_relayout), so record
+                        # the cap there instead.
+                        whole_number = is_numeric and np.all(
+                            column_values == np.round(column_values)
+                        )
+                        if is_numeric and diagonal_type == "impulse":
+                            ax.xaxis.set_major_locator(
+                                MaxNLocator(
+                                    nbins=PAIRS_MAX_DISCRETE_TICKS,
+                                    integer=whole_number,
+                                )
+                            )
+                        elif is_numeric and diagonal_type == "dotplot":
+                            ax._symbulate_value_ticks = PAIRS_MAX_DISCRETE_TICKS
                 else:
                     joint_panels.append(
                         (
@@ -1898,6 +1975,7 @@ class RVResults(Results):
                 discrete_x=discrete_x,
                 discrete_y=discrete_y,
                 colorbar=False,
+                max_discrete_ticks=PAIRS_MAX_DISCRETE_TICKS,
                 **kwargs,
             )
 

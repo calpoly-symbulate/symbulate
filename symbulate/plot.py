@@ -110,6 +110,16 @@ REPEAT_FRACTION_THRESHOLD = 0.6
 # count low enough to fit unrotated.
 MAX_DISCRETE_TICKS = 10
 
+# A pairs-matrix panel (make_tile / make_joint_pmf below the diagonal) is
+# only JOINT_PAIRS_PANEL_SIZE (2.2in) square -- a third the width of a normal
+# single-plot figure (figure.figsize, 6.4in) -- so MAX_DISCRETE_TICKS worth
+# of labels, sized for the full-width case, run into each other there.
+# PAIRS_MAX_DISCRETE_TICKS is the same cap scaled down for that panel size,
+# used by every pairs-matrix panel (the tile/joint-pmf grid and the discrete
+# diagonal's value axis) so a column's ticks stay legible and consistent
+# with each other. Provisional, like MAX_DISCRETE_TICKS itself.
+PAIRS_MAX_DISCRETE_TICKS = 5
+
 figure = plt.figure
 
 xlabel = plt.xlabel
@@ -2022,6 +2032,7 @@ def make_tile(
     discrete_x=None,
     discrete_y=None,
     colorbar=True,
+    max_discrete_ticks=MAX_DISCRETE_TICKS,
     **kwargs,
 ):
     """Draw a 2D tile plot of simulated (x, y) pairs on the given axes.
@@ -2106,6 +2117,11 @@ def make_tile(
         'marginal' layout in ``RVResults.plot()`` passes False and
         places its own colorbar so the marginal panels aren't
         squeezed.
+    max_discrete_ticks : int, optional
+        Cap on how many ticks a discrete axis shows. Defaults to the
+        module constant ``MAX_DISCRETE_TICKS``; a panel of a pairs
+        matrix passes ``PAIRS_MAX_DISCRETE_TICKS`` instead, since its
+        panel is a fraction of a full-size plot's width.
     **kwargs
         Additional keyword arguments passed to ``ax.imshow``.
 
@@ -2182,9 +2198,9 @@ def make_tile(
     # categorical / non-whole-number / pathologically wide-range discrete
     # axis instead falls back to compacted rank-index cells, thinned here.
     if discrete_x and x_ticks is not None:
-        x_ticks = _thin_discrete_ticks(x_ticks[0], x_ticks[1], MAX_DISCRETE_TICKS)
+        x_ticks = _thin_discrete_ticks(x_ticks[0], x_ticks[1], max_discrete_ticks)
     if discrete_y and y_ticks is not None:
-        y_ticks = _thin_discrete_ticks(y_ticks[0], y_ticks[1], MAX_DISCRETE_TICKS)
+        y_ticks = _thin_discrete_ticks(y_ticks[0], y_ticks[1], max_discrete_ticks)
     intensity = np.zeros((ny, nx))
     np.add.at(intensity, (y_idx, x_idx), 1)
     if normalize:
@@ -2215,12 +2231,12 @@ def make_tile(
     # rank-index discrete axis (categorical data, or data that couldn't
     # be laid out in real values) instead gets its own pre-thinned ticks.
     if discrete_x and x_ticks is None:
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))
     elif x_ticks is not None:
         ax.set_xticks(x_ticks[0])
         ax.set_xticklabels(x_ticks[1])
     if discrete_y and y_ticks is None:
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))
     elif y_ticks is not None:
         ax.set_yticks(y_ticks[0])
         ax.set_yticklabels(y_ticks[1])
@@ -5488,7 +5504,16 @@ def _dotplot_relayout(ax):
             ]
         )
     elif np.all(positions == np.round(positions)):
-        value_axis.set_major_locator(MaxNLocator(integer=True))
+        # This runs on every draw, so it would undo a cap set on the tick
+        # count afterwards -- a dot plot on the diagonal of a pairs matrix
+        # is thinned to fit its small panel (RVResults._plot_pairs records
+        # the cap on the axes), so honor that cap if it is there.
+        value_cap = getattr(ax, "_symbulate_value_ticks", None)
+        value_axis.set_major_locator(
+            MaxNLocator(integer=True)
+            if value_cap is None
+            else MaxNLocator(integer=True, nbins=value_cap)
+        )
     # The count axis is always integer counts. This runs on every draw, so
     # it would undo a cap set on the tick count afterwards -- a dot plot in a
     # marginal strip is thinned to fit (thin_marginal_frequency_ticks, which
@@ -6702,6 +6727,7 @@ def make_joint_pmf(
     xlabel="Variable 1",
     ylabel="Variable 2",
     title=True,
+    max_discrete_ticks=MAX_DISCRETE_TICKS,
     **kwargs,
 ):
     """Draw the joint probability grid of a discrete 2-D distribution.
@@ -6737,6 +6763,11 @@ def make_joint_pmf(
         Axis labels, naming the two variables being plotted.
     title : bool, default True
         Whether to title the axes. A panel of a pairs matrix passes False.
+    max_discrete_ticks : int, optional
+        Cap on how many ticks each axis shows. Defaults to the module
+        constant ``MAX_DISCRETE_TICKS``; a panel of a pairs matrix passes
+        ``PAIRS_MAX_DISCRETE_TICKS`` instead, since its panel is a
+        fraction of a full-size plot's width.
     **kwargs
         Additional keyword arguments passed to ``ax.imshow``.
 
@@ -6813,8 +6844,8 @@ def make_joint_pmf(
         ax.set_title("Joint PMF Plot")
     # Counts are whole numbers, so only whole-number ticks make sense; cap
     # how many appear so the labels can't crowd into each other.
-    ax.xaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=MAX_DISCRETE_TICKS, integer=True))
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=max_discrete_ticks, integer=True))
     # A filled mesh covers the axes, so a grid would only show at the
     # spines; turn it off entirely rather than leave stray ticks of it,
     # matching make_tile.
