@@ -7269,7 +7269,7 @@ class Multinomial(MultivariateDistribution):
         # ``p`` reports the helpful message instead of a cryptic error and can
         # be stacked alongside an invalid ``n``.
         try:
-            bad_p = not (sum(p) == 1 and min(p) >= 0)
+            bad_p = not (math.isclose(sum(p), 1, abs_tol=1e-9) and min(p) >= 0)
         except (TypeError, ValueError):
             bad_p = True
 
@@ -7734,12 +7734,14 @@ class NegativeMultinomial(MultivariateDistribution):
         # low-level error, and can be reported alongside an invalid ``r``.
         try:
             p_arr = np.asarray(p, dtype=float)
+            p_sum = p_arr.sum()
             bad_p = (
                 p_arr.ndim != 1
                 or len(p_arr) < 1
                 or not np.all(np.isfinite(p_arr))
                 or np.any(p_arr < 0)
-                or p_arr.sum() >= 1
+                or p_sum > 1
+                or math.isclose(p_sum, 1, abs_tol=1e-9)
             )
         except (TypeError, ValueError):
             bad_p = True

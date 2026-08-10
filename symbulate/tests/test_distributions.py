@@ -5192,6 +5192,18 @@ class TestMultinomial(MultivariatePlotTestCase):
     def test_Multinomial_error_p_negative(self):
         self.assertRaises(Exception, lambda: Multinomial(n=10, p=[-0.1, 1.1]))
 
+    def test_Multinomial_p_sum_within_float_tolerance_constructs(self):
+        # sum([0.4, 0.3, 0.2, 0.1]) == 0.9999999999999999 in floating point,
+        # not exactly 1 -- this must not be rejected.
+        Multinomial(n=12, p=[0.4, 0.3, 0.2, 0.1])
+
+    def test_Multinomial_p_sum_repeated_fraction_constructs(self):
+        # sum([1 / 6] * 6) also lands a few ULPs away from 1.
+        Multinomial(n=6, p=[1 / 6] * 6)
+
+    def test_Multinomial_error_p_sum_still_rejected_when_actually_wrong(self):
+        self.assertRaises(Exception, lambda: Multinomial(n=5, p=[0.5, 0.6]))
+
     def test_Multinomial_draw_sums_to_n(self):
         distributions.rng = np.random.default_rng(42)
         X = Multinomial(n=20, p=[0.2, 0.5, 0.3])
@@ -5760,6 +5772,15 @@ class TestNegativeMultinomial(MultivariatePlotTestCase):
 
     def test_NegativeMultinomial_error_p_sums_above_one(self):
         self.assertRaises(Exception, lambda: NegativeMultinomial(r=3, p=[0.7, 0.6]))
+
+    def test_NegativeMultinomial_error_p_sum_at_boundary_within_float_tolerance(self):
+        # sum([1/3, 1/3, 1/3]) lands a few ULPs away from 1 in floating
+        # point, but this is still the invalid "leaves no probability for
+        # the stopping category" boundary and must still be rejected.
+        self.assertRaises(Exception, lambda: NegativeMultinomial(r=3, p=[1 / 3] * 3))
+
+    def test_NegativeMultinomial_p_sum_safely_below_one_constructs(self):
+        NegativeMultinomial(r=3, p=[0.3, 0.2])
 
     def test_NegativeMultinomial_error_p_negative(self):
         self.assertRaises(Exception, lambda: NegativeMultinomial(r=3, p=[-0.1, 0.2]))
