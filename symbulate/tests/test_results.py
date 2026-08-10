@@ -564,6 +564,70 @@ class TestResultsRepr(unittest.TestCase):
         html = make_results(list(range(20)))._repr_html_()
         self.assertIn("...", html)
 
+    # --- edge cases the display rewrite's manual smoke-testing covered ---
+
+    def test_repr_of_empty_results(self):
+        """n=0: the header still prints and nothing blows up on max() of an
+        empty column."""
+        r = make_results([])
+        s = repr(r)
+        self.assertIn("Index", s)
+        self.assertIn("Result", s)
+        self.assertEqual(s.count("\n"), 0)  # header only, no data rows
+        self.assertIn("<table>", r._repr_html_())
+
+    def test_repr_of_single_value_results(self):
+        r = make_results([1.5])
+        s = repr(r)
+        self.assertEqual(s.count("\n"), 1)  # header + one row
+        self.assertIn("1.5000", s)
+        self.assertIn("1.5000", r._repr_html_())
+
+    def test_vector_column_with_inconsistent_dimension_does_not_crash(self):
+        """_format_display_column aligns component-by-component only when
+        every row has the same length; a ragged column takes the fallback
+        branch and is formatted row by row instead."""
+        r = make_results([Vector([1.5, 2.5]), Vector([3.5]), Vector([4.5, 5.5, 6.5])])
+        s = repr(r)
+        self.assertIn("1.5000", s)
+        self.assertIn("3.5000", s)
+        self.assertIn("6.5000", s)
+        self.assertIn("<table>", r._repr_html_())
+
+    def test_exactly_ten_and_eleven_rows_show_every_row(self):
+        """Regression: _repr_html_ used to insert a "..." row whenever
+        len > 9 -- so at exactly 10 or 11 it claimed rows were omitted when
+        none were, and at 11 it dropped index 9's row entirely. Both display
+        methods now share _display_rows, so neither can do that."""
+        for n in (10, 11):
+            with self.subTest(n=n):
+                r = make_results(list(range(100, 100 + n)))
+                text, html = repr(r), r._repr_html_()
+                for rendering, name in [(text, "__repr__"), (html, "_repr_html_")]:
+                    self.assertNotIn("...", rendering, f"{name} claimed truncation")
+                    for value in range(100, 100 + n):
+                        self.assertIn(str(value), rendering, f"{name} dropped {value}")
+
+    def test_twelve_rows_is_where_truncation_starts(self):
+        """One past the boundary above: now rows really are omitted, so the
+        marker is correct rather than spurious."""
+        r = make_results(list(range(100, 112)))
+        for rendering in (repr(r), r._repr_html_()):
+            self.assertIn("...", rendering)
+            self.assertIn("111", rendering)  # last row still shown
+            self.assertNotIn("110", rendering)  # the omitted middle
+
+    def test_repr_and_repr_html_agree_on_which_rows_appear(self):
+        """The two used to disagree; _display_rows is what keeps them in
+        step."""
+        for n in (5, 10, 11, 12, 30):
+            with self.subTest(n=n):
+                r = make_results(list(range(n)))
+                self.assertEqual(
+                    [label for label, _ in r._display_rows()].count("..."),
+                    1 if n > 11 else 0,
+                )
+
 
 # ---------------------------------------------------------------------------
 # RVResults.plot
@@ -762,12 +826,16 @@ class TestRVResultsPlot(unittest.TestCase):
         plt.close("all")
 
     def test_categorical_2d_mosaic_normal_usage_unaffected(self):
-        rvr = RVResults([("a" if i % 2 else "b", "x" if i % 3 else "y") for i in range(50)])
+        rvr = RVResults(
+            [("a" if i % 2 else "b", "x" if i % 3 else "y") for i in range(50)]
+        )
         rvr.plot(type="mosaic")
         plt.close("all")
 
     def test_categorical_2d_tile_bad_kwarg_raises_friendly_typeerror(self):
-        rvr = RVResults([("a" if i % 2 else "b", "x" if i % 3 else "y") for i in range(50)])
+        rvr = RVResults(
+            [("a" if i % 2 else "b", "x" if i % 3 else "y") for i in range(50)]
+        )
         with self.assertRaisesRegex(TypeError, "keyword argument"):
             rvr.plot(type="tile", not_a_real_kwarg=5)
         plt.close("all")

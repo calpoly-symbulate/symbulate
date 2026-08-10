@@ -174,6 +174,154 @@ def _is_boolean_vector(vector):
     return all(isinstance(x, (bool, np.bool_)) for x in vector)
 
 
+#: Default number of decimal places shown for float outcomes in
+#: ``Results.__repr__`` / ``Results._repr_html_``. Fixed-width decimals
+#: (rather than e.g. ``%.4g``'s variable-width significant figures) is
+#: what makes a right-justified column line up on the decimal point --
+#: the number of characters after the point is constant, so the point
+#: ends up a constant distance from the right edge of the column.
+RESULT_DISPLAY_DECIMALS = 4
+
+
+def _format_scalar(value, decimals=RESULT_DISPLAY_DECIMALS):
+    """Format one numeric scalar outcome for display.
+
+    Floats are rounded to a fixed number of decimal places so that a
+    column of them lines up on the decimal point once right-justified
+    (see ``RESULT_DISPLAY_DECIMALS``). Integers and booleans are left
+    exactly as-is: they are typically exact counts or category codes
+    (e.g. a die roll, a coin flip encoded as 0/1) rather than measured
+    quantities, so rounding them would be misleading, not clarifying.
+
+    Parameters
+    ----------
+    value : object
+        One numeric outcome, or one component of a numeric-vector
+        outcome. Booleans are handled before ints because ``bool`` is
+        a subclass of ``int`` in Python.
+    decimals : int, optional
+        Number of decimal places to show for floats. Defaults to
+        ``RESULT_DISPLAY_DECIMALS``.
+
+    Returns
+    -------
+    str
+        The formatted value, not yet padded/aligned.
+
+    Examples
+    --------
+    >>> _format_scalar(3)
+    '3'
+    >>> _format_scalar(3.14159)
+    '3.1416'
+    >>> _format_scalar(True)
+    'True'
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return str(value)
+    if isinstance(value, (int, np.integer)):
+        return str(value)
+    if isinstance(value, (float, np.floating)):
+        return f"{value:.{decimals}f}"
+    return str(value)
+
+
+def _format_result(value, decimals=RESULT_DISPLAY_DECIMALS):
+    """Format one simulation outcome for display.
+
+    Numeric scalars are rounded to a fixed number of decimals (see
+    ``_format_scalar``). Numeric-vector outcomes (e.g. a ``Tuple`` or
+    ``Vector`` from ``(X & Y).sim(n)``) have each component formatted
+    the same way and rejoined, so a bivariate outcome gets the same
+    fixed-decimal treatment as a scalar one. Anything else --
+    categorical outcomes, ``TimeFunction`` values, and so on -- falls
+    back to ``str(value)`` unchanged.
+
+    Parameters
+    ----------
+    value : object
+        One stored simulation outcome.
+    decimals : int, optional
+        Number of decimal places to show for floats.
+
+    Returns
+    -------
+    str
+        The formatted outcome, not yet padded/aligned.
+
+    See Also
+    --------
+    _format_display_column :
+        Formats and aligns an entire column of outcomes, including
+        per-component alignment for numeric-vector outcomes.
+    """
+    if is_number(value):
+        return _format_scalar(value, decimals)
+    if is_numeric_vector(value):
+        formatted = ", ".join(_format_scalar(v, decimals) for v in value)
+        return f"({formatted})"
+    return str(value)
+
+
+def _format_display_column(values, decimals=RESULT_DISPLAY_DECIMALS):
+    """Format and right-justify a column of simulation outcomes for display.
+
+    Every value is formatted individually (see ``_format_result``).
+    When every value is a numeric vector of the same length -- e.g. a
+    column of ``(X, Y)`` pairs -- each *component position* is
+    additionally aligned on its own: component 0 across all rows is
+    padded to the widest formatted component 0, component 1 to the
+    widest component 1, and so on, so a two-column outcome reads as
+    two neat sub-columns instead of one ragged tuple string. The whole
+    column (vector or scalar) is then right-justified to a single
+    common width, so it lines up under its header.
+
+    Parameters
+    ----------
+    values : list
+        The simulation outcomes to format. Should already be narrowed
+        down to just the rows that will actually be displayed --
+        widths are computed only from what's passed in.
+    decimals : int, optional
+        Number of decimal places to show for floats.
+
+    Returns
+    -------
+    list of str
+        One formatted, aligned, right-justified string per input
+        value, all of the same length.
+
+    Examples
+    --------
+    >>> _format_display_column([1, 22, 3])
+    [' 1', '22', ' 3']
+    >>> _format_display_column([(1.5, 20), (13.25, 4)])
+    ['( 1.5000, 20)', '(13.2500,  4)']
+    """
+    if values and all(is_numeric_vector(v) for v in values):
+        lengths = {len(v) for v in values}
+        if len(lengths) == 1:
+            dim = lengths.pop()
+            columns = []
+            for j in range(dim):
+                component_strs = [_format_scalar(v[j], decimals) for v in values]
+                width = max(len(s) for s in component_strs)
+                columns.append([s.rjust(width) for s in component_strs])
+            formatted = [
+                "(" + ", ".join(columns[j][i] for j in range(dim)) + ")"
+                for i in range(len(values))
+            ]
+        else:
+            # Inconsistent dimension across rows -- fall back to
+            # formatting each row on its own, unaligned internally.
+            formatted = [_format_result(v, decimals) for v in values]
+    else:
+        formatted = [_format_result(v, decimals) for v in values]
+
+    width = max((len(s) for s in formatted), default=0)
+    return [s.rjust(width) for s in formatted]
+
+
 def _is_categorical_1d(results):
     """Check whether results are a 1D collection of categorical (string) values.
 
@@ -1136,9 +1284,40 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
             "Then call .plot() on those simulations."
         )
 
+    def _display_rows(self):
+        """Return the rows that ``__repr__``/``_repr_html_`` show.
+
+        Shows every row when there are at most 11; otherwise the
+        first 9 and the last one, with an ``"..."`` marker in
+        between standing in for the omitted middle. Shared by both
+        display methods so they always agree on which rows appear
+        (previously ``_repr_html_`` inserted a spurious ``"..."``
+        row even at exactly 10 or 11 results, where nothing was
+        actually omitted).
+
+        Returns
+        -------
+        list of (str, object or None)
+            ``(index_label, result)`` pairs for real rows, and
+            ``("...", None)`` for the ellipsis marker.
+        """
+        n = len(self)
+        if n <= 11:
+            return [(str(i), self.results[i]) for i in range(n)]
+        rows = [(str(i), self.results[i]) for i in range(9)]
+        rows.append(("...", None))
+        rows.append((str(n - 1), self.results[n - 1]))
+        return rows
+
     def __repr__(self):
         """
         Return a string representation of the results.
+
+        Numeric outcomes are rounded to a fixed number of decimal
+        places and the Result column is right-justified (see
+        ``_format_display_column``), so a column of simulated values
+        lines up on the decimal point instead of trailing off at
+        whatever precision each float happened to print at.
 
         Returns
         -------
@@ -1153,53 +1332,38 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         >>> P = BoxModel(["H", "T"])
         >>> results = P.sim(3)
         >>> print(repr(results))  # doctest: +SKIP
-        Index  Result
-        0      H
-        1      T
-        2      H
+        Index Result
+        0     H
+        1     T
+        2     H
         """
+        rows = self._display_rows()
+        index_strs = [label for label, _ in rows]
+        real_values = [result for label, result in rows if label != "..."]
+        formatted_reals = iter(_format_display_column(real_values))
+        result_strs = [
+            "..." if label == "..." else next(formatted_reals) for label, _ in rows
+        ]
 
-        i_last = len(self) - 1
-        max_index_length = len(str(i_last))
+        index_width = max([len("Index")] + [len(s) for s in index_strs])
+        result_width = max([len("Result")] + [len(s) for s in result_strs])
 
-        if max_index_length <= 5:
-            index_header_space = ""
-            index_value_space = " " * 4
-        else:
-            index_header_space = " " * (max_index_length - 5)
-            index_value_space = " " * (max_index_length - 1)
-
-        table_rows = []
-
-        table_rows.append(f"Index{index_header_space} Result")
-
-        for i, result in enumerate(self.results):
-            table_rows.append(f"{str(i)}{index_value_space} {str(result)}")
-
-            if len(self) > 9 and i >= 8:
-                index_value_space = " " * (5 - len(str(i_last)))
-
-                if len(self) > 11:
-                    table_rows.append(
-                        f"{'.' * max_index_length}{index_value_space} "
-                        f"{'.' * len(str(self.get(i_last)))}"
-                    )
-                elif len(self) == 11:
-                    table_rows.append(
-                        f"{str(i_last - 1)}{' ' * (5 - len(str(i_last - 1)))} "
-                        f"{str(self.get(i_last - 1))}"
-                    )
-
-                table_rows.append(
-                    f"{str(i_last)}{index_value_space} {str(self.get(i_last))}"
-                )
-                break
+        table_rows = [f"{'Index'.ljust(index_width)} {'Result'.rjust(result_width)}"]
+        for index_str, result_str in zip(index_strs, result_strs):
+            table_rows.append(
+                f"{index_str.ljust(index_width)} {result_str.rjust(result_width)}"
+            )
 
         return "\n".join(table_rows)
 
     def _repr_html_(self):
         """
         Return an HTML table representation of the results.
+
+        Numeric outcomes are rounded the same way as in ``__repr__``
+        (see ``_format_display_column``) and the Result column is
+        right-aligned via CSS, so the notebook table matches the
+        plain-text one instead of showing raw, unrounded floats.
 
         Returns
         -------
@@ -1223,7 +1387,7 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
         """
         row_template = """
         <tr>
-          <td>%s</td><td>%s</td>
+          <td>%s</td><td style="text-align: right">%s</td>
         </tr>
         """
 
@@ -1232,19 +1396,15 @@ class Results(Arithmetic, Statistical, Comparable, Logical, Filterable, Transfor
                 return result[:100] + "..."
             return result
 
+        rows = self._display_rows()
+        real_values = [result for label, result in rows if label != "..."]
+        formatted_reals = iter(_format_display_column(real_values))
+
         table_body = ""
-        for i, result in enumerate(self.results):
-            table_body += row_template % (i, _truncate(str(result)))
-            # if we've already printed 9 rows, skip to end
-            if i >= 8:
-                if len(self) > 9:
-                    table_body += "<tr><td>...</td><td>...</td></tr>"
-                    i_last = len(self) - 1
-                    table_body += row_template % (
-                        i_last,
-                        _truncate(str(self.get(i_last))),
-                    )
-                break
+        for label, _ in rows:
+            result_str = "..." if label == "..." else _truncate(next(formatted_reals))
+            table_body += row_template % (label, result_str)
+
         return table_template.format(table_body=table_body)
 
 
@@ -3115,10 +3275,18 @@ class RVResults(Results):
             color = get_next_color(ax)
             if "bar" in type:
                 _call_plot_helper(
-                    make_bar, values, ax, color, normalize=normalize, alpha=alpha, **kwargs
+                    make_bar,
+                    values,
+                    ax,
+                    color,
+                    normalize=normalize,
+                    alpha=alpha,
+                    **kwargs,
                 )
             elif "dotplot" in type:
-                _call_plot_helper(make_dotplot, values, ax, color, alpha=alpha, **kwargs)
+                _call_plot_helper(
+                    make_dotplot, values, ax, color, alpha=alpha, **kwargs
+                )
             elif "impulse" in type:
                 _call_plot_helper(
                     make_impulse,
