@@ -4336,18 +4336,26 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_labels_every_row(self):
-        # The left column names its row's variable, top-left panel included --
-        # that panel is the only one in its row, so without the label the
-        # first row goes unnamed. Matches a simulated pairs matrix.
+        # A diagonal panel's y-axis is that variable's own density, not the
+        # variable, so it says which -- and says "Marginal" so it can't be
+        # read as the joint density its colorbar measures. The rest of the
+        # left column names its row's variable. Matches a simulated matrix.
         plt.close("all")
         X = MultivariateNormal(mean=[0, 0, 0], cov=np.eye(3).tolist())
         X.plot()
         panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
-        # Panels are added row by row, so the first one is (0, 0).
-        self.assertEqual(panels[0].get_ylabel(), "Variable 1")
+        # Panels are added row by row, so the first one is (0, 0) -- the
+        # diagonal panel for variable 1.
+        self.assertEqual(panels[0].get_ylabel(), "Marginal Density")
         self.assertEqual(
             sorted(a.get_ylabel() for a in panels if a.get_ylabel()),
-            ["Variable 1", "Variable 2", "Variable 3"],
+            [
+                "Marginal Density",
+                "Marginal Density",
+                "Marginal Density",
+                "Variable 2",
+                "Variable 3",
+            ],
         )
         plt.close("all")
 
@@ -4367,7 +4375,9 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
                 "Variables 2 & 3",
             ],
         )
-        self.assertEqual({a.get_ylabel() for a in bars}, {"Density"})
+        # "Joint", so a bar can't be confused with the marginal density on the
+        # diagonal panel it sits across from.
+        self.assertEqual({a.get_ylabel() for a in bars}, {"Joint Density"})
         plt.close("all")
 
     def test_MultivariateNormal_plot_pairs_colorbars_avoid_the_panels(self):
@@ -5125,7 +5135,7 @@ class TestMultinomial(MultivariatePlotTestCase):
         plt.close("all")
         Multinomial(n=12, p=[0.3, 0.3, 0.2, 0.2]).plot()
         bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
-        self.assertEqual({a.get_ylabel() for a in bars}, {"Probability"})
+        self.assertEqual({a.get_ylabel() for a in bars}, {"Joint Probability"})
         plt.close("all")
 
     def test_Multinomial_plot_pairs(self):

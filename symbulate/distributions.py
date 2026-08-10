@@ -24,6 +24,8 @@ from .plot import (
     PAIRS_MAX_DISCRETE_TICKS,
     setup_marginal_axes,
     pairs_colorbar_pair_label,
+    pairs_joint_label,
+    pairs_marginal_label,
     advance_pairs_diagonal_color,
     align_pairs_columns,
     thin_marginal_frequency_ticks,
@@ -5599,6 +5601,9 @@ class MultivariateDistribution(Distribution):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
                 cells[(row, col)] = ax
+                # What this panel's frequency axis measures, for a diagonal
+                # panel (see the label section below).
+                marginal_quantity = ""
                 if row == col:
                     # The diagonal is this variable on its own, so it is
                     # exactly the univariate plot -- reuse it rather than
@@ -5613,6 +5618,11 @@ class MultivariateDistribution(Distribution):
                         xlim=self._plot_window(variables[row]), ax=ax, alpha=alpha
                     )
                     ax.set_title("")
+                    # Whatever the univariate plot called its own frequency
+                    # axis -- "Density" for a continuous family, "Probability"
+                    # for a discrete one. Read off the panel rather than
+                    # re-derived, so the two can't disagree.
+                    marginal_quantity = ax.get_ylabel()
                     # A discrete marginal's value axis otherwise keeps
                     # matplotlib's default locator, sized for a full-size
                     # plot -- too many ticks for this panel's fraction of
@@ -5657,15 +5667,18 @@ class MultivariateDistribution(Distribution):
                     # panel's y-axis is a density and genuinely differs from
                     # its neighbors'.
                     ax.set_xticklabels([])
-                # The left column names its row's variable, so the labels read
-                # down the side in order -- including the top-left panel, which
-                # is the only one in its row and would otherwise go unnamed
-                # until the bottom of its column. That panel's y-axis is really
-                # a density or a probability rather than the variable, so the
-                # label names the row it heads rather than the axis it sits on;
-                # this is the convention seaborn's PairGrid uses, and the one a
-                # simulated pairs matrix follows.
-                if col == 0:
+                # A diagonal panel's y-axis is not the variable at all -- it is
+                # that variable's own density or probability -- so it says so,
+                # and says which of the matrix's two kinds of distribution it
+                # is showing. The variable itself is still named at the bottom
+                # of that column, since a diagonal panel sits above one.
+                # Everything else in the left column names its row's variable,
+                # so the labels read down the side in order; the inner panels
+                # stay unlabeled rather than repeat them. A simulated pairs
+                # matrix labels itself the same way.
+                if marginal_quantity:
+                    ax.set_ylabel(pairs_marginal_label(marginal_quantity))
+                elif col == 0:
                     ax.set_ylabel(self._variable_label(variables[row]))
                 else:
                     ax.set_ylabel("")
@@ -5693,7 +5706,7 @@ class MultivariateDistribution(Distribution):
         # it across the diagonal -- the same treatment a simulated pairs
         # matrix gets, so the two can be read side by side. Done after
         # tight_layout, so the cells are where they will finally be.
-        quantity = "Probability" if self.discrete else "Density"
+        quantity = pairs_joint_label("Probability" if self.discrete else "Density")
         for mappable, row, col in joint_panels:
             if mappable is None:
                 continue

@@ -1831,6 +1831,55 @@ def pairs_colorbar_pair_label(first, second):
     return "Variables %d & %d" % (first + 1, second + 1)
 
 
+def pairs_joint_label(quantity):
+    """Name what a joint panel's colorbar measures, e.g. ``"Joint Density"``.
+
+    A pairs matrix shows two kinds of distribution at once: each off-diagonal
+    panel is a *joint* distribution of two variables, each diagonal panel is
+    one variable's own *marginal* distribution. "Density" on its own does not
+    say which of the two a scale belongs to, and the two are read differently
+    -- so the word in front says it. Both the simulated and the theoretical
+    matrix call this, so they can't drift apart.
+
+    Parameters
+    ----------
+    quantity : str
+        What the colors measure on their own: ``"Density"``, ``"Count"``
+        (a simulated matrix with ``normalize=False``), or ``"Probability"``
+        (a discrete distribution's exact joint pmf).
+
+    Returns
+    -------
+    str
+        The quantity named as a joint one, e.g. ``"Joint Count"``.
+    """
+    return "Joint %s" % quantity
+
+
+def pairs_marginal_label(quantity):
+    """Name what a diagonal panel's frequency axis measures.
+
+    The counterpart of :func:`pairs_joint_label` for the other half of the
+    matrix -- see there for why the word in front is needed at all. The
+    quantity is whatever that panel's own plot type already labeled its
+    frequency axis, so this adapts on its own: a count histogram's diagonal
+    reads "Marginal Count", an exact pmf's reads "Marginal Probability".
+
+    Parameters
+    ----------
+    quantity : str
+        What the panel's frequency axis measures on its own, e.g.
+        ``"Density"``, ``"Relative Frequency"``, ``"Count"``, or
+        ``"Probability"``.
+
+    Returns
+    -------
+    str
+        The quantity named as a marginal one, e.g. ``"Marginal Density"``.
+    """
+    return "Marginal %s" % quantity
+
+
 def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
     """Put one joint panel's colorbar in the empty cell mirroring it.
 
@@ -1857,9 +1906,9 @@ def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
     pair_label : str
         Which two variables the panel shows, e.g. ``"X1 & X2"``.
     quantity_label : str
-        What the colors measure: ``"Density"``, ``"Count"``, or
-        ``"Probability"``. Counts are whole numbers, so their ticks are
-        drawn without decimals.
+        What the colors measure: ``"Joint Density"``, ``"Joint Count"``, or
+        ``"Joint Probability"``, from :func:`pairs_joint_label`. Counts are
+        whole numbers, so their ticks are drawn without decimals.
 
     Returns
     -------
@@ -1882,7 +1931,7 @@ def add_pairs_panel_colorbar(fig, cell, mappable, pair_label, quantity_label):
     caxes.set_title(pair_label, fontsize=JOINT_PAIRS_COLORBAR_TITLE_SIZE)
     # A count is a whole number of simulated values, so decimals on its ticks
     # would be noise; a density or a probability needs them.
-    decimals = 0 if quantity_label == "Count" else JOINT_CBAR_DECIMALS
+    decimals = 0 if quantity_label.endswith("Count") else JOINT_CBAR_DECIMALS
     cbar.ax.yaxis.set_major_formatter(
         FuncFormatter(lambda value, _pos: f"{value:.{decimals}f}")
     )

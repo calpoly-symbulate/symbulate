@@ -42,6 +42,8 @@ from .plot import (
     MARGINAL_OVERLAY_ERROR,
     setup_marginal_axes,
     pairs_colorbar_pair_label,
+    pairs_joint_label,
+    pairs_marginal_label,
     advance_pairs_diagonal_color,
     align_pairs_columns,
     PAIRS_SUPTITLE,
@@ -1697,6 +1699,11 @@ class RVResults(Results):
             for col in range(row + 1):
                 ax = fig.add_subplot(gs[row, col])
                 cells[(row, col)] = ax
+                # What this panel's frequency axis measures, for a diagonal
+                # panel that has one. Read off the panel itself after it
+                # draws, so it follows the type actually used rather than
+                # being re-derived here (see the label section below).
+                marginal_quantity = ""
                 if row == col:
                     # The diagonal is this variable on its own, so it is
                     # exactly the univariate plot -- reuse the whole 1-D
@@ -1797,6 +1804,14 @@ class RVResults(Results):
                             )
                         elif is_numeric and diagonal_type == "dotplot":
                             ax._symbulate_value_ticks = PAIRS_MAX_DISCRETE_TICKS
+                    # Whatever this panel's own plot type called its
+                    # frequency axis -- "Density" or "Count" for a
+                    # histogram, "Relative Frequency" or "Count" for an
+                    # impulse plot, "Count" for a dot plot. A rug plot has
+                    # no frequency axis at all (it hides that direction
+                    # outright), so it leaves this empty and the panel keeps
+                    # the variable name below.
+                    marginal_quantity = ax.get_ylabel()
                 else:
                     joint_panels.append(
                         (
@@ -1833,14 +1848,19 @@ class RVResults(Results):
                     # panel's y-axis is a density and genuinely differs
                     # from its neighbors'.
                     ax.set_xticklabels([])
-                # The left column names its row's variable, so the labels read
-                # down the side in order -- including the top-left panel, which
-                # is the only one in its row and would otherwise go unnamed
-                # until the bottom of its column. That panel's y-axis is really
-                # a density rather than the variable, so the label names the
-                # row it heads rather than the axis it sits on; this is the
-                # convention seaborn's PairGrid uses too.
-                if col == 0:
+                # A diagonal panel's y-axis is not the variable at all -- it is
+                # how often that variable took each value -- so it says so,
+                # and says which of the matrix's two kinds of distribution it
+                # is showing. The variable itself is still named at the bottom
+                # of that column, since a diagonal panel sits above one.
+                # Everything else in the left column names its row's variable,
+                # so the labels read down the side in order; the inner panels
+                # stay unlabeled rather than repeat them.
+                if marginal_quantity:
+                    ax.set_ylabel(pairs_marginal_label(marginal_quantity))
+                elif col == 0:
+                    # A small-n continuous diagonal is a rug plot, which has no
+                    # frequency axis to name -- fall back to the row's variable.
                     ax.set_ylabel(self._pairs_variable_label(chosen[row]))
                 else:
                     ax.set_ylabel("")
@@ -1858,7 +1878,7 @@ class RVResults(Results):
         # Each joint panel gets its own colorbar, in the empty cell mirroring
         # it across the diagonal. Done after tight_layout, so the cells are
         # where they will finally be.
-        quantity = "Density" if normalize else "Count"
+        quantity = pairs_joint_label("Density" if normalize else "Count")
         for mappable, row, col in joint_panels:
             if mappable is None:
                 continue
