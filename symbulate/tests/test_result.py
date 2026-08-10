@@ -361,6 +361,15 @@ class TestDiscreteTimeFunction(unittest.TestCase):
         self.assertIsInstance(result, Vector)
         self.assertEqual(list(result), [0, 1, 2])
 
+    def test_getitem_open_ended_slice_raises_clear_value_error(self):
+        # Regression test: f[2:] used to crash with a raw
+        # "TypeError: 'NoneType' object cannot be interpreted as an
+        # integer" from range(n.start or 0, n.stop, ...) since there is
+        # no length to infer a stop from.
+        f = DiscreteTimeFunction(lambda n: n * 3, fs=1)
+        with self.assertRaisesRegex(ValueError, "without a stop"):
+            f[2:]
+
     def test_getitem_bad_type_raises(self):
         f = DiscreteTimeFunction(lambda n: n)
         with self.assertRaises(TypeError):

@@ -237,9 +237,15 @@ class RV(Arithmetic, Transformable, Comparable):
             return self.apply(lambda x: Vector(x[i] for i in n))
         # if the indices are a slice, return a random vector
         elif isinstance(n, slice):
-            return self.apply(
-                lambda x: Vector(x[i] for i in range(n.start or 0, n.stop, n.step or 1))
-            )
+            # x is the RV's own realized value (e.g. a tuple/Vector from a
+            # fixed-size draw), which already knows its own length and
+            # already supports native slicing -- so slice it directly
+            # rather than rebuilding a range() from n.start/stop/step.
+            # The old range()-based version broke on any open-ended slice
+            # (X[1:], with n.stop is None) with a raw
+            # "TypeError: 'NoneType' object cannot be interpreted as an
+            # integer", since range() requires an actual integer stop.
+            return self.apply(lambda x: Vector(x[n]))
         # otherwise, return the nth value
         return self.apply(lambda x: x[n])
 

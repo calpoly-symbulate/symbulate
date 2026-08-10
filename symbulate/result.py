@@ -1108,6 +1108,10 @@ class DiscreteTimeFunction(TimeFunction):
         TypeError
             If ``n`` is not an int, numeric vector, or slice. The message
             includes the actual value, its type, and the expected types.
+        ValueError
+            If ``n`` is a slice with no stop index (e.g. ``f[2:]``). The
+            index set runs on forever in both directions, so there is no
+            end to slice up to.
 
         Examples
         --------
@@ -1122,6 +1126,22 @@ class DiscreteTimeFunction(TimeFunction):
         elif is_numeric_vector(n):
             return Vector(self._get_value_at_index(e) for e in n)
         elif isinstance(n, slice):
+            if n.stop is None:
+                # Unlike RV.__getitem__, there is no underlying container
+                # to delegate to here: each value is generated on demand
+                # from a function over an index set unbounded in both
+                # directions (negative indices work too), so there is no
+                # length to infer and no way to materialize "the rest of
+                # an infinite Vector" eagerly. This used to fall through
+                # to range(n.start or 0, n.stop, ...) and crash with a raw
+                # "TypeError: 'NoneType' object cannot be interpreted as
+                # an integer" the moment n.stop was None.
+                raise ValueError(
+                    "Cannot slice a DiscreteTimeFunction without a stop "
+                    "index (e.g. f[2:10]) -- it has no end to slice up "
+                    "to. Index individual values with f(t) or f[n], or "
+                    "give an explicit stop."
+                )
             return Vector(
                 self._get_value_at_index(e)
                 for e in range(n.start or 0, n.stop, n.step or 1)
