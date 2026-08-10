@@ -7160,23 +7160,25 @@ class TestDistributionAutoZoom(unittest.TestCase):
     # --- what the plot actually draws ---
 
     def test_plot_uses_the_zoomed_window(self):
-        # The drawn window is the zoomed one, plus the half step of air a
-        # discrete plot puts around a window it chose for itself.
+        # The drawn window is the zoomed one, plus one whole-number slot of
+        # air a discrete plot puts around a window it chose for itself --
+        # matching the same "one slot" convention configure_axes uses for
+        # simulated impulse/dot plots.
         plt.figure()
         d = Binomial(100, 0.5)
         d.plot()
         low, high = d.xlim
-        self.assertEqual(tuple(plt.gca().get_xlim()), (low - 0.5, high + 0.5))
+        self.assertEqual(tuple(plt.gca().get_xlim()), (low - 1.0, high + 1.0))
         lo, hi = plt.gca().get_xlim()
         self.assertGreater(lo, 5)  # not the full (0, 100) support
         self.assertLess(hi, 95)
 
     def test_plot_keeps_a_filled_window_whole(self):
-        # All of (0, 10) is on screen, with half a step of air at each end so
-        # the dots on 0 and 10 don't sit on the axis spine.
+        # All of (0, 10) is on screen, with one whole-number slot of air at
+        # each end so the dots on 0 and 10 don't sit on the axis spine.
         plt.figure()
         Binomial(10, 0.5).plot()
-        self.assertEqual(tuple(plt.gca().get_xlim()), (-0.5, 10.5))
+        self.assertEqual(tuple(plt.gca().get_xlim()), (-1.0, 11.0))
 
     # --- overlay: the theoretical curve no longer stretches the shared axis ---
 
@@ -7194,13 +7196,59 @@ class TestDistributionAutoZoom(unittest.TestCase):
     # --- a window set by hand still wins ---
 
     def test_window_set_by_hand_is_used_as_given(self):
-        # Exactly (10, 90): a hand-chosen window skips the half step of
-        # padding a self-chosen discrete window gets.
+        # Exactly (10, 90): a hand-chosen window skips the whole-number slot
+        # of padding a self-chosen discrete window gets.
         plt.figure()
         d = Binomial(100, 0.5)
         d.xlim = (10, 90)
         d.plot()
         self.assertEqual(tuple(plt.gca().get_xlim()), (10.0, 90.0))
+
+    # --- regression: discrete pmf/cdf axes are not flush against the spines ---
+
+    def test_discrete_pmf_xlim_is_not_flush_with_data(self):
+        # A discrete pmf's leftmost/rightmost point must sit strictly inside
+        # the axes' view, not exactly on the left/right spine.
+        plt.figure()
+        d = Poisson(3)
+        d.plot()
+        xlo, xhi = plt.gca().get_xlim()
+        data_lo, data_hi = d.xlim
+        self.assertLess(xlo, data_lo)
+        self.assertGreater(xhi, data_hi)
+
+    def test_discrete_cdf_xlim_is_not_flush_with_data(self):
+        # Same padding requirement for the discrete cdf step function: the
+        # step function's left edge must not sit exactly on the y-axis
+        # spine, and the right edge must not sit exactly on the right spine.
+        plt.figure()
+        d = Poisson(3)
+        d.plot(cdf=True)
+        xlo, xhi = plt.gca().get_xlim()
+        data_lo, data_hi = d.xlim
+        self.assertLess(xlo, data_lo)
+        self.assertGreater(xhi, data_hi)
+
+    def test_continuous_pdf_xlim_unaffected_by_discrete_padding(self):
+        # A continuous distribution's axes are untouched by this padding --
+        # only self.discrete=True widens the view.
+        plt.figure()
+        d = Normal(0, 1)
+        d.plot()
+        self.assertEqual(tuple(plt.gca().get_xlim()), tuple(d.xlim))
+
+    def test_discrete_padding_does_not_grow_across_overlaid_calls(self):
+        # Two calls that draw the same discrete window (e.g. two pmf-family
+        # calls sharing an axes) must not accumulate padding on every call --
+        # the axes should widen by one slot beyond the true data window
+        # regardless of how many overlaid calls contributed to that window.
+        plt.figure()
+        ax = plt.gca()
+        Binomial(10, 0.5).plot(ax=ax)
+        first_lim = ax.get_xlim()
+        Binomial(10, 0.5).plot(ax=ax)  # same kind, same window -- overlays
+        second_lim = ax.get_xlim()
+        self.assertEqual(first_lim, second_lim)
 
     # --- every base-plot distribution renders on its own window ---
 
