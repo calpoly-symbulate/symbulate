@@ -5049,6 +5049,20 @@ class TestMultinomial(MultivariatePlotTestCase):
         draw = X.draw()
         self.assertEqual(sum(draw), 20)
 
+    def test_Multinomial_corr_zero_variance_component_is_nan_not_warning(self):
+        # Regression test: a category with probability 0 never varies, so
+        # its correlation row/column is undefined (nan). This used to leak
+        # a raw "RuntimeWarning: invalid value encountered in divide" with
+        # no context; it should now compute quietly, with nan as the
+        # documented, intentional result.
+        import warnings
+
+        X = Multinomial(n=10, p=[1, 0, 0])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            corr = X.corr()
+        self.assertTrue(np.all(np.isnan(corr)))
+
     def test_Multinomial_marginals_match_Binomial(self):
         distributions.rng = np.random.default_rng(42)
         p = [0.3, 0.5, 0.2]

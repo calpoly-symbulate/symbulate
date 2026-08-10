@@ -5132,11 +5132,22 @@ class MultivariateDistribution(Distribution):
         numpy.ndarray
             The correlation matrix, obtained by scaling the covariance matrix
             by the outer product of the component standard deviations. Its
-            diagonal entries are all 1.
+            diagonal entries are all 1, except that a row/column for a
+            component with zero variance (e.g. ``Multinomial(n=10, p=[1, 0,
+            0])`` -- a category with probability 0 never varies) is entirely
+            ``nan``: correlation with a component that never varies from its
+            mean is undefined, not zero, so ``nan`` is the honest answer
+            rather than a number that looks precise but isn't.
         """
         cov = np.asarray(self.cov(), dtype=float)
         sd = np.sqrt(np.diag(cov))
-        return cov / np.outer(sd, sd)
+        # A zero-variance component makes the corresponding outer-product
+        # entries 0, so this division would otherwise raise a raw
+        # "RuntimeWarning: invalid value encountered in divide" with no
+        # context -- the result (nan) is correct and now documented above,
+        # so the warning is suppressed rather than the calculation changed.
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return cov / np.outer(sd, sd)
 
     # Whether the components must add up to a fixed total -- True for the
     # families whose draws are a breakdown of a whole (``Multinomial``
