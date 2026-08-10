@@ -586,6 +586,19 @@ MARGINAL_OVERLAY_ERROR = (
     "that a second plot can't share. Plot each one in its own cell -- or, for "
     "simulated data, draw both without marginal=True so they can overlay."
 )
+# Distribution.plot(): a pdf/pmf and a cdf on the same axes use incompatible
+# y-scales (one can exceed 1, the other runs 0 to 1), so this is a hard error
+# rather than a natural overlay or a readability warning -- there is no
+# reading of the combined plot that is correct. Same "hard error" tier as
+# MARGINAL_OVERLAY_ERROR above; see DECISIONS.md, "Decision: Overlay Behavior".
+THEORETICAL_CDF_PDF_OVERLAY_ERROR = (
+    "This axes already has a {existing} plotted on it, and you're now trying "
+    "to add a {new}. A density/mass curve and a cumulative distribution "
+    "curve use different y-axis scales (one can exceed 1, the other runs "
+    "from 0 to 1), so overlaying them on the same axes produces a plot that "
+    "can't be read correctly. Draw them in separate cells, or pass ax= to "
+    "place them in your own subplots (e.g. via plt.subplots())."
+)
 # Geometry of that three-panel layout, as a GridSpec of MARGINAL_GRID by
 # MARGINAL_GRID cells: the joint panel takes all but the first row and last
 # column, each variable's own distribution takes the strip beside it.
