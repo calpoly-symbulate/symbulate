@@ -947,15 +947,18 @@ class TestUpcrossingsAPI(unittest.TestCase):
         ):
             self.assertTrue(np.isinf(times[5]))
 
-    def test_step_and_tol_are_not_accepted(self):
-        # Nothing hides between the values of a path this reads, so there is no
-        # step size to choose and nothing to localize -- the arguments do not
-        # exist rather than being ignored.
-        seed()
-        with self.assertRaises(TypeError):
-            upcrossings(RandomWalk(p=0.5), level=1, step=0.1)
-        with self.assertRaises(TypeError):
-            upcrossings(RandomWalk(p=0.5), level=1, tol=1e-9)
+    def test_step_and_tol_are_accepted_and_ignored_for_a_step_path(self):
+        # They exist for a continuous path, which needs a band and a scan. A
+        # discrete-time path hides nothing between its values, so the arguments
+        # are accepted -- one call should work across a mixture of processes --
+        # and make no difference to the answer.
+        path = deterministic_walk([0, 1, 2, 0, 2, 0, 2, 0])
+        plain = upcrossings(path, level=2, max_time=7)
+        fussy = upcrossings(path, level=2, max_time=7, step=0.001, tol=1e-12)
+        self.assertEqual(
+            [plain[n] for n in range(3)],
+            [fussy[n] for n in range(3)],
+        )
 
 
 class TestUpcrossingsMeaning(unittest.TestCase):
@@ -1237,6 +1240,265 @@ class TestUpcrossingsErrors(unittest.TestCase):
             with self.assertRaises(ValueError) as context:
                 upcrossings(path, level=1000, max_time=100)[0]
         self.assertIn("jumps", str(context.exception))
+
+
+class TestResetBandOnStepPaths(unittest.TestCase):
+    """A reset level filters out wobbles that never go back far enough.
+
+    Written-down paths, so the expected answers can be read straight off the
+    list rather than trusted.
+    """
+
+    # 0 1 2 1 2 0 2 2 -- reaches 2 at steps 2, 4 and 6. The one at step 4
+    # arrives from 1, the other two from 0.
+    WOBBLE = [0, 1, 2, 1, 2, 0, 2, 2]
+
+    def test_without_a_reset_every_return_to_the_level_counts(self):
+        times = upcrossings(deterministic_walk(self.WOBBLE), level=2, max_time=7)
+        self.assertEqual([times[n] for n in range(3)], [2.0, 4.0, 6.0])
+
+    def test_a_reset_drops_the_crossing_that_did_not_come_back_far_enough(self):
+        # Dipping to 1 is not coming back to 0, so the step-4 crossing goes.
+        times = upcrossings(
+            deterministic_walk(self.WOBBLE), level=2, reset=0, max_time=7
+        )
+        self.assertEqual([times[n] for n in range(2)], [2.0, 6.0])
+        self.assertTrue(np.isinf(times[2]))
+
+    def test_a_reset_between_the_two_keeps_both(self):
+        # Coming back to 1 is enough when the reset is 1, so both count again.
+        times = upcrossings(
+            deterministic_walk(self.WOBBLE), level=2, reset=1, max_time=7
+        )
+        self.assertEqual([times[n] for n in range(3)], [2.0, 4.0, 6.0])
+
+    def test_a_reset_above_the_level_counts_crossings_downward(self):
+        # Mirrored: 4 3 2 3 2 4 2 2 falls to 2 at steps 2, 4 and 6, and only
+        # the first and last arrive from as high as 4.
+        path = deterministic_walk([4, 3, 2, 3, 2, 4, 2, 2])
+        times = upcrossings(path, level=2, reset=4, max_time=7)
+        self.assertEqual([times[n] for n in range(2)], [2.0, 6.0])
+        self.assertTrue(np.isinf(times[2]))
+
+    def test_a_band_narrower_than_the_steps_still_finds_the_crossings(self):
+        # The walk leaps over both ends of the band, never landing inside it.
+        # Reaching a level means reaching *or passing* it, so these still count.
+        path = deterministic_walk([0, 10, 0, 10, 0, 10])
+        times = upcrossings(path, level=6, reset=4, max_time=5)
+        self.assertEqual([times[n] for n in range(3)], [1.0, 3.0, 5.0])
+
+    def test_a_reset_the_path_never_reaches_gives_no_crossings_at_all(self):
+        path = deterministic_walk([0, 5, 5, 5, 5, 5, 5, 5])
+        times = upcrossings(path, level=5, reset=-99, max_time=7)
+        self.assertTrue(np.isinf(times[0]))
+
+    def test_jump_paths_take_a_reset_too(self):
+        # A queue length wobbling about 3 -- the reset is what stops one
+        # customer arriving and leaving from counting as a fresh crossing.
+        seed()
+        path = MM1(arrival_rate=1.8, service_rate=2, num_states=40).draw()
+        loose = upcrossings(path, level=3, max_time=200)
+        strict = upcrossings(path, level=3, reset=0, max_time=200)
+        loose_times = [t for t in (loose[n] for n in range(12)) if np.isfinite(t)]
+        strict_times = [t for t in (strict[n] for n in range(12)) if np.isfinite(t)]
+        self.assertTrue(len(strict_times) < len(loose_times))
+        self.assertEqual(strict_times, sorted(strict_times))
+        # Each crossing the band keeps really is one: the queue is at 3 there,
+        # having emptied since the previous one.
+        for t in strict_times:
+            self.assertGreaterEqual(float(path(t)), 3)
+
+
+class TestResetBandOnContinuousPaths(unittest.TestCase):
+    """A band is what gives a continuous path a sequence of crossings at all."""
+
+    def test_brownian_motion_is_accepted_once_a_reset_is_given(self):
+        seed()
+        times = upcrossings(
+            BrownianMotion().draw(), level=0.4, reset=-0.4, max_time=6, step=0.05
+        )
+        self.assertIsInstance(times, InfiniteVector)
+        self.assertIsInstance(times[0], float)
+
+    def test_the_crossings_come_in_order_and_land_near_the_level(self):
+        seed()
+        path = BrownianMotion().draw()
+        # One sequence, indexed -- not a fresh upcrossings() call per index,
+        # which would be an independent walk each time.
+        sequence = upcrossings(path, level=0.2, reset=-0.2, max_time=8, step=0.05)
+        times = [t for t in (sequence[n] for n in range(8)) if np.isfinite(t)]
+        self.assertTrue(len(times) >= 2)
+        self.assertEqual(times, sorted(times))
+        # Each reported time is where the path is at the level, give or take the
+        # localization slack `hitting_time` documents.
+        for t in times:
+            self.assertLess(abs(float(path(t)) - 0.2), 0.2)
+
+    def test_the_first_crossing_matches_the_definition_composed_by_hand(self):
+        # The whole meaning of a band: reach the reset, then reach the level.
+        # Composing two hitting times says the same thing the long way round, so
+        # the two should agree in distribution.
+        level, reset, max_time, step, n = 0.5, -0.5, 6.0, 0.05, 250
+
+        def two_stage(path):
+            armed = hitting_time(path, level=reset, max_time=max_time, step=step)
+            if not np.isfinite(armed):
+                return float("inf")
+            return hitting_time(
+                path, level=level, max_time=max_time, start_time=armed, step=step
+            )
+
+        seed(1)
+        band = np.array(
+            list(
+                upcrossings(
+                    BrownianMotion(),
+                    level=level,
+                    reset=reset,
+                    max_time=max_time,
+                    step=step,
+                )[0].sim(n)
+            ),
+            dtype=float,
+        )
+        seed(2)
+        by_hand = np.array(list(BrownianMotion().apply(two_stage).sim(n)), dtype=float)
+
+        # They should give up on the same share of paths, and agree on the rest.
+        reached = np.isfinite(band).mean()
+        reached_by_hand = np.isfinite(by_hand).mean()
+        self.assertLess(abs(reached - reached_by_hand), 0.12)
+        self.assertGreater(
+            stats.ks_2samp(
+                band[np.isfinite(band)], by_hand[np.isfinite(by_hand)]
+            ).pvalue,
+            0.01,
+        )
+
+    def test_a_geometric_brownian_motion_asks_the_question_on_the_log_scale(self):
+        # A price crossing a band is its log crossing the log of the band, and
+        # the two are the same computation -- not merely close. With the growth
+        # rate set so the log has no drift, the log band is the same band scaled,
+        # which leaves the crossing probability unchanged, so the same seed gives
+        # the very same times.
+        scale = 0.4
+        gaussian_process.rng = np.random.default_rng(3)
+        price = GeometricBrownianMotion(
+            initial=100, growth_rate=scale**2 / 2, scale=scale
+        ).draw()
+
+        hitting_times.rng = np.random.default_rng(9)
+        on_price = [
+            upcrossings(price, level=110, reset=90, max_time=4, step=0.05)[n]
+            for n in range(3)
+        ]
+        hitting_times.rng = np.random.default_rng(9)
+        on_log = [
+            upcrossings(
+                price.brownian_path,
+                level=np.log(1.1) / scale,
+                reset=np.log(0.9) / scale,
+                max_time=4,
+                step=0.05,
+            )[n]
+            for n in range(3)
+        ]
+        self.assertEqual(on_price, on_log)
+        # Not a vacuous match: this seed really does cross.
+        self.assertTrue(np.isfinite(on_price[0]))
+
+    def test_a_level_at_or_below_zero_is_still_refused_for_a_price(self):
+        seed()
+        path = GeometricBrownianMotion().draw()
+        with self.assertRaises(ValueError):
+            upcrossings(path, level=1.2, reset=0, max_time=2, step=0.1)
+
+    def test_other_gaussian_processes_are_accepted_with_a_band(self):
+        # A Brownian bridge only exists on its own interval, so each process gets
+        # a window it is actually defined on.
+        seed()
+        for process, max_time in [
+            (OrnsteinUhlenbeck(), 4.0),
+            (BrownianBridge(), 0.9),
+            (FractionalBrownianMotion(hurst=0.7), 4.0),
+        ]:
+            times = upcrossings(
+                process.draw(),
+                level=0.3,
+                reset=-0.3,
+                max_time=max_time,
+                step=max_time / 80,
+            )
+            self.assertIsInstance(times[0], float)
+
+    def test_the_count_does_not_run_away_as_the_step_shrinks(self):
+        # The point of the band. Without one the count of a continuous path's
+        # crossings grows without limit as the step shrinks; with one it settles,
+        # so a 10x finer step should give about the same answer.
+        def mean_count(step, tag):
+            seed(tag)
+            times = upcrossings(
+                BrownianMotion(), level=0.2, reset=-0.2, max_time=5, step=step
+            )
+            counts = [
+                sum(1 for k in range(12) if np.isfinite(row[k]))
+                for row in times.sim(150)
+            ]
+            return float(np.mean(counts))
+
+        coarse = mean_count(0.5, 5)
+        fine = mean_count(0.05, 6)
+        # Both are near 2; the tolerance is a few simulation errors, not a claim
+        # that they are equal.
+        self.assertLess(abs(coarse - fine), 0.75)
+
+    def test_a_process_gives_a_random_variable_with_a_band_too(self):
+        seed()
+        times = upcrossings(
+            BrownianMotion(), level=0.5, reset=-0.5, max_time=4, step=0.1
+        )
+        self.assertIsInstance(times, RV)
+        self.assertIsInstance(times[0], RV)
+
+
+class TestResetBandErrors(unittest.TestCase):
+
+    def test_a_continuous_path_without_a_reset_says_to_give_one(self):
+        seed()
+        with self.assertRaises(NotImplementedError) as context:
+            upcrossings(BrownianMotion().draw(), level=1)
+        message = str(context.exception)
+        self.assertIn("reset", message)
+        self.assertIn("infinitely often", message)
+
+    def test_a_reset_equal_to_the_level_raises_value_error(self):
+        with self.assertRaises(ValueError) as context:
+            upcrossings(RandomWalk(p=0.5), level=2, reset=2)
+        self.assertIn("apart", str(context.exception))
+
+    def test_a_non_numeric_reset_raises_type_error(self):
+        with self.assertRaises(TypeError):
+            upcrossings(RandomWalk(p=0.5), level=2, reset="low")
+
+    def test_reset_errors_come_before_any_simulating(self):
+        # No path is drawn, so a bad reset is reported even for a process whose
+        # paths would be refused anyway.
+        with self.assertRaises(ValueError):
+            upcrossings(BrownianMotion(), level=1, reset=1)
+
+    def test_a_diffusion_is_still_refused_even_with_a_reset(self):
+        # A band makes a *readable* continuous path answerable. A general
+        # diffusion cannot be read at all yet, so it still raises.
+        seed()
+        for path in [CIR().draw(), MertonJumpDiffusion().draw()]:
+            with self.assertRaises(NotImplementedError):
+                upcrossings(path, level=1.0, reset=0.5, max_time=2, step=0.1)
+
+    def test_a_bad_step_or_tol_raises_before_anything_else(self):
+        with self.assertRaises(ValueError):
+            upcrossings(BrownianMotion(), level=1, reset=0, step=-0.1)
+        with self.assertRaises(ValueError):
+            upcrossings(BrownianMotion(), level=1, reset=0, tol=0)
 
 
 if __name__ == "__main__":
