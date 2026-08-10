@@ -709,10 +709,17 @@ class InfiniteTuple(TimeFunction):
         # handle the case where n is a slice
         if isinstance(n, slice):
             if n.stop is None:
-                if n.start is None:
+                # Open-ended: no way to eagerly materialize this, so hand
+                # back another lazy InfiniteTuple that reindexes through
+                # self, shifted by start and re-spaced by step. Both start
+                # and step have to be honored here, not just start -- a
+                # missing step silently returns every element instead of
+                # every step-th one.
+                start = n.start or 0
+                step = n.step or 1
+                if start == 0 and step == 1:
                     return self
-                else:
-                    return type(self)(lambda i: self[i + n.start])
+                return type(self)(lambda i: self[start + i * step])
             if n.stop >= m:
                 n0 = n.stop
         elif isinstance(n, numbers.Integral) and n >= m:

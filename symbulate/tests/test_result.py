@@ -261,6 +261,24 @@ class TestInfiniteTuple(unittest.TestCase):
         self.assertEqual(shifted[0], 2)
         self.assertEqual(shifted[3], 5)
 
+    def test_slice_no_stop_honors_step(self):
+        # Regression test: an open-ended slice with a start used to
+        # silently drop the step entirely (iv[2::2] behaved like iv[2:]).
+        iv = InfiniteTuple(lambda n: n)
+        stepped = iv[2::2]
+        self.assertEqual([stepped[i] for i in range(5)], [2, 4, 6, 8, 10])
+
+    def test_slice_no_start_honors_step(self):
+        # Same bug, sibling branch: with no start (iv[::2]) the old code
+        # returned self unchanged, silently ignoring the step too.
+        iv = InfiniteTuple(lambda n: n)
+        stepped = iv[::2]
+        self.assertEqual([stepped[i] for i in range(5)], [0, 2, 4, 6, 8])
+
+    def test_full_slice_still_returns_self(self):
+        iv = InfiniteTuple(lambda n: n)
+        self.assertIs(iv[:], iv)
+
     def test_str_contains_ellipsis(self):
         iv = InfiniteTuple(lambda n: n)
         self.assertIn("...", str(iv))
