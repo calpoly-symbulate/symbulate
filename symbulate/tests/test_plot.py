@@ -1798,21 +1798,29 @@ class TestPlotCategorical2D(PlotTestCase):
         self.assertEqual(default, "mosaic")
         self.assertEqual(alternatives, ["stackedbar", "tile"])
 
-    def test_stackedbar_on_two_categories_is_drawn_as_a_mosaic(self):
-        """event_sim is 2x2, so the category count picks the mosaic even
-        though a stacked bar was asked for."""
+    def test_stackedbar_on_two_categories_is_drawn_as_asked(self):
+        """event_sim is 2x2, where a mosaic is the default -- but an
+        explicit stackedbar request is still honored."""
         self.sims.plot(type="stackedbar", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
+        self.assertEqual(plt.gca().get_title(), "Stacked Bar Chart")
 
-    def test_many_categories_are_drawn_as_a_stacked_bar(self):
+    def test_many_categories_still_default_to_a_mosaic_but_say_so(self):
+        """The default is not swapped for a crowded pair -- the mosaic is
+        drawn as the lookup table says, with a note pointing elsewhere."""
+        import io
+        import contextlib
+
         def many_sim():
             a = BoxModel([f"g{i}" for i in range(6)]).draw()
             b = BoxModel(["yes", "no"]).draw()
             return a, b
 
         X, Y = RV(ProbabilitySpace(many_sim))
-        (X & Y).sim(600).plot(suggest=False)
-        self.assertEqual(plt.gca().get_title(), "Stacked Bar Chart")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            (X & Y).sim(600).plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
+        self.assertIn("Mosaic plots get messy", buf.getvalue())
 
     def test_tile_is_available(self):
         self.sims.plot(type="tile", suggest=False)
@@ -2702,74 +2710,60 @@ class TestPlot2DMosaic(PlotTestCase):
         make_mosaic(["a", "b"], ["x", "y"], plt.gca(), legend=False)
         self.assertIsNone(plt.gca().get_legend())
 
-    # ---- too many categories switches a mosaic to a stacked bar ----
+    # ---- too many categories: a note, never a substitution ----
 
     SMALL_X = ["a", "b"] * 10
     SMALL_Y = ["p", "q"] * 10
     BIG_X = [f"x{i}" for i in range(6)] * 5
     BIG_Y = ["p", "q"] * 15
 
-    def test_small_mosaic_is_left_alone(self):
-        drawn, note = resolve_mosaic_type(self.SMALL_X, self.SMALL_Y, "mosaic")
-        self.assertEqual(drawn, "mosaic")
-        self.assertIsNone(note)
+    def test_small_mosaic_says_nothing(self):
+        self.assertIsNone(resolve_mosaic_type(self.SMALL_X, self.SMALL_Y, "mosaic"))
 
-    def test_crowded_mosaic_becomes_a_stacked_bar(self):
-        """Past the cutoff a mosaic's columns are unreadable, so the
-        request is overridden rather than merely questioned."""
-        drawn, note = resolve_mosaic_type(self.BIG_X, self.BIG_Y, "mosaic")
-        self.assertEqual(drawn, "stackedbar")
-        self.assertIn("6x2 categories", note)
-        self.assertIn("Stacked Bar Chart", note)
+    def test_crowded_mosaic_gets_a_note(self):
+        note = resolve_mosaic_type(self.BIG_X, self.BIG_Y, "mosaic")
+        self.assertIsNotNone(note)
+        self.assertIn("6x2 here", note)
+        self.assertIn('type="stackedbar"', note)
+        self.assertIn('type="tile"', note)
 
-    def test_crowded_stackedbar_is_left_alone(self):
-        drawn, note = resolve_mosaic_type(self.BIG_X, self.BIG_Y, "stackedbar")
-        self.assertEqual(drawn, "stackedbar")
-        self.assertIsNone(note)
+    def test_stackedbar_never_gets_a_note(self):
+        """Only a mosaic can be too crowded to read; a stacked bar is
+        fine at any number of categories, and is never second-guessed."""
+        self.assertIsNone(resolve_mosaic_type(self.BIG_X, self.BIG_Y, "stackedbar"))
+        self.assertIsNone(resolve_mosaic_type(self.SMALL_X, self.SMALL_Y, "stackedbar"))
 
-    def test_small_stackedbar_becomes_a_mosaic(self):
-        """The switch runs both ways: few enough categories and a stacked
-        bar is drawn as a mosaic, with the same shape of message."""
-        drawn, note = resolve_mosaic_type(self.SMALL_X, self.SMALL_Y, "stackedbar")
-        self.assertEqual(drawn, "mosaic")
-        self.assertIn("2x2 categories", note)
-        self.assertIn("Mosaic Plot", note)
-
-    def test_small_stackedbar_through_plot_draws_a_mosaic(self):
-        self.discrete_sims.plot(type="stackedbar", suggest=False)
-        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
-
-    def test_switch_triggers_on_either_axis(self):
+    def test_crowding_is_judged_on_either_axis(self):
         """More than MOSAIC_SUGGEST_MAX_CATEGORIES on y alone is enough."""
         x = ["a", "b"] * 15
         y = [f"y{i}" for i in range(6)] * 5
-        drawn, _ = resolve_mosaic_type(x, y, "mosaic")
-        self.assertEqual(drawn, "stackedbar")
+        self.assertIsNotNone(resolve_mosaic_type(x, y, "mosaic"))
 
-    def test_switch_boundary_is_max_categories(self):
+    def test_crowding_boundary_is_max_categories(self):
         n = MOSAIC_SUGGEST_MAX_CATEGORIES
         at = [f"x{i}" for i in range(n)] * 4
         over = [f"x{i}" for i in range(n + 1)] * 4
         y_at = ["p", "q"] * (len(at) // 2)
         y_over = ["p", "q"] * (len(over) // 2)
-        self.assertEqual(resolve_mosaic_type(at, y_at, "mosaic")[0], "mosaic")
-        self.assertEqual(resolve_mosaic_type(over, y_over, "mosaic")[0], "stackedbar")
+        self.assertIsNone(resolve_mosaic_type(at, y_at, "mosaic"))
+        self.assertIsNotNone(resolve_mosaic_type(over, y_over, "mosaic"))
 
     def test_resolve_ignores_other_plot_types(self):
-        drawn, note = resolve_mosaic_type(["a"], ["b"], "tile")
-        self.assertEqual(drawn, "tile")
-        self.assertIsNone(note)
+        self.assertIsNone(resolve_mosaic_type(["a"], ["b"], "tile"))
 
-    def test_crowded_mosaic_through_plot_draws_a_stacked_bar(self):
-        """End to end: type='mosaic' on crowded data renders a stacked bar
-        and titles itself accordingly."""
+    def test_crowded_mosaic_through_plot_still_draws_a_mosaic(self):
+        """End to end: type='mosaic' on crowded data renders a mosaic,
+        because that is what was asked for."""
         X, Y = RV(Binomial(n=6, p=0.3) * Binomial(n=6, p=0.5))
         (X & Y).sim(800).plot(type="mosaic", suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
+
+    def test_crowded_stackedbar_through_plot_stays_a_stacked_bar(self):
+        self.crowded_sims.plot(type="stackedbar", suggest=False)
         self.assertEqual(plt.gca().get_title(), "Stacked Bar Chart")
 
-    def test_crowded_mosaic_note_names_what_was_drawn(self):
-        """The 'Currently Showing' note must say Stacked Bar Chart, not the
-        mosaic that was asked for and not drawn."""
+    def test_crowded_mosaic_note_suggests_the_alternatives(self):
+        """The mosaic is drawn as asked; the note names what else to try."""
         import io
         import contextlib
 
@@ -2777,7 +2771,9 @@ class TestPlot2DMosaic(PlotTestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             (X & Y).sim(800).plot(type="mosaic", suggest=True)
-        self.assertIn("Currently Showing: Stacked Bar Chart", buf.getvalue())
+        out = buf.getvalue()
+        self.assertIn("Mosaic plots get messy", out)
+        self.assertIn("Currently Showing: Mosaic Plot", out)
 
 
 class TestPlot2DBox(PlotTestCase):
