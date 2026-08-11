@@ -448,26 +448,118 @@ class Distribution(ProbabilitySpace):
         """
         return Scalar(self.sim_func(**self.params, random_state=rng))
 
-    def spinner(self, mode="proportional"):
-        """Display a static probability spinner wheel for this distribution.
+    def spinner(
+        self,
+        value=None,
+        seed=None,
+        ax=None,
+        style=None,
+        sections=None,
+        increment=None,
+        **kwargs,
+    ):
+        """Spin a probability spinner for this distribution, and draw it.
+
+        A spinner is a picture of this distribution's quantile function. The
+        dial is fixed and the needle turns, so a quarter turn always points
+        at the 25th percentile, half a turn at the median, and three quarters
+        at the 75th. **One spin is one draw** from the distribution:
+
+        .. code-block:: text
+
+            bearing ~ Uniform(0, 360)     measured clockwise from 12 o'clock
+            value   = quantile(bearing / 360)
+
+        Calling it spins: the needle lands somewhere at random, and the value
+        it landed on comes back on the returned plot as ``.value``. Pass
+        ``value=`` instead to point the needle at a value you choose, which is
+        what to use for a figure that has to look the same every time.
+
+        Which dial is drawn depends on the distribution. A **discrete** one
+        gets a slice per outcome, sized by that outcome's probability -- there
+        is only the one dial, so it takes no ``style``. A **continuous** one
+        can be read two ways:
+
+        - ``style="increments"`` (the default) rules the rim in round steps of
+          equal *value*, so each slice's size is the chance of landing in that
+          range -- wide where the density is high, pinched in the tails.
+        - ``style="area"`` gives every slice the same *area*, so each one is
+          exactly a 1-in-``sections`` chance and the values round the rim bunch
+          up where the distribution is dense.
 
         Parameters
         ----------
-        mode : {'proportional', 'equal'}, optional
-            'proportional' sizes each slice by its probability (default).
-            'equal' gives every slice the same arc; for discrete distributions
-            likelier values appear on more sections.
+        value : optional
+            Rest the needle on this value instead of spinning for one. For a
+            discrete distribution the needle sits in the *middle* of that
+            outcome's slice, since a discrete cdf steps and would otherwise
+            land on the boundary between two slices.
+        seed : int, optional
+            Makes a spin reproducible. This uses a generator of its own, so a
+            seeded spin does not disturb the shared stream
+            :func:`~symbulate.seed` controls. Cannot be combined with
+            ``value``, which leaves nothing random to seed.
+        ax : matplotlib.axes.Axes, optional
+            Draw the dial here instead of building a figure for it.
+        style : {'increments', 'area'}, optional
+            Which continuous dial to draw. Refused for a discrete
+            distribution, which has only one.
+        sections : int, optional
+            How many bands (``'increments'``, 3 to 20, default 8) or equally
+            likely slices (``'area'``, 4 to 60, default 12).
+        increment : float, optional
+            The band length itself, in the units of the distribution, instead
+            of a count. ``'increments'`` only, and not with ``sections``.
+
+        Returns
+        -------
+        SpinnerPlot
+            The dial. Its ``.value`` is what the needle landed on; it also
+            carries the ``.bearing``, the ``.slices`` drawn, and the
+            ``.caption`` if the dial has one.
 
         Examples
         --------
         >>> from symbulate import *
-        >>> Normal(0, 1).spinner()
-        >>> Binomial(10, 0.3).spinner(mode='equal')
-        >>> Poisson(4).spinner()
+        >>> Binomial(10, 0.5).spinner()  # doctest: +SKIP
+        >>> Binomial(10, 0.5).spinner().value  # doctest: +SKIP
+        6
+        >>> Binomial(10, 0.5).spinner(value=7)  # doctest: +SKIP
+        >>> Normal(0, 1).spinner(style="area", sections=12)  # doctest: +SKIP
+        >>> Exponential(1).spinner(increment=0.5)  # doctest: +SKIP
         """
-        from .spinner import show_spinner
+        # `mode=` named the earlier spinner's two layouts. The equal-sections
+        # layout is gone (a discrete dial has one slice per outcome, always),
+        # and the choice that remains is between the two *continuous* dials
+        # -- so the keyword is renamed rather than kept as an alias, the same
+        # way `dims=`/`pairs=`/`equal_width=` name their replacements instead
+        # of reaching matplotlib as an opaque error.
+        if "mode" in kwargs:
+            raise TypeError(
+                "`spinner()` no longer takes a `mode=` argument. A discrete "
+                "distribution now has a single dial -- one slice per outcome, "
+                "sized by its probability -- so there is nothing to choose. "
+                "For a continuous distribution, the two layouts are "
+                "style='increments' and style='area'."
+            )
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs))
+            raise TypeError(
+                f"`spinner()` got an unexpected argument: {unexpected}. It "
+                "takes value=, seed=, ax=, style=, sections=, and increment=."
+            )
 
-        show_spinner(self, mode=mode)
+        from .spinner import make_spinner
+
+        return make_spinner(
+            self,
+            value=value,
+            seed=seed,
+            ax=ax,
+            style=style,
+            sections=sections,
+            increment=increment,
+        )
 
     # Override the inherited __pow__ function to take advantage
     # of vectorized simulations.
