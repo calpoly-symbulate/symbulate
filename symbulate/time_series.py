@@ -846,6 +846,62 @@ class AR(ARMA):
         self.coefs = self.ar_coefs
 
 
+class ARProbabilitySpace(ARMAProbabilitySpace):
+    """The probability space underlying an autoregressive process.
+
+    The pure-autoregressive specialization of
+    :class:`ARMAProbabilitySpace`, in the same way :class:`AR` specializes
+    :class:`ARMA`: it takes ``coefs`` rather than ``ar_coefs``, and no
+    moving-average terms. Each draw produces one simulated sample path.
+
+    Every process in this package has a probability space of its own, so
+    that ``RV(ARProbabilitySpace(...))`` works the same way as it does for
+    every other process rather than sending an ``AR`` user to the general
+    ARMA space.
+
+    Parameters
+    ----------
+    coefs : list of float
+        The weight on each previous value, most recent first. Its length
+        is the order ``p``.
+    noise_dist : Distribution or RV, optional
+        The distribution of one shock. Default is ``Normal(0, 1)``.
+    mean : float, optional
+        The level the process varies around. Default is 0.
+    initial : float, sequence, Distribution, or str, optional
+        Where the ``p`` values before time 0 come from. Default is 0. See
+        :class:`ARMA` for the accepted forms.
+
+    Attributes
+    ----------
+    coefs : list of float
+        The weight on each previous value (the same list as ``ar_coefs``).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> space = ARProbabilitySpace(coefs=[0.5], noise_dist=Bernoulli(1))
+    >>> float(space.draw()[0])
+    1.0
+
+    See Also
+    --------
+    AR : The process itself.
+    ARMAProbabilitySpace : The general case, which also takes ``ma_coefs``.
+    """
+
+    def __init__(self, coefs, noise_dist=None, mean=0, initial=0):
+        """Create the probability space for an autoregressive process."""
+        super().__init__(
+            ar_coefs=coefs,
+            ma_coefs=None,
+            noise_dist=noise_dist,
+            mean=mean,
+            initial=initial,
+        )
+        self.coefs = self.ar_coefs
+
+
 def _garch_is_stationary(arch_coefs, garch_coefs, noise_var):
     """Whether a GARCH process has a finite long-run variance.
 
@@ -1327,6 +1383,66 @@ class ARCH(GARCH):
 
     def __init__(self, omega, coefs, noise_dist=None, initial=None):
         """Create an ARCH process."""
+        super().__init__(
+            omega=omega,
+            arch_coefs=coefs,
+            garch_coefs=None,
+            noise_dist=noise_dist,
+            initial=initial,
+        )
+        self.coefs = self.arch_coefs
+
+
+class ARCHProbabilitySpace(GARCHProbabilitySpace):
+    """The probability space underlying an ARCH process.
+
+    The no-persistence-terms specialization of
+    :class:`GARCHProbabilitySpace`, in the same way :class:`ARCH`
+    specializes :class:`GARCH`: it takes ``coefs`` rather than
+    ``arch_coefs``, and no ``garch_coefs``. Each draw produces one
+    simulated sample path.
+
+    Every process in this package has a probability space of its own, so
+    that ``RV(ARCHProbabilitySpace(...))`` works the same way as it does
+    for every other process rather than sending an ``ARCH`` user to the
+    general GARCH space.
+
+    Parameters
+    ----------
+    omega : float
+        The constant floor under the variance. Must be positive.
+    coefs : list of float
+        The weight on each recent squared value, most recent first. Its
+        length is the order ``q``.
+    noise_dist : Distribution or RV, optional
+        The distribution of one standardized shock. Default is
+        ``Normal(0, 1)``.
+    initial : float, sequence, Distribution, or str, optional
+        Where the values before time 0 come from. See :class:`GARCH` for
+        the accepted forms.
+
+    Attributes
+    ----------
+    coefs : list of float
+        The weight on each recent squared value (the same list as
+        ``arch_coefs``).
+
+    Examples
+    --------
+    >>> from symbulate import *
+    >>> space = ARCHProbabilitySpace(omega=0.2, coefs=[0.1])
+    >>> len(space.coefs)
+    1
+
+    See Also
+    --------
+    ARCH : The process itself.
+    GARCHProbabilitySpace : The general case, which also takes
+        ``garch_coefs``.
+    """
+
+    def __init__(self, omega, coefs, noise_dist=None, initial=None):
+        """Create the probability space for an ARCH process."""
         super().__init__(
             omega=omega,
             arch_coefs=coefs,
