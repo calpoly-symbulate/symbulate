@@ -249,13 +249,13 @@ window is only needed for plotting, but `__init__` runs once per *draw* inside
 `Exponential` every draw), so eager computation charges every simulated value
 for a plot nobody asked for. This was a real 26-second bug.
 
-The window is built in **two steps**. Step one, applied to each end of the
-support independently — **a fixed bound is used as-is, an unbounded side is cut
-at a quantile** (`_PLOT_TAIL = 0.001`):
+The window is one rule, applied to each end of the support independently —
+**a fixed bound is used as-is, an unbounded side is cut at a quantile**
+(`_PLOT_TAIL = 0.001`):
 
-| Support | Step-one window | Example |
+| Support | Window | Example |
 |---|---|---|
-| bounded both ends | full support | `Binomial(10, 0.5)` → `(0, 10)` |
+| bounded both ends | full support | `Binomial(1000, 0.5)` → `(0, 1000)` |
 | fixed lower only | `(lower, quantile(0.999))` | `Poisson(3)`, `Exponential` start at 0 |
 | fixed upper only | `(quantile(0.001), upper)` | none currently |
 | unbounded both ends | `(quantile(0.001), quantile(0.999))` | `Normal` |
@@ -263,33 +263,55 @@ at a quantile** (`_PLOT_TAIL = 0.001`):
 Bounds are read from scipy's own `support()` via `Distribution._scipy`, so a new
 distribution gets the right window with **no per-distribution code**.
 
-Step two — **it zooms itself**. If the quantile window (`_zoom_xlim`, both ends
-cut, i.e. the distribution framed as if it had no fixed bounds) covers less than
-`_ZOOM_FRACTION = 0.5` of the step-one window, the quantile window is used
-instead (`Distribution._fills_window` is the test). So `Binomial(1000, 0.5)` →
-`(451, 549)` rather than a spike in the middle of `(0, 1000)`, `Beta(2, 200)` →
-about `(0.0002, 0.045)`, and `Poisson(1000)` gives up its true lower bound of 0
-— while `Binomial(10, 0.5)`, `Uniform`, `Beta(2, 5)` and `Poisson(3)` keep every
-bound, tails included. Half is the crossover because at that point a plot is
-showing as much empty axis as distribution.
+**A fixed bound is never given up automatically.** It is exact, so it stays —
+however little of the window the probability actually fills. `Binomial(1000,
+0.5)` frames all of `(0, 1000)` even though everything happens between about
+451 and 549. A univariate plot does **not** zoom itself; that was tried and
+**rolled back** by team decision (see `DECISIONS.md`, "Decision: Univariate
+Plotting Window — Zoom Is Opt-In"). Do not reintroduce automatic zooming into
+`_compute_xlim`.
 
-**`plot()` takes no window argument.** `xlim=` (and its `"zoom"` value) is
-**gone** — a stray one raises rather than reaching matplotlib. A window chosen
-by hand is set on the distribution (`X.xlim = (2, 8)`, the setter that already
-existed) or applied to the axes afterwards (`xlim(2, 8)`, the pyplot passthrough
-exported from `plot.py`).
+**`plot()` takes a window argument, and `xlim` is its first parameter** — so it
+can be passed positionally. Three forms:
 
-**Assigning `xlim` also turns off the discrete half-step padding**
-(`_xlim_padded`). A discrete plot pads a window the distribution chose for
-itself by ±0.5 so the boundary dots don't sit on the spine; a window someone
-assigned is used exactly as given. That is why `Zeta` and the degenerate
-`LogNormal` branch preset `self._xlim` directly instead of going through the
-setter — their windows are still self-chosen — while `_marginal_framed` uses
-the setter, since a panel must land on the joint panels' window exactly or the
-column stops lining up. Internally, a marginal strip or pairs-matrix diagonal
-gets its column's window through `MultivariateDistribution._marginal_framed(i)`,
-which pins `xlim` on the fresh marginal — do not add a private window parameter
-back to `plot()`.
+| Call | Window |
+|---|---|
+| `Binomial(1000, 0.5).plot()` | `(0, 1000)` — the default above |
+| `Binomial(1000, 0.5).plot(xlim=(400, 600))` | exactly `(400, 600)` |
+| `Binomial(1000, 0.5).plot("zoom")` | `_zoom_xlim()`, about `(451, 549)` |
+
+`"zoom"` is the only text value accepted; anything else raises a message naming
+the three forms. A window can also be set on the distribution
+(`X.xlim = (2, 8)`, the setter) or applied to the axes afterwards
+(`xlim(2, 8)`, the pyplot passthrough exported from `plot.py`). The argument
+wins over a window set on the distribution.
+
+**`MultivariateDistribution.plot()` takes no `xlim`** — a stray one raises
+rather than reaching `make_joint_pdf` as a bare `TypeError`. It draws several
+panels at once (a joint panel plus a strip per variable, or a whole pairs
+matrix), so one range doesn't say which panel it belongs to and the panels have
+to share a scale to line up. **Naming a single variable is a one-dimensional
+plot, so `xlim=` does work there** — `D.plot(variables=0, xlim=(low, high))` —
+which is why that check sits *after* the single-variable branch in `plot()`,
+not before it.
+
+**A window given by hand turns off the discrete half-step padding**
+(`_xlim_padded`, and the local `padded` flag in `plot()`). A discrete plot pads
+a window the distribution chose for itself by one whole-number slot so the
+boundary dots don't sit on the spine; a window that came from `xlim=`,
+`"zoom"`, or the setter is used exactly as given. That is why `Zeta` and the
+degenerate `LogNormal` branch preset `self._xlim` directly instead of going
+through the setter — their windows are still self-chosen — while
+`_marginal_framed` uses the setter, since a panel must land on the joint
+panels' window exactly or the column stops lining up.
+
+**Multivariate panels still zoom, and that is the one asymmetry.**
+`MultivariateDistribution._plot_window(i)` starts from the marginal's own
+window and applies `Distribution._fills_window` / `_ZOOM_FRACTION = 0.5` — the
+"does the probability fill this window" test that a univariate plot no longer
+uses. A panel has no `xlim=` of its own and is a fraction of the figure, so an
+unreadable panel can't be fixed by passing a window; a one-dimensional plot
+can. Keep `_fills_window` — it is live, just only on this path.
 
 A highest-density interval (HDI) used to set this window. It was **removed** —
 it cost a root-find per distribution to buy a window only 5–26% narrower on
@@ -1159,7 +1181,9 @@ pytest tests/
 - Do not hardcode the discreteness thresholds — use `B_1D` (1-D) and `K_2D` (2-D per axis) from `plot.py`, passed into `classify_data()` at the `results.py` dispatch (`B_1D` for 1-D, `K_2D` per axis for 2-D). Values are provisional (see `DECISIONS.md`).
 - Do not set `self.xlim` in a new distribution's `__init__`, and do not compute a window there — `Distribution._compute_xlim` derives it from scipy's `support()` on first read (see "Distribution Plotting Window"). The only exception is a degenerate branch that skips `Distribution.__init__` and so has no scipy object.
 - Do not reintroduce the highest-density interval (`_discrete_hdi_xlim`, `_continuous_hdi_xlim`, `_PLOT_COVERAGE`, `_hdi_window`) — removed by team decision; there are tests asserting it stays gone.
-- Do not add an `xlim=` parameter (or a `"zoom"` value) back to `Distribution.plot()` — the window zooms itself now, and a window chosen by hand goes on the distribution (`X.xlim = (a, b)`) or on the axes (`xlim(a, b)`). Internal callers use `_marginal_framed` (see "Distribution Plotting Window").
+- Do not remove `xlim=` (or its `"zoom"` value) from `Distribution.plot()`, and do not move it out of first position — it is passed positionally (`Binomial(1000, 0.5).plot("zoom")`). It was removed once and **rolled back by team decision**; see "Distribution Plotting Window" and `DECISIONS.md`, "Decision: Univariate Plotting Window — Zoom Is Opt-In".
+- Do not make a univariate plot zoom itself — a fixed bound is exact and stays, so `Binomial(1000, 0.5).plot()` frames all of `(0, 1000)`. `_fills_window`/`_ZOOM_FRACTION` are live but apply to **multivariate panels only**, which have no window argument of their own. Do not delete them as dead code, and do not call them from `_compute_xlim`.
+- Do not add an `xlim=` parameter to `MultivariateDistribution.plot()` — it draws several panels and they must share a scale. Keep its guard *after* the single-variable branch, since `D.plot(variables=0, xlim=(a, b))` is a one-dimensional plot and does take one (see "Distribution Plotting Window").
 - Do not add a nonnegativity check to `CompoundPoissonProcess`'s `jump_dist` — negative jumps are intentional (see "Compound Poisson Process")
 - Do not add separate `MixedPoissonProcess` or `MarkovModulatedPoissonProcess` classes — both are `CoxProcess` with a different `intensity` (see "Cox Process")
 - Do not add interpolation, a `step` scan, or an equality test to `hitting_time`'s jump/discrete-time branches — they are exact, and a jump path reaching a level means reaching *or passing* it (see "Hitting Times")
