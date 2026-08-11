@@ -68,6 +68,7 @@ from .plot import (
     make_ecdf,
     make_hist,
     make_hist2d,
+    resolve_hist_bins,
     make_impulse,
     make_mosaic,
     make_stackedbar,
@@ -2308,6 +2309,8 @@ class RVResults(Results):
         normalize=True,
         jitter=None,
         bins=None,
+        bin_width=None,
+        equal_area=False,
         marginal=False,
         suggest=None,
         **kwargs,
@@ -2381,10 +2384,32 @@ class RVResults(Results):
             ``False`` (exact positions). Has no effect on 1D impulse
             and dot plots -- overlays of those already spread apart
             automatically.
-        bins : int, optional
-            Number of bins for histograms (1D, 2D, and segmented), or
-            for a continuous axis of a tile plot. Defaults to 30. Dot
-            plots are never binned.
+        bins : int, array-like, or None, optional
+            Number of equal-width bins for histograms (1D, 2D, and
+            segmented), or for a continuous axis of a tile plot, OR an
+            explicit array of bin edges for ``type="hist"`` (single
+            variable only), which need not be evenly spaced. Defaults
+            to 30. Dot plots are never binned.
+        bin_width : float, optional
+            Width of each bin for a single-variable ``type="hist"``; the
+            number of bins is determined automatically from the data's
+            range, the same way ``Results.tabulate(bin=True,
+            binwidth=...)`` does. Cannot be used together with
+            ``equal_area``. If both ``bins`` and ``bin_width`` are given,
+            ``bin_width`` wins and a warning is printed. Not yet
+            supported for two-variable plots (``"hist2d"``,
+            ``"segmented_hist"``, ``"tile"``) or the pairs matrix --
+            ``bins`` still works there.
+        equal_area : bool, default False
+            If True, draw a single-variable ``type="hist"`` with bin
+            *edges* placed at evenly spaced quantiles of the data,
+            rather than at evenly spaced values -- so every bin holds
+            (approximately) the same number of observations and, once
+            normalized, the same area, instead of the same width.
+            ``bins`` still sets how many bins to use (default 30).
+            Cannot be used together with ``bin_width``. Not yet
+            supported for two-variable plots (``"hist2d"``,
+            ``"segmented_hist"``, ``"tile"``) or the pairs matrix.
         marginal : bool, default False
             2D data only. If True, add two extra panels along the top
             and right edges of the main plot showing each variable's
@@ -2433,6 +2458,8 @@ class RVResults(Results):
         Exception
             If ``type`` is not a recognized string, tuple, or
             list.
+        ValueError
+            If ``bin_width`` is given and is not a positive number.
 
         See Also
         --------
@@ -2445,6 +2472,18 @@ class RVResults(Results):
         >>> from symbulate import *
         >>> X = RV(BoxModel([1, 2, 3, 4, 5, 6]))
         >>> X.sim(1000).plot()  # doctest: +SKIP
+
+        Plot a histogram of a continuous variable with a fixed bin width
+        instead of a fixed bin count:
+
+        >>> Y = RV(Normal(0, 1))
+        >>> Y.sim(1000).plot(type="hist", bin_width=0.25)  # doctest: +SKIP
+
+        Plot an equal-area histogram (30 bins, each holding about the same
+        number of observations, so bins are narrow where data is dense and
+        wide in the tails):
+
+        >>> Y.sim(1000).plot(type="hist", bins=30, equal_area=True)  # doctest: +SKIP
 
         Plot an impulse chart for a discrete distribution:
 
@@ -2600,6 +2639,14 @@ class RVResults(Results):
             default, alternatives = default_plot_type("nD", False)
             if type is None:
                 type = (default,)
+            if (bin_width is not None or equal_area) and "pairs" in type:
+                warnings.warn(
+                    "bin_width and equal_area are not yet supported for "
+                    "the pairs matrix (3+ variables) -- they were "
+                    "ignored. Use bins= instead.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             if "pairs" in type:
                 # Printed here rather than at the end, because the matrix
                 # returns early; the panels themselves stay quiet.
@@ -2687,6 +2734,13 @@ class RVResults(Results):
                     UserWarning,
                     stacklevel=2,
                 )
+            if (bin_width is not None or equal_area) and "hist" not in type:
+                warnings.warn(
+                    "bin_width and equal_area only have an effect on "
+                    "type='hist'. They were ignored for this plot.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             n = len(self)
 
             # initialize figure
@@ -2722,12 +2776,18 @@ class RVResults(Results):
                         alpha=alpha,
                     )
             if "hist" in type:
+                _hist_bins = resolve_hist_bins(
+                    _plot_array,
+                    bins=bins,
+                    bin_width=bin_width,
+                    equal_area=equal_area,
+                )
                 _call_plot_helper(
                     make_hist,
                     _plot_array,
                     ax,
                     color,
-                    bins=bins,
+                    bins=_hist_bins,
                     normalize=normalize,
                     alpha=alpha,
                     **kwargs,
@@ -2806,6 +2866,14 @@ class RVResults(Results):
             default, alternatives = default_plot_type(configuration, small_n)
             if type is None:
                 type = (default,)
+            if bin_width is not None or equal_area:
+                warnings.warn(
+                    "bin_width and equal_area are not yet supported for "
+                    "two-variable plots ('hist2d', 'segmented_hist', "
+                    "'tile') -- they were ignored. Use bins= instead.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             # On continuous x continuous data the short names hist/density
             # mean the 2D mesh variants, so map them to the explicit tokens
             # for the suggestion note's display name ("Joint Histogram"
