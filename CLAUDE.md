@@ -48,6 +48,7 @@ must be understandable by a general audience without assuming prior knowledge.
 | `result.py` | Result types: `Scalar`, `Int`, `Float`, `Vector`, `InfiniteVector`, `TimeFunction` |
 | `base.py` | Mixin classes: `Arithmetic`, `Transformable`, `Comparable`, `Filterable`, `Statistical`, `Logical` |
 | `plot.py` | Plotting utilities |
+| `spinner.py` | `Distribution.spinner()` — the probability spinner dial (see "Probability Spinners" below) |
 | `table.py` | Table display for simulation results |
 | `markov_chains.py` | Markov chain probability spaces |
 | `gaussian_process.py` | `GaussianProcess`, `BrownianMotion`, `OrnsteinUhlenbeck`, `BrownianBridge`, `FractionalBrownianMotion` |
@@ -712,6 +713,107 @@ types are offered — `make_scatter`'s jitter modes assume integer-coded
 positions, so a categorical scatter is future work rather than something to
 silently work around.
 
+## Probability Spinners
+
+`Distribution.spinner()` in `symbulate/spinner.py` draws a dial with a needle
+resting on a drawn value. **One method, and it spins**: calling it draws a
+value (`.value` on the returned `SpinnerPlot`), `value=` pins the needle
+instead, `seed=` makes a spin reproducible. There is **no `.spin()`** — the two
+methods the port spec proposed were collapsed into this one by team decision.
+The old `spinner(mode=...)` is gone; a stray `mode=` raises a message naming
+`style=`, the same pattern `dims=`/`pairs=`/`equal_width=` use.
+
+**The one invariant, and everything rests on it:**
+
+```
+bearing ~ Uniform(0, 360)        measured CLOCKWISE FROM 12 O'CLOCK
+value    = quantile(bearing / 360)
+```
+
+So a quarter turn is the 25th percentile, half a turn the median, three
+quarters the 75th. `spin_value()` is the single place that map is written down
+— do not re-derive it anywhere else. **The dial is fixed and the needle
+turns**; never rotate the dial, or those positions stop meaning anything.
+
+**Three dials, and `style=` only applies to one kind of distribution:**
+
+| Distribution | Dial | `style=` |
+|---|---|---|
+| discrete | one slice per outcome, arc = pmf | refused — there is only one |
+| continuous | round steps of value, arc = P(that range) | `"increments"` (default) |
+| continuous | equally likely slices, values bunch where dense | `"area"` |
+
+Things that are easy to get wrong:
+
+- **The y-flip.** The prototype is SVG (y down); matplotlib is y up. `pt()`
+  *adds* the cosine term where the SVG helper subtracts it. Get it wrong and
+  the dial mirrors **silently** — the picture still looks plausible, but three
+  quarters of a turn lands on the 25th percentile. `wedge_angles()` is the same
+  reflection for an arc (`Wedge` measures counter-clockwise from +x). Both
+  conversions live in those two functions; do not inline a third.
+- **There is no numeric quantile engine, and there must not be.** The prototype
+  builds a 4000-point CDF grid because JavaScript has no stats library. Here
+  every distribution already wraps scipy, so `quantile`/`cdf`/`pmf` are used
+  directly — which is what makes the geometry test hold to exactly 0.0 rather
+  than to a tolerance.
+- **The support and the window both come from `Distribution.xlim`**, not from a
+  second rule invented here — so a spinner covers the same outcomes and the
+  same stretch of axis that `.plot()` does. Discrete wedge boundaries come from
+  the true `cdf` with the two end wedges stretched to 0 and 360, which is what
+  makes the wedges and the quantile contract agree *exactly* rather than
+  approximately.
+- **Order of operations on an increments dial is load-bearing.** Label
+  placement is settled first, ticks with nowhere to put their value are dropped
+  outright, and only *then* are bands built from the survivors — so every
+  boundary the figure quotes is a tick the reader can actually see. A dropped
+  tick merges two bands; the probabilities still sum to 1.
+- **Label collision is cyclic, and priority is the wedge's sweep.** 0 and 360
+  are the same point, so a non-cyclic scan puts a bounded distribution's first
+  and last labels on top of each other (the prototype does exactly this).
+  Candidates are then considered widest-first, not clockwise: on
+  `Binomial(10, 0.5)` the outcome `0` carries 0.1% and a third of a degree, and
+  in bearing order it would take the label and push out `9`.
+- **Labels are anchored, not measured.** `rotation_mode="anchor"` with
+  `ha="left"`/`"right"` pins whichever end of the string faces the centre, so
+  the label grows outward on its own — equivalent to centring it at
+  `radius + half the text width`, but exact under resize and at any dpi. Do not
+  add a renderer round-trip to measure text.
+- **The upright-label exception is scoped to the equal-area seam pair only.**
+  Radial text at the very top reads sideways, which is bad for `∞`/`−∞` — but
+  upright text is far wider than tall, and at `sections=60` three rim labels
+  land within the tolerance of straight down and would collide. The seam pair
+  is safe because it has its own ring inside the rim. Do not widen this to the
+  rim labels.
+- **An equal-area dial has no ticks, no slice dividers, and no in-slice
+  percentages.** The numbers round the rim are the scale and their uneven
+  spacing is the lesson; every slice carries the *same* chance, so printing it
+  once per slice would print one number twelve times. The caption says it once.
+  (The prototype's screenshots *do* show ticks and dividers here — the spec
+  overrides them.)
+- **`sections` is capped at 60 for equal area** because that dial never drops a
+  label, and at 20 for increments. Out of range raises with the reason rather
+  than clamping. Everything — style, sections, needle position — is resolved
+  **before a single patch is drawn**, so a refused setting leaves the figure
+  clean, and a dial can never be captioned with the other style's numbers.
+- **A real bound versus a tail is decided exactly**, by `quantile(0)` /
+  `quantile(1)` being finite — not by the prototype's "is the window close to
+  the quantile" heuristic. `Uniform` → `0`/`1.00`, `Exponential` → `0`/`∞`.
+- **The palette is read out of `axes.prop_cycle`**, never retyped. Past seven
+  outcomes each lap shifts in lightness **away from whichever end the hue
+  already sits at** (a fixed direction is not enough — yellow is already light)
+  and adds a hatch, giving 42 distinct fills. The dark ink is **pure black**:
+  with an off-black there is a band of mid lightness where neither ink reaches
+  4.5:1, and the shaded laps land in it. A hatch is drawn as a second edgeless
+  overlay wedge, because matplotlib draws hatching in the patch's *edge* colour
+  and these wedges are edged in white.
+- **A spun value is wrapped like a drawn one** (`Scalar`), so a discrete spin
+  reads `6` and not `np.float64(6.0)` — matching `.draw()`.
+- **A dial fills its whole figure**, so it refuses to be drawn over an existing
+  plot, the same rule the pairs matrix and the marginal layout follow. `ax=` is
+  the escape hatch, and a caption is not written onto a caller's own axes.
+
+Demo notebook: `team/spinner_showcase.ipynb`.
+
 ## Suggestion Messages
 
 Print a message after a plot renders — this fires whether or not
@@ -1007,6 +1109,7 @@ Three implementation notes:
 | `test_result.py` | `Scalar`, `Vector`, `InfiniteVector`, etc. |
 | `test_base.py` | Mixin classes |
 | `test_plot.py` | Plotting utilities |
+| `test_spinner.py` | `Distribution.spinner()` — geometry contract, all three dials, colour |
 | `test_table.py` | Table display |
 | `test_markov_chains.py` | Markov chains |
 | `test_gaussian_process.py` | Gaussian processes (incl. Ornstein-Uhlenbeck, Brownian bridge, fractional Brownian motion) |
@@ -1066,6 +1169,13 @@ pytest tests/
 - Do not drop the `strict` half of `upcrossings`' two-search cycle, or its eager `read_one()` check — the first keeps a path sitting *on* the level from reporting a crossing every step, the second keeps a lazy sequence from hiding a bad path (see "Hitting Times")
 - Do not change `CoxProcess`'s intensity grid to a trapezoid/right-hand rule, a variable mesh, or `scipy.integrate.quad` — a fixed left-handed grid anchored at 0 is what keeps the event count from going backwards, and there are tests pinning it (see "Cox Process")
 - Do not rename `type=` to `kind=` or anything else — considered and decided against.
+- Do not flip the sign in the spinner's `pt()` / `wedge_angles()`, and do not inline a third copy of either conversion — an SVG-style y-down helper mirrors the dial silently, so three quarters of a turn lands on the 25th percentile (see "Probability Spinners")
+- Do not rotate a spinner's dial, and do not build a numeric CDF grid for it — the needle turns and the quantile comes from scipy through the distribution (see "Probability Spinners")
+- Do not add a `.spin()` method back, or a `mode=` argument to `spinner()` — one method that spins, with `value=`/`seed=`/`style=`, was the team decision (see "Probability Spinners")
+- Do not build an increments dial's bands before deciding which ticks get labels — that order is what keeps the figure from quoting a boundary it never drew (see "Probability Spinners")
+- Do not make the spinner's label-collision check non-cyclic, or place labels in bearing order instead of widest-first — the first puts a bounded distribution's first and last labels on top of each other, the second hands the label to a 0.1% outcome (see "Probability Spinners")
+- Do not add tick marks, slice dividers, or in-slice percentages to the equal-area dial, and do not widen the upright-label exception past its seam pair — upright rim labels collide at `sections=60` (see "Probability Spinners")
+- Do not ramp the spinner's repeated palette laps in one fixed lightness direction, or use an off-black label ink — yellow is already light, and an off-black leaves a mid-lightness band where neither ink reaches 4.5:1 (see "Probability Spinners")
 - Do not add ad-hoc cosmetic override kwargs (`color=`, `label=`, etc.) to a new plot-type function's user-facing surface — reserved for a future `.customize()` method (not yet designed).
 - Do not use `viridis_r` (reversed) for 2D density/tile/hist2d — plain `viridis`, 0 = dark.
 - Do not bring back `equal_width=`, `marginal_column=`, `annotate=`, or in-cell labels on mosaic/stacked bar plots, and do not soften their overlay back to a warning — all were removed by request (see "Mosaic and Stacked Bar")
