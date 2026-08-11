@@ -7031,14 +7031,18 @@ class TestDistributionXlim(unittest.TestCase):
 
 
 class TestDistributionAutoZoom(unittest.TestCase):
-    """The second step of the default window: it zooms itself.
+    """Zooming is opt-in for a one-dimensional plot, never automatic.
 
     The window derived from the support (:class:`TestDistributionXlim`) is
-    kept only while the probability fills at least ``_ZOOM_FRACTION`` of it.
-    Below that the plot is mostly empty axis, so the two-sided quantile
-    window (``_zoom_xlim``) is used instead. Nothing is passed to ``plot`` to
-    get this -- there is no window argument at all any more, which
-    :class:`TestDistributionPlotTakesNoXlim` covers. The overlay and
+    kept whole however little of it the probability fills, so
+    ``Binomial(1000, 0.5)`` frames all of ``(0, 1000)``. The tighter
+    two-sided quantile window (``_zoom_xlim``) is reached by asking:
+    ``plot(xlim="zoom")`` -- see :class:`TestDistributionPlotXlimArgument`.
+
+    ``_fills_window`` and ``_ZOOM_FRACTION`` still exist and are still the
+    rule, but they now govern **multivariate panels only**
+    (``MultivariateDistribution._plot_window``), where there is no per-panel
+    window argument to fix an unreadable panel with. The overlay and
     rendering checks use a non-interactive backend.
     """
 
@@ -7066,31 +7070,32 @@ class TestDistributionAutoZoom(unittest.TestCase):
                 type(d).__name__,
             )
 
-    # --- a spread-out distribution zooms off its bounds, by itself ---
+    # --- the default window keeps its bounds; zooming is asked for ---
 
-    def test_wide_binomial_zooms_itself(self):
-        # The motivating example: a thousand-trial binomial puts everything in
-        # a band a tenth of its support wide, so (0, 1000) is drawn as a spike
-        # in an empty axis. It now frames the band with nothing passed in.
+    def test_wide_binomial_keeps_its_full_support(self):
+        # The behavior the supervisor asked to keep: a thousand-trial binomial
+        # frames all of (0, 1000) by default, even though its probability sits
+        # in a band a tenth that wide. Zooming is available, not automatic.
         d = Binomial(1000, 0.5)
-        self.assertEqual(d.xlim, d._zoom_xlim())
-        lo, hi = d.xlim
+        self.assertEqual(d.xlim, (0, 1000))
+        self.assertNotEqual(d.xlim, d._zoom_xlim())
+        lo, hi = d._zoom_xlim()
         self.assertGreater(lo, 400)
         self.assertLess(hi, 600)
 
-    def test_concentrated_continuous_zooms_itself(self):
-        # Beta(2, 200) lives in the first few percent of (0, 1).
+    def test_concentrated_continuous_keeps_its_bounds(self):
+        # Beta(2, 200) lives in the first few percent of (0, 1), and still
+        # frames all of it unless asked otherwise.
         d = Beta(2, 200)
-        self.assertEqual(d.xlim, d._zoom_xlim())
-        self.assertLess(d.xlim[1], 0.1)
+        self.assertEqual(d.xlim, (0, 1))
+        self.assertLess(d._zoom_xlim()[1], 0.1)
 
-    def test_zoom_gives_up_a_fixed_lower_bound_too(self):
-        # A half-bounded distribution is judged the same way: Poisson(1000)
-        # has a true lower bound of 0 but nothing within 900 of it.
+    def test_a_fixed_lower_bound_is_never_given_up(self):
+        # Poisson(1000) has nothing within 900 of its true lower bound of 0,
+        # and keeps that bound anyway -- it is exact, so it stays.
         d = Poisson(1000)
-        self.assertEqual(d.xlim, d._zoom_xlim())
-        self.assertGreater(d.xlim[0], 800)
-        # Poisson(2) does reach its bound, so the bound is kept.
+        self.assertEqual(d.xlim[0], 0)
+        self.assertGreater(d._zoom_xlim()[0], 800)
         self.assertEqual(Poisson(2).xlim[0], 0)
 
     # --- a distribution that fills its window keeps every bound ---
@@ -7109,20 +7114,33 @@ class TestDistributionAutoZoom(unittest.TestCase):
         ]:
             self.assertEqual(d.xlim, expected, type(d).__name__)
 
-    def test_crossover_is_the_zoom_fraction(self):
-        # Directly the rule, swept across a family that crosses it: a binomial
-        # keeps (0, n) exactly while its probability fills at least
-        # _ZOOM_FRACTION of it, and is the quantile window otherwise.
+    def test_the_default_window_never_zooms_at_any_size(self):
+        # The rule swept across a family that would have crossed the old
+        # automatic threshold: a binomial keeps (0, n) at every size, however
+        # little of it the probability fills.
         fraction = distributions._ZOOM_FRACTION
         crossed = set()
         for n in [2, 5, 10, 20, 30, 50, 100, 300, 1000]:
             d = Binomial(n, 0.5)
             zoom_lo, zoom_hi = d._zoom_xlim()
-            fills = (zoom_hi - zoom_lo) >= fraction * n
-            crossed.add(fills)
-            self.assertEqual(d.xlim, (0, n) if fills else (zoom_lo, zoom_hi), f"n={n}")
-        # The sweep must actually straddle the crossover, or it proves nothing.
+            crossed.add((zoom_hi - zoom_lo) >= fraction * n)
+            self.assertEqual(d.xlim, (0, n), f"n={n}")
+        # The sweep must actually straddle the old crossover, or it proves
+        # nothing about the sizes that used to zoom.
         self.assertEqual(crossed, {True, False})
+
+    def test_the_zoom_fraction_still_governs_multivariate_panels(self):
+        # _fills_window is no longer applied to a one-dimensional window, but
+        # it is still the rule a joint panel is framed by, since a panel has
+        # no xlim= of its own to fix it with.
+        big = Multinomial(n=1000, p=[0.2, 0.3, 0.5])
+        for i in range(2):
+            marginal = big._marginal_1d(i)
+            window = big._plot_window(i)
+            self.assertEqual(window, marginal._zoom_xlim())
+            self.assertNotEqual(window, marginal.xlim)
+        small = Multinomial(n=10, p=[0.2, 0.3, 0.5])
+        self.assertEqual(small._plot_window(0), small._marginal_1d(0).xlim)
 
     # --- an unbounded distribution has nothing to give up ---
 
@@ -7151,19 +7169,25 @@ class TestDistributionAutoZoom(unittest.TestCase):
 
     # --- what the plot actually draws ---
 
-    def test_plot_uses_the_zoomed_window(self):
-        # The drawn window is the zoomed one, plus one whole-number slot of
-        # air a discrete plot puts around a window it chose for itself --
-        # matching the same "one slot" convention configure_axes uses for
-        # simulated impulse/dot plots.
+    def test_plot_zoom_uses_the_zoomed_window(self):
+        # xlim="zoom" draws the tight window, and exactly it: a window someone
+        # asked for gets no half-step padding, unlike one the distribution
+        # chose for itself (test_plot_keeps_a_filled_window_whole below).
         plt.figure()
         d = Binomial(100, 0.5)
-        d.plot()
-        low, high = d.xlim
-        self.assertEqual(tuple(plt.gca().get_xlim()), (low - 1.0, high + 1.0))
+        d.plot("zoom")
+        self.assertEqual(tuple(plt.gca().get_xlim()), tuple(d._zoom_xlim()))
         lo, hi = plt.gca().get_xlim()
         self.assertGreater(lo, 5)  # not the full (0, 100) support
         self.assertLess(hi, 95)
+
+    def test_plot_default_draws_the_full_support(self):
+        # The counterpart: nothing passed in, so the full (0, 100) is drawn,
+        # plus the one whole-number slot of air a discrete plot puts around a
+        # window it chose for itself.
+        plt.figure()
+        Binomial(100, 0.5).plot()
+        self.assertEqual(tuple(plt.gca().get_xlim()), (-1.0, 101.0))
 
     def test_plot_keeps_a_filled_window_whole(self):
         # All of (0, 10) is on screen, with one whole-number slot of air at
@@ -7174,16 +7198,26 @@ class TestDistributionAutoZoom(unittest.TestCase):
 
     # --- overlay: the theoretical curve no longer stretches the shared axis ---
 
-    def test_overlay_does_not_stretch_to_full_support(self):
+    def test_overlay_with_zoom_does_not_stretch_to_full_support(self):
         # 10000 draws of Binomial(100, 0.5) realize only a narrow band, and the
-        # theoretical curve's full (0, 100) support would widen the shared axis
-        # to the whole range. The automatic zoom keeps it tight.
+        # theoretical curve's full (0, 100) support widens the shared axis to
+        # the whole range. xlim="zoom" is how the overlay is kept tight.
         plt.figure()
-        RV(Binomial(100, 0.5)).sim(10000).plot()
-        Binomial(100, 0.5).plot()
+        RV(Binomial(100, 0.5)).sim(10000).plot(suggest=False)
+        Binomial(100, 0.5).plot("zoom")
         lo, hi = plt.gca().get_xlim()
         self.assertGreater(lo, 5)
         self.assertLess(hi, 95)
+
+    def test_overlay_without_zoom_widens_to_the_full_support(self):
+        # The default's cost, stated outright so it can't change unnoticed:
+        # the union with the theoretical curve's (0, 100) does widen the axis.
+        plt.figure()
+        RV(Binomial(100, 0.5)).sim(10000).plot(suggest=False)
+        Binomial(100, 0.5).plot()
+        lo, hi = plt.gca().get_xlim()
+        self.assertLessEqual(lo, 0)
+        self.assertGreaterEqual(hi, 100)
 
     # --- a window set by hand still wins ---
 
@@ -7299,34 +7333,84 @@ class TestDistributionAutoZoom(unittest.TestCase):
         )
 
 
-class TestDistributionPlotTakesNoXlim(unittest.TestCase):
-    """``Distribution.plot()`` has no window argument at all.
+class TestDistributionPlotXlimArgument(unittest.TestCase):
+    """``Distribution.plot()`` takes a window argument, as it always did.
 
-    ``xlim=`` used to select the window, including the string ``"zoom"`` for
-    a tight one. The window chooses itself now (see
-    :class:`TestDistributionAutoZoom`), so the argument is gone rather than
-    left as a near-no-op, and a stray one gets a pointer to the two ways of
-    setting a window by hand instead of an opaque matplotlib error.
+    ``xlim`` is the first parameter, so it can be passed positionally. Three
+    forms: left out for the distribution's own window, ``"zoom"`` for the
+    region holding most of the probability, or ``(low, high)`` for an exact
+    range. A one-dimensional plot never zooms on its own -- see
+    :class:`TestDistributionAutoZoom`.
+
+    A multivariate ``plot()`` still takes none, since it draws several panels
+    at once; :class:`TestMultivariatePlotTakesNoXlim` covers that.
     """
 
     def tearDown(self):
         plt.close("all")
 
-    def test_signature_has_no_xlim(self):
-        params = inspect.signature(Normal(0, 1).plot).parameters
-        self.assertNotIn("xlim", params)
+    def test_xlim_is_the_first_parameter(self):
+        # So it can be given positionally: Binomial(1000, 0.5).plot("zoom").
+        params = list(inspect.signature(Normal(0, 1).plot).parameters)
+        self.assertEqual(params[0], "xlim")
 
-    def test_xlim_argument_raises_with_a_pointer(self):
-        for bad in ["zoom", "trim", "hdi", (10, 90), None]:
-            plt.figure()
-            with self.assertRaises(ValueError) as cm:
-                Binomial(100, 0.5).plot(xlim=bad)
-            message = str(cm.exception)
-            self.assertIn("does not take an `xlim=` argument", message)
-            self.assertIn("X.xlim = ", message)  # how to set one by hand
+    # --- the three forms the supervisor asked to keep working ---
 
-    def test_setting_xlim_by_hand_still_works(self):
-        # The replacement the message points at, both ways round.
+    def test_default_window_is_the_full_support(self):
+        plt.figure()
+        Binomial(1000, 0.5).plot()
+        # Plus the discrete plot's one whole-number slot of air per end.
+        self.assertEqual(tuple(plt.gca().get_xlim()), (-1.0, 1001.0))
+
+    def test_explicit_range_is_used_as_given(self):
+        for window in [[400, 600], (400, 600)]:
+            with self.subTest(window=window):
+                plt.figure()
+                Binomial(1000, 0.5).plot(xlim=window)
+                self.assertEqual(tuple(plt.gca().get_xlim()), (400.0, 600.0))
+                plt.close("all")
+
+    def test_zoom_frames_the_probability(self):
+        plt.figure()
+        d = Binomial(1000, 0.5)
+        d.plot("zoom")
+        lo, hi = plt.gca().get_xlim()
+        self.assertEqual((lo, hi), tuple(d._zoom_xlim()))
+        self.assertGreater(lo, 400)
+        self.assertLess(hi, 600)
+
+    def test_zoom_works_by_keyword_too(self):
+        plt.figure()
+        Binomial(1000, 0.5).plot(xlim="zoom")
+        lo, _ = plt.gca().get_xlim()
+        self.assertGreater(lo, 400)
+
+    def test_positional_and_keyword_agree(self):
+        plt.figure()
+        positional = Binomial(1000, 0.5).plot("zoom").ax.get_xlim()
+        plt.close("all")
+        plt.figure()
+        keyword = Binomial(1000, 0.5).plot(xlim="zoom").ax.get_xlim()
+        self.assertEqual(positional, keyword)
+
+    # --- a window given by hand is used exactly, with no padding ---
+
+    def test_a_given_window_gets_no_discrete_padding(self):
+        # The distribution's own window is padded by a slot at each end; one
+        # someone passed in is their numbers, so it is used as given.
+        plt.figure()
+        Poisson(3).plot(xlim=(0, 4))
+        self.assertEqual(tuple(plt.gca().get_xlim()), (0.0, 4.0))
+
+    def test_zoom_gets_no_discrete_padding_either(self):
+        plt.figure()
+        d = Binomial(100, 0.5)
+        d.plot("zoom")
+        self.assertEqual(tuple(plt.gca().get_xlim()), tuple(d._zoom_xlim()))
+
+    # --- the other two ways of choosing a window still work ---
+
+    def test_setting_xlim_on_the_distribution_still_works(self):
         plt.figure()
         X = Poisson(3)
         X.xlim = (0, 4)
@@ -7337,6 +7421,94 @@ class TestDistributionPlotTakesNoXlim(unittest.TestCase):
         Poisson(3).plot()
         plt.xlim(0, 4)
         self.assertEqual(tuple(plt.gca().get_xlim()), (0.0, 4.0))
+
+    def test_argument_beats_a_window_set_on_the_distribution(self):
+        plt.figure()
+        X = Poisson(3)
+        X.xlim = (0, 4)
+        X.plot(xlim=(1, 3))
+        self.assertEqual(tuple(plt.gca().get_xlim()), (1.0, 3.0))
+
+    # --- only "zoom" is accepted as text ---
+
+    def test_other_text_raises_with_a_pointer(self):
+        for bad in ["trim", "hdi", "tight", "Zoom"]:
+            with self.subTest(xlim=bad):
+                plt.figure()
+                with self.assertRaises(ValueError) as cm:
+                    Binomial(100, 0.5).plot(xlim=bad)
+                message = str(cm.exception)
+                self.assertIn('"zoom"', message)
+                self.assertIn("(low, high)", message)
+                plt.close("all")
+
+    def test_xlim_applies_to_the_cdf_as_well(self):
+        for window in [(400, 600), "zoom"]:
+            with self.subTest(xlim=window):
+                plt.figure()
+                pdf = Binomial(1000, 0.5).plot(window).ax.get_xlim()
+                plt.close("all")
+                plt.figure()
+                cdf = Binomial(1000, 0.5).plot(window, cdf=True).ax.get_xlim()
+                self.assertEqual(pdf, cdf)
+                plt.close("all")
+
+
+class TestMultivariatePlotTakesNoXlim(unittest.TestCase):
+    """A multivariate ``plot()`` has no window argument.
+
+    It draws more than one panel -- a joint panel plus a strip per variable,
+    or a matrix of pairs -- so one range doesn't say which panel it belongs
+    to, and the panels have to share a scale to line up. Naming a single
+    variable *is* a one-dimensional plot, though, so ``xlim=`` works there.
+    """
+
+    def setUp(self):
+        self.dist = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
+
+    def tearDown(self):
+        plt.close("all")
+
+    def test_joint_plot_rejects_xlim(self):
+        for bad in [(0, 1), "zoom", None]:
+            with self.subTest(xlim=bad):
+                plt.figure()
+                with self.assertRaises(ValueError) as cm:
+                    self.dist.plot(xlim=bad)
+                message = str(cm.exception)
+                self.assertIn("does not take an xlim=", message)
+                # It names the form that does work.
+                self.assertIn("variables=0", message)
+                plt.close("all")
+
+    def test_pairs_matrix_rejects_xlim(self):
+        three = MultivariateNormal(
+            mean=[0, 0, 0], cov=[[1, 0.3, 0.2], [0.3, 1, 0.4], [0.2, 0.4, 1]]
+        )
+        plt.figure()
+        with self.assertRaises(ValueError):
+            three.plot(xlim=(0, 1))
+
+    def test_one_variable_accepts_xlim(self):
+        # The escape the message points at has to actually work.
+        plt.figure()
+        self.dist.plot(variables=0, xlim=(-1, 1))
+        self.assertEqual(tuple(plt.gca().get_xlim()), (-1.0, 1.0))
+        # Still labelled by which variable it is.
+        self.assertEqual(plt.gca().get_xlabel(), "Variable 1")
+
+    def test_one_variable_accepts_zoom(self):
+        plt.figure()
+        Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot(variables=0, xlim="zoom")
+        lo, hi = plt.gca().get_xlim()
+        self.assertGreaterEqual(lo, 0)
+        self.assertLess(hi, 10)
+
+    def test_joint_plot_still_works_without_xlim(self):
+        plt.figure()
+        self.dist.plot()
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertGreaterEqual(len(panels), 3)  # joint + two strips
 
 
 class TestDistributionXlimLaziness(unittest.TestCase):
@@ -7582,16 +7754,24 @@ class TestDistributionCDFPlot(unittest.TestCase):
     # --- the automatically zoomed x-window is reused unchanged for the CDF ---
 
     def test_cdf_reuses_zoom_window(self):
-        # The window is picked before `cdf` is looked at, so both curves are
-        # drawn over the same automatically zoomed range.
+        # The window is resolved before `cdf` is looked at, so both curves are
+        # drawn over the same range -- including the zoomed one.
+        plt.figure()
+        pdf_win = Binomial(100, 0.5).plot("zoom").ax.get_xlim()
+        plt.close("all")
+        plt.figure()
+        cdf_win = Binomial(100, 0.5).plot("zoom", cdf=True).ax.get_xlim()
+        self.assertEqual(pdf_win, cdf_win)
+        self.assertGreater(cdf_win[0], 0)  # not the full (0, 100) support
+        self.assertLess(cdf_win[1], 100)
+
+    def test_cdf_reuses_the_default_window_too(self):
         plt.figure()
         pdf_win = Binomial(100, 0.5).plot().ax.get_xlim()
         plt.close("all")
         plt.figure()
         cdf_win = Binomial(100, 0.5).plot(cdf=True).ax.get_xlim()
         self.assertEqual(pdf_win, cdf_win)
-        self.assertGreater(cdf_win[0], 0)  # not the full (0, 100) support
-        self.assertLess(cdf_win[1], 100)
 
     # --- the old type= spelling raises a friendly pointer to cdf= ---
 
@@ -8090,11 +8270,11 @@ class TestDistributionShade(unittest.TestCase):
     # --- the shaded region respects the displayed window, not self.xlim ---
 
     def test_open_tail_uses_displayed_axis_not_self_xlim(self):
-        # Binomial(100, 0.5) zooms itself, so the axis is far tighter than its
-        # (0, 100) support; an open left tail must start at the visible edge,
-        # which the fork's support-based version could not do.
+        # xlim="zoom" frames Binomial(100, 0.5) far tighter than its (0, 100)
+        # support; an open left tail must start at the visible edge, which the
+        # fork's support-based version could not do.
         plt.figure()
-        p = Binomial(100, 0.5).plot()
+        p = Binomial(100, 0.5).plot("zoom")
         axlo, _ = p.ax.get_xlim()
         self.assertGreater(axlo, 0)  # window is tighter than full support
         p.shade(le=50)

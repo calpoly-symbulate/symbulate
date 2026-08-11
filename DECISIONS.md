@@ -722,7 +722,7 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 
 ## Decision: The Plotting Window Zooms Itself (`xlim` Parameter Removed)
 
-**Status:** Finalized (implemented in `distributions.py`) — supersedes `xlim="zoom"`, and makes the "Default Plotting Window (HDI Removed)" rule the first of two steps.
+**Status:** **Reversed for one-dimensional distributions** — see "Decision: Univariate Plotting Window — Zoom Is Opt-In" below, which restores `xlim=` (including `"zoom"`) on `Distribution.plot()` and stops the univariate window zooming itself. The measurements and the `_ZOOM_FRACTION = 0.5` crossover below are **still current** and still in force, but now govern **multivariate panels only** (`MultivariateDistribution._plot_window`). Read this entry for the rationale and the data; read the reversal for what actually ships.
 
 **Decision**
 > A distribution's plotting window **zooms in on its own**, and `Distribution.plot()` **takes no window argument at all**.
@@ -768,6 +768,44 @@ Update this file when a decision is finalized. Never remove an entry — mark it
 > - **Zoom continuous distributions only** — avoids dropping countable outcomes, but leaves `Binomial(1000, 0.5)`, the actual motivating example, unfixed.
 > - **Keep `xlim=` alongside the automatic zoom** — no loss of expressiveness, and the smaller diff; rejected by the same call that removed `"zoom"`: a parameter whose main use case has just been automated is one more thing on a beginner-facing signature.
 > - **A different threshold** (0.25, 0.75) — 0.25 leaves `Binomial(100, 0.5)` unzoomed at 0.30, which is squarely a case that wants it; 0.75 zooms `Beta(2, 5)` and `Binomial(20, 0.5)`, which read fine as they are.
+
+---
+
+## Decision: Univariate Plotting Window — Zoom Is Opt-In (`xlim` Restored)
+
+**Status:** Finalized (implemented in `distributions.py`) — reverses the univariate half of "The Plotting Window Zooms Itself" above.
+
+**Decision**
+> **A one-dimensional plot keeps its fixed bounds and never zooms itself**, and `Distribution.plot()` takes `xlim` as its **first** parameter, so it can be given positionally. Three forms:
+>
+> | Call | Window |
+> |---|---|
+> | `Binomial(1000, 0.5).plot()` | `(0, 1000)` — the support rule, unchanged |
+> | `Binomial(1000, 0.5).plot(xlim=(400, 600))` | exactly `(400, 600)` |
+> | `Binomial(1000, 0.5).plot("zoom")` | `_zoom_xlim()`, about `(451, 549)` |
+>
+> `"zoom"` is the only text value; anything else raises a message naming the three forms. `X.xlim = (a, b)` and the pyplot `xlim(a, b)` passthrough both still work; the argument wins over a window set on the distribution. A window that came from any of the three by-hand routes skips the discrete half-step padding, as before.
+>
+> **`MultivariateDistribution.plot()` takes no `xlim`**, and a stray one now raises a student-facing message instead of reaching `make_joint_pdf` as a bare `TypeError: got multiple values for argument 'xlim'`. It draws several panels at once, so one range doesn't say which panel it applies to and the panels must share a scale to line up. **Naming a single variable is a one-dimensional plot and does take `xlim=`** (`D.plot(variables=0, xlim=(low, high))`), so that check sits *after* the single-variable branch.
+>
+> **Multivariate panels still zoom.** `_plot_window(i)` applies `_fills_window` / `_ZOOM_FRACTION` explicitly rather than inheriting it from `.xlim`, so every joint plot, marginal strip and pairs-matrix panel is framed exactly as it was before this reversal.
+
+**Rationale**
+> Requested by the course supervisor: the automatic zoom and the removal of `xlim=` were only ever intended for the multivariate side, and the univariate change was not intended at all. `Binomial(1000, 0.5).plot()` showing `(0, 1000)` is the behavior the course teaches against — a fixed bound is exact information, and a student reading a binomial's plot is meant to see the whole range of possible counts.
+>
+> Whatever the merits of the original argument, this is a teaching package and the people teaching from it get to choose the default. The prior entry's reasoning is left in place and unedited rather than rewritten, so the trade-off it describes stays on the record.
+>
+> **The asymmetry with multivariate panels is the substantive part, and it is deliberate.** The old entry's case for automatic zooming was "the student least likely to know the keyword is the one whose plot most needs it." That argument survives exactly where the keyword does not exist: a joint panel has no `xlim=` of its own, and each panel is a fraction of the figure, so a panel the probability barely occupies cannot be fixed at all. A one-dimensional plot can always be fixed in one call. So the automatic rule is kept precisely where it is the only remedy, and dropped where an argument does the job — which is why `_fills_window` and `_ZOOM_FRACTION` are still live code rather than deleted.
+
+**Costs**
+> - `Binomial(1000, 0.5).plot()` is back to a spike in a wide axis unless `"zoom"` is passed. That is the accepted cost, and the reason the alternative was tried in the first place.
+> - Overlaying a theoretical curve on simulated data widens the shared axis to the full support again (`test_overlay_without_zoom_widens_to_the_full_support` pins this outright so it can't change unnoticed). `plot("zoom")` is the fix.
+> - The window rule now differs between a univariate plot and a panel of a multivariate one. Two tests pin both halves so the divergence stays intentional: `test_the_default_window_never_zooms_at_any_size` and `test_the_zoom_fraction_still_governs_multivariate_panels`.
+
+**Alternatives Considered**
+> - **Revert everywhere, deleting `_fills_window`** — simpler and one rule again; rejected because it visibly re-frames multivariate panels, which is the one thing the supervisor asked to leave alone, and a joint panel has no escape hatch.
+> - **Keep auto-zoom and add `xlim=` back alongside it** — smallest diff, and `xlim=(400, 600)` would work; rejected because it fails the first of the three required behaviors: `Binomial(1000, 0.5).plot()` would still show `(451, 549)`, not `(0, 1000)`.
+> - **A `zoom=True` boolean instead of `xlim="zoom"`** — arguably cleaner than overloading one parameter with a magic string; rejected because the three calls above are the exact prior API, and the point of this change is to restore it rather than to redesign it.
 
 ---
 
