@@ -3448,6 +3448,152 @@ def make_impulse(
     return xs, freqs
 
 
+def resolve_hist_bins(
+    values, bins=None, bin_width=None, equal_area=False, default_bins=None
+):
+    """Resolve ``bins``/``bin_width``/``equal_area`` into one ``bins`` value.
+
+    ``make_hist`` (and ``ax.hist`` underneath it) only understands a single
+    ``bins`` argument -- an int (equal-width bin *count*) or an array of
+    explicit edges. ``bin_width`` and ``equal_area`` are two more ways for
+    a caller to say what they want; this resolves whichever combination
+    was given down to that one value, warning about any conflict rather
+    than silently picking a winner.
+
+    Precedence, in order:
+
+    1. If ``bins`` is already an explicit array of edges, it wins outright
+       -- ``bin_width``/``equal_area`` are ignored (with a warning). This
+       matches the long-standing rule that an explicit ``bins=`` (int or
+       edges array) always wins over any automatic binning scheme (see
+       DECISIONS.md, "Outlier/Skew-Aware Histogram Binning").
+    2. ``bin_width`` and ``equal_area`` are mutually exclusive -- they ask
+       for opposite things (fixed-width bins vs. fixed-area/variable-width
+       bins). If both are given, ``equal_area`` wins (with a warning).
+    3. If ``bin_width`` is given, it is converted to an equivalent integer
+       bin count spanning the data's range, the same ceiling-division
+       scheme ``Results.tabulate(bin=True, binwidth=...)`` already uses.
+       If ``bins`` (an int) was *also* given, ``bin_width`` wins (with a
+       warning) -- ``bins`` is ignored.
+    4. If ``equal_area`` is True, ``bins`` (or ``default_bins`` if ``bins``
+       is None) is treated as the bin *count*, and edges are placed at
+       that many evenly spaced quantiles of ``values``, so each bin holds
+       (approximately) the same number of observations -- and, once
+       normalized, the same area. Repeated values in the data can force
+       two requested quantile edges to coincide; when that happens the
+       duplicate is dropped (a zero-width bin would have infinite
+       density) and fewer bins than requested are drawn, with a warning.
+    5. Otherwise, ``bins`` is returned unchanged (including ``None``,
+       which every ``make_*`` histogram helper already treats as its own
+       flat default).
+
+    Parameters
+    ----------
+    values : array-like
+        The data the histogram will be drawn from -- used to convert
+        ``bin_width`` to a bin count and to place ``equal_area`` quantile
+        edges. Not used otherwise.
+    bins : int, array-like, or None, optional
+        The caller's ``bins=`` argument.
+    bin_width : float, optional
+        The caller's ``bin_width=`` argument: width of each bin, with the
+        number of bins determined automatically from ``values``' range.
+    equal_area : bool, default False
+        If True, place bin edges at evenly spaced quantiles of ``values``
+        instead of at evenly spaced values, so every bin has
+        (approximately) equal area rather than equal width.
+    default_bins : int, optional
+        Bin count to use for ``equal_area`` when ``bins`` is None.
+        Defaults to ``HIST_DEFAULT_BINS``.
+
+    Returns
+    -------
+    int or numpy.ndarray
+        A ``bins`` value safe to pass straight through to ``make_hist``.
+
+    Raises
+    ------
+    ValueError
+        If ``bin_width`` is given and is not a positive number.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> values = np.random.default_rng().normal(0, 1, 1000)
+    >>> resolve_hist_bins(values, bin_width=0.5)  # doctest: +SKIP
+    >>> resolve_hist_bins(values, bins=30, equal_area=True)  # doctest: +SKIP
+    """
+    if default_bins is None:
+        default_bins = HIST_DEFAULT_BINS
+    values = np.asarray(values)
+
+    explicit_edges = bins is not None and not isinstance(bins, (int, np.integer))
+    if explicit_edges:
+        if bin_width is not None or equal_area:
+            warnings.warn(
+                "bins was given as an explicit array of bin edges, so "
+                "bin_width and equal_area have no effect and were "
+                "ignored. Use only one of bins (an array), bin_width, or "
+                "equal_area to set the bins.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return bins
+
+    if bin_width is not None and equal_area:
+        warnings.warn(
+            "Cannot use bin_width and equal_area together -- bin_width "
+            "asks for equal-width bins and equal_area asks for "
+            "equal-area (variable-width) bins. Using equal_area and "
+            "ignoring bin_width.",
+            UserWarning,
+            stacklevel=3,
+        )
+        bin_width = None
+
+    if bin_width is not None:
+        if bin_width <= 0:
+            raise ValueError(f"bin_width must be a positive number, not {bin_width!r}.")
+        if bins is not None:
+            warnings.warn(
+                f"Both bins ({bins!r}) and bin_width ({bin_width!r}) were "
+                "given. bin_width takes precedence; bins is ignored. Use "
+                "only one of bins or bin_width.",
+                UserWarning,
+                stacklevel=3,
+            )
+        if values.size == 0:
+            return default_bins
+        data_range = float(values.max() - values.min())
+        if data_range <= 0:
+            return 1
+        return max(1, int(np.ceil(data_range / bin_width)))
+
+    if equal_area:
+        n = bins if bins is not None else default_bins
+        if values.size == 0:
+            return default_bins
+        edges = np.quantile(values, np.linspace(0, 1, n + 1))
+        unique_edges = np.unique(edges)
+        n_actual = len(unique_edges) - 1
+        if n_actual < 1:
+            # Degenerate: every value is identical. Fall back to the
+            # flat default rather than handing ax.hist a single zero-
+            # width bin.
+            return default_bins
+        if n_actual < n:
+            warnings.warn(
+                f"Requested {n} equal_area bins, but repeated values in "
+                f"the data forced some bin boundaries together -- drew "
+                f"{n_actual} bins instead.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return unique_edges
+
+    return bins
+
+
 def make_hist(
     values,
     ax,

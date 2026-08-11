@@ -111,6 +111,7 @@ from symbulate.plot import (
     SAMPLE_PATH_LINEWIDTH,
     TILE_DEFAULT_BINS,
     HIST_DEFAULT_BINS,
+    resolve_hist_bins,
 )
 from symbulate.results import RVResults, _is_categorical_2d
 
@@ -1198,6 +1199,117 @@ class TestPlot1DHistStyling(PlotTestCase):
         RV(Normal(3, 1)).sim(600).plot(label="Second")
         labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
         self.assertIn("Second", labels)
+
+
+class TestPlot1DHistBinWidthAndEqualArea(PlotTestCase):
+    """bin_width= and equal_area= on a single-variable type="hist"."""
+
+    def setUp(self):
+        np.random.seed(42)
+        self.sims = RV(Normal(0, 1)).sim(2000)
+        self.values = np.asarray(self.sims.results)
+
+    def test_bin_width_produces_expected_bin_count(self):
+        data_range = self.values.max() - self.values.min()
+        expected = max(1, int(np.ceil(data_range / 0.25)))
+        self.sims.plot(type="hist", bin_width=0.25, suggest=False)
+        self.assertEqual(len(plt.gca().patches), expected)
+
+    def test_bin_width_bins_are_no_wider_than_requested(self):
+        """The ceiling-division scheme (matching Results.tabulate's
+        binwidth=) can only shrink bins to fit the exact data range, never
+        widen them past what was asked for."""
+        self.sims.plot(type="hist", bin_width=0.5, suggest=False)
+        widths = [p.get_width() for p in plt.gca().patches]
+        self.assertTrue(all(0 < w <= 0.5 + 1e-9 for w in widths))
+
+    def test_bin_width_zero_raises(self):
+        with self.assertRaises(ValueError):
+            self.sims.plot(type="hist", bin_width=0, suggest=False)
+
+    def test_bin_width_negative_raises(self):
+        with self.assertRaises(ValueError):
+            self.sims.plot(type="hist", bin_width=-1.0, suggest=False)
+
+    def test_bins_and_bin_width_together_warns_and_bin_width_wins(self):
+        data_range = self.values.max() - self.values.min()
+        expected = max(1, int(np.ceil(data_range / 0.5)))
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="hist", bins=10, bin_width=0.5, suggest=False)
+        self.assertEqual(len(plt.gca().patches), expected)
+
+    def test_bin_width_ignored_outside_hist_warns(self):
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="density", bin_width=0.5, suggest=False)
+
+    def test_equal_area_produces_requested_bin_count(self):
+        self.sims.plot(type="hist", bins=20, equal_area=True, suggest=False)
+        self.assertEqual(len(plt.gca().patches), 20)
+
+    def test_equal_area_bins_have_approximately_equal_area(self):
+        self.sims.plot(type="hist", bins=20, equal_area=True, suggest=False)
+        areas = [p.get_width() * p.get_height() for p in plt.gca().patches]
+        target = 1.0 / 20
+        for area in areas:
+            self.assertAlmostEqual(area, target, delta=target * 0.35)
+
+    def test_equal_area_widths_are_not_all_equal(self):
+        """Sanity check that this differs from a plain equal-width
+        histogram -- equal-area bins should be narrow where data is
+        dense and wide in the tails, not a constant width."""
+        self.sims.plot(type="hist", bins=20, equal_area=True, suggest=False)
+        widths = {round(p.get_width(), 6) for p in plt.gca().patches}
+        self.assertGreater(len(widths), 1)
+
+    def test_equal_area_and_bin_width_together_warns_and_equal_area_wins(self):
+        with self.assertWarns(UserWarning):
+            self.sims.plot(
+                type="hist", bins=20, bin_width=0.5, equal_area=True, suggest=False
+            )
+        self.assertEqual(len(plt.gca().patches), 20)
+
+    def test_equal_area_ignored_outside_hist_warns(self):
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="density", equal_area=True, suggest=False)
+
+    def test_explicit_bin_edges_array_wins_over_bin_width(self):
+        edges = [-3, -1, 0, 1, 3]
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="hist", bins=edges, bin_width=0.5, suggest=False)
+        self.assertEqual(len(plt.gca().patches), len(edges) - 1)
+
+    def test_explicit_bin_edges_array_wins_over_equal_area(self):
+        edges = [-3, -1, 0, 1, 3]
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="hist", bins=edges, equal_area=True, suggest=False)
+        self.assertEqual(len(plt.gca().patches), len(edges) - 1)
+
+    def test_equal_area_repeated_values_collapse_bins_with_warning(self):
+        """Heavily repeated values can force requested quantile edges to
+        coincide; resolve_hist_bins should drop the duplicate rather than
+        hand ax.hist a zero-width bin, and say so."""
+        lumpy = np.array([0.0] * 50 + list(np.linspace(1, 2, 50)))
+        with self.assertWarns(UserWarning):
+            n_actual = len(resolve_hist_bins(lumpy, bins=40, equal_area=True)) - 1
+        self.assertLess(n_actual, 40)
+
+
+class TestPlot2DHistBinWidthAndEqualAreaUnsupported(PlotTestCase):
+    """bin_width=/equal_area= are not yet wired up for two-variable plots;
+    they must warn and be ignored rather than fail silently or error."""
+
+    def setUp(self):
+        np.random.seed(42)
+        X, Y = RV(Normal(0, 1) ** 2)
+        self.sims = (X & Y).sim(500)
+
+    def test_bin_width_warns_on_hist2d(self):
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="hist", bin_width=0.5, suggest=False)
+
+    def test_equal_area_warns_on_hist2d(self):
+        with self.assertWarns(UserWarning):
+            self.sims.plot(type="hist", equal_area=True, suggest=False)
 
 
 class TestPlot1DBar(PlotTestCase):
