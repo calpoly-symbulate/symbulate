@@ -2974,63 +2974,57 @@ def make_stackedbar(
 
 
 def resolve_mosaic_type(x, y, plot_type):
-    """Pick between mosaic and stacked bar for this many categories.
+    """Note when a mosaic has more categories than it reads well with.
 
     A mosaic's proportional column widths are informative while the
     table is small, but past a handful of categories on either axis the
     rarer columns get too thin to compare -- equal widths
-    (``"stackedbar"``) read better there. Below that size the
-    proportional widths are worth having, since they also show how
-    common each ``x`` category is.
+    (``"stackedbar"``) or a colour scale (``"tile"``) read better there.
 
-    **The number of categories decides, in both directions.** Ask for a
-    mosaic of too many categories and a stacked bar is drawn instead; ask
-    for a stacked bar of few enough and a mosaic is drawn instead. Either
-    way the plot says what it did and why. The cutoff is
-    ``MOSAIC_SUGGEST_MAX_CATEGORIES`` on *either* axis.
-
-    So ``type=`` here says which of the pair you had in mind, not which
-    one you get -- the data has the final say, which is the point: a
-    student should not have to count categories to get a readable plot.
+    **Nothing is ever substituted.** The type asked for is the type
+    drawn, whether it was named explicitly or came from the lookup
+    table; a crowded mosaic just gets a note alongside it pointing at
+    the alternatives. An earlier draft swapped in whichever type suited
+    the category count, and that was rejected -- a plot type should not
+    change out from under the person who chose it.
 
     Parameters
     ----------
     x, y : array-like
         The paired simulated values about to be plotted.
     plot_type : str
-        Which of ``"mosaic"`` / ``"stackedbar"`` was asked for. Any
-        other value is returned unchanged with no message.
+        The type about to be drawn. Only ``"mosaic"`` can produce a
+        message; anything else returns ``None``.
 
     Returns
     -------
-    tuple of (str, str or None)
-        The type to actually draw, and the message to print (or
-        ``None`` when the type asked for already suits the data).
+    str or None
+        The message to print, or ``None`` when there is nothing worth
+        saying.
 
     Examples
     --------
     >>> x = ["a", "b"] * 10
     >>> y = ["yes", "no"] * 10
-    >>> resolve_mosaic_type(x, y, "mosaic")
-    ('mosaic', None)
+    >>> resolve_mosaic_type(x, y, "mosaic") is None
+    True
     >>> crowded_x = [f"x{i}" for i in range(6)] * 5
     >>> crowded_y = ["yes", "no"] * 15
-    >>> resolve_mosaic_type(crowded_x, crowded_y, "mosaic")[0]
-    'stackedbar'
-    >>> resolve_mosaic_type(x, y, "stackedbar")[0]
-    'mosaic'
+    >>> print(resolve_mosaic_type(crowded_x, crowded_y, "mosaic"))
+    Mosaic plots get messy when there are many possible pairs (6x2 here); try type="stackedbar" or type="tile" instead.
+    >>> resolve_mosaic_type(crowded_x, crowded_y, "stackedbar") is None
+    True
     """
-    if plot_type not in ("mosaic", "stackedbar"):
-        return plot_type, None
+    if plot_type != "mosaic":
+        return None
     n_x = len(np.unique(np.asarray(x)))
     n_y = len(np.unique(np.asarray(y)))
-    crowded = max(n_x, n_y) > MOSAIC_SUGGEST_MAX_CATEGORIES
-    fits = "stackedbar" if crowded else "mosaic"
-    if plot_type == fits:
-        return fits, None
-    return fits, (
-        f"Your data has {n_x}x{n_y} categories, so the appropriate plot "
-        f"would be a {PLOT_DISPLAY_NAME[fits]}. Showing that instead."
+    if max(n_x, n_y) <= MOSAIC_SUGGEST_MAX_CATEGORIES:
+        return None
+    return (
+        f"Mosaic plots get messy when there are many possible pairs "
+        f'({n_x}x{n_y} here); try type="stackedbar" or type="tile" '
+        f"instead."
     )
 
 

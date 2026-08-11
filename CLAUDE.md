@@ -700,24 +700,24 @@ Four things to respect:
 - **Overlay is a hard `ValueError`, checked before anything is drawn** so a
   refused second plot leaves the first intact. Both types share the one
   `ax._mosaic_count` counter, so mixing them is still an overlay.
-- **The number of categories picks which of the two is drawn, in both
-  directions.** `resolve_mosaic_type(x, y, plot_type)` returns
-  `(type_to_draw, message_or_None)`. Over `MOSAIC_SUGGEST_MAX_CATEGORIES`
-  on *either* axis a stacked bar is drawn; at or under it, a mosaic — and
-  whichever the caller asked for, the plot says what it did:
+- **A crowded mosaic gets a note, never a substitution.**
+  `resolve_mosaic_type(x, y, plot_type)` returns a message or `None`; it
+  does **not** choose the type. Past `MOSAIC_SUGGEST_MAX_CATEGORIES` on
+  *either* axis a mosaic prints:
 
-  > `Your data has 7x2 categories, so the appropriate plot would be a
-  > Stacked Bar Chart. Showing that instead.`
+  > `Mosaic plots get messy when there are many possible pairs (7x2
+  > here); try type="stackedbar" or type="tile" instead.`
 
-  So on these two types **`type=` says which one you had in mind, not
-  which one you get.** That is deliberate: a student shouldn't have to
-  count categories to get a readable plot. Keep the two directions
-  symmetric — an earlier draft switched only the crowded one and merely
-  nudged the other, and the asymmetry was the thing that got rejected.
-- **The switch means the note has to name what was drawn, not what was
-  asked for.** Both dispatch branches reassign `_suggestion` from
-  `_draw_mosaic_family`'s return value, so `Currently Showing:` reads
-  "Stacked Bar Chart" after an override. A test pins this.
+  The mosaic is still drawn — whether `type="mosaic"` was named or came
+  from the lookup table. Only a mosaic can trigger this; a stacked bar is
+  readable at any size and is never second-guessed. Two earlier drafts
+  *did* swap the type (one in both directions, one only for the default)
+  and both were rejected: a plot type should not change out from under
+  the person who chose it. Don't reintroduce the substitution.
+- **The note names what was drawn.** Both branches reassign `_suggestion`
+  from `_draw_mosaic_family`'s return value. That is now always the type
+  requested, but the wiring is kept so a future change can't silently
+  desync the note from the plot.
 - **A cutoff of 4 catches more numeric data than you might expect, and
   test fixtures have to sit on the right side of it.** `Binomial(5, p)`
   has 6 distinct values, so `Binomial(5, p) ** 2` is 6x6 and draws a

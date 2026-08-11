@@ -401,9 +401,9 @@ def _draw_mosaic_family(x, y, ax, type, **kwargs):
     and the message live here once rather than being written out at each
     call site where they could drift apart.
 
-    A mosaic asked for on too many categories is drawn as a stacked bar
-    instead -- see ``resolve_mosaic_type`` for why that one direction
-    overrides the request rather than just suggesting.
+    The type asked for is always the type drawn -- nothing is
+    substituted. A crowded mosaic just gets a note alongside it; see
+    ``resolve_mosaic_type``.
 
     Parameters
     ----------
@@ -424,13 +424,13 @@ def _draw_mosaic_family(x, y, ax, type, **kwargs):
         drawn, so the caller can record it and name it in the
         suggestion note.
     """
-    asked = "stackedbar" if "stackedbar" in type else "mosaic"
-    resolved, note = resolve_mosaic_type(x, y, asked)
-    draw = make_stackedbar if resolved == "stackedbar" else make_mosaic
+    drawn = "stackedbar" if "stackedbar" in type else "mosaic"
+    draw = make_stackedbar if drawn == "stackedbar" else make_mosaic
     draw(x, y, ax, **kwargs)
+    note = resolve_mosaic_type(x, y, drawn)
     if note is not None:
         print(note)
-    return resolved
+    return drawn
 
 
 def _sim_with_progress(draw_func, n, progress_delay=5.0, bar_width=30):
@@ -3103,12 +3103,14 @@ class RVResults(Results):
                     _marginal_hist_edges = (tile_x_edges, tile_y_edges)
             elif "mosaic" in type or "stackedbar" in type:
                 _drawn = _call_plot_helper(
-                    _draw_mosaic_family, x, y, ax, type, **kwargs
+                    _draw_mosaic_family,
+                    x,
+                    y,
+                    ax,
+                    type,
+                    **kwargs,
                 )
                 _resolved_main_type_x = _resolved_main_type_y = _drawn
-                # The category count can override the type asked for, so
-                # the note has to name what is on screen rather than what
-                # was requested.
                 _suggestion = (_drawn, default, alternatives)
             elif "violin" in type:
                 # outliers= is consumed here rather than left in kwargs:
@@ -3339,11 +3341,13 @@ class RVResults(Results):
             get_next_color(ax)
             if "mosaic" in type or "stackedbar" in type:
                 _drawn = _call_plot_helper(
-                    _draw_mosaic_family, x, y, ax, type, **kwargs
+                    _draw_mosaic_family,
+                    x,
+                    y,
+                    ax,
+                    type,
+                    **kwargs,
                 )
-                # The category count can override the type asked for, so
-                # the note has to name what is on screen rather than what
-                # was requested.
                 _suggestion = (_drawn, default, alternatives)
             elif "tile" in type:
                 _call_plot_helper(
