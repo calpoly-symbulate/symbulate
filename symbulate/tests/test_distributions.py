@@ -17,15 +17,7 @@ from matplotlib.collections import LineCollection, PolyCollection
 from symbulate import *
 from symbulate import distributions
 
-# Benford is deliberately not exported from symbulate/__init__.py yet -- the
-# public-API addition is awaiting team sign-off -- so it is imported from its
-# module directly rather than coming in through the star import above.
-from symbulate.distributions import Benford
 from symbulate.plot import THEORETICAL_CDF_PDF_OVERLAY_ERROR
-
-# InverseGaussian is likewise not exported yet -- awaiting team sign-off on the
-# public-API addition -- so it too is imported straight from its module.
-from symbulate.distributions import InverseGaussian
 
 # The sentinel RV.sim() compares `func` against to decide whether anything has
 # been composed on top of the distribution (see TestFastSim). Private, so it
