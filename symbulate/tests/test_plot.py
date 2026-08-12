@@ -3357,6 +3357,26 @@ class TestMarginalPanelRebuild(PlotTestCase):
         self.assertGreater(getattr(ax_marg_x, "_hist_count", 0), 0)
         self.assertGreater(getattr(ax_marg_y, "_hist_count", 0), 0)
 
+    def test_hist2d_marginal_labels_name_joint_and_marginal_density(self):
+        np.random.seed(1)
+        X, Y = RV(Normal(0, 1) ** 2)
+        p = (X & Y).sim(2000).plot(marginal=True, type="hist2d", suggest=False)
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        colorbar = next(a for a in plt.gcf().axes if a not in (p.ax, ax_marg_x, ax_marg_y))
+        self.assertEqual(colorbar.get_ylabel(), "Joint Density")
+        self.assertEqual(ax_marg_x.get_ylabel(), "Marginal Density")
+        self.assertEqual(ax_marg_y.get_xlabel(), "Marginal Density")
+
+    def test_mixed_tile_marginal_labels_name_their_scales(self):
+        np.random.seed(1)
+        X, Y = RV(Poisson(lam=3) * Normal(0, 1))
+        p = (X & Y).sim(2000).plot(marginal=True, type="tile", suggest=False)
+        ax_marg_x, ax_marg_y = self._marginal_axes(p)
+        colorbar = next(a for a in plt.gcf().axes if a not in (p.ax, ax_marg_x, ax_marg_y))
+        self.assertEqual(colorbar.get_ylabel(), "Joint Relative Frequency")
+        self.assertEqual(ax_marg_x.get_ylabel(), "Marginal Relative Frequency")
+        self.assertEqual(ax_marg_y.get_xlabel(), "Marginal Density")
+
     def test_density_mode_gives_density_curve_marginals(self):
         np.random.seed(1)
         X, Y = RV(Normal(0, 1) ** 2)
@@ -5708,6 +5728,22 @@ class TestPairsLayout(PlotTestCase):
                 plt.figure()
                 sim.plot()
                 self.assertEqual(len(_pairs_colorbars()), 3)
+
+    def test_pairs_colorbars_name_their_renderers_scale(self):
+        # Tiles divide cell counts by the simulation size, so their cells sum
+        # to 1 and are relative frequencies. Hist2d instead divides by bin
+        # area, so its colors are densities. A mixed matrix has both kinds.
+        for label, sim, expected in [
+            ("discrete", _discrete_sim(), {"Joint Relative Frequency"}),
+            ("mixed", _mixed_sim(), {"Joint Density", "Joint Relative Frequency"}),
+        ]:
+            with self.subTest(data=label):
+                plt.close("all")
+                plt.figure()
+                sim.plot()
+                self.assertEqual(
+                    {a.get_ylabel() for a in _pairs_colorbars()}, expected
+                )
 
     def test_every_configuration_draws_without_warnings(self):
         for label, sim in [
