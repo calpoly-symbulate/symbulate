@@ -5596,16 +5596,15 @@ class TestMultinomial(MultivariatePlotTestCase):
         self.assertIsInstance(marginal, Binomial)
         self.assertAlmostEqual(float(marginal.mean()), 3.0)
 
-    def test_Multinomial_plot_window_zooms_when_counts_range_too_far(self):
-        # A small number of trials shows every count, so the triangular
-        # shape of the joint support is visible; a large one would need
-        # more cells than are readable, so it falls back to the window
-        # holding most of the probability.
-        small = Multinomial(n=10, p=[0.5, 0.3, 0.2])
-        self.assertEqual(len(small._plot_values(0)), 11)
-        large = Multinomial(n=1000, p=[0.5, 0.3, 0.2])
-        self.assertLess(len(large._plot_values(0)), 1001)
-        large.plot()
+    def test_Multinomial_plot_window_zooms_to_the_count_marginals(self):
+        # A joint panel has no xlim= argument, so it uses the same
+        # probability-based framing rule at every n, not a grid-size cutoff.
+        X = Multinomial(n=100, p=[0.3, 0.4, 0.3])
+        for i in range(3):
+            marginal = X._marginal_1d(i)
+            self.assertEqual(X._plot_window(i), marginal._zoom_xlim())
+            self.assertLess(len(X._plot_values(i)), 101)
+        X.plot()
         plt.close("all")
 
     def test_Multinomial_plot_pairs_is_titled_mass_functions(self):
@@ -5870,13 +5869,25 @@ class TestDirichlet(MultivariatePlotTestCase):
         self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
         plt.close("all")
 
-    def test_Dirichlet_plot_window_is_full_proportion_range(self):
-        # Framed on [0, 1] on both axes, so the triangle a pair of
-        # proportions lives on stays fully in view.
-        X = Dirichlet(alpha=[2, 3, 5])
-        X.plot()
-        self.assertEqual(plt.gca().get_xlim(), (0.0, 1.0))
-        self.assertEqual(plt.gca().get_ylim(), (0.0, 1.0))
+    def test_Dirichlet_plot_window_zooms_to_concentrated_marginals(self):
+        # Each panel is framed by its Beta marginal, so it can focus on the
+        # region holding probability instead of always showing [0, 1]. A
+        # marginal that already fills enough of [0, 1] keeps that full range.
+        X = Dirichlet(alpha=[5, 7, 10, 1, 3])
+        zoomed = []
+        for i in range(5):
+            marginal = X._marginal_1d(i)
+            low, high = marginal.xlim
+            zoom_low, zoom_high = marginal._zoom_xlim()
+            expected = (
+                (low, high)
+                if marginal._fills_window(low, high, zoom_low, zoom_high)
+                else (zoom_low, zoom_high)
+            )
+            window = X._plot_window(i)
+            self.assertEqual(window, expected)
+            zoomed.append(window != (0.0, 1.0))
+        self.assertTrue(any(zoomed))
         plt.close("all")
 
     def test_Dirichlet_two_categories_plot_points_to_Beta(self):

@@ -31,7 +31,6 @@ from .plot import (
     advance_pairs_diagonal_color,
     align_pairs_columns,
     thin_marginal_frequency_ticks,
-    JOINT_PMF_MAX_CELLS,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
     add_colorbar,
@@ -7881,39 +7880,6 @@ class Multinomial(MultivariateDistribution):
         """
         return Binomial(n=self.n, p=float(np.asarray(self.p, dtype=float)[i]))
 
-    def _plot_window(self, i):
-        """Return the plotting window for category ``i``'s count.
-
-        A count can be anything from 0 to ``n``, and showing that whole
-        range is what makes the triangular shape of the joint support
-        visible (two counts can't add up to more than ``n``). But a joint
-        plot draws one cell per pair of counts, so the full range only fits
-        while ``n`` is small: past that, this falls back to the window
-        holding most of the probability -- the same zoomed window a
-        one-dimensional plot uses when its bounds stop being informative --
-        so a distribution with many trials still plots, showing the region
-        the counts actually land in.
-
-        Parameters
-        ----------
-        i : int
-            Index of the category, counting from 0.
-
-        Returns
-        -------
-        tuple of float
-            The ``(low, high)`` range of counts to draw cells for.
-        """
-        marginal = self._marginal_1d(i)
-        low, high = marginal.xlim
-        n_values = int(high) - int(low) + 1
-        if n_values * n_values <= JOINT_PMF_MAX_CELLS:
-            return (low, high)
-        # `_zoom_xlim` is the tight, most-of-the-probability window -- the
-        # replacement for the highest-density helper this line was originally
-        # written against, in a branch that predated that helper's removal.
-        return marginal._zoom_xlim()
-
     def _joint_func(self, i, j):
         """Return the joint probability function of counts ``i`` and ``j``.
 
@@ -8658,27 +8624,6 @@ class Dirichlet(MultivariateDistribution):
         # so both Beta parameters are positive.
         a_i = float(self.alpha[i])
         return Beta(shape1=a_i, shape2=self.alpha0 - a_i)
-
-    def _plot_window(self, i):
-        """Return the plotting window for proportion ``i``.
-
-        Every proportion lives on ``[0, 1]``, and a pair of them lives on
-        the triangle where they also sum to at most 1. Framing each axis on
-        the full ``[0, 1]`` -- rather than on the window that proportion's
-        own beta distribution would use -- keeps that whole triangle in view,
-        so the shape of the support a Dirichlet lives on stays visible.
-
-        Parameters
-        ----------
-        i : int
-            Index of the category, counting from 0.
-
-        Returns
-        -------
-        tuple of float
-            The range ``(0, 1)``.
-        """
-        return (0.0, 1.0)
 
     def _joint_func(self, i, j):
         """Return the joint density of proportions ``i`` and ``j``.
