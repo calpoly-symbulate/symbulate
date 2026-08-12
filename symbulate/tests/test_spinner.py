@@ -49,6 +49,7 @@ from symbulate.spinner import (
     HATCH,
     LAP_MAG,
     SPINNER_AXIS_LIMIT,
+    SPINNER_DISCRETE_SLICE_FILL,
     SPINNER_FACE_TINT,
     SPINNER_LEADER_COLOR,
     SPINNER_MIN_LABEL_SWEEP,
@@ -61,6 +62,8 @@ from symbulate.spinner import (
     area_bound_labels,
     area_slices,
     bearing_of,
+    discrete_slice_fills,
+    discrete_slice_hatches,
     discrete_slices,
     display_range,
     increment_options,
@@ -429,10 +432,27 @@ class TestDiscreteDialFigure(unittest.TestCase):
         dist = Binomial(10, 0.5)
         ax = dist.spinner().ax
         expected = len(discrete_slices(dist))
-        # each outcome contributes its fill wedge; repeated palette laps add
-        # a second, hatched overlay wedge on top of the same arc
-        fills = [w for w in self._wedges(ax) if w.get_hatch() is None]
-        self.assertEqual(len(fills), expected)
+        self.assertEqual(len(self._wedges(ax)), expected)
+
+    def test_discrete_wedges_share_the_lavender_fill(self):
+        """Discrete outcome probabilities are conveyed by wedge width, not hue."""
+        ax = Binomial(10, 0.5).spinner().ax
+        fills = {mcolors.to_hex(w.get_facecolor()) for w in self._wedges(ax)}
+        self.assertEqual(fills, {mcolors.to_hex(SPINNER_DISCRETE_SLICE_FILL)})
+
+    def test_discrete_wedges_are_unhatched(self):
+        """The common fill needs no secondary categorical marker."""
+        ax = Binomial(10, 0.5).spinner().ax
+        self.assertEqual({w.get_hatch() for w in self._wedges(ax)}, {None})
+
+    def test_discrete_probability_labels_use_readable_dark_ink(self):
+        ax = Binomial(10, 0.5).spinner().ax
+        labels = [text for text in ax.texts if text.get_text().endswith("%")]
+        self.assertTrue(labels)
+        self.assertEqual(
+            {mcolors.to_hex(text.get_color()) for text in labels},
+            {mcolors.to_hex("black")},
+        )
 
     def test_axes_furniture_is_off(self):
         ax = Binomial(5, 0.5).spinner().ax
@@ -572,7 +592,15 @@ class TestDiscreteDialFigure(unittest.TestCase):
 
 
 class TestSliceColors(unittest.TestCase):
-    """Test 6: fills are distinct. Test 7: labels stay readable on them."""
+    """Color utilities keep a future categorical discrete scheme available."""
+
+    def test_discrete_color_vectors_match_the_slices(self):
+        slices = discrete_slices(Binomial(10, 0.5))
+        self.assertEqual(
+            discrete_slice_fills(slices),
+            [SPINNER_DISCRETE_SLICE_FILL] * len(slices),
+        )
+        self.assertEqual(discrete_slice_hatches(slices), [None] * len(slices))
 
     def test_forty_two_distinct_fills(self):
         pairs = [(slice_fill(i), slice_hatch(i)) for i in range(42)]

@@ -98,6 +98,12 @@ SPINNER_BAND_EDGECOLOR = "#4f5c6c"  # hairline between two bands
 SPINNER_BAND_EDGEWIDTH = 0.9
 SPINNER_BAND_EDGEALPHA = 0.5
 
+# The discrete dial uses one light lavender rather than a categorical palette.
+# Wedge widths already encode the outcome probabilities, so changing hue adds
+# decoration without information. The drawing code receives this as a vector,
+# making a future outcome-specific color scheme a local change.
+SPINNER_DISCRETE_SLICE_FILL = "#E0D3F0"
+
 # The seam at 12 o'clock, where the largest values wrap back to the smallest.
 SPINNER_SEAM_COLOR = "#c0392b"
 SPINNER_SEAM_WIDTH = 2.2
@@ -470,6 +476,45 @@ def slice_hatch(i):
     """
     lap = min(i // len(SPINNER_PALETTE), len(HATCH) - 1)
     return HATCH[lap]
+
+
+def discrete_slice_fills(slices):
+    """Return one fill color for each discrete spinner slice.
+
+    Discrete wedges currently share an accessible light-lavender fill.
+    Returning a vector keeps the dial ready for a future outcome-specific
+    color scheme without changing its geometry or drawing loop.
+
+    Parameters
+    ----------
+    slices : sequence of Slice
+        The discrete wedges to color.
+
+    Returns
+    -------
+    list of str
+        One fill color per slice.
+    """
+    return [SPINNER_DISCRETE_SLICE_FILL for _ in slices]
+
+
+def discrete_slice_hatches(slices):
+    """Return one hatch pattern for each discrete spinner slice.
+
+    The common fill makes a hatch unnecessary. Returning a vector keeps the
+    drawing loop ready for a future outcome-specific hatch scheme.
+
+    Parameters
+    ----------
+    slices : sequence of Slice
+        The discrete wedges to hatch.
+
+    Returns
+    -------
+    list of None
+        One unhatched setting per slice.
+    """
+    return [None for _ in slices]
 
 
 def ink_on(fill):
@@ -1377,6 +1422,9 @@ def draw_needle(ax, bearing):
 def draw_discrete_dial(dist, ax):
     """Draw the "sized by probability" dial: one wedge per outcome.
 
+    Wedges share one light-lavender fill; their angular widths communicate
+    the outcome probabilities.
+
     Parameters
     ----------
     dist : Distribution
@@ -1390,10 +1438,11 @@ def draw_discrete_dial(dist, ax):
         The wedges drawn.
     """
     slices = discrete_slices(dist)
+    fills = discrete_slice_fills(slices)
+    hatches = discrete_slice_hatches(slices)
 
-    for sl in slices:
+    for sl, fill, hatch in zip(slices, fills, hatches):
         theta1, theta2 = wedge_angles(sl.start, sl.end)
-        fill = slice_fill(sl.index)
         ax.add_patch(
             Wedge(
                 (0.0, 0.0),
@@ -1406,7 +1455,6 @@ def draw_discrete_dial(dist, ax):
                 zorder=SPINNER_WEDGE_Z,
             )
         )
-        hatch = slice_hatch(sl.index)
         if hatch is not None:
             # matplotlib draws a hatch in the patch's *edge* color, and these
             # wedges are edged in white to separate them -- so the hatch goes
@@ -1466,10 +1514,10 @@ def draw_discrete_dial(dist, ax):
         )
 
     # Probability labels, inside the wedges that are wide enough to hold one.
-    for sl in slices:
+    for sl, fill in zip(slices, fills):
         if sl.sweep < SPINNER_MIN_LABEL_SWEEP:
             continue
-        ink = ink_on(slice_fill(sl.index))
+        ink = ink_on(fill)
         _centred_radial_text(
             ax,
             sl.midpoint,
