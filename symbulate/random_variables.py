@@ -120,14 +120,17 @@ class RV(Arithmetic, Transformable, Comparable):
         """
         if not isinstance(n, int) or n < 1:
             raise ValueError(f"n must be a positive integer, got {n!r}.")
-        # Batched fast path, but only for a bare random variable sitting
-        # directly on a distribution that offers one. `func is _IDENTITY`
-        # means nothing has been composed on top: the moment .apply(),
-        # conditioning, or arithmetic replaces func, the check fails and the
-        # ordinary per-draw loop runs, since those have to see each outcome
-        # one at a time. Distribution._fast_sim returns None for all but two
-        # distributions, so almost everything falls through regardless.
-        if self.func is _IDENTITY and hasattr(self.prob_space, "_fast_sim"):
+        # Batched fast path, but only for a bare RV sitting directly on a
+        # distribution that offers one. Subclasses such as RVConditional can
+        # override draw() without replacing the identity function, so the
+        # exact-class check is necessary to keep their per-draw behavior.
+        # Distribution._fast_sim returns None for all but two distributions,
+        # so almost everything falls through regardless.
+        if (
+            type(self) is RV
+            and self.func is _IDENTITY
+            and hasattr(self.prob_space, "_fast_sim")
+        ):
             batch = self.prob_space._fast_sim(n)
             if batch is not None:
                 return RVResults([Scalar(v) for v in batch])

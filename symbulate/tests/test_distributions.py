@@ -8459,6 +8459,19 @@ class TestFastSim(unittest.TestCase):
         doubled = list(X.apply(lambda x: 2 * x).sim(200))
         self.assertTrue(all(v % 2 == 0 for v in doubled))
 
+    def test_conditioned_fast_path_distributions_still_apply_the_condition(self):
+        """A conditional RV must use its rejection sampler, not `_fast_sim`."""
+        cases = [
+            (TruncatedNormal(mean=0, sd=1, a=-2, b=2), 1),
+            (NegativeHypergeometric(r=3, N0=10, N1=8), 2),
+        ]
+        for dist, lower_bound in cases:
+            with self.subTest(dist=type(dist).__name__):
+                seed(42)
+                X = RV(dist)
+                Y = X | (X > lower_bound)
+                self.assertTrue(all(v > lower_bound for v in Y.sim(2000)))
+
     def test_fast_path_does_not_change_pdf_cdf_or_mean(self):
         # Only .sim() is affected; every other method must be untouched.
         nh = NegativeHypergeometric(r=3, N0=10, N1=8)
