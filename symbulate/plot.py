@@ -6695,7 +6695,7 @@ def make_scatter(
 
     ax.set_xlabel("Variable 1" if xlabel is None else xlabel)
     ax.set_ylabel("Variable 2" if ylabel is None else ylabel)
-    set_plot_title(ax, "2D Scatter Plot")
+    set_plot_title(ax, "Scatterplot")
     _refresh_legend(ax, loc=SCATTER_LEGEND_LOC)
 
     if jitter in ("spiral", "bins"):

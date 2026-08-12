@@ -608,7 +608,7 @@ class TestPlot2DContinuous(PlotTestCase):
         X, Y = RV(Normal(0, 1) ** 2)
         (X & Y).sim(40).plot()
         ax = plt.gca()
-        self.assertEqual(plt.gca().get_title(), "2D Scatter Plot")
+        self.assertEqual(plt.gca().get_title(), "Scatterplot")
         self.assertEqual(len(ax.collections[0].get_offsets()), 40)
 
     def test_scatter_explicit(self):
@@ -747,8 +747,8 @@ class TestMarginalLayoutIsOptIn(PlotTestCase):
         Xm, Ym = RV(Binomial(5, 0.4) * Normal(0, 1))
         cases = [
             ((X & Y).sim(500), None, "Joint Histogram"),
-            ((X & Y).sim(500), "scatter", "2D Scatter Plot"),
-            ((X & Y).sim(40), None, "2D Scatter Plot"),
+            ((X & Y).sim(500), "scatter", "Scatterplot"),
+            ((X & Y).sim(40), None, "Scatterplot"),
             ((Xd & Yd).sim(500), None, "Tile Plot"),
             ((Xm & Ym).sim(500), "violin", "Violin Plot"),
         ]
@@ -2228,7 +2228,7 @@ class TestPlot2DScatterFeatures(PlotTestCase):
         ax = plt.gca()
         self.assertEqual(ax.get_xlabel(), "Variable 1")
         self.assertEqual(ax.get_ylabel(), "Variable 2")
-        self.assertEqual(plt.gca().get_title(), "2D Scatter Plot")
+        self.assertEqual(plt.gca().get_title(), "Scatterplot")
 
     def test_scatter_jitter_true_still_works(self):
         """jitter=True is the legacy alias for jitter='random'."""
@@ -3842,7 +3842,7 @@ class TestDefaultLookupDispatch(PlotTestCase):
     def test_2d_discrete_small_defaults_to_scatter(self):
         X, Y = RV(Binomial(5, 0.4) ** 2)
         (X & Y).sim(40).plot()
-        self.assertEqual(plt.gca().get_title(), "2D Scatter Plot")
+        self.assertEqual(plt.gca().get_title(), "Scatterplot")
 
     def test_2d_explicit_alias_types_work(self):
         """The lookup-table tokens are accepted as explicit type= values."""
@@ -4999,10 +4999,10 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
         # Top strip: value on x, density on y (the univariate orientation).
         self.assertEqual(marg_x.get_xlim(), p.ax.get_xlim())
         self.assertEqual(marg_x.get_xlabel(), "")
-        self.assertEqual(marg_x.get_ylabel(), "Density")
+        self.assertEqual(marg_x.get_ylabel(), "Marginal Density")
         # Right strip: transposed.
         self.assertEqual(marg_y.get_ylim(), p.ax.get_ylim())
-        self.assertEqual(marg_y.get_xlabel(), "Density")
+        self.assertEqual(marg_y.get_xlabel(), "Marginal Density")
         self.assertEqual(marg_y.get_ylabel(), "")
         # Its curve rises from a density of 0, so its x data is nonnegative
         # and its y data spans the variable's window.
@@ -5044,7 +5044,21 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
         offsets = np.asarray(marg_y.collections[0].get_offsets())
         # Transposed: the probabilities are the x coordinate now.
         self.assertTrue(np.all(offsets[:, 0] >= 0))
-        self.assertEqual(marg_y.get_xlabel(), "Probability")
+        self.assertEqual(marg_y.get_xlabel(), "Marginal Probability")
+
+    def test_two_variable_colorbar_names_the_joint_quantity(self):
+        for dist, expected in [
+            (
+                MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]),
+                "Joint Density",
+            ),
+            (Multinomial(n=10, p=[0.2, 0.3, 0.5]), "Joint Probability"),
+        ]:
+            with self.subTest(dist=type(dist).__name__):
+                plt.close("all")
+                dist.plot()
+                bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
+                self.assertEqual([a.get_ylabel() for a in bars], [expected])
 
     def test_the_strips_are_the_exact_marginals(self):
         """A MultivariateNormal's marginal is a Normal, so the top strip is
