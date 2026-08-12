@@ -281,7 +281,26 @@ class DiffusionProcess(RandomProcess, RV):
         A function ``mu(x, t)`` giving the drift of the process.
     diffusion : callable
         A function ``sigma(x, t)`` giving the diffusion coefficient of
-        the process. Should be non-negative.
+        the process. Its output must be real and non-negative wherever a
+        simulated path may visit.
+
+        .. warning::
+           This general process uses Euler-Maruyama simulation. A simulated
+           path can step slightly outside a state space that the continuous
+           model would keep positive. In particular, do not use an
+           unguarded square root such as ``diffusion=lambda x, t:
+           sigma * sqrt(x)``: if a simulated value of ``x`` is negative,
+           ``sqrt(x)`` returns ``nan``, which propagates through the rest of
+           the path.
+
+           For a CIR-shaped process using this general interface, floor the
+           square-root input explicitly::
+
+               diffusion=lambda x, t: sigma * sqrt(max(x, 0))
+
+           Prefer :class:`CIR` when modeling the standard
+           Cox-Ingersoll-Ross process; it simulates that special case
+           directly.
     initial : float, optional
         The starting value ``X_0``. Default is 0.
     x0 : float, optional
