@@ -5546,20 +5546,21 @@ class TestMultinomial(MultivariatePlotTestCase):
             self.assertAlmostEqual(float(sims.mean()), expected_mean, delta=0.15)
             self.assertAlmostEqual(float(sims.var()), expected_var, delta=0.15)
 
-    def test_Multinomial_two_categories_plot_points_to_Binomial(self):
-        # Two counts that must add to n vary in only one direction, so
-        # there is no joint plot to draw -- it is a Binomial.
+    def test_Multinomial_two_categories_plots_mass_on_a_support_line(self):
         X = Multinomial(n=10, p=[0.5, 0.5])
-        with self.assertRaises(Exception) as cm:
-            X.plot()
-        self.assertIn("Binomial", str(cm.exception))
+        func = X._joint_func(0, 1)
+        self.assertGreater(float(func([4], [6])[0]), 0.0)
+        self.assertEqual(float(func([4], [5])[0]), 0.0)
+        X.plot()
+        self.assertEqual(plt.gcf()._suptitle.get_text(), "Joint Probability Mass Function")
+        plt.close("all")
 
-    def test_Multinomial_three_categories_plots_joint_pmf(self):
-        # Three categories vary in two directions (the third count is
-        # whatever is left), so this is the single-joint-plot case.
+    def test_Multinomial_three_categories_plots_all_named_components(self):
         X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
         X.plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Mass Function")
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
+        self.assertEqual(plt.gcf()._suptitle.get_text(), "Probability Mass Functions")
         plt.close("all")
 
     def test_Multinomial_is_discrete(self):
@@ -5731,11 +5732,19 @@ class TestMultivariateHypergeometric(MultivariatePlotTestCase):
         # Every draw is a vector of whole counts.
         self.assertTrue(MultivariateHypergeometric(m=[10, 8, 6], n=6).discrete)
 
-    def test_MVHypergeom_three_types_is_one_joint_plot(self):
-        # The counts add up to n, so three types vary in only two
-        # directions -- the single-joint-plot case, needing no dims.
+    def test_MVHypergeom_three_types_plots_all_named_components(self):
         X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
         self.assertEqual(X._free_dim(), 2)
+        X.plot()
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
+        plt.close("all")
+
+    def test_MVHypergeom_two_types_plots_mass_on_a_support_line(self):
+        X = MultivariateHypergeometric(m=[10, 8], n=6)
+        func = X._joint_func(0, 1)
+        self.assertGreater(float(func([4], [2])[0]), 0.0)
+        self.assertEqual(float(func([4], [1])[0]), 0.0)
         X.plot()
         plt.close("all")
 
@@ -5861,12 +5870,12 @@ class TestDirichlet(MultivariatePlotTestCase):
             pval = stats.kstest(sims, cdf).pvalue
             self.assertTrue(pval > 0.01)
 
-    def test_Dirichlet_plots_joint_density(self):
-        # Three proportions add to 1, so two of them vary freely: this is
-        # the single-joint-plot case, drawn over the simplex.
+    def test_Dirichlet_three_categories_plots_all_named_components(self):
         Dirichlet(alpha=[2, 3, 5]).draw()
         Dirichlet(alpha=[2, 3, 5]).plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
+        self.assertEqual(plt.gcf()._suptitle.get_text(), "Probability Density Functions")
         plt.close("all")
 
     def test_Dirichlet_plot_window_zooms_to_concentrated_marginals(self):
@@ -5890,11 +5899,20 @@ class TestDirichlet(MultivariatePlotTestCase):
         self.assertTrue(any(zoomed))
         plt.close("all")
 
-    def test_Dirichlet_two_categories_plot_points_to_Beta(self):
+    def test_Dirichlet_two_categories_draws_singular_support(self):
         X = Dirichlet(alpha=[2, 3])
-        with self.assertRaises(Exception) as cm:
-            X.plot()
-        self.assertIn("Beta", str(cm.exception))
+        plot = X.plot()
+        self.assertEqual(plot.ax.get_title(), "")
+        self.assertEqual(
+            plt.gcf()._suptitle.get_text(), "Joint Distribution (Singular Support)"
+        )
+        self.assertIn(
+            "All probability lies on\nVariable 1 + Variable 2 = 1",
+            {text.get_text() for text in plot.ax.texts},
+        )
+        bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
+        self.assertEqual(bars, [])
+        plt.close("all")
 
     def test_Dirichlet_marginal_1d_is_Beta(self):
         alpha = [2, 3, 5]
@@ -6017,10 +6035,12 @@ class TestDirichletMultinomial(MultivariatePlotTestCase):
     def test_DirichletMultinomial_is_discrete(self):
         self.assertTrue(DirichletMultinomial(n=10, alpha=[2, 3, 5]).discrete)
 
-    def test_DirichletMultinomial_three_categories_is_one_joint_plot(self):
+    def test_DirichletMultinomial_three_categories_plots_all_named_components(self):
         X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
         self.assertEqual(X._free_dim(), 2)
         X.plot()
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
         plt.close("all")
 
     def test_DirichletMultinomial_marginal_is_betabinomial(self):
@@ -6057,6 +6077,14 @@ class TestDirichletMultinomial(MultivariatePlotTestCase):
         X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
         func = X._joint_func(0, 1)
         self.assertEqual(float(func(np.array([7]), np.array([6]))[0]), 0.0)
+
+    def test_DirichletMultinomial_two_categories_plots_mass_on_a_support_line(self):
+        X = DirichletMultinomial(n=10, alpha=[3, 4])
+        func = X._joint_func(0, 1)
+        self.assertGreater(float(func([4], [6])[0]), 0.0)
+        self.assertEqual(float(func([4], [5])[0]), 0.0)
+        X.plot()
+        plt.close("all")
 
     def test_DirichletMultinomial_plot_pairs(self):
         DirichletMultinomial(n=10, alpha=[2, 3, 5, 4]).plot()
