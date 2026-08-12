@@ -900,21 +900,22 @@ class Distribution(ProbabilitySpace):
             # since those are their numbers, used exactly as given.
             view_xlim = (data_xlim[0] - 1, data_xlim[1] + 1)
 
-        # The CDF describes every x-value visible on the axes. A PMF instead
-        # evaluates only its data range, then omits outcomes with exactly zero
-        # mass below so unsupported values never gain misleading dots/lines.
+        # Draw every x-value visible on the axes. A PMF then omits outcomes
+        # with exactly zero mass below, so unsupported values never gain
+        # misleading dots or lines. Validation above deliberately used the
+        # unpadded data window, so cosmetic room cannot mask a degenerate
+        # parameter error.
         if self.discrete:
             if cdf:
                 xs = np.arange(math.floor(view_xlim[0]), math.ceil(view_xlim[1]) + 1)
             else:
-                xs = evaluation_xs
+                xs = np.arange(math.ceil(view_xlim[0]), math.floor(view_xlim[1]) + 1)
         else:
-            xs = evaluation_xs
+            xs = np.linspace(view_xlim[0], view_xlim[1], 200)
         ys = self.cdf(xs) if cdf else self.pdf(xs)
 
-        # The CDF uses the padded visible range, so recompute the finite mask
-        # for the values actually drawn. The PMF and continuous-PDF paths
-        # reuse the already validated evaluation range.
+        # Recompute the finite mask for the values actually drawn, which may
+        # now include the cosmetic padding around the validated data window.
         finite = np.isfinite(ys)
 
         # Anchor the baseline at exactly 0 so probability heights and CDFs

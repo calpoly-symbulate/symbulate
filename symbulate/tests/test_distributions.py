@@ -7277,6 +7277,20 @@ class TestDistributionAutoZoom(unittest.TestCase):
                 self.assertGreater(hi, zoom_hi)
                 plt.close("all")
 
+    def test_continuous_zoom_curve_reaches_the_visible_limits(self):
+        # The padding is part of the plotted x-range, not empty space around a
+        # shorter curve. This matters especially near bounded endpoints.
+        for distribution in [Exponential(1), Beta(0.5, 0.5)]:
+            for cdf in [False, True]:
+                with self.subTest(distribution=type(distribution).__name__, cdf=cdf):
+                    plt.figure()
+                    plot = distribution.plot("zoom", cdf=cdf)
+                    (line,) = plot.ax.get_lines()
+                    xlo, xhi = plot.ax.get_xlim()
+                    self.assertEqual(line.get_xdata()[0], xlo)
+                    self.assertEqual(line.get_xdata()[-1], xhi)
+                    plt.close("all")
+
     def test_discrete_padding_does_not_grow_across_overlaid_calls(self):
         # Two calls that draw the same discrete window (e.g. two pmf-family
         # calls sharing an axes) must not accumulate padding on every call --
@@ -7820,6 +7834,17 @@ class TestDistributionCDFPlot(unittest.TestCase):
         # Tiny but nonzero probability remains a point; this is exact-zero
         # filtering rather than a tolerance that hides a tail outcome.
         self.assertIn(10, offsets[:, 0])
+
+    def test_default_discrete_pmf_reaches_the_visible_right_endpoint(self):
+        # The default Poisson view has one padded slot beyond its data range;
+        # its nonzero mass at that endpoint must still be drawn and connected.
+        plt.figure()
+        plot = Poisson(1).plot()
+        offsets = plot.ax.collections[0].get_offsets()
+        self.assertIn(6, offsets[:, 0])
+        self.assertTrue(
+            any(np.asarray(line.get_xdata())[-1] == 6 for line in plot.ax.get_lines())
+        )
 
     # --- the old type= spelling raises a friendly pointer to cdf= ---
 
