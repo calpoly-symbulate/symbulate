@@ -2180,17 +2180,25 @@ class RVResults(Results):
 
         # Each joint panel gets its own colorbar, in the empty cell mirroring
         # it across the diagonal. Done after tight_layout, so the cells are
-        # where they will finally be.
-        quantity = pairs_joint_label("Density" if normalize else "Count")
+        # where they will finally be. A tile's normalized cells are relative
+        # frequencies (they sum to 1), whereas a histogram's are densities
+        # (they integrate to 1), so name each bar after its own renderer.
         for mappable, row, col in joint_panels:
             if mappable is None:
                 continue
+            joint_type = self._pairs_joint_type(chosen[col], chosen[row])
+            if not normalize:
+                quantity = "Count"
+            elif joint_type == "tile":
+                quantity = "Relative Frequency"
+            else:
+                quantity = "Density"
             add_pairs_panel_colorbar(
                 fig,
                 gs[col, row].get_position(fig),
                 mappable,
                 pairs_colorbar_pair_label(chosen[col], chosen[row]),
-                quantity,
+                pairs_joint_label(quantity),
             )
 
         # Leave the bottom-left panel current, so the returned plot and the
@@ -2225,8 +2233,9 @@ class RVResults(Results):
 
         Calls the same drawing helpers the ``dim == 2`` dispatch does, with
         the colorbar off: a matrix of panels each carrying its own colorbar
-        would spend more of the figure on scales than on data, and the
-        panels share one meaning (density, or count) anyway.
+        would spend more of the figure on scales than on data. A histogram's
+        colors measure density, while a tile's measure relative frequency;
+        the caller names each resulting colorbar accordingly.
 
         Parameters
         ----------
@@ -3033,7 +3042,10 @@ class RVResults(Results):
                     )
                     mappable = histo[3] if isinstance(histo, tuple) else histo
                     add_colorbar(
-                        fig, marginal, mappable, "Density" if normalize else "Count"
+                        fig,
+                        marginal,
+                        mappable,
+                        "Joint Density" if normalize else "Joint Count",
                     )
                     _resolved_main_type_x = _resolved_main_type_y = "hist2d"
                     if isinstance(histo, tuple):
@@ -3087,7 +3099,7 @@ class RVResults(Results):
                         fig,
                         marginal,
                         hm,
-                        "Relative Frequency" if normalize else "Count",
+                        "Joint Relative Frequency" if normalize else "Joint Count",
                     )
                     _tile_bins = bins if bins is not None else TILE_DEFAULT_BINS
                     _, _, _, tile_x_ticks, tile_x_edges = setup_tile_axis(
@@ -3271,6 +3283,19 @@ class RVResults(Results):
                     _marginal_bandwidth,
                     edges_y,
                 )
+                # The main color scale is joint; each strip is a marginal.
+                # Preserve its renderer's established quantity -- density
+                # for a continuous histogram, relative frequency for an
+                # impulse plot -- and name that relationship explicitly.
+                # Rug and count axes deliberately keep their existing labels.
+                if ax_marg_x.get_ylabel() in ("Density", "Relative Frequency"):
+                    ax_marg_x.set_ylabel(
+                        pairs_marginal_label(ax_marg_x.get_ylabel())
+                    )
+                if ax_marg_y.get_xlabel() in ("Density", "Relative Frequency"):
+                    ax_marg_y.set_xlabel(
+                        pairs_marginal_label(ax_marg_y.get_xlabel())
+                    )
                 # Read the main panel's own actual final limits (after
                 # everything above has drawn) rather than re-deriving each
                 # plot type's extent formula independently -- this is what
