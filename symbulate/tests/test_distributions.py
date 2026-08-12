@@ -7170,14 +7170,15 @@ class TestDistributionAutoZoom(unittest.TestCase):
     # --- what the plot actually draws ---
 
     def test_plot_zoom_uses_the_zoomed_window(self):
-        # xlim="zoom" draws the tight window, and exactly it: a window someone
-        # asked for gets no half-step padding, unlike one the distribution
-        # chose for itself (test_plot_keeps_a_filled_window_whole below).
+        # xlim="zoom" keeps its tight data window, while adding a small amount
+        # of visual room so endpoint dots do not sit on the axis spine.
         plt.figure()
         d = Binomial(100, 0.5)
         d.plot("zoom")
-        self.assertEqual(tuple(plt.gca().get_xlim()), tuple(d._zoom_xlim()))
+        zoom_lo, zoom_hi = d._zoom_xlim()
         lo, hi = plt.gca().get_xlim()
+        self.assertLess(lo, zoom_lo)
+        self.assertGreater(hi, zoom_hi)
         self.assertGreater(lo, 5)  # not the full (0, 100) support
         self.assertLess(hi, 95)
 
@@ -7262,6 +7263,33 @@ class TestDistributionAutoZoom(unittest.TestCase):
         d = Normal(0, 1)
         d.plot()
         self.assertEqual(tuple(plt.gca().get_xlim()), tuple(d.xlim))
+
+    def test_continuous_zoom_adds_visual_padding(self):
+        # A zoomed Exponential window starts at 0, but the visible axis needs
+        # a little room left of it so the endpoint and its tick are visible.
+        d = Exponential(1)
+        zoom_lo, zoom_hi = d._zoom_xlim()
+        for cdf in [False, True]:
+            with self.subTest(cdf=cdf):
+                plt.figure()
+                lo, hi = d.plot("zoom", cdf=cdf).ax.get_xlim()
+                self.assertLess(lo, zoom_lo)
+                self.assertGreater(hi, zoom_hi)
+                plt.close("all")
+
+    def test_continuous_zoom_curve_reaches_the_visible_limits(self):
+        # The padding is part of the plotted x-range, not empty space around a
+        # shorter curve. This matters especially near bounded endpoints.
+        for distribution in [Exponential(1), Beta(0.5, 0.5)]:
+            for cdf in [False, True]:
+                with self.subTest(distribution=type(distribution).__name__, cdf=cdf):
+                    plt.figure()
+                    plot = distribution.plot("zoom", cdf=cdf)
+                    (line,) = plot.ax.get_lines()
+                    xlo, xhi = plot.ax.get_xlim()
+                    self.assertEqual(line.get_xdata()[0], xlo)
+                    self.assertEqual(line.get_xdata()[-1], xhi)
+                    plt.close("all")
 
     def test_discrete_padding_does_not_grow_across_overlaid_calls(self):
         # Two calls that draw the same discrete window (e.g. two pmf-family
@@ -7375,7 +7403,9 @@ class TestDistributionPlotXlimArgument(unittest.TestCase):
         d = Binomial(1000, 0.5)
         d.plot("zoom")
         lo, hi = plt.gca().get_xlim()
-        self.assertEqual((lo, hi), tuple(d._zoom_xlim()))
+        zoom_lo, zoom_hi = d._zoom_xlim()
+        self.assertLess(lo, zoom_lo)
+        self.assertGreater(hi, zoom_hi)
         self.assertGreater(lo, 400)
         self.assertLess(hi, 600)
 
@@ -7402,11 +7432,14 @@ class TestDistributionPlotXlimArgument(unittest.TestCase):
         Poisson(3).plot(xlim=(0, 4))
         self.assertEqual(tuple(plt.gca().get_xlim()), (0.0, 4.0))
 
-    def test_zoom_gets_no_discrete_padding_either(self):
+    def test_zoom_gets_small_discrete_padding(self):
         plt.figure()
         d = Binomial(100, 0.5)
         d.plot("zoom")
-        self.assertEqual(tuple(plt.gca().get_xlim()), tuple(d._zoom_xlim()))
+        zoom_lo, zoom_hi = d._zoom_xlim()
+        lo, hi = plt.gca().get_xlim()
+        self.assertEqual(lo, zoom_lo - 0.5)
+        self.assertEqual(hi, zoom_hi + 0.5)
 
     # --- the other two ways of choosing a window still work ---
 
@@ -7501,7 +7534,11 @@ class TestMultivariatePlotTakesNoXlim(unittest.TestCase):
         plt.figure()
         Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot(variables=0, xlim="zoom")
         lo, hi = plt.gca().get_xlim()
-        self.assertGreaterEqual(lo, 0)
+        marginal = Binomial(n=10, p=0.2)
+        zoom_lo, zoom_hi = marginal._zoom_xlim()
+        self.assertEqual(lo, zoom_lo - 0.5)
+        self.assertEqual(hi, zoom_hi + 0.5)
+        self.assertGreaterEqual(lo, -0.5)
         self.assertLess(hi, 10)
 
     def test_joint_plot_still_works_without_xlim(self):
@@ -7772,6 +7809,42 @@ class TestDistributionCDFPlot(unittest.TestCase):
         plt.figure()
         cdf_win = Binomial(100, 0.5).plot(cdf=True).ax.get_xlim()
         self.assertEqual(pdf_win, cdf_win)
+
+    def test_discrete_cdf_covers_the_entire_visible_window(self):
+        # Poisson's default view has a padded slot left of its support. The
+        # CDF should visibly stay at 0 there, not begin abruptly at x=0.
+        plt.figure()
+        plot = Poisson(1).plot(cdf=True)
+        (line,) = plot.ax.get_lines()
+        xs, ys = np.asarray(line.get_xdata()), np.asarray(line.get_ydata())
+        xlo, xhi = plot.ax.get_xlim()
+        self.assertLessEqual(xs.min(), math.floor(xlo))
+        self.assertGreaterEqual(xs.max(), math.ceil(xhi))
+        self.assertTrue(np.all(ys[xs < 0] == 0))
+
+    def test_discrete_pmf_omits_exact_zero_mass_outcomes(self):
+        # An explicit range can include values outside Poisson's support, but
+        # those values must not gain dots or dashed connecting lines at y=0.
+        plt.figure()
+        plot = Poisson(1).plot(xlim=(-3, 10))
+        offsets = plot.ax.collections[0].get_offsets()
+        self.assertTrue(np.all(offsets[:, 0] >= 0))
+        for line in plot.ax.get_lines():
+            self.assertTrue(np.all(np.asarray(line.get_xdata()) >= 0))
+        # Tiny but nonzero probability remains a point; this is exact-zero
+        # filtering rather than a tolerance that hides a tail outcome.
+        self.assertIn(10, offsets[:, 0])
+
+    def test_default_discrete_pmf_reaches_the_visible_right_endpoint(self):
+        # The default Poisson view has one padded slot beyond its data range;
+        # its nonzero mass at that endpoint must still be drawn and connected.
+        plt.figure()
+        plot = Poisson(1).plot()
+        offsets = plot.ax.collections[0].get_offsets()
+        self.assertIn(6, offsets[:, 0])
+        self.assertTrue(
+            any(np.asarray(line.get_xdata())[-1] == 6 for line in plot.ax.get_lines())
+        )
 
     # --- the old type= spelling raises a friendly pointer to cdf= ---
 

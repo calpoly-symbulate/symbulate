@@ -52,6 +52,8 @@ from .probability_space import rng
 
 
 LEGEND_PARAMETER_DECIMALS = 3
+ZOOM_XLIM_PADDING_FRACTION = 0.05
+DISCRETE_ZOOM_XLIM_PADDING = 0.5
 
 
 def _format_legend_parameter(value):
@@ -665,16 +667,20 @@ class Distribution(ProbabilitySpace):
 
         For a discrete distribution, a window the distribution chose for
         itself gets one whole-number slot of padding on each end, so the
-        boundary value isn't drawn right on the axis spine. A window given by
-        hand -- through ``xlim=`` here or by assigning ``X.xlim = (low,
-        high)`` -- is used exactly as given, with no padding added.
+        boundary value isn't drawn right on the axis spine. ``xlim="zoom"``
+        likewise adds a smaller amount of room: half a whole-number slot for
+        discrete distributions, and 5% of the zoomed width for continuous
+        distributions. A numeric window given by hand -- through ``xlim=``
+        here or by assigning ``X.xlim = (low, high)`` -- is used exactly as
+        given, with no padding added.
 
         Parameters
         ----------
         xlim : tuple of float or str, optional
             The x-axis range. Leave it out for the distribution's own default
             window; pass ``"zoom"`` to frame the region holding most of the
-            probability; or pass ``(low, high)`` for exactly that range.
+            probability, with a small amount of visual padding; or pass
+            ``(low, high)`` for exactly that range.
         cdf : bool, default False
             Which function to plot. ``False`` (the default) draws the
             probability density/mass function; ``True`` draws the
@@ -726,12 +732,16 @@ class Distribution(ProbabilitySpace):
         #                  framing an unbounded distribution already gets,
         #                  which zooms in on a bounded default;
         #   (low, high) -> those exact limits, used as given.
-        # A window given here is someone's own choice, so it skips the
-        # discrete half-step padding below -- the same rule the `xlim` setter
-        # follows (see `_xlim_padded`).
+        # Keep the range whose values are evaluated (`data_xlim`) separate
+        # from the visible axes range (`view_xlim`). The distinction matters
+        # for a discrete CDF: if the axes has room left of the support, its
+        # zero-height step needs to be drawn there too. A numeric window is
+        # still the caller's exact view; only a default or zoomed window gets
+        # cosmetic padding.
         padded = self._xlim_padded
+        zoomed = False
         if xlim is None:
-            xlim = self.xlim
+            data_xlim = self.xlim
         elif isinstance(xlim, str):
             if xlim != "zoom":
                 raise ValueError(
@@ -740,9 +750,11 @@ class Distribution(ProbabilitySpace):
                     f"xlim={xlim!r}. Otherwise pass xlim=(low, high) for an "
                     "exact range, or leave it out for the default range."
                 )
-            xlim = self._zoom_xlim()
+            data_xlim = self._zoom_xlim()
             padded = False
+            zoomed = True
         else:
+            data_xlim = tuple(xlim)
             padded = False
 
         # The window itself can come back non-finite, which is a different
@@ -755,8 +767,8 @@ class Distribution(ProbabilitySpace):
         # (Normal(sd=0), Uniform(a=5, b=5)). Checking here also keeps a nan
         # bound away from the `int(xlim[0])` on the discrete branch below,
         # which would raise its own uninformative conversion error.
-        if not all(np.isfinite(bound) for bound in xlim):
-            if any(np.isnan(bound) for bound in xlim):
+        if not all(np.isfinite(bound) for bound in data_xlim):
+            if any(np.isnan(bound) for bound in data_xlim):
                 cause = (
                     "This usually means a parameter is at a degenerate edge "
                     "-- zero variance, or bounds that collapse to a single "
@@ -771,49 +783,11 @@ class Distribution(ProbabilitySpace):
                 )
             raise ValueError(
                 f"{type(self).__name__}'s parameters give the plotting window "
-                f"{tuple(xlim)}, which is not a finite range of values. "
+                f"{tuple(data_xlim)}, which is not a finite range of values. "
                 f"{cause} This is rarely a bug in your code -- check the "
                 f"distribution's parameters, or choose the window yourself "
                 f"with plot(xlim=(low, high))."
             )
-
-        # get the x and y values. The x-window is chosen the same way for
-        # both plot types (it only picks x-values); `cdf` decides which
-        # function is evaluated there.
-        if self.discrete:
-            # xs is drawn from the *true*, unpadded window -- the view
-            # padding added near the end of this method (see
-            # `_symbulate_true_xlim` below) only ever widens the axes, and
-            # must never change which values are actually evaluated/drawn.
-            xs = np.arange(int(xlim[0]), int(xlim[1]) + 1)
-        else:
-            xs = np.linspace(xlim[0], xlim[1], 200)
-        ys = self.cdf(xs) if cdf else self.pdf(xs)
-
-        # A degenerate parameter (zero variance, a shape parameter at an
-        # extreme edge, bounds that collapse to a point, ...) can make every
-        # evaluated value non-finite, which would otherwise reach a bare
-        # NumPy "zero-size array" crash below with no context for a student.
-        # Name the likely cause and point at the fix instead.
-        finite = np.isfinite(ys)
-        if not np.any(finite):
-            quantity = "cdf" if cdf else "pmf" if self.discrete else "pdf"
-            raise ValueError(
-                f"{type(self).__name__}'s parameters make the {quantity} "
-                f"undefined or infinite everywhere in the plotting window "
-                f"{tuple(xlim)}. This usually means a parameter is at a "
-                f"degenerate edge -- zero variance, a shape parameter at 0, "
-                f"or bounds that collapse to a single point -- rather than a "
-                f"bug in your code. Check the distribution's parameters."
-            )
-
-        # determine limits for y-axes based on y values. Anchor the baseline
-        # at exactly 0 so the curve sits right on the x-axis: a pdf/pmf height
-        # is never negative and only reads correctly against a zero baseline,
-        # and a CDF likewise runs from 0 upward. Padding below 0 would float
-        # the curve off the axis and misrepresent it.
-        ymax = ys[finite].max()
-        ylim = 0, 1.05 * ymax
 
         # get the current axis (creating one if the figure has none) unless
         # an axis was specified
@@ -856,12 +830,36 @@ class Distribution(ProbabilitySpace):
         # pairs matrix).
         if ax.has_data():
             xlower, xupper = getattr(ax, "_symbulate_true_xlim", ax.get_xlim())
-            xlim = min(xlim[0], xlower), max(xlim[1], xupper)
-            ylower, yupper = ax.get_ylim()
-            ylim = min(ylim[0], ylower), max(ylim[1], yupper)
+            data_xlim = min(data_xlim[0], xlower), max(data_xlim[1], xupper)
 
-        # set the axis limits
-        if xlim[0] == xlim[1]:
+        # Check the actual distribution window before giving a collapsed range
+        # visual room. A degenerate Gamma, for example, must still explain
+        # that its PDF is undefined at its true `(0, 0)` window rather than
+        # borrowing finite values from a wider display.
+        if self.discrete:
+            evaluation_xs = np.arange(
+                math.ceil(data_xlim[0]), math.floor(data_xlim[1]) + 1
+            )
+        else:
+            evaluation_xs = np.linspace(data_xlim[0], data_xlim[1], 200)
+        evaluation_ys = self.cdf(evaluation_xs) if cdf else self.pdf(evaluation_xs)
+        finite = np.isfinite(evaluation_ys)
+        if not np.any(finite):
+            quantity = "cdf" if cdf else "pmf" if self.discrete else "pdf"
+            raise ValueError(
+                f"{type(self).__name__}'s parameters make the {quantity} "
+                f"undefined or infinite everywhere in the plotting window "
+                f"{tuple(data_xlim)}. This usually means a parameter is at a "
+                f"degenerate edge -- zero variance, a shape parameter at 0, "
+                f"or bounds that collapse to a single point -- rather than a "
+                f"bug in your code. Check the distribution's parameters."
+            )
+
+        # A collapsed data range needs room before matplotlib sees it. Do this
+        # after validating the true window, so display padding cannot mask a
+        # degenerate parameter error.
+        display_data_xlim = data_xlim
+        if display_data_xlim[0] == display_data_xlim[1]:
             # A window can collapse onto a single value when one outcome
             # carries essentially all the probability (e.g. Geometric(0.99),
             # or a bounded distribution that zoomed onto one value, or an
@@ -871,12 +869,22 @@ class Distribution(ProbabilitySpace):
             # a "slot" from, so this matches the one-slot convention below),
             # half a unit otherwise.
             pad = 1.0 if self.discrete else 0.5
-            xlim = (xlim[0] - pad, xlim[1] + pad)
-        # Recorded before the discrete padding below is added, so a later
-        # overlay's union (above) compares against the real data window
-        # rather than this cosmetic padding.
-        ax._symbulate_true_xlim = xlim
-        if self.discrete and padded:
+            display_data_xlim = (
+                display_data_xlim[0] - pad,
+                display_data_xlim[1] + pad,
+            )
+
+        # Recorded before cosmetic padding is added, so a later overlay's
+        # union compares against the real data window rather than the view.
+        ax._symbulate_true_xlim = data_xlim
+        view_xlim = display_data_xlim
+        if zoomed:
+            if self.discrete:
+                pad = DISCRETE_ZOOM_XLIM_PADDING
+            else:
+                pad = ZOOM_XLIM_PADDING_FRACTION * (data_xlim[1] - data_xlim[0])
+            view_xlim = (data_xlim[0] - pad, data_xlim[1] + pad)
+        elif self.discrete and padded:
             # A discrete pmf/cdf is drawn at whole-number x-values one unit
             # apart (see `xs` above), so without padding the outermost dot or
             # step sits exactly on the left/right spine -- flush against it
@@ -890,9 +898,35 @@ class Distribution(ProbabilitySpace):
             # distribution -- `plot(xlim=...)`, `plot("zoom")`, or an assigned
             # `X.xlim = (low, high)` (which sets `_xlim_padded = False`) --
             # since those are their numbers, used exactly as given.
-            ax.set_xlim(xlim[0] - 1, xlim[1] + 1)
+            view_xlim = (data_xlim[0] - 1, data_xlim[1] + 1)
+
+        # Draw every x-value visible on the axes. A PMF then omits outcomes
+        # with exactly zero mass below, so unsupported values never gain
+        # misleading dots or lines. Validation above deliberately used the
+        # unpadded data window, so cosmetic room cannot mask a degenerate
+        # parameter error.
+        if self.discrete:
+            if cdf:
+                xs = np.arange(math.floor(view_xlim[0]), math.ceil(view_xlim[1]) + 1)
+            else:
+                xs = np.arange(math.ceil(view_xlim[0]), math.floor(view_xlim[1]) + 1)
         else:
-            ax.set_xlim(*xlim)
+            xs = np.linspace(view_xlim[0], view_xlim[1], 200)
+        ys = self.cdf(xs) if cdf else self.pdf(xs)
+
+        # Recompute the finite mask for the values actually drawn, which may
+        # now include the cosmetic padding around the validated data window.
+        finite = np.isfinite(ys)
+
+        # Anchor the baseline at exactly 0 so probability heights and CDFs
+        # sit on the x-axis rather than floating below it.
+        ymax = ys[finite].max()
+        ylim = 0, 1.05 * ymax
+        if ax.has_data():
+            ylower, yupper = ax.get_ylim()
+            ylim = min(ylim[0], ylower), max(ylim[1], yupper)
+
+        ax.set_xlim(*view_xlim)
         ax.set_ylim(*ylim)
 
         # get next color in cycle
@@ -938,17 +972,32 @@ class Distribution(ProbabilitySpace):
             # between integers). Both are styled from the named TRUE_DIST_*
             # constants instead of a hardcoded marker size / default line.
             if self.discrete:
+                nonzero = np.isfinite(ys) & (ys != 0)
+                pmf_xs, pmf_ys = xs[nonzero], ys[nonzero]
                 ax.scatter(
-                    xs, ys, s=TRUE_DIST_MARKER_SIZE, color=color, alpha=alpha, **kwargs
-                )
-                ax.plot(
-                    xs,
-                    ys,
+                    pmf_xs,
+                    pmf_ys,
+                    s=TRUE_DIST_MARKER_SIZE,
                     color=color,
                     alpha=alpha,
-                    linestyle=TRUE_DIST_LINESTYLE,
-                    linewidth=TRUE_DIST_LINEWIDTH,
+                    **kwargs,
                 )
+                # Do not bridge a gap in the support: an exact zero has no
+                # marker and no connector, while a tiny nonzero mass remains.
+                run_start = 0
+                for index in range(1, len(pmf_xs) + 1):
+                    at_end = index == len(pmf_xs)
+                    gap = not at_end and pmf_xs[index] != pmf_xs[index - 1] + 1
+                    if at_end or gap:
+                        ax.plot(
+                            pmf_xs[run_start:index],
+                            pmf_ys[run_start:index],
+                            color=color,
+                            alpha=alpha,
+                            linestyle=TRUE_DIST_LINESTYLE,
+                            linewidth=TRUE_DIST_LINEWIDTH,
+                        )
+                        run_start = index
             else:
                 ax.plot(xs, ys, color=color, alpha=alpha, **kwargs)
 
