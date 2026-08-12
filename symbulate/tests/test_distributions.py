@@ -8124,6 +8124,25 @@ class TestDistributionPlotLegend(unittest.TestCase):
         labels = [t.get_text() for t in legend.get_texts()]
         self.assertEqual(labels, ["Normal(0, 1)", "Normal(2, 1)"])
 
+    def test_fractional_parameters_are_rounded_in_theoretical_legend_only(self):
+        scale = 1 / 3
+        plt.figure()
+        Rayleigh(scale=2).plot()
+        Rayleigh(scale=scale).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Rayleigh(2)", "Rayleigh(0.333)"])
+        # The formatting must not alter the distribution's actual parameter.
+        self.assertEqual(Rayleigh(scale=scale).params["scale"], scale)
+
+    def test_fractional_parameter_is_rounded_when_overlaid_on_simulations(self):
+        rate = 1 / 3
+        plt.figure()
+        RV(Poisson(rate)).sim(500).plot(type="hist")
+        Poisson(rate).plot()
+        labels = [t.get_text() for t in plt.gca().get_legend().get_texts()]
+        self.assertEqual(labels, ["Variable 1", "Poisson(0.333)"])
+        self.assertEqual(Poisson(rate).params["mu"], rate)
+
     # --- default label names the distribution itself ---
 
     def test_default_label_is_the_distribution_repr(self):

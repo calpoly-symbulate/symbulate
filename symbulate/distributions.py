@@ -51,6 +51,22 @@ from .result import Scalar, Vector, InfiniteVector
 from .probability_space import rng
 
 
+LEGEND_PARAMETER_DECIMALS = 3
+
+
+def _format_legend_parameter(value):
+    """Return one distribution parameter formatted for a legend label.
+
+    This is deliberately display-only: callers continue to retain and use
+    the original parameter value for all distribution calculations.
+    """
+    if isinstance(value, numbers.Real):
+        formatted = f"{float(value):.{LEGEND_PARAMETER_DECIMALS}f}"
+        formatted = formatted.rstrip("0").rstrip(".")
+        return "0" if formatted == "-0" else formatted
+    return str(value)
+
+
 def _validate(*checks):
     """Collect all failed parameter checks and report them together.
 
@@ -892,7 +908,9 @@ class Distribution(ProbabilitySpace):
         # second, duplicate legend entry for the same curve.
         kwargs.setdefault(
             "label",
-            f"{type(self).__name__}({', '.join(str(v) for v in self.params.values())})",
+            f"{type(self).__name__}("
+            f"{', '.join(_format_legend_parameter(v) for v in self.params.values())}"
+            f")",
         )
 
         if cdf:
@@ -6253,6 +6271,9 @@ class MultivariateDistribution(Distribution):
         # Framed on the same window the joint panel uses, so the strip covers
         # the variable over exactly the range the joint panel shows it over.
         self._marginal_framed(i).plot(ax=ax, alpha=alpha)
+        # In this layout the same figure also contains the joint distribution,
+        # so make clear that this strip is the marginal counterpart.
+        marginal_quantity = pairs_marginal_label(ax.get_ylabel())
         # Each strip is one variable's distribution, not a plot in its own
         # right -- the figure's title names what the whole thing is.
         ax.set_title("")
@@ -6265,6 +6286,7 @@ class MultivariateDistribution(Distribution):
             # would be clutter right next to it. The density/probability label
             # stays: it is what the strip's height means.
             ax.set_xlabel("")
+            ax.set_ylabel(marginal_quantity)
             return
 
         # Turn the plot on its side: the values move to the y-axis and the
@@ -6282,7 +6304,7 @@ class MultivariateDistribution(Distribution):
         ax.set_ylim(*value_lim)
         # The labels transpose with the data: what named the height now names
         # the width. The value label is dropped for the same reason as above.
-        ax.set_xlabel(ax.get_ylabel())
+        ax.set_xlabel(marginal_quantity)
         ax.set_ylabel("")
 
     def _plot_pairs(self, variables, contour, alpha=None, **kwargs):
@@ -6685,7 +6707,7 @@ class MultivariateDistribution(Distribution):
             alpha=alpha,
             **kwargs,
         )
-        quantity = "Probability" if self.discrete else "Density"
+        quantity = pairs_joint_label("Probability" if self.discrete else "Density")
         if mappable is not None:
             add_colorbar(fig, True, mappable, quantity, decimals=JOINT_CBAR_DECIMALS)
 

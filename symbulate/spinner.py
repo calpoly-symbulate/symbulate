@@ -913,8 +913,7 @@ def area_caption(sections):
     return (
         f"The spinner lands in each interval with probability "
         f"{_percent(1.0 / sections)} (1 in {sections}). Notice the intervals "
-        f"do not all have the same length -- they are short where the "
-        f"distribution is dense."
+        f"do not all have the same length. "
     )
 
 
