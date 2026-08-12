@@ -230,6 +230,17 @@ class TestDiffusionProcessKnownModels(unittest.TestCase):
         expected = x0 * np.exp(rate * t)
         self.assertAlmostEqual(X[t].sim(Nsim).mean(), expected, delta=0.1 * expected)
 
+    def test_cir_shaped_diffusion_with_floor_stays_finite(self):
+        """The documented floor prevents sqrt of a negative path value."""
+        seed(42)
+        X = DiffusionProcess(
+            drift=lambda x, t: 1.0 - x,
+            diffusion=lambda x, t: 2.0 * sqrt(max(x, 0)),
+            initial=0.1,
+        )
+        endpoints = [float(X.draw()(5.0)) for _ in range(200)]
+        self.assertTrue(np.isfinite(endpoints).all())
+
 
 class TestDiffusionProcessErrors(unittest.TestCase):
 
