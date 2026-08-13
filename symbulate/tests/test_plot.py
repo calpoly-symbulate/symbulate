@@ -4264,10 +4264,10 @@ class TestDistributionPlotDiscrete(PlotTestCase):
         MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]).plot()
         self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
 
-    def test_multinomial_plots_joint_pmf(self):
-        """Multinomial.plot() draws a probability per pair of counts."""
+    def test_three_category_multinomial_plots_all_named_components(self):
+        """A fixed-sum constraint does not omit a named component's panels."""
         Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Mass Function")
+        self.assertEqual(plt.gcf().get_suptitle(), "Probability Mass Functions")
 
 
 # ===========================================================================
@@ -4995,21 +4995,12 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
             max(strips, key=lambda a: a.get_position().x0),
         )
 
-    def test_continuous_and_discrete_both_get_three_panels(self):
-        for dist, title in [
-            (
-                MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]),
-                "Joint Probability Density Function",
-            ),
-            (Multinomial(n=10, p=[0.2, 0.3, 0.5]), "Joint Probability Mass Function"),
-        ]:
-            with self.subTest(dist=type(dist).__name__):
-                plt.close("all")
-                plt.figure()
-                dist.plot()
-                self.assertEqual(len(self._panels()), 3)
-                self.assertEqual(plt.gcf().get_suptitle(), title)
-                self.assertEqual(plt.gca().get_title(), "")
+    def test_two_variable_distribution_gets_three_panels(self):
+        dist = MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]])
+        dist.plot()
+        self.assertEqual(len(self._panels()), 3)
+        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
+        self.assertEqual(plt.gca().get_title(), "")
 
     def test_the_right_strip_runs_sideways(self):
         """The strip beside the y-axis has the variable on *its* y-axis, so
@@ -5058,7 +5049,7 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
     def test_a_discrete_strip_keeps_its_masses(self):
         """A pmf strip is dots plus a dashed connector, transposed the same
         way -- the dots are a PathCollection, not a line."""
-        p = Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot()
+        p = Multinomial(n=10, p=[0.2, 0.8]).plot()
         _, marg_y = self._strips(p.ax)
         self.assertGreater(len(marg_y.collections), 0)
         offsets = np.asarray(marg_y.collections[0].get_offsets())
@@ -5068,11 +5059,8 @@ class TestTheoreticalTwoVariableLayout(PlotTestCase):
 
     def test_two_variable_colorbar_names_the_joint_quantity(self):
         for dist, expected in [
-            (
-                MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]),
-                "Joint Density",
-            ),
-            (Multinomial(n=10, p=[0.2, 0.3, 0.5]), "Joint Probability"),
+            (MultivariateNormal(mean=[0, 0], cov=[[1, 0.5], [0.5, 1]]), "Joint Density"),
+            (Multinomial(n=10, p=[0.2, 0.8]), "Joint Probability"),
         ]:
             with self.subTest(dist=type(dist).__name__):
                 plt.close("all")
@@ -5334,12 +5322,13 @@ class TestVariablesChoosesWhatIsDrawn(PlotTestCase):
         self.assertEqual(p.ax.get_title(), "Probability Mass Function")
         self.assertEqual(p.ax.get_xlabel(), "Variable 2")
 
-    def test_one_variable_works_where_the_joint_plot_is_refused(self):
-        """A two-category Multinomial varies in only one direction, so it has
-        no joint plot -- but each of its marginals is a Binomial."""
+    def test_one_variable_and_degenerate_joint_plot_both_work(self):
+        """A two-category Multinomial retains both marginals and its support."""
         dist = Multinomial(n=10, p=[0.4, 0.6])
-        with self.assertRaises(Exception):
-            dist.plot()
+        joint = dist.plot()
+        self.assertEqual(len(self._panels()), 3)
+        self.assertEqual(joint.ax.get_xlabel(), "Variable 1")
+        plt.close("all")
         p = dist.plot(variables=0)
         self.assertEqual(p.ax.get_xlabel(), "Variable 1")
 
