@@ -8693,7 +8693,7 @@ class Dirichlet(MultivariateDistribution):
         ax.set_xlabel(self._variable_label(i))
         ax.set_ylabel(self._variable_label(j))
         if title:
-            set_plot_title(ax, "Joint Distribution (Singular Support)")
+            set_plot_title(ax, "Joint Probability Density Function")
         ax.text(
             0.03,
             0.04,

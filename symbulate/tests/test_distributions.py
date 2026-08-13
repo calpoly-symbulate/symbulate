@@ -5913,7 +5913,7 @@ class TestDirichlet(MultivariatePlotTestCase):
         plot = X.plot()
         self.assertEqual(plot.ax.get_title(), "")
         self.assertEqual(
-            plt.gcf()._suptitle.get_text(), "Joint Distribution (Singular Support)"
+            plt.gcf()._suptitle.get_text(), "Joint Probability Density Function"
         )
         self.assertIn(
             "No finite two-dimensional density.\nAll probability lies on\n"
