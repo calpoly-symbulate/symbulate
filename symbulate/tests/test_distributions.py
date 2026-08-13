@@ -5546,20 +5546,30 @@ class TestMultinomial(MultivariatePlotTestCase):
             self.assertAlmostEqual(float(sims.mean()), expected_mean, delta=0.15)
             self.assertAlmostEqual(float(sims.var()), expected_var, delta=0.15)
 
-    def test_Multinomial_two_categories_plot_points_to_Binomial(self):
-        # Two counts that must add to n vary in only one direction, so
-        # there is no joint plot to draw -- it is a Binomial.
-        X = Multinomial(n=10, p=[0.5, 0.5])
-        with self.assertRaises(Exception) as cm:
-            X.plot()
-        self.assertIn("Binomial", str(cm.exception))
+    def test_Multinomial_two_categories_plots_mass_on_a_support_line(self):
+        X = Multinomial(n=1000, p=[0.7, 0.3])
+        func = X._joint_func(0, 1)
+        # The support is exactly X1 + X2 = 1000. A point below that line
+        # must not retain a tiny floating-point probability.
+        self.assertGreater(float(func([700], [300])[0]), 0.0)
+        self.assertEqual(float(func([730], [260])[0]), 0.0)
+        X.plot()
+        self.assertEqual(plt.gcf()._suptitle.get_text(), "Joint Probability Mass Function")
+        plt.close("all")
 
-    def test_Multinomial_three_categories_plots_joint_pmf(self):
-        # Three categories vary in two directions (the third count is
-        # whatever is left), so this is the single-joint-plot case.
+    def test_Multinomial_masks_impossible_joint_cells_gray(self):
+        plot = Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot(variables=(0, 1))
+        values = plot.ax.images[0].get_array()
+        self.assertTrue(values.mask[10, 10])
+        self.assertFalse(values.mask[2, 3])
+        plt.close("all")
+
+    def test_Multinomial_three_categories_plots_all_named_components(self):
         X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
         X.plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Mass Function")
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
+        self.assertEqual(plt.gcf()._suptitle.get_text(), "Probability Mass Functions")
         plt.close("all")
 
     def test_Multinomial_is_discrete(self):
@@ -5596,16 +5606,15 @@ class TestMultinomial(MultivariatePlotTestCase):
         self.assertIsInstance(marginal, Binomial)
         self.assertAlmostEqual(float(marginal.mean()), 3.0)
 
-    def test_Multinomial_plot_window_zooms_when_counts_range_too_far(self):
-        # A small number of trials shows every count, so the triangular
-        # shape of the joint support is visible; a large one would need
-        # more cells than are readable, so it falls back to the window
-        # holding most of the probability.
-        small = Multinomial(n=10, p=[0.5, 0.3, 0.2])
-        self.assertEqual(len(small._plot_values(0)), 11)
-        large = Multinomial(n=1000, p=[0.5, 0.3, 0.2])
-        self.assertLess(len(large._plot_values(0)), 1001)
-        large.plot()
+    def test_Multinomial_plot_window_zooms_to_the_count_marginals(self):
+        # A joint panel has no xlim= argument, so it uses the same
+        # probability-based framing rule at every n, not a grid-size cutoff.
+        X = Multinomial(n=100, p=[0.3, 0.4, 0.3])
+        for i in range(3):
+            marginal = X._marginal_1d(i)
+            self.assertEqual(X._plot_window(i), marginal._zoom_xlim())
+            self.assertLess(len(X._plot_values(i)), 101)
+        X.plot()
         plt.close("all")
 
     def test_Multinomial_plot_pairs_is_titled_mass_functions(self):
@@ -5732,11 +5741,19 @@ class TestMultivariateHypergeometric(MultivariatePlotTestCase):
         # Every draw is a vector of whole counts.
         self.assertTrue(MultivariateHypergeometric(m=[10, 8, 6], n=6).discrete)
 
-    def test_MVHypergeom_three_types_is_one_joint_plot(self):
-        # The counts add up to n, so three types vary in only two
-        # directions -- the single-joint-plot case, needing no dims.
+    def test_MVHypergeom_three_types_plots_all_named_components(self):
         X = MultivariateHypergeometric(m=[10, 8, 6], n=6)
         self.assertEqual(X._free_dim(), 2)
+        X.plot()
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
+        plt.close("all")
+
+    def test_MVHypergeom_two_types_plots_mass_on_a_support_line(self):
+        X = MultivariateHypergeometric(m=[10, 8], n=6)
+        func = X._joint_func(0, 1)
+        self.assertGreater(float(func([4], [2])[0]), 0.0)
+        self.assertEqual(float(func([4], [1])[0]), 0.0)
         X.plot()
         plt.close("all")
 
@@ -5862,28 +5879,56 @@ class TestDirichlet(MultivariatePlotTestCase):
             pval = stats.kstest(sims, cdf).pvalue
             self.assertTrue(pval > 0.01)
 
-    def test_Dirichlet_plots_joint_density(self):
-        # Three proportions add to 1, so two of them vary freely: this is
-        # the single-joint-plot case, drawn over the simplex.
+    def test_Dirichlet_three_categories_plots_all_named_components(self):
         Dirichlet(alpha=[2, 3, 5]).draw()
         Dirichlet(alpha=[2, 3, 5]).plot()
-        self.assertEqual(plt.gcf().get_suptitle(), "Joint Probability Density Function")
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
+        self.assertEqual(plt.gcf()._suptitle.get_text(), "Probability Density Functions")
         plt.close("all")
 
-    def test_Dirichlet_plot_window_is_full_proportion_range(self):
-        # Framed on [0, 1] on both axes, so the triangle a pair of
-        # proportions lives on stays fully in view.
-        X = Dirichlet(alpha=[2, 3, 5])
-        X.plot()
-        self.assertEqual(plt.gca().get_xlim(), (0.0, 1.0))
-        self.assertEqual(plt.gca().get_ylim(), (0.0, 1.0))
+    def test_Dirichlet_plot_window_zooms_to_concentrated_marginals(self):
+        # Each panel is framed by its Beta marginal, so it can focus on the
+        # region holding probability instead of always showing [0, 1]. A
+        # marginal that already fills enough of [0, 1] keeps that full range.
+        X = Dirichlet(alpha=[5, 7, 10, 1, 3])
+        zoomed = []
+        for i in range(5):
+            marginal = X._marginal_1d(i)
+            low, high = marginal.xlim
+            zoom_low, zoom_high = marginal._zoom_xlim()
+            expected = (
+                (low, high)
+                if marginal._fills_window(low, high, zoom_low, zoom_high)
+                else (zoom_low, zoom_high)
+            )
+            window = X._plot_window(i)
+            self.assertEqual(window, expected)
+            zoomed.append(window != (0.0, 1.0))
+        self.assertTrue(any(zoomed))
         plt.close("all")
 
-    def test_Dirichlet_two_categories_plot_points_to_Beta(self):
+    def test_Dirichlet_two_categories_draws_singular_support(self):
         X = Dirichlet(alpha=[2, 3])
-        with self.assertRaises(Exception) as cm:
-            X.plot()
-        self.assertIn("Beta", str(cm.exception))
+        plot = X.plot()
+        self.assertEqual(plot.ax.get_title(), "")
+        self.assertEqual(
+            plt.gcf()._suptitle.get_text(), "Joint Probability Density Function"
+        )
+        self.assertIn(
+            "No finite two-dimensional density.\nAll probability lies on\n"
+            "Variable 1 + Variable 2 = 1.",
+            {text.get_text() for text in plot.ax.texts},
+        )
+        self.assertEqual(
+            plot.ax.get_facecolor(), plt.matplotlib.colors.to_rgba("#E6E6E6")
+        )
+        self.assertEqual(
+            plot.ax.lines[0].get_color(), plt.get_cmap(plt.rcParams["image.cmap"])(1.0)
+        )
+        bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
+        self.assertEqual(bars, [])
+        plt.close("all")
 
     def test_Dirichlet_marginal_1d_is_Beta(self):
         alpha = [2, 3, 5]
@@ -6006,10 +6051,12 @@ class TestDirichletMultinomial(MultivariatePlotTestCase):
     def test_DirichletMultinomial_is_discrete(self):
         self.assertTrue(DirichletMultinomial(n=10, alpha=[2, 3, 5]).discrete)
 
-    def test_DirichletMultinomial_three_categories_is_one_joint_plot(self):
+    def test_DirichletMultinomial_three_categories_plots_all_named_components(self):
         X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
         self.assertEqual(X._free_dim(), 2)
         X.plot()
+        panels = [a for a in plt.gcf().axes if a.get_subplotspec() is not None]
+        self.assertEqual(len(panels), 6)
         plt.close("all")
 
     def test_DirichletMultinomial_marginal_is_betabinomial(self):
@@ -6046,6 +6093,14 @@ class TestDirichletMultinomial(MultivariatePlotTestCase):
         X = DirichletMultinomial(n=10, alpha=[2, 3, 5])
         func = X._joint_func(0, 1)
         self.assertEqual(float(func(np.array([7]), np.array([6]))[0]), 0.0)
+
+    def test_DirichletMultinomial_two_categories_plots_mass_on_a_support_line(self):
+        X = DirichletMultinomial(n=10, alpha=[3, 4])
+        func = X._joint_func(0, 1)
+        self.assertGreater(float(func([4], [6])[0]), 0.0)
+        self.assertEqual(float(func([4], [5])[0]), 0.0)
+        X.plot()
+        plt.close("all")
 
     def test_DirichletMultinomial_plot_pairs(self):
         DirichletMultinomial(n=10, alpha=[2, 3, 5, 4]).plot()

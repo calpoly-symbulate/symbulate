@@ -22,6 +22,7 @@ from .plot import (
     make_joint_pmf,
     ECDF_LINEWIDTH,
     JOINT_CBAR_DECIMALS,
+    JOINT_IMPOSSIBLE_COLOR,
     JOINT_PAIRS_MAX_DIM,
     PAIRS_MAX_DISCRETE_TICKS,
     setup_marginal_axes,
@@ -31,7 +32,6 @@ from .plot import (
     advance_pairs_diagonal_color,
     align_pairs_columns,
     thin_marginal_frequency_ticks,
-    JOINT_PMF_MAX_CELLS,
     JOINT_PAIRS_OVERLAY_ERROR,
     JOINT_PAIRS_PANEL_SIZE,
     add_colorbar,
@@ -6091,16 +6091,15 @@ class MultivariateDistribution(Distribution):
         """Check a ``variables`` argument and return the variables to plot.
 
         Also decides *what* to draw, since the two questions are the same
-        one: exactly two variables have a single joint distribution between
-        them, and three or more do not, so they are drawn as a matrix of
-        every pair.
+        one: two named variables have a single joint distribution between
+        them, and three or more are drawn as a matrix of every pair.
 
         Parameters
         ----------
         variables : sequence of int or None
             The requested variables. ``None`` falls back to the default:
-            the two freely varying variables when there are only two, and
-            every variable otherwise.
+            two named variables when there are two, and every named
+            variable otherwise.
 
         Returns
         -------
@@ -6111,9 +6110,8 @@ class MultivariateDistribution(Distribution):
         Raises
         ------
         Exception
-            If the distribution has too few freely varying variables to
-            plot; if ``variables`` was left out where there is no single natural
-            default; or if it is not the right number of distinct, in-range
+            If the distribution has too few variables to plot; or if
+            ``variables`` is not the right number of distinct, in-range
             whole numbers.
         """
         n = self._n_components()
@@ -6127,14 +6125,15 @@ class MultivariateDistribution(Distribution):
             variables = (variables,)
 
         # Naming one variable asks for that variable's own distribution, which
-        # exists no matter how the rest of them are constrained -- so this is
-        # checked before the "needs two directions" gate below. Plotting one
-        # marginal of a two-category Multinomial is a reasonable thing to ask
-        # for, even though its *joint* plot is refused.
+        # exists no matter how the rest are constrained.
         one_variable = (
             isinstance(variables, (tuple, list, np.ndarray)) and len(variables) == 1
         )
-        if free < 2 and not one_variable:
+        # A two-component fixed-sum distribution has one freely varying
+        # direction, but it still has two named marginals and a joint support
+        # line. Draw it as a degenerate two-variable joint plot.
+        degenerate_pair = self._sum_constrained and n == 2
+        if free < 2 and not one_variable and not degenerate_pair:
             raise Exception(
                 "A joint plot needs two variables, and this distribution "
                 "varies in only one direction, so there is nothing to plot "
@@ -6146,14 +6145,14 @@ class MultivariateDistribution(Distribution):
             )
 
         if variables is None:
-            if free == 2:
-                # Exactly two freely varying variables, so there is only one
-                # joint distribution to show and no choice to make -- the
-                # same way a univariate plot() never asks which variable.
+            if n == 2:
+                # Two named variables have one joint distribution, including
+                # a fixed-sum pair whose probability lies on a support line.
                 variables = (0, 1)
             else:
-                # Three or more variables have no single joint plot, so show
-                # every pair at once rather than asking which one to pick.
+                # Retain every named component. A fixed-sum constraint makes
+                # one component dependent, but does not remove its marginal
+                # or pairwise relationships.
                 variables = tuple(range(n))
 
         # Checked before converting, so a non-sequence that isn't a single
@@ -6270,6 +6269,7 @@ class MultivariateDistribution(Distribution):
                 self._plot_values(j),
                 ax,
                 colorbar=colorbar,
+                mask_zero=self._sum_constrained,
                 xlabel=xlabel,
                 ylabel=ylabel,
                 title=title,
@@ -6283,6 +6283,7 @@ class MultivariateDistribution(Distribution):
             ax,
             contour=contour,
             colorbar=colorbar,
+            mask_zero=self._sum_constrained,
             xlabel=xlabel,
             ylabel=ylabel,
             title=title,
@@ -6538,7 +6539,7 @@ class MultivariateDistribution(Distribution):
         return corner
 
     def plot(self, variables=None, contour=True, alpha=None, ax=None, **kwargs):
-        """Plot the joint distribution of two of the variables.
+        """Plot the marginals and joint distributions of the components.
 
         A multivariate distribution describes several variables at once, so
         it has no single curve to draw the way a one-dimensional
@@ -6550,14 +6551,17 @@ class MultivariateDistribution(Distribution):
 
         What gets plotted depends on how many variables there are:
 
-        - **Two variables** (including a three-category ``Multinomial`` or
-          ``Dirichlet``, whose third category is fixed by the other two):
-          there is only one joint distribution, so it is plotted with no
-          arguments needed.
-        - **Three or more**: there is no single "the plot" any more, so
-          this draws a **matrix of panels** -- each variable's own
-          distribution down the diagonal, each pair's joint distribution
-          below it -- rather than silently picking one pair out of several.
+        - **Two variables**: there is one joint distribution, shown with
+          both marginal distributions in adjoining strips. For a fixed-sum
+          discrete family, all probability lies on the line where the two
+          components add to the fixed total. A two-component ``Dirichlet``
+          instead shows its singular support line, since it has no finite
+          two-dimensional density.
+        - **Three or more variables**: a **matrix of panels** shows each
+          variable's own distribution down the diagonal and each pair's
+          joint distribution below it. This includes fixed-sum families:
+          although one component is determined by the rest, every named
+          component has its own marginal and pairwise relationships.
         - **One particular pair**: name the two variables you want with
           ``variables``, e.g. ``variables=(0, 2)`` for the 1st and 3rd. Naming three
           or more instead draws the matrix of just those.
@@ -6578,11 +6582,11 @@ class MultivariateDistribution(Distribution):
             ``variables=[2]``) for the 3rd variable's marginal pdf/pmf;
             **two** for their joint distribution, e.g. ``variables=(0, 2)``
             for the 1st and 3rd; **three or more** for a matrix of every pair
-            among them. Left out, a distribution of two freely varying
-            variables draws its one joint plot, and one of three or more draws
-            the matrix of all of them. The panels are labeled by the numbers
-            asked for, so ``variables=[0, 2, 4]`` labels them "Variable 1",
-            "Variable 3" and "Variable 5".
+            among them. Left out, two named components draw their joint plot,
+            and three or more draw the matrix of all named components. The
+            panels are labeled by the numbers asked for, so
+            ``variables=[0, 2, 4]`` labels them "Variable 1", "Variable 3",
+            and "Variable 5".
         contour : bool, default True
             Whether to draw a continuous density surface as discrete
             contour bands with outlines between them, so a band can be
@@ -7797,10 +7801,9 @@ class Multinomial(MultivariateDistribution):
     (5, 3, 2)
     """
 
-    # The counts always add up to n, so the last one is whatever is left
-    # over: a three-category multinomial varies in two directions, which
-    # makes it the natural single-joint-plot case (two categories is just a
-    # binomial). See MultivariateDistribution._free_dim.
+    # The counts always add up to n, so the last one is whatever is left over.
+    # A plot retains every named count: each has its own marginal and
+    # pairwise relationships. See MultivariateDistribution._free_dim.
     _sum_constrained = True
 
     def __init__(self, n, p):
@@ -7881,39 +7884,6 @@ class Multinomial(MultivariateDistribution):
         """
         return Binomial(n=self.n, p=float(np.asarray(self.p, dtype=float)[i]))
 
-    def _plot_window(self, i):
-        """Return the plotting window for category ``i``'s count.
-
-        A count can be anything from 0 to ``n``, and showing that whole
-        range is what makes the triangular shape of the joint support
-        visible (two counts can't add up to more than ``n``). But a joint
-        plot draws one cell per pair of counts, so the full range only fits
-        while ``n`` is small: past that, this falls back to the window
-        holding most of the probability -- the same zoomed window a
-        one-dimensional plot uses when its bounds stop being informative --
-        so a distribution with many trials still plots, showing the region
-        the counts actually land in.
-
-        Parameters
-        ----------
-        i : int
-            Index of the category, counting from 0.
-
-        Returns
-        -------
-        tuple of float
-            The ``(low, high)`` range of counts to draw cells for.
-        """
-        marginal = self._marginal_1d(i)
-        low, high = marginal.xlim
-        n_values = int(high) - int(low) + 1
-        if n_values * n_values <= JOINT_PMF_MAX_CELLS:
-            return (low, high)
-        # `_zoom_xlim` is the tight, most-of-the-probability window -- the
-        # replacement for the highest-density helper this line was originally
-        # written against, in a branch that predated that helper's removal.
-        return marginal._zoom_xlim()
-
     def _joint_func(self, i, j):
         """Return the joint probability function of counts ``i`` and ``j``.
 
@@ -7924,6 +7894,12 @@ class Multinomial(MultivariateDistribution):
         at ``(x, y, n - x - y)``. Pairs that would need more than ``n``
         trials between them are impossible and get probability 0, which is
         what makes the triangular shape of the joint support visible.
+
+        With exactly two categories, the counts must add to ``n``. Evaluate
+        the Binomial marginal directly on that support line rather than
+        passing a zero-probability pooled category to SciPy: floating-point
+        round-off in that remainder can otherwise create tiny, spurious
+        probabilities below the line.
 
         Parameters
         ----------
@@ -7936,6 +7912,20 @@ class Multinomial(MultivariateDistribution):
             The joint probability function, as a function of two
             equal-length flat arrays of counts.
         """
+        if self._n_components() == 2:
+            marginal = self._marginal_1d(i)
+
+            def func(x, y):
+                x = np.ravel(x)
+                y = np.ravel(y)
+                out = np.zeros(len(x), dtype=float)
+                on_support = x + y == self.n
+                if np.any(on_support):
+                    out[on_support] = marginal.pdf(x[on_support])
+                return out
+
+            return func
+
         p = np.asarray(self.p, dtype=float)
         # The pooled category's probability is whatever is left over. Clamp
         # at 0 so floating-point round-off in the subtraction can't make it
@@ -8027,9 +8017,8 @@ class MultivariateHypergeometric(MultivariateDistribution):
     """
 
     # Every draw takes exactly n items, so the counts always add up to n and
-    # the last one is whatever is left over: a three-type distribution varies
-    # in two directions, which makes it the natural single-joint-plot case
-    # (two types is just a Hypergeometric). See
+    # the last one is whatever is left over. A plot retains every named type:
+    # each has its own marginal and pairwise relationships. See
     # MultivariateDistribution._free_dim.
     _sum_constrained = True
 
@@ -8562,10 +8551,9 @@ class Dirichlet(MultivariateDistribution):
     (0.19, 0.42, 0.39)
     """
 
-    # The proportions always add up to 1, so the last one is whatever is
-    # left over: a three-category Dirichlet varies in two directions, which
-    # makes it the natural single-joint-plot case (two categories is just a
-    # beta distribution). See MultivariateDistribution._free_dim.
+    # The proportions always add up to 1, so the last one is whatever is left
+    # over. A plot retains every named proportion: each has its own marginal
+    # and pairwise relationships. See MultivariateDistribution._free_dim.
     _sum_constrained = True
 
     def __init__(self, alpha):
@@ -8659,26 +8647,64 @@ class Dirichlet(MultivariateDistribution):
         a_i = float(self.alpha[i])
         return Beta(shape1=a_i, shape2=self.alpha0 - a_i)
 
-    def _plot_window(self, i):
-        """Return the plotting window for proportion ``i``.
+    def _plot_joint(
+        self,
+        i,
+        j,
+        ax,
+        contour,
+        colorbar=True,
+        title=True,
+        alpha=None,
+        max_discrete_ticks=None,
+        **kwargs,
+    ):
+        """Draw a joint Dirichlet density or its two-component support.
 
-        Every proportion lives on ``[0, 1]``, and a pair of them lives on
-        the triangle where they also sum to at most 1. Framing each axis on
-        the full ``[0, 1]`` -- rather than on the window that proportion's
-        own beta distribution would use -- keeps that whole triangle in view,
-        so the shape of the support a Dirichlet lives on stays visible.
-
-        Parameters
-        ----------
-        i : int
-            Index of the category, counting from 0.
-
-        Returns
-        -------
-        tuple of float
-            The range ``(0, 1)``.
+        A two-component Dirichlet is a Beta distribution embedded on the
+        line where its proportions add to 1. It has no finite density over
+        the plane, so this draws the support in the top sequential color
+        against a neutral-gray impossible region, without a density colorbar.
         """
-        return (0.0, 1.0)
+        if self._n_components() != 2:
+            return super()._plot_joint(
+                i,
+                j,
+                ax,
+                contour,
+                colorbar=colorbar,
+                title=title,
+                alpha=alpha,
+                max_discrete_ticks=max_discrete_ticks,
+                **kwargs,
+            )
+
+        ax.set_facecolor(JOINT_IMPOSSIBLE_COLOR)
+        cmap = plt.get_cmap(plt.rcParams["image.cmap"])
+        ax.plot(
+            [0.0, 1.0],
+            [1.0, 0.0],
+            color=cmap(1.0),
+            linewidth=TRUE_DIST_LINEWIDTH,
+            alpha=alpha,
+        )
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlabel(self._variable_label(i))
+        ax.set_ylabel(self._variable_label(j))
+        if title:
+            set_plot_title(ax, "Joint Probability Density Function")
+        ax.text(
+            0.03,
+            0.04,
+            "No finite two-dimensional density.\n"
+            "All probability lies on\n"
+            "Variable 1 + Variable 2 = 1.",
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
+        )
+        return None
 
     def _joint_func(self, i, j):
         """Return the joint density of proportions ``i`` and ``j``.
@@ -8800,10 +8826,9 @@ class DirichletMultinomial(MultivariateDistribution):
     BetaBinomial : The univariate analogue.
     """
 
-    # The counts always add up to n, so the last one is whatever is left
-    # over: a three-category distribution varies in two directions, which
-    # makes it the natural single-joint-plot case (two categories is just a
-    # BetaBinomial). See MultivariateDistribution._free_dim.
+    # The counts always add up to n, so the last one is whatever is left over.
+    # A plot retains every named count: each has its own marginal and
+    # pairwise relationships. See MultivariateDistribution._free_dim.
     _sum_constrained = True
 
     def __init__(self, n, alpha):
@@ -8923,6 +8948,20 @@ class DirichletMultinomial(MultivariateDistribution):
             The joint probability function, as a function of two
             equal-length flat arrays of counts.
         """
+        if self._n_components() == 2:
+            marginal = self._marginal_1d(i)
+
+            def func(x, y):
+                x = np.ravel(x)
+                y = np.ravel(y)
+                out = np.zeros(len(x), dtype=float)
+                on_support = x + y == self.n
+                if np.any(on_support):
+                    out[on_support] = marginal.pdf(x[on_support])
+                return out
+
+            return func
+
         alpha = np.asarray(self.alpha, dtype=float)
         rest = float(alpha.sum() - alpha[i] - alpha[j])
         pair = stats.dirichlet_multinomial(
