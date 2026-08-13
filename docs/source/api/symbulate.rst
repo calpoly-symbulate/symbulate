@@ -1,144 +1,35 @@
 symbulate package
 =================
 
-Subpackages
------------
+Submodules
+----------
 
 .. toctree::
    :maxdepth: 4
 
-   symbulate.tests
-
-Submodules
-----------
-
-symbulate.base module
----------------------
-
-.. automodule:: symbulate.base
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.distributions module
-------------------------------
-
-.. automodule:: symbulate.distributions
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.gaussian\_process module
-----------------------------------
-
-.. automodule:: symbulate.gaussian_process
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.independence module
------------------------------
-
-.. automodule:: symbulate.independence
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.index\_sets module
-----------------------------
-
-.. automodule:: symbulate.index_sets
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.markov\_chains module
--------------------------------
-
-.. automodule:: symbulate.markov_chains
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.math module
----------------------
-
-.. automodule:: symbulate.math
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.plot module
----------------------
-
-.. automodule:: symbulate.plot
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.poisson\_process module
----------------------------------
-
-.. automodule:: symbulate.poisson_process
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.probability\_space module
------------------------------------
-
-.. automodule:: symbulate.probability_space
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.random\_processes module
-----------------------------------
-
-.. automodule:: symbulate.random_processes
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.random\_variables module
-----------------------------------
-
-.. automodule:: symbulate.random_variables
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.result module
------------------------
-
-.. automodule:: symbulate.result
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.results module
-------------------------
-
-.. automodule:: symbulate.results
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.spinner module
-------------------------
-
-.. automodule:: symbulate.spinner
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-symbulate.table module
-----------------------
-
-.. automodule:: symbulate.table
-   :members:
-   :show-inheritance:
-   :undoc-members:
+   symbulate.base
+   symbulate.branching_process
+   symbulate.diffusion_process
+   symbulate.distributions
+   symbulate.gaussian_process
+   symbulate.hitting_times
+   symbulate.independence
+   symbulate.index_sets
+   symbulate.markov_chains
+   symbulate.math
+   symbulate.plot
+   symbulate.poisson_process
+   symbulate.probability_space
+   symbulate.queues
+   symbulate.random_processes
+   symbulate.random_variables
+   symbulate.random_walk
+   symbulate.renewal_process
+   symbulate.result
+   symbulate.results
+   symbulate.spinner
+   symbulate.table
+   symbulate.time_series
 
 Module contents
 ---------------

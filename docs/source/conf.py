@@ -40,4 +40,16 @@ exclude_patterns = []
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = 'sphinx_rtd_theme'
+html_title = "Symbulate Documentation"
+
+html_theme_options = {
+    "collapse_navigation": False,
+    "sticky_navigation": True,
+    "navigation_depth": 3,
+    "titles_only": True,
+}
+
+autodoc_member_order = "bysource"
+add_module_names = False
+
 html_static_path = ['_static']
