@@ -1268,14 +1268,15 @@ DEFAULT_PLOT_TYPE = {
         "default": "tile",
         "alternatives": ["scatter", "mosaic", "stackedbar"],
     },
-    # Two categorical (string) variables. Unlike numeric discrete data
-    # there is no meaningful scatter to fall back on (the values aren't
-    # positions), and a mosaic answers the question these are almost
-    # always simulated to ask -- does y's distribution change with x --
-    # so it is the default here rather than tile.
+    # Two categorical (string) variables. A small sample uses a scatter
+    # plot with observations spread within category cells, so individual
+    # paired outcomes remain visible. For a large sample, a mosaic answers
+    # the usual question -- does y's distribution change with x -- and the
+    # categorical dispatch may select equal-width stacked bars when the
+    # number of categories makes proportional mosaic columns too narrow.
     ("2D_categorical", True): {
-        "default": "mosaic",
-        "alternatives": ["stackedbar", "tile"],
+        "default": "scatter",
+        "alternatives": ["mosaic", "stackedbar", "tile"],
     },
     ("2D_categorical", False): {
         "default": "mosaic",

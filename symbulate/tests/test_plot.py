@@ -1778,6 +1778,7 @@ class TestPlotCategorical2D(PlotTestCase):
 
         X, Y = RV(ProbabilitySpace(event_sim))
         self.sims = (X & Y).sim(500)
+        self.small_sims = (X & Y).sim(100)
 
     def test_is_categorical_2d_detects_string_pairs(self):
         self.assertTrue(_is_categorical_2d(self.sims.results))
@@ -1790,12 +1791,30 @@ class TestPlotCategorical2D(PlotTestCase):
         colors = RV(BoxModel(["red", "green"])).sim(50)
         self.assertFalse(_is_categorical_2d(colors.results))
 
-    def test_default_is_mosaic_not_sample_path(self):
-        """The reported bug: this drew a "Sample Path" against index."""
+    def test_small_n_default_is_categorical_scatter_not_sample_path(self):
+        """A small categorical sample is a binned category scatter."""
+        self.small_sims.plot(suggest=False)
+        ax = plt.gca()
+        self.assertEqual(ax.get_title(), "Scatterplot")
+        self.assertEqual(
+            [tick.get_text() for tick in ax.get_xticklabels() if tick.get_text()],
+            ["a", "not a"],
+        )
+        self.assertEqual(
+            [tick.get_text() for tick in ax.get_yticklabels() if tick.get_text()],
+            ["b", "not b"],
+        )
+
+    def test_large_n_default_remains_mosaic(self):
+        """The categorical small-sample scatter path does not affect large n."""
         self.sims.plot(suggest=False)
         self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
 
-    def test_default_lookup_is_mosaic(self):
+    def test_default_lookup_uses_scatter_only_for_small_n(self):
+        default, alternatives = default_plot_type("2D_categorical", True)
+        self.assertEqual(default, "scatter")
+        self.assertEqual(alternatives, ["mosaic", "stackedbar", "tile"])
+
         default, alternatives = default_plot_type("2D_categorical", False)
         self.assertEqual(default, "mosaic")
         self.assertEqual(alternatives, ["stackedbar", "tile"])
@@ -1830,11 +1849,11 @@ class TestPlotCategorical2D(PlotTestCase):
         self.sims.plot(type="tile", suggest=False)
         self.assertEqual(plt.gca().get_title(), "Tile Plot")
 
-    def test_unsupported_type_names_the_three_that_work(self):
+    def test_unsupported_type_names_the_four_that_work(self):
         with self.assertRaises(ValueError) as cm:
-            self.sims.plot(type="scatter", suggest=False)
+            self.sims.plot(type="hist", suggest=False)
         message = str(cm.exception)
-        for token in ("'mosaic'", "'stackedbar'", "'tile'"):
+        for token in ("'scatter'", "'mosaic'", "'stackedbar'", "'tile'"):
             self.assertIn(token, message)
 
     def test_marginal_raises(self):
