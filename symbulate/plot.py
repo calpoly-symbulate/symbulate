@@ -620,8 +620,9 @@ MOSAIC_SUGGEST_MAX_CATEGORIES = 4  # a mosaic's proportional column
 # categories on either axis the rarest columns get too thin to compare,
 # and equal-width columns (type="stackedbar") read better. Below it the
 # proportional widths are worth having, since they also show how common
-# each x category is. Used only to print a suggestion -- neither type is
-# ever refused (see mosaic_type_suggestion).
+# each x category is. Categorical-pair plots use this cutoff to choose
+# their automatic type; an explicit type="mosaic" is always honored
+# (see mosaic_has_too_many_categories and resolve_mosaic_type).
 
 # A mosaic or stacked bar plot re-partitions the entire plot area for
 # its own data, so a second one drawn on the same axes completely covers
@@ -1267,14 +1268,15 @@ DEFAULT_PLOT_TYPE = {
         "default": "tile",
         "alternatives": ["scatter", "mosaic", "stackedbar"],
     },
-    # Two categorical (string) variables. Unlike numeric discrete data
-    # there is no meaningful scatter to fall back on (the values aren't
-    # positions), and a mosaic answers the question these are almost
-    # always simulated to ask -- does y's distribution change with x --
-    # so it is the default here rather than tile.
+    # Two categorical (string) variables. A small sample uses a scatter
+    # plot with observations spread within category cells, so individual
+    # paired outcomes remain visible. For a large sample, a mosaic answers
+    # the usual question -- does y's distribution change with x -- and the
+    # categorical dispatch may select equal-width stacked bars when the
+    # number of categories makes proportional mosaic columns too narrow.
     ("2D_categorical", True): {
-        "default": "mosaic",
-        "alternatives": ["stackedbar", "tile"],
+        "default": "scatter",
+        "alternatives": ["mosaic", "stackedbar", "tile"],
     },
     ("2D_categorical", False): {
         "default": "mosaic",
@@ -2977,6 +2979,31 @@ def make_stackedbar(
     )
 
 
+def mosaic_has_too_many_categories(x, y):
+    """Whether a mosaic is crowded for the paired categorical data.
+
+    A mosaic's proportional column widths become difficult to compare
+    when either variable has more than
+    ``MOSAIC_SUGGEST_MAX_CATEGORIES`` observed categories. This is used
+    to select the automatic plot type for categorical pairs; it never
+    overrides an explicitly requested mosaic.
+
+    Parameters
+    ----------
+    x, y : array-like
+        The paired categorical values about to be plotted.
+
+    Returns
+    -------
+    bool
+        True when either variable has more categories than a mosaic
+        displays readably.
+    """
+    n_x = len(np.unique(np.asarray(x)))
+    n_y = len(np.unique(np.asarray(y)))
+    return max(n_x, n_y) > MOSAIC_SUGGEST_MAX_CATEGORIES
+
+
 def resolve_mosaic_type(x, y, plot_type):
     """Note when a mosaic has more categories than it reads well with.
 
@@ -2985,12 +3012,11 @@ def resolve_mosaic_type(x, y, plot_type):
     rarer columns get too thin to compare -- equal widths
     (``"stackedbar"``) or a colour scale (``"tile"``) read better there.
 
-    **Nothing is ever substituted.** The type asked for is the type
-    drawn, whether it was named explicitly or came from the lookup
-    table; a crowded mosaic just gets a note alongside it pointing at
-    the alternatives. An earlier draft swapped in whichever type suited
-    the category count, and that was rejected -- a plot type should not
-    change out from under the person who chose it.
+    **An explicitly requested type is never substituted.** Categorical
+    pairs without a requested type automatically use ``"stackedbar"``
+    when this threshold is exceeded. A person who explicitly asks for a
+    crowded mosaic still receives it, together with this note pointing
+    at the alternatives.
 
     Parameters
     ----------
@@ -3021,10 +3047,10 @@ def resolve_mosaic_type(x, y, plot_type):
     """
     if plot_type != "mosaic":
         return None
+    if not mosaic_has_too_many_categories(x, y):
+        return None
     n_x = len(np.unique(np.asarray(x)))
     n_y = len(np.unique(np.asarray(y)))
-    if max(n_x, n_y) <= MOSAIC_SUGGEST_MAX_CATEGORIES:
-        return None
     return (
         f"Mosaic plots get messy when there are many possible pairs "
         f'({n_x}x{n_y} here); try type="stackedbar" or type="tile" '

@@ -72,6 +72,7 @@ from .plot import (
     make_impulse,
     make_mosaic,
     make_stackedbar,
+    mosaic_has_too_many_categories,
     resolve_mosaic_type,
     make_segmented_density,
     make_segmented_hist,
@@ -3342,19 +3343,22 @@ class RVResults(Results):
             # catch-all at the bottom, which drew each pair as a
             # meaningless two-point "path" against index (0, 1).
             #
-            # Only mosaic, stackedbar, and tile are offered: all three
-            # accept raw categorical arrays directly, unlike make_scatter,
-            # whose jitter modes assume integer-coded positions. A mosaic
-            # is the default because the question two dependent
-            # categorical variables are almost always simulated to ask --
-            # does y's distribution change with x -- is exactly what
-            # comparing its columns answers.
+            # A small categorical sample uses scatter: rank codes give its
+            # numeric renderer category-cell positions, and fixed
+            # jitter="bins" keeps every paired observation visible. A large
+            # sample uses a mosaic when its proportional widths remain
+            # readable, otherwise an equal-width stacked bar.
             arr = np.asarray(list(self.results))
             x, y = arr[:, 0], arr[:, 1]
             _, small_n = classify_values(arr[:, 0])
             default, alternatives = default_plot_type("2D_categorical", small_n)
             if type is None:
-                type = (default,)
+                if small_n:
+                    type = (default,)
+                elif mosaic_has_too_many_categories(x, y):
+                    type = ("stackedbar",)
+                else:
+                    type = (default,)
             _suggestion = (type[0], default, alternatives)
             if marginal:
                 raise ValueError(
@@ -3363,8 +3367,27 @@ class RVResults(Results):
                     "Drop marginal=True."
                 )
             ax = plt.gca()
-            get_next_color(ax)
-            if "mosaic" in type or "stackedbar" in type:
+            color = get_next_color(ax)
+            if "scatter" in type:
+                x_levels = np.unique(x)
+                y_levels = np.unique(y)
+                x_codes = np.searchsorted(x_levels, x)
+                y_codes = np.searchsorted(y_levels, y)
+                _call_plot_helper(
+                    make_scatter,
+                    x_codes,
+                    y_codes,
+                    ax,
+                    color,
+                    alpha=alpha,
+                    jitter="bins",
+                    **kwargs,
+                )
+                ax.set_xticks(np.arange(len(x_levels)))
+                ax.set_xticklabels(x_levels)
+                ax.set_yticks(np.arange(len(y_levels)))
+                ax.set_yticklabels(y_levels)
+            elif "mosaic" in type or "stackedbar" in type:
                 _drawn = _call_plot_helper(
                     _draw_mosaic_family,
                     x,
@@ -3388,8 +3411,8 @@ class RVResults(Results):
             else:
                 raise ValueError(
                     f"{type[0]!r} can't be used for two categorical (text) "
-                    "variables. This works with type='mosaic', "
-                    "type='stackedbar', or type='tile'."
+                    "variables. This works with type='scatter', "
+                    "type='mosaic', type='stackedbar', or type='tile'."
                 )
         elif self.index_set is None and _is_categorical_1d(self.results):
             # 1D categorical (string) outcomes. These are not numbers, so
