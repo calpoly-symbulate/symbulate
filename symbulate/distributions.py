@@ -22,6 +22,7 @@ from .plot import (
     make_joint_pmf,
     ECDF_LINEWIDTH,
     JOINT_CBAR_DECIMALS,
+    JOINT_IMPOSSIBLE_COLOR,
     JOINT_PAIRS_MAX_DIM,
     PAIRS_MAX_DISCRETE_TICKS,
     setup_marginal_axes,
@@ -6268,6 +6269,7 @@ class MultivariateDistribution(Distribution):
                 self._plot_values(j),
                 ax,
                 colorbar=colorbar,
+                mask_zero=self._sum_constrained,
                 xlabel=xlabel,
                 ylabel=ylabel,
                 title=title,
@@ -6281,6 +6283,7 @@ class MultivariateDistribution(Distribution):
             ax,
             contour=contour,
             colorbar=colorbar,
+            mask_zero=self._sum_constrained,
             xlabel=xlabel,
             ylabel=ylabel,
             title=title,
@@ -8640,7 +8643,8 @@ class Dirichlet(MultivariateDistribution):
 
         A two-component Dirichlet is a Beta distribution embedded on the
         line where its proportions add to 1. It has no finite density over
-        the plane, so this draws the support line without a density colorbar.
+        the plane, so this draws the support in the top sequential color
+        against a neutral-gray impossible region, without a density colorbar.
         """
         if self._n_components() != 2:
             return super()._plot_joint(
@@ -8655,10 +8659,12 @@ class Dirichlet(MultivariateDistribution):
                 **kwargs,
             )
 
+        ax.set_facecolor(JOINT_IMPOSSIBLE_COLOR)
+        cmap = plt.get_cmap(plt.rcParams["image.cmap"])
         ax.plot(
             [0.0, 1.0],
             [1.0, 0.0],
-            color=SHADE_COLOR,
+            color=cmap(1.0),
             linewidth=TRUE_DIST_LINEWIDTH,
             alpha=alpha,
         )
@@ -8669,11 +8675,14 @@ class Dirichlet(MultivariateDistribution):
         if title:
             set_plot_title(ax, "Joint Distribution (Singular Support)")
         ax.text(
-            0.5,
-            0.55,
-            "All probability lies on\nVariable 1 + Variable 2 = 1",
-            ha="center",
-            va="center",
+            0.03,
+            0.04,
+            "No finite two-dimensional density.\n"
+            "All probability lies on\n"
+            "Variable 1 + Variable 2 = 1.",
+            transform=ax.transAxes,
+            ha="left",
+            va="bottom",
         )
         return None
 

@@ -97,6 +97,7 @@ from symbulate.plot import (
     make_tile,
     make_joint_pdf,
     make_joint_pmf,
+    JOINT_IMPOSSIBLE_COLOR,
     JOINT_OVERLAY_WARNING,
     JOINT_PDF_GRID_POINTS,
     JOINT_PMF_MAX_CELLS,
@@ -5165,6 +5166,32 @@ class TestJointTheoreticalPlots(PlotTestCase):
         self.assertEqual(ax.get_xlim(), (-0.5, 3.5))
         self.assertEqual(ax.get_ylim(), (-0.5, 3.5))
         self.assertEqual(ax.get_title(), "Joint Probability Mass Function")
+
+    def test_masked_joint_pmf_grays_only_exact_zeros(self):
+        """A small positive probability keeps its sequential-colormap color."""
+        def pmf(x, y):
+            return np.where((x == 0) & (y == 0), 1e-12, 0.0)
+
+        mesh = make_joint_pmf(
+            pmf, np.arange(2), np.arange(2), plt.gca(), mask_zero=True
+        )
+        values = mesh.get_array()
+        self.assertTrue(np.ma.isMaskedArray(values))
+        self.assertFalse(values.mask[0, 0])
+        self.assertTrue(values.mask[0, 1])
+        np.testing.assert_allclose(
+            mesh.get_cmap().get_bad(),
+            plt.matplotlib.colors.to_rgba(JOINT_IMPOSSIBLE_COLOR),
+        )
+
+    def test_masked_joint_pdf_grays_only_exact_zeros(self):
+        """The continuous helper masks structural zeros, not small densities."""
+        pdf = lambda x, y: np.where(x + y <= 0, 1e-12, 0.0)
+        ax = plt.gca()
+        make_joint_pdf(pdf, (-1, 1), (-1, 1), ax, mask_zero=True)
+        self.assertEqual(
+            ax.get_facecolor(), plt.matplotlib.colors.to_rgba(JOINT_IMPOSSIBLE_COLOR)
+        )
 
     def test_second_joint_plot_warns_and_keeps_one_colorbar(self):
         # The "warn but still draw" tier of the overlay policy, the same one

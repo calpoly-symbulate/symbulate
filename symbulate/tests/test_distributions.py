@@ -5555,6 +5555,13 @@ class TestMultinomial(MultivariatePlotTestCase):
         self.assertEqual(plt.gcf()._suptitle.get_text(), "Joint Probability Mass Function")
         plt.close("all")
 
+    def test_Multinomial_masks_impossible_joint_cells_gray(self):
+        plot = Multinomial(n=10, p=[0.2, 0.3, 0.5]).plot(variables=(0, 1))
+        values = plot.ax.images[0].get_array()
+        self.assertTrue(values.mask[10, 10])
+        self.assertFalse(values.mask[2, 3])
+        plt.close("all")
+
     def test_Multinomial_three_categories_plots_all_named_components(self):
         X = Multinomial(n=10, p=[0.5, 0.3, 0.2])
         X.plot()
@@ -5907,8 +5914,15 @@ class TestDirichlet(MultivariatePlotTestCase):
             plt.gcf()._suptitle.get_text(), "Joint Distribution (Singular Support)"
         )
         self.assertIn(
-            "All probability lies on\nVariable 1 + Variable 2 = 1",
+            "No finite two-dimensional density.\nAll probability lies on\n"
+            "Variable 1 + Variable 2 = 1.",
             {text.get_text() for text in plot.ax.texts},
+        )
+        self.assertEqual(
+            plot.ax.get_facecolor(), plt.matplotlib.colors.to_rgba("#E6E6E6")
+        )
+        self.assertEqual(
+            plot.ax.lines[0].get_color(), plt.get_cmap(plt.rcParams["image.cmap"])(1.0)
         )
         bars = [a for a in plt.gcf().axes if a.get_subplotspec() is None]
         self.assertEqual(bars, [])

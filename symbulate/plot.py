@@ -501,6 +501,10 @@ JOINT_CBAR_DECIMALS = 3
 # the cells are too small to read (and the pmf evaluation slow), so the
 # plot reports the problem instead of rendering an unreadable mesh.
 JOINT_PMF_MAX_CELLS = 40000
+# Fixed-sum joint distributions have structural zero regions outside their
+# support. Gray distinguishes impossible pairs from positive values near the
+# low end of the sequential colormap.
+JOINT_IMPOSSIBLE_COLOR = "#E6E6E6"
 JOINT_OVERLAY_WARNING = (
     "Warning: you drew a second joint plot on the same plot. The new surface "
     "covers the first one and the two color scales compete, so the result may "
@@ -7165,6 +7169,7 @@ def make_joint_pdf(
     ax,
     contour=True,
     colorbar=True,
+    mask_zero=False,
     xlabel="Variable 1",
     ylabel="Variable 2",
     title=True,
@@ -7211,6 +7216,10 @@ def make_joint_pdf(
         If True, add a colorbar to the right of the axes. A panel of a
         pairs matrix passes False, since one small color scale per panel
         would crowd out the panels themselves.
+    mask_zero : bool, default False
+        If True, display points whose density is exactly zero in neutral
+        gray. The gray marks impossible pairs; it does not alter the
+        sequential color mapping or colorbar for positive densities.
     xlabel, ylabel : str, optional
         Axis labels, naming the two variables being plotted.
     title : bool, default True
@@ -7256,6 +7265,7 @@ def make_joint_pdf(
         # a well-formed, increasing set of color bands.
         zmax = 1.0
     Z = np.where(finite, np.minimum(Z, zmax), zmax)
+    zero_mask = mask_zero & (Z == 0)
 
     levels = JOINT_PDF_LEVELS if contour else JOINT_PDF_CONTINUOUS_LEVELS
     # contourf reads the level values as band *boundaries* (N boundaries ->
@@ -7264,7 +7274,15 @@ def make_joint_pdf(
     # image.cmap in symbulate.mplstyle.
     level_edges = np.linspace(0, zmax, levels + 1)
 
-    filled = ax.contourf(Xgrid, Ygrid, Z, levels=level_edges, **kwargs)
+    if mask_zero:
+        # contourf leaves masked regions transparent, revealing the neutral
+        # axes face below. Positive densities keep their existing colors and
+        # colorbar scale.
+        ax.set_facecolor(JOINT_IMPOSSIBLE_COLOR)
+        filled_Z = np.ma.masked_where(zero_mask, Z)
+    else:
+        filled_Z = Z
+    filled = ax.contourf(Xgrid, Ygrid, filled_Z, levels=level_edges, **kwargs)
     if contour:
         ax.contour(
             Xgrid,
@@ -7302,6 +7320,7 @@ def make_joint_pmf(
     yvalues,
     ax,
     colorbar=True,
+    mask_zero=False,
     xlabel="Variable 1",
     ylabel="Variable 2",
     title=True,
@@ -7320,8 +7339,9 @@ def make_joint_pmf(
     Cells are drawn as a seamless ``imshow`` mesh centered on the values
     themselves (each cell spans half a unit either side), so the axis reads
     in real units and a pair's probability can be read off the colorbar.
-    Impossible pairs simply have probability 0 and take the colormap's
-    zero color, so the shape of the joint support is visible.
+    By default, impossible pairs have probability 0 and take the colormap's
+    zero color. Fixed-sum distributions request neutral gray instead,
+    distinguishing impossible pairs from small positive probabilities.
 
     Parameters
     ----------
@@ -7337,6 +7357,10 @@ def make_joint_pmf(
     colorbar : bool, default True
         If True, add a colorbar to the right of the axes. A panel of a
         pairs matrix passes False.
+    mask_zero : bool, default False
+        If True, display cells whose probability is exactly zero in neutral
+        gray. The gray marks impossible pairs; it does not alter the
+        sequential color mapping or colorbar for positive probabilities.
     xlabel, ylabel : str, optional
         Axis labels, naming the two variables being plotted.
     title : bool, default True
@@ -7395,15 +7419,23 @@ def make_joint_pmf(
     Xgrid, Ygrid = np.meshgrid(xvalues, yvalues)
     Z = np.asarray(func(Xgrid.ravel(), Ygrid.ravel()), dtype=float).reshape(Xgrid.shape)
 
+    if mask_zero:
+        cmap = plt.get_cmap(plt.rcParams["image.cmap"]).copy()
+        cmap.set_bad(JOINT_IMPOSSIBLE_COLOR)
+        image_values = np.ma.masked_where(Z == 0, Z)
+    else:
+        cmap = None
+        image_values = Z
+
     # imshow centers each cell on its value, so the extent runs half a unit
     # past the outermost values on every side -- the cells then tile the
     # axes seamlessly and every tick lands on a cell center. aspect="auto"
     # lets the grid fill the axes instead of forcing square cells, matching
-    # make_tile. No cmap argument: viridis comes from image.cmap in
-    # symbulate.mplstyle, so probability 0 reads as its dark end.
+    # make_tile. Unless exact zeros are masked, the sequential colormap comes
+    # directly from image.cmap in symbulate.mplstyle.
     kwargs.setdefault("interpolation", "nearest")
     mesh = ax.imshow(
-        Z,
+        image_values,
         origin="lower",
         aspect="auto",
         extent=(
@@ -7413,6 +7445,7 @@ def make_joint_pmf(
             yvalues[-1] + 0.5,
         ),
         vmin=0,
+        cmap=cmap,
         **kwargs,
     )
 
