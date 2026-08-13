@@ -72,6 +72,7 @@ from .plot import (
     make_impulse,
     make_mosaic,
     make_stackedbar,
+    mosaic_has_too_many_categories,
     resolve_mosaic_type,
     make_segmented_density,
     make_segmented_hist,
@@ -3345,16 +3346,19 @@ class RVResults(Results):
             # Only mosaic, stackedbar, and tile are offered: all three
             # accept raw categorical arrays directly, unlike make_scatter,
             # whose jitter modes assume integer-coded positions. A mosaic
-            # is the default because the question two dependent
-            # categorical variables are almost always simulated to ask --
-            # does y's distribution change with x -- is exactly what
-            # comparing its columns answers.
+            # is the default for compact tables because its proportional
+            # widths also show each x category's prevalence. When either
+            # axis has too many categories for those widths to remain
+            # readable, the automatic type is an equal-width stacked bar.
             arr = np.asarray(list(self.results))
             x, y = arr[:, 0], arr[:, 1]
             _, small_n = classify_values(arr[:, 0])
             default, alternatives = default_plot_type("2D_categorical", small_n)
             if type is None:
-                type = (default,)
+                if mosaic_has_too_many_categories(x, y):
+                    type = ("stackedbar",)
+                else:
+                    type = (default,)
             _suggestion = (type[0], default, alternatives)
             if marginal:
                 raise ValueError(

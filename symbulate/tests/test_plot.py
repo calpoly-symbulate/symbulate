@@ -86,6 +86,7 @@ from symbulate.plot import (
     make_ecdf,
     make_mosaic,
     make_stackedbar,
+    mosaic_has_too_many_categories,
     resolve_mosaic_type,
     MOSAIC_SUGGEST_MAX_CATEGORIES,
     MOSAIC_YAXIS_TICKS,
@@ -1805,23 +1806,25 @@ class TestPlotCategorical2D(PlotTestCase):
         self.sims.plot(type="stackedbar", suggest=False)
         self.assertEqual(plt.gca().get_title(), "Stacked Bar Chart")
 
-    def test_many_categories_still_default_to_a_mosaic_but_say_so(self):
-        """The default is not swapped for a crowded pair -- the mosaic is
-        drawn as the lookup table says, with a note pointing elsewhere."""
-        import io
-        import contextlib
-
+    def test_many_categories_default_to_stackedbar(self):
+        """A crowded categorical pair uses equal-width columns by default."""
         def many_sim():
             a = BoxModel([f"g{i}" for i in range(6)]).draw()
             b = BoxModel(["yes", "no"]).draw()
             return a, b
 
         X, Y = RV(ProbabilitySpace(many_sim))
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            (X & Y).sim(600).plot(suggest=False)
-        self.assertEqual(plt.gca().get_title(), "Mosaic Plot")
-        self.assertIn("Mosaic plots get messy", buf.getvalue())
+        (X & Y).sim(600).plot(suggest=False)
+        self.assertEqual(plt.gca().get_title(), "Stacked Bar Chart")
+
+    def test_category_cutoff_is_strictly_more_than_four(self):
+        """Four categories fit a mosaic; five select a stacked bar."""
+        y_at = ["yes", "no"] * 8
+        x_at = [f"a{i}" for i in range(4)] * 4
+        y_over = ["yes", "no"] * 10
+        x_over = [f"a{i}" for i in range(5)] * 4
+        self.assertFalse(mosaic_has_too_many_categories(x_at, y_at))
+        self.assertTrue(mosaic_has_too_many_categories(x_over, y_over))
 
     def test_tile_is_available(self):
         self.sims.plot(type="tile", suggest=False)
