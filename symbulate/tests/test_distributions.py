@@ -5547,10 +5547,12 @@ class TestMultinomial(MultivariatePlotTestCase):
             self.assertAlmostEqual(float(sims.var()), expected_var, delta=0.15)
 
     def test_Multinomial_two_categories_plots_mass_on_a_support_line(self):
-        X = Multinomial(n=10, p=[0.5, 0.5])
+        X = Multinomial(n=1000, p=[0.7, 0.3])
         func = X._joint_func(0, 1)
-        self.assertGreater(float(func([4], [6])[0]), 0.0)
-        self.assertEqual(float(func([4], [5])[0]), 0.0)
+        # The support is exactly X1 + X2 = 1000. A point below that line
+        # must not retain a tiny floating-point probability.
+        self.assertGreater(float(func([700], [300])[0]), 0.0)
+        self.assertEqual(float(func([730], [260])[0]), 0.0)
         X.plot()
         self.assertEqual(plt.gcf()._suptitle.get_text(), "Joint Probability Mass Function")
         plt.close("all")

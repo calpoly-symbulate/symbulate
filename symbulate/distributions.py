@@ -7895,6 +7895,12 @@ class Multinomial(MultivariateDistribution):
         trials between them are impossible and get probability 0, which is
         what makes the triangular shape of the joint support visible.
 
+        With exactly two categories, the counts must add to ``n``. Evaluate
+        the Binomial marginal directly on that support line rather than
+        passing a zero-probability pooled category to SciPy: floating-point
+        round-off in that remainder can otherwise create tiny, spurious
+        probabilities below the line.
+
         Parameters
         ----------
         i, j : int
@@ -7906,6 +7912,20 @@ class Multinomial(MultivariateDistribution):
             The joint probability function, as a function of two
             equal-length flat arrays of counts.
         """
+        if self._n_components() == 2:
+            marginal = self._marginal_1d(i)
+
+            def func(x, y):
+                x = np.ravel(x)
+                y = np.ravel(y)
+                out = np.zeros(len(x), dtype=float)
+                on_support = x + y == self.n
+                if np.any(on_support):
+                    out[on_support] = marginal.pdf(x[on_support])
+                return out
+
+            return func
+
         p = np.asarray(self.p, dtype=float)
         # The pooled category's probability is whatever is left over. Clamp
         # at 0 so floating-point round-off in the subtraction can't make it
