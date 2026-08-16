@@ -1919,8 +1919,8 @@ class SIR(RV):
     """An SIR epidemic model, treated as a random variable.
 
     The standard stochastic epidemic on a closed population of ``population``
-    individuals, each of whom is **S**usceptible, **I**nfectious, or
-    **R**ecovered (immune). A susceptible individual becomes infectious
+    individuals, each of whom is susceptible (S), infectious (I), or
+    recovered (R, immune). A susceptible individual becomes infectious
     through contact with an infectious one, and an infectious individual
     eventually recovers; recovered individuals never become susceptible
     again. Two things happen at random:
@@ -2114,7 +2114,7 @@ class SEIRProbabilitySpace(ProbabilitySpace):
 class SEIR(RV):
     """An SEIR epidemic model, treated as a random variable.
 
-    Like the :class:`SIR` model, but with an added **E**xposed compartment for
+    Like the :class:`SIR` model, but with an added exposed (E) compartment for
     individuals who have been infected but are not yet infectious (a latent
     period). A susceptible first becomes exposed, then infectious, then
     recovered:

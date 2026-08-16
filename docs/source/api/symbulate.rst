@@ -5,7 +5,7 @@ Submodules
 ----------
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 1
 
    symbulate.base
    symbulate.branching_process
@@ -30,11 +30,3 @@ Submodules
    symbulate.spinner
    symbulate.table
    symbulate.time_series
-
-Module contents
----------------
-
-.. automodule:: symbulate
-   :members:
-   :show-inheritance:
-   :undoc-members:
