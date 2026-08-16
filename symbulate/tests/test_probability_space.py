@@ -240,6 +240,18 @@ class TestBoxModel(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "size"):
             BoxModel([1, 2, 3], size=-2)
 
+    def test_non_numeric_size_raises_at_construction(self):
+        with self.assertRaisesRegex(TypeError, "size"):
+            BoxModel([1, 2, 3], size="two")
+
+    def test_fractional_size_raises_at_construction(self):
+        with self.assertRaisesRegex(ValueError, "non-negative integer"):
+            BoxModel([1, 2, 3], size=2.5)
+
+    def test_boolean_size_raises_at_construction(self):
+        with self.assertRaisesRegex(TypeError, "size"):
+            BoxModel([1, 2, 3], size=False)
+
     def test_infinite_size_still_allowed(self):
         bm = BoxModel([1, 2, 3], size=float("inf"))
         self.assertEqual(bm.size, float("inf"))
@@ -292,6 +304,17 @@ class TestBoxModel(unittest.TestCase):
     def test_probs_wrong_length_raises(self):
         with self.assertRaises(ValueError):
             BoxModel(["a", "b", "c"], probs=[0.5, 0.5])
+
+    def test_dict_box_rejects_probs_with_mismatched_length(self):
+        with self.assertRaisesRegex(ValueError, "cannot be used"):
+            BoxModel({"a": 2, "b": 3}, probs=[0.5, 0.5])
+
+    def test_dict_box_rejects_probs_with_matching_expanded_length(self):
+        with self.assertRaisesRegex(ValueError, "cannot be used"):
+            BoxModel(
+                {"a": 2, "b": 3},
+                probs=[0.9, 0.9, 0.05, 0.05, 0.05],
+            )
 
     def test_probs_that_do_not_sum_to_one_raise_at_construction(self):
         with self.assertRaisesRegex(ValueError, "sum to 1"):

@@ -559,15 +559,17 @@ class BoxModel(ProbabilitySpace):
     box : list or dict
         The collection of tickets to sample from. Specify as a list
         of objects or as a dict mapping objects to their counts.
-    size : int or float, optional
+    size : int or float('inf'), optional
         Number of tickets to draw per outcome. Default is ``None``
         (draw 1 ticket and return a scalar). Pass ``float('inf')``
-        for an infinite lazy sequence.
+        for an infinite lazy sequence. Finite sizes must be non-negative
+        integers.
     replace : bool, optional
         If ``True``, sample with replacement. Default is ``True``.
     probs : list of float, optional
         Sampling probability for each ticket. All tickets are equally
-        likely by default. Ignored when ``box`` is a dict.
+        likely by default. Cannot be used when ``box`` is a dict, because
+        dictionary values already specify ticket multiplicities.
     order_matters : bool, optional
         If ``True``, different orderings of the same tickets are counted
         as different outcomes. Default is ``True``.
@@ -616,6 +618,12 @@ class BoxModel(ProbabilitySpace):
             self.box = box
             self.probs = probs
         elif isinstance(box, dict):
+            if probs is not None:
+                raise ValueError(
+                    "probs cannot be used when box is a dict. Use a list box "
+                    "with probs for custom weights, or encode relative "
+                    "multiplicities in the dictionary values."
+                )
             self.box = []
             for ticket, count in box.items():
                 self.box.extend([ticket] * count)
@@ -628,21 +636,22 @@ class BoxModel(ProbabilitySpace):
                 "BoxModel a non-empty list of tickets, e.g. "
                 "BoxModel([1, 2, 3])."
             )
-        # size=None means "draw 1 ticket"; float('inf') is a legitimate,
-        # deliberately unbounded lazy sequence. Only an actual negative
-        # number is invalid -- this used to pass silently and only fail
-        # later, inside .draw(), with a raw NumPy message ("negative
-        # dimensions are not allowed") that never mentions size.
-        if (
-            size is not None
-            and isinstance(size, numbers.Real)
-            and size != float("inf")
-            and size < 0
-        ):
-            raise ValueError(
-                f"size must be a non-negative number of tickets to draw, "
-                f"got size={size!r}."
-            )
+        if size is not None:
+            if (
+                not isinstance(size, numbers.Real)
+                or isinstance(size, (bool, np.bool_))
+            ):
+                raise TypeError(
+                    "size must be None, a non-negative integer, or float('inf'), "
+                    f"got size={size!r}."
+                )
+            if size != float("inf") and (
+                not isinstance(size, numbers.Integral) or size < 0
+            ):
+                raise ValueError(
+                    "size must be a non-negative integer or float('inf'), "
+                    f"got size={size!r}."
+                )
         if self.probs is not None:
             probs = list(self.probs)
             if len(probs) != len(self.box):
