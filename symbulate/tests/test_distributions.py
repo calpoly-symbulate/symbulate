@@ -4782,6 +4782,22 @@ class TestMultivariateNormal(MultivariatePlotTestCase):
         self.assertIn("no longer needed", str(cm.exception))
         plt.close("all")
 
+    def test_MultivariateNormal_too_many_variables_avoids_removed_pairs_keyword(self):
+        plt.close("all")
+        dimension = distributions.JOINT_PAIRS_MAX_DIM + 1
+        X = MultivariateNormal(
+            mean=[0] * dimension,
+            cov=np.eye(dimension).tolist(),
+        )
+
+        with self.assertRaises(Exception) as cm:
+            X.plot()
+
+        message = str(cm.exception)
+        self.assertNotIn("pairs=True", message)
+        self.assertIn(".plot(variables=(0, 1, 2))", message)
+        plt.close("all")
+
     def test_MultivariateNormal_plot_pairs_lower_triangle(self):
         # n diagonal panels plus n(n-1)/2 lower-triangle panels, and no
         # upper triangle: 4 variables -> 4 + 6 = 10 panels. The 6 joint panels

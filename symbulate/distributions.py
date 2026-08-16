@@ -6394,7 +6394,7 @@ class MultivariateDistribution(Distribution):
             raise Exception(
                 "A pairs plot of %d variables would need %d panels, too many "
                 "to read on one screen. Choose which variables to include, "
-                "for example .plot(pairs=True, variables=(0, 1, 2))."
+                "for example .plot(variables=(0, 1, 2))."
                 % (len(variables), len(variables) * (len(variables) + 1) // 2)
             )
 
@@ -8536,7 +8536,7 @@ class Dirichlet(MultivariateDistribution):
     one-dimensional distributions it provides no ``cdf`` method. Each
     individual proportion ``X_i`` does, however, follow a
     ``Beta(alpha_i, alpha0 - alpha_i)`` distribution, which is what
-    ``plot(pairs=True)`` shows down its diagonal.
+    ``plot()`` shows down its diagonal.
 
     Examples
     --------

@@ -484,6 +484,11 @@ class TestARMATheory(unittest.TestCase):
 class TestARMAInitialConditions(unittest.TestCase):
     """The `initial` parameter's accepted forms."""
 
+    def test_rv_initial_condition_is_accepted_and_drawn(self):
+        X = AR(coefs=[0.5], initial=RV(Normal(0, 1)))
+
+        self.assertIsNotNone(X.draw()[0])
+
     def test_number_starts_every_path_there(self):
         seed(42)
         path = AR(coefs=[0.5], noise_dist=Bernoulli(1), initial=10).draw()

@@ -5859,6 +5859,12 @@ class TestPairsErrors(PlotTestCase):
         self.assertIn("no longer needed", message)
         self.assertIn("type='path'", message)
 
+    def test_pairs_tile_bad_kwarg_raises_friendly_typeerror(self):
+        """Tile panels use the normal plot-helper kwarg error translation."""
+        plt.figure()
+        with self.assertRaisesRegex(TypeError, "keyword argument"):
+            _discrete_sim(n=50, k=3).plot(not_a_plot_keyword=10)
+
     def test_a_one_variable_type_is_refused_for_a_matrix(self):
         plt.figure()
         with self.assertRaises(ValueError) as cm:
