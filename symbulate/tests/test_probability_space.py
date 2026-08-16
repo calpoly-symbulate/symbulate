@@ -293,6 +293,19 @@ class TestBoxModel(unittest.TestCase):
         with self.assertRaises(ValueError):
             BoxModel(["a", "b", "c"], probs=[0.5, 0.5])
 
+    def test_probs_that_do_not_sum_to_one_raise_at_construction(self):
+        with self.assertRaisesRegex(ValueError, "sum to 1"):
+            BoxModel(["a", "b", "c"], probs=[0.5, 0.5, 0.5])
+
+    def test_negative_probs_raise_at_construction(self):
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            BoxModel(["a", "b", "c"], probs=[0.6, 0.5, -0.1])
+
+    def test_valid_probs_are_accepted(self):
+        box_model = BoxModel(["a", "b", "c"], probs=[0.2, 0.3, 0.5])
+
+        self.assertEqual(box_model.probs, [0.2, 0.3, 0.5])
+
 
 class TestDeckOfCards(unittest.TestCase):
 

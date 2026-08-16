@@ -1,4 +1,5 @@
 from collections import Counter
+import math
 import numbers
 
 import numpy as np
@@ -642,11 +643,29 @@ class BoxModel(ProbabilitySpace):
                 f"size must be a non-negative number of tickets to draw, "
                 f"got size={size!r}."
             )
-        if probs is not None and len(probs) != len(self.box):
-            raise ValueError(
-                f"probs must have the same length as box, "
-                f"but got len(probs)={len(probs)} and len(box)={len(self.box)}."
-            )
+        if self.probs is not None:
+            probs = list(self.probs)
+            if len(probs) != len(self.box):
+                raise ValueError(
+                    f"probs must have the same length as box, "
+                    f"but got len(probs)={len(probs)} and len(box)={len(self.box)}."
+                )
+            if any(
+                not isinstance(prob, numbers.Real)
+                or isinstance(prob, (bool, np.bool_))
+                or not math.isfinite(prob)
+                for prob in probs
+            ):
+                raise TypeError(
+                    "probs must contain only finite real-valued probabilities."
+                )
+            if any(prob < 0 for prob in probs):
+                raise ValueError("probs must contain only non-negative probabilities.")
+            if not math.isclose(sum(probs), 1.0):
+                raise ValueError(
+                    f"probs must sum to 1, but sums to {sum(probs)!r}."
+                )
+            self.probs = probs
         self.size = None if size == 1 else size
         self.replace = replace
         self.order_matters = order_matters
