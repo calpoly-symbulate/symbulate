@@ -394,7 +394,7 @@ def _validate_arma(ar_coefs, ma_coefs, noise_dist, mean, initial):
         )
 
     p = len(ar_coefs)
-    if initial == STATIONARY:
+    if isinstance(initial, str) and initial == STATIONARY:
         if p == 0:
             return
         if len(ma_coefs) > 0:
@@ -469,7 +469,7 @@ def _draw_initial_values(initial, ar_coefs, noise_dist, mean):
     p = len(ar_coefs)
     if p == 0:
         return []
-    if initial == STATIONARY:
+    if isinstance(initial, str) and initial == STATIONARY:
         cov = _stationary_covariance(ar_coefs, float(noise_dist.var()))
         return list(MultivariateNormal([mean] * p, cov.tolist()).draw())
     if isinstance(initial, MultivariateDistribution):
@@ -1008,7 +1008,7 @@ def _validate_garch(omega, arch_coefs, garch_coefs, noise_dist, initial):
         )
     if initial is None:
         return
-    if initial == STATIONARY:
+    if isinstance(initial, str) and initial == STATIONARY:
         if not _garch_is_stationary(arch_coefs, garch_coefs, float(noise_dist.var())):
             raise ValueError(
                 'initial="stationary" is impossible with these coefficients '
@@ -1198,7 +1198,9 @@ class GARCHProbabilitySpace(ProbabilitySpace):
 
         noise_var = float(self.noise_dist.var())
         settles = _garch_is_stationary(self.arch_coefs, self.garch_coefs, noise_var)
-        if initial is None or initial == STATIONARY:
+        if initial is None or (
+            isinstance(initial, str) and initial == STATIONARY
+        ):
             # Starting at the long-run variance means there is no warm-up:
             # the variance is already where it belongs at time 0. When the
             # process does not settle there is no such value, so fall back to
