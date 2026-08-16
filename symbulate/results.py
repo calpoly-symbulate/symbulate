@@ -2281,7 +2281,8 @@ class RVResults(Results):
         y = self._pairs_column(y_index)
         _, discrete_x, discrete_y, _ = self._pairs_joint_configuration(x_index, y_index)
         if joint_type == "hist2d":
-            histogram = make_hist2d(
+            histogram = _call_plot_helper(
+                make_hist2d,
                 x,
                 y,
                 ax,
@@ -2300,7 +2301,8 @@ class RVResults(Results):
             # is a continuous axis for it to apply to.
             if not (discrete_x and discrete_y):
                 kwargs["bins"] = bins
-            return make_tile(
+            return _call_plot_helper(
+                make_tile,
                 x,
                 y,
                 ax,
